@@ -1,0 +1,13 @@
+__v0_runtime_loader.js
+__v0_devtools.tsx
+__v0_jsx-dev-runtime.ts
+.snowflake/
+.design-cache/
+.v0-trash/
+.vercel/
+
+.env*.local
+
+node_modules
+.next/
+.DS_Store

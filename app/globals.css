@@ -1,0 +1,109 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@theme inline {
+  --font-sans: 'Inter', 'Inter Fallback', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'JetBrains Mono Fallback', ui-monospace, monospace;
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--foreground);
+  --color-popover: var(--surface-raised);
+  --color-popover-foreground: var(--foreground);
+  --color-muted: var(--surface-raised);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--surface-raised);
+  --color-secondary-foreground: var(--foreground);
+  --color-accent: var(--surface-raised);
+  --color-accent-foreground: var(--foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-highlight: var(--highlight);
+  --color-input: var(--surface-sunken);
+  --color-ring: var(--primary);
+  --color-axis-x: var(--axis-x);
+  --color-axis-y: var(--axis-y);
+  --color-axis-z: var(--axis-z);
+
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --radius-xl: 6px;
+}
+
+:root {
+  color-scheme: dark;
+
+  --background: oklch(0.135 0.003 260);
+  --surface-sunken: oklch(0.115 0.003 260);
+  --surface: oklch(0.185 0.003 260);
+  --surface-raised: oklch(0.235 0.004 260);
+  --foreground: oklch(0.87 0.005 260);
+  --muted-foreground: oklch(0.6 0.008 260);
+
+  --primary: oklch(0.64 0.15 243);
+  --primary-foreground: oklch(0.985 0 0);
+  --warning: oklch(0.76 0.16 62);
+  --warning-foreground: oklch(0.15 0.02 62);
+  --destructive: oklch(0.62 0.2 25);
+
+  --border: oklch(0.08 0 0);
+  --border-strong: oklch(1 0 0 / 7%);
+  --highlight: oklch(1 0 0 / 4%);
+
+  --axis-x: oklch(0.63 0.21 25);
+  --axis-y: oklch(0.74 0.19 142);
+  --axis-z: oklch(0.64 0.17 255);
+
+  --radius: 3px;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    font-size: 16px;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans text-xs antialiased;
+    font-feature-settings: 'tnum' 1, 'cv11' 1;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: oklch(1 0 0 / 10%);
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: oklch(1 0 0 / 18%);
+    background-clip: padding-box;
+    border: 2px solid transparent;
+  }
+}
