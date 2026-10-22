@@ -22,7 +22,7 @@ export async function importTextureFile(session: EditorSession, file: File, colo
         session.log.error('Texturas', `Não foi possível decodificar "${file.name}": ${cause instanceof Error ? cause.message : String(cause)}`);
         return null;
     }
-    session.assets.addTexture(texture, file.name);
+    session.resources.addTexture(texture, file.name);
     session.log.info('Texturas', `${texture.name} importada (${texture.width}×${texture.height}, ${colorSpace === 'srgb' ? 'sRGB' : 'linear'}).`);
     return texture;
 }
