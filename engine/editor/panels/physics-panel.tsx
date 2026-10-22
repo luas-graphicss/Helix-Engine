@@ -10,6 +10,7 @@ import { useEditorState } from '@/engine/editor/session/editor-session-context';
 import * as vec3 from '@/engine/core/math/vec3';
 import { matchPhysicsQuality, type PhysicsQuality } from '@/engine/physics/world/physics-settings';
 import { Vector3Input } from './inspector/number-fields';
+import { CsgCollisionSection } from './physics/csg-collision-section';
 const QUALITY_OPTIONS: readonly {
     value: PhysicsQuality;
     label: string;
@@ -34,6 +35,8 @@ const millimeters = (value: number) => `${Number((value * 1000).toFixed(1))} mm`
 const seconds = (value: number) => `${Number(value.toFixed(2))} s`;
 const meters = (value: number) => `${Math.round(value)} m`;
 const ratio = (value: number) => Number(value.toFixed(1)).toString();
+const density = (value: number) => `${Math.round(value)} kg/m³`;
+const multiplier = (value: number) => `${Number(value.toFixed(2))}×`;
 export function PhysicsPanel() {
     const session = useEditorState();
     const physics = session.scene.physics;
@@ -68,6 +71,8 @@ export function PhysicsPanel() {
           </p>
         </CollapsibleSection>
 
+        <CsgCollisionSection />
+
         <CollapsibleSection title="Simulação">
           <PropertyRow label="Qualidade">
             <SegmentedControl label="Qualidade da simulação" options={QUALITY_OPTIONS} value={quality} onChange={(value) => session.applyPhysicsQuality(value)}/>
@@ -95,6 +100,15 @@ export function PhysicsPanel() {
           <SliderField label="Vel. linear" value={physics.sleepLinearThreshold} min={0.005} max={0.5} step={0.005} disabled={!physics.sleepEnabled} format={metersPerSecond} onChange={(value) => session.updatePhysics({ sleepLinearThreshold: value })}/>
           <SliderField label="Vel. angular" value={physics.sleepAngularThreshold} min={0.005} max={0.5} step={0.005} disabled={!physics.sleepEnabled} format={radiansPerSecond} onChange={(value) => session.updatePhysics({ sleepAngularThreshold: value })}/>
           <SliderField label="Tempo" value={physics.timeToSleep} min={0.1} max={3} step={0.1} disabled={!physics.sleepEnabled} format={seconds} onChange={(value) => session.updatePhysics({ timeToSleep: value })}/>
+        </CollapsibleSection>
+
+        <CollapsibleSection title="Água">
+          <SliderField label="Densidade" value={physics.waterDensity} min={100} max={3000} step={10} format={density} onChange={(value) => session.updatePhysics({ waterDensity: value })}/>
+          <SliderField label="Arrasto" value={physics.waterDrag} min={0} max={3} step={0.05} format={multiplier} onChange={(value) => session.updatePhysics({ waterDrag: value })}/>
+          <SliderField label="Arrasto angular" value={physics.waterAngularDrag} min={0} max={3} step={0.05} format={multiplier} onChange={(value) => session.updatePhysics({ waterAngularDrag: value })}/>
+          <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+            Um corpo boia quando a massa dividida pelo volume do colisor fica abaixo da densidade da água (1000 kg/m³ é água doce) e afunda acima dela. O arrasto freia quem está submerso e o faz acompanhar as ondas.
+          </p>
         </CollapsibleSection>
 
         <CollapsibleSection title="Limites">
