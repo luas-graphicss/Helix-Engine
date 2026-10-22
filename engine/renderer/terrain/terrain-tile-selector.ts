@@ -29,11 +29,16 @@ class TileState {
     readonly variants: Uint8Array;
     readonly order: number[] = [];
     readonly byDistance = (a: number, b: number): number => this.distances[a] - this.distances[b];
+    readonly lightOrder: number[] = [];
+    readonly lightLevels: Int8Array;
+    readonly lightVariants: Uint8Array;
     constructor(readonly tileCount: number) {
         this.levels = new Int8Array(tileCount).fill(-1);
         this.visible = new Uint8Array(tileCount);
         this.distances = new Float32Array(tileCount);
         this.variants = new Uint8Array(tileCount);
+        this.lightLevels = new Int8Array(tileCount);
+        this.lightVariants = new Uint8Array(tileCount);
     }
 }
 export function shadowLevelForTexel(texelWorldSize: number, cellWorldSize: number, lod: LodSettings): number {
@@ -103,7 +108,32 @@ export class TerrainTileSelector {
         }
         constrainNeighbors(levels, n);
         order.sort(state.byDistance);
-        const { variantBatch, variantCursor, batches, stats } = this;
+        this.buildBatches(order, levels, variants, n, instances);
+        const { stats } = this;
+        for (const batch of this.batches)
+            stats.perLevel[batch.level] += batch.count;
+        stats.tiles += state.tileCount;
+        stats.drawn += order.length;
+    }
+    selectForLight(entity: Entity, terrain: Terrain, frustum: Frustum, fallbackLevel: number, instances: InstanceBuffer): number {
+        const n = terrain.tiles.tilesPerSide;
+        const state = this.resolveState(terrain);
+        const { lightOrder, lightLevels, lightVariants } = state;
+        const cameraLevels = state.levels[0] >= 0 ? state.levels : null;
+        lightOrder.length = 0;
+        for (let tz = 0; tz < n; tz++) {
+            for (let tx = 0; tx < n; tx++) {
+                const t = tz * n + tx;
+                lightLevels[t] = cameraLevels ? cameraLevels[t] : fallbackLevel;
+                if (frustum.intersectsAabb(this.tileWorldBounds(entity, terrain, tx, tz)))
+                    lightOrder.push(t);
+            }
+        }
+        this.buildBatches(lightOrder, lightLevels, lightVariants, n, instances);
+        return lightOrder.length;
+    }
+    private buildBatches(order: readonly number[], levels: Int8Array, variants: Uint8Array, n: number, instances: InstanceBuffer): void {
+        const { variantBatch, variantCursor, batches } = this;
         variantBatch.fill(-1);
         batches.length = 0;
         for (let i = 0; i < order.length; i++) {
@@ -118,13 +148,11 @@ export class TerrainTileSelector {
             }
             batches[index].count++;
         }
-        const firstInstance = instances.allocate(order.length);
-        let offset = firstInstance;
+        let offset = instances.allocate(order.length);
         for (const batch of batches) {
             batch.firstInstance = offset;
             variantCursor[batch.level * STITCH_VARIANTS + batch.stitchMask] = offset;
             offset += batch.count;
-            stats.perLevel[batch.level] += batch.count;
         }
         const { data } = instances;
         for (let i = 0; i < order.length; i++) {
@@ -133,23 +161,6 @@ export class TerrainTileSelector {
             data[slot] = (t % n) * TILE_CELLS;
             data[slot + 1] = Math.floor(t / n) * TILE_CELLS;
         }
-        stats.tiles += state.tileCount;
-        stats.drawn += order.length;
-    }
-    selectForLight(entity: Entity, terrain: Terrain, frustum: Frustum, instances: InstanceBuffer): number {
-        const n = terrain.tiles.tilesPerSide;
-        let count = 0;
-        for (let tz = 0; tz < n; tz++) {
-            for (let tx = 0; tx < n; tx++) {
-                if (!frustum.intersectsAabb(this.tileWorldBounds(entity, terrain, tx, tz)))
-                    continue;
-                const slot = instances.allocate(1) * TILE_FLOATS;
-                instances.data[slot] = tx * TILE_CELLS;
-                instances.data[slot + 1] = tz * TILE_CELLS;
-                count++;
-            }
-        }
-        return count;
     }
     private resolveState(terrain: Terrain): TileState {
         let state = this.states.get(terrain);

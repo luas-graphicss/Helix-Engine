@@ -1,4 +1,5 @@
 import { TILE_CELLS, TILE_LEVELS } from '@/engine/terrain/chunks/terrain-tiles';
+import { cellDiagonalFrom00 } from '@/engine/terrain/core/heightfield';
 export const ATTRIB_PATCH = 0;
 export const ATTRIB_TILE_ORIGIN = 1;
 export const STITCH_NORTH = 1;
@@ -68,7 +69,7 @@ export function buildTerrainPatch(): TerrainPatch {
                     const p11 = resolveCorner(cx + 1, cz + 1, cells, step, mask);
                     const dropped00or11 = p00 !== vertexAt(cx * step, cz * step) || p11 !== vertexAt((cx + 1) * step, (cz + 1) * step);
                     const dropped10or01 = p10 !== vertexAt((cx + 1) * step, cz * step) || p01 !== vertexAt(cx * step, (cz + 1) * step);
-                    let diagonalFrom00 = (cx + cz) % 2 === 1;
+                    let diagonalFrom00 = cellDiagonalFrom00(cx, cz);
                     if (dropped00or11)
                         diagonalFrom00 = false;
                     else if (dropped10or01)
