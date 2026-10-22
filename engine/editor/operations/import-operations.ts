@@ -1,5 +1,6 @@
 import * as mat4 from '@/engine/core/math/mat4';
 import * as aabb from '@/engine/core/math/aabb';
+import type { Vec3 } from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
 import { computeWorldBounds } from '@/engine/renderer/geometry/bounds';
 import { importModelFile, IMPORT_FORMAT_SUMMARY, partitionImportFiles } from '@/engine/assets/import/import-registry';
@@ -10,12 +11,16 @@ import { addEntity } from './entity-operations';
 export type ImportPlacement = 'target' | 'origin' | 'keep';
 export interface ImportOptions extends MaterializeOptions {
     placement: ImportPlacement;
+    placementPoint: Vec3 | null;
     frameAfterImport: boolean;
+    saveToLibrary: boolean;
 }
 export const DEFAULT_IMPORT_OPTIONS: ImportOptions = {
     ...DEFAULT_MATERIALIZE_OPTIONS,
     placement: 'target',
+    placementPoint: null,
     frameAfterImport: true,
+    saveToLibrary: true,
 };
 const LOG_SOURCE = 'Importação';
 function describeError(cause: unknown): string {
@@ -69,13 +74,11 @@ const WORLD_ORIGIN = [0, 0, 0] as const;
 export async function instantiateImportedScene(session: EditorSession, imported: ImportedScene, options: ImportOptions = DEFAULT_IMPORT_OPTIONS): Promise<Entity> {
     const result = await materializeImportedScene(session.scene, imported, options);
     for (const texture of result.textures)
-        session.assets.addTexture(texture, imported.sourceFile);
-    for (const material of result.materials)
-        session.assets.addMaterial(material, imported.sourceFile);
+        session.resources.addTexture(texture, imported.sourceFile);
     for (const mesh of result.meshes)
-        session.assets.addMesh(mesh.name, mesh.geometry, mesh.material, imported.sourceFile);
+        session.resources.addMesh(mesh.name, mesh.geometry, mesh.material, imported.sourceFile);
     if (options.placement === 'target')
-        placeRootAt(session, result.root, session.camera.target);
+        placeRootAt(session, result.root, options.placementPoint ?? session.camera.target);
     else if (options.placement === 'origin')
         placeRootAt(session, result.root, WORLD_ORIGIN);
     addEntity(session, result.root, session.scene.root, `Importar ${result.root.name}`);

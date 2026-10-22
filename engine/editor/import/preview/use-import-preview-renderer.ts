@@ -4,6 +4,7 @@ import { Renderer } from '@/engine/renderer/renderer';
 import { WebGLUnsupportedError } from '@/engine/renderer/gl/context';
 import type { CullingOptions } from '@/engine/renderer/culling/visible-set';
 import type { LodSettings } from '@/engine/renderer/lod/lod-selector';
+import { createMyriadSettings, type MyriadSettings } from '@/engine/renderer/myriad/runtime/myriad-settings';
 import type { ImportPreviewModel } from './import-preview-model';
 export interface PreviewRenderSettings {
     grid: boolean;
@@ -12,6 +13,7 @@ export interface PreviewRenderSettings {
 const MAX_DELTA_SECONDS = 0.1;
 const PREVIEW_CULLING: CullingOptions = { frustumCulling: true, minPixelSize: 0 };
 const PREVIEW_LOD: LodSettings = { enabled: false, bias: 0 };
+const PREVIEW_MYRIAD: MyriadSettings = { ...createMyriadSettings(), enabled: false };
 export function useImportPreviewRenderer(canvasRef: React.RefObject<HTMLCanvasElement | null>, model: ImportPreviewModel, settings: PreviewRenderSettings) {
     const [error, setError] = useState<string | null>(null);
     const settingsRef = useRef(settings);
@@ -36,13 +38,17 @@ export function useImportPreviewRenderer(canvasRef: React.RefObject<HTMLCanvasEl
             renderer.render(model.scene, model.camera, {
                 showGrid: settingsRef.current.grid,
                 shadows: settingsRef.current.shadows,
-                selectedId: null,
+                selection: null,
+                showCsgBrushes: false,
                 gizmo: null,
                 terrainBrush: null,
+                skeletons: null,
                 elapsedSeconds: now / 1000,
                 deltaSeconds,
                 culling: PREVIEW_CULLING,
                 lod: PREVIEW_LOD,
+                myriad: PREVIEW_MYRIAD,
+                terrainMaterialCache: true,
             });
             frameHandle = requestAnimationFrame(frame);
         };

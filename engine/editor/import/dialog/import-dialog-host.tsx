@@ -2,7 +2,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { LoaderCircle } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { isModelFile } from '@/engine/assets/import/import-registry';
 import type { ImportedScene } from '@/engine/assets/import/import-types';
+import { addFilesToLibrary } from '@/engine/editor/operations/asset-library-operations';
 import { instantiateImportedScene, parseImportFiles, type ImportOptions, type ParsedImport } from '@/engine/editor/operations/import-operations';
 import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { subscribeImportRequests } from '../import-requests';
@@ -49,7 +51,7 @@ export function ImportDialogHost() {
             return { status: 'idle' };
         });
     }, [session]);
-    const importCurrent = useCallback(async (scene: ImportedScene, options: ImportOptions) => {
+    const importCurrent = useCallback(async (scene: ImportedScene, options: ImportOptions, sourceFiles: File[]) => {
         try {
             await instantiateImportedScene(session, scene, options);
         }
@@ -58,6 +60,10 @@ export function ImportDialogHost() {
             return;
         }
         advance();
+        if (options.saveToLibrary) {
+            const model = sourceFiles.find(isModelFile);
+            void addFilesToLibrary(session, sourceFiles, { parsedScenes: model ? new Map([[model, scene]]) : undefined });
+        }
     }, [session, advance]);
     const reportPreviewError = useCallback((message: string) => session.log.error(LOG_SOURCE, `Falha na pré-visualização: ${message}`), [session]);
     if (state.status === 'parsing') {

@@ -4,12 +4,13 @@ import { Import, LoaderCircle, TriangleAlert, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
-import { formatLabel } from '@/engine/assets/import/import-registry';
+import { formatLabel, isModelFile } from '@/engine/assets/import/import-registry';
 import type { ImportedScene } from '@/engine/assets/import/import-types';
 import type { ImportOptions, ParsedImport } from '@/engine/editor/operations/import-operations';
 import { useFileDrop } from '@/engine/editor/viewport/use-file-drop';
 import { IconButton } from '@/engine/ui/icon-button';
 import { TabStrip, type TabDefinition } from '@/engine/ui/tab-strip';
+import { ToggleSwitch } from '@/engine/ui/toggle-field';
 import { ImportPreview } from '../preview/import-preview';
 import { useImportDraft } from '../use-import-draft';
 import { formatInteger } from './import-format';
@@ -27,7 +28,7 @@ type ImportDialogProps = {
         index: number;
         total: number;
     };
-    onImport: (scene: ImportedScene, options: ImportOptions) => Promise<void>;
+    onImport: (scene: ImportedScene, options: ImportOptions, sourceFiles: File[]) => Promise<void>;
     onSkip: () => void;
     onCancel: () => void;
     onPreviewError: (message: string) => void;
@@ -62,7 +63,7 @@ export function ImportDialog({ parsed, companionFiles, position, onImport, onSki
     const handleImport = async () => {
         setImporting(true);
         try {
-            await onImport(scene, options);
+            await onImport(scene, options, draft.files.filter((file) => file === parsed.file || !isModelFile(file)));
         }
         finally {
             setImporting(false);
@@ -122,6 +123,10 @@ export function ImportDialog({ parsed, companionFiles, position, onImport, onSki
               </button>)}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
+            <label className="mr-2 flex cursor-pointer items-center gap-2 text-2xs text-muted-foreground" title="Guarda o arquivo (e seus auxiliares) na biblioteca de ativos para reutilizar em outras cenas">
+              <ToggleSwitch label="Guardar na biblioteca" on={options.saveToLibrary} onToggle={() => draft.updateOptions({ saveToLibrary: !options.saveToLibrary })}/>
+              Guardar na biblioteca
+            </label>
             <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={importing}>
               {hasMultiple ? 'Cancelar tudo' : 'Cancelar'}
             </Button>

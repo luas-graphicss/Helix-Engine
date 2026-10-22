@@ -9,6 +9,7 @@ export type TextureStatus = 'embedded' | 'file' | 'missing';
 export interface ImportDraft {
     scene: ImportedScene;
     options: ImportOptions;
+    files: File[];
     revision: number;
     stats: ImportStats;
     effectiveScale: number;
@@ -105,6 +106,7 @@ export function useImportDraft(scene: ImportedScene, initialFiles: File[]): Impo
     return {
         scene,
         options,
+        files: bundleFiles,
         revision,
         stats,
         effectiveScale: effectiveImportScale(scene, options),
