@@ -14,6 +14,8 @@ export interface ImportedScene {
     meshes: ImportedMesh[];
     materials: ImportedMaterial[];
     textures: ImportedTexture[];
+    skins: ImportedSkin[];
+    animations: ImportedAnimation[];
     upAxis: ImportUpAxis;
     metersPerUnit: number | null;
     warnings: string[];
@@ -25,6 +27,27 @@ export interface ImportedNode {
     scale: Vec3;
     meshes: number[];
     children: ImportedNode[];
+    nodeIndex?: number;
+    skin?: number;
+}
+export interface ImportedSkin {
+    name: string;
+    joints: number[];
+    inverseBindMatrices: Float32Array;
+}
+export type ImportedAnimationPath = 'translation' | 'rotation' | 'scale';
+export type ImportedInterpolation = 'linear' | 'step' | 'cubic';
+export interface ImportedAnimationChannel {
+    nodeIndex: number;
+    path: ImportedAnimationPath;
+    interpolation: ImportedInterpolation;
+    times: Float32Array;
+    values: Float32Array;
+}
+export interface ImportedAnimation {
+    name: string;
+    duration: number;
+    channels: ImportedAnimationChannel[];
 }
 export interface ImportedMesh {
     name: string;

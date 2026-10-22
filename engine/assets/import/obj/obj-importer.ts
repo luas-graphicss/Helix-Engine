@@ -380,6 +380,8 @@ export async function importObj(file: File, bundle: FileBundle): Promise<Importe
         materials,
         textures: textures.textures,
         upAxis: 'y',
+        skins: [],
+        animations: [],
         metersPerUnit: null,
         warnings,
     };

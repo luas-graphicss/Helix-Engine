@@ -104,6 +104,8 @@ export async function importStl(file: File): Promise<ImportedScene> {
         materials: [createImportedMaterial(`${name}_Material`, { baseColor: vec3.create(0.75, 0.75, 0.78), roughness: 0.5 })],
         textures: [],
         upAxis: 'z',
+        skins: [],
+        animations: [],
         metersPerUnit: null,
         warnings,
     };

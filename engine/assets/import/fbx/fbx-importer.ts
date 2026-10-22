@@ -181,6 +181,8 @@ export async function importFbx(file: File, bundle: FileBundle): Promise<Importe
         materials: materials.materials,
         textures: materials.textures,
         upAxis: readUpAxis(doc, warnings),
+        skins: [],
+        animations: [],
         metersPerUnit: unitScale > 0 ? unitScale / 100 : null,
         warnings,
     };

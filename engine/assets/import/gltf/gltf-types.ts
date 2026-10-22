@@ -107,10 +107,36 @@ export interface GltfNode {
     name?: string;
     children?: number[];
     mesh?: number;
+    skin?: number;
     matrix?: number[];
     translation?: number[];
     rotation?: number[];
     scale?: number[];
+}
+export interface GltfSkin {
+    name?: string;
+    joints: number[];
+    inverseBindMatrices?: number;
+    skeleton?: number;
+}
+export type GltfInterpolation = 'LINEAR' | 'STEP' | 'CUBICSPLINE';
+export type GltfAnimationPath = 'translation' | 'rotation' | 'scale' | 'weights';
+export interface GltfAnimationSampler {
+    input: number;
+    output: number;
+    interpolation?: GltfInterpolation;
+}
+export interface GltfAnimationChannel {
+    sampler: number;
+    target: {
+        node?: number;
+        path: GltfAnimationPath;
+    };
+}
+export interface GltfAnimation {
+    name?: string;
+    samplers: GltfAnimationSampler[];
+    channels: GltfAnimationChannel[];
 }
 export interface GltfSceneDef {
     name?: string;
@@ -132,6 +158,8 @@ export interface GltfDocument {
     materials?: GltfMaterial[];
     meshes?: GltfMesh[];
     nodes?: GltfNode[];
+    skins?: GltfSkin[];
+    animations?: GltfAnimation[];
     scenes?: GltfSceneDef[];
     scene?: number;
 }

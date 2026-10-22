@@ -1,12 +1,12 @@
 import * as mat4 from '@/engine/core/math/mat4';
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Mat4 } from '@/engine/core/math/mat4';
-import { createIndexArray, type MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { createIndexArray, type MeshData, type MeshSkinning } from '@/engine/renderer/geometry/mesh-data';
 import type { TextureFilter, TextureWrap } from '@/engine/core/scene/texture';
 import { mimeTypeFromFileName } from '@/engine/assets/image-decoder';
 import { dataUriToBlob, isDataUri, type FileBundle } from '../file-bundle';
 import { stripOrFanToTriangles, withFlatNormals } from '../geometry-utils';
-import { baseNameWithoutExtension, createImportedMaterial, createImportedNode, createImportedTexture, type ImportedMaterial, type ImportedMesh, type ImportedNode, type ImportedScene, type ImportedTexture, } from '../import-types';
+import { baseNameWithoutExtension, createImportedMaterial, createImportedNode, createImportedTexture, type ImportedAnimation, type ImportedAnimationChannel, type ImportedInterpolation, type ImportedMaterial, type ImportedMesh, type ImportedNode, type ImportedScene, type ImportedSkin, type ImportedTexture, } from '../import-types';
 import type { GltfAccessor, GltfDocument, GltfMaterial, GltfNode, GltfPrimitive, GltfTextureInfo } from './gltf-types';
 const GLB_MAGIC = 0x46546c67;
 const GLB_CHUNK_JSON = 0x4e4f534a;
@@ -336,6 +336,7 @@ function convertPrimitive(reader: GltfReader, primitive: GltfPrimitive, name: st
         else
             warnings.push(`${name}: TEXCOORD_0 com formato inesperado foi ignorado.`);
     }
+    const skinning = readSkinning(reader, primitive, name, vertexCount, warnings);
     let geometry: MeshData;
     const normalAccessor = primitive.attributes.NORMAL;
     const hadNormals = normalAccessor !== undefined;
@@ -343,12 +344,92 @@ function convertPrimitive(reader: GltfReader, primitive: GltfPrimitive, name: st
         const normals = reader.readAccessor(normalAccessor).data;
         if (normals.length !== positions.length)
             throw new Error(`${name}: NORMAL e POSITION com contagens diferentes.`);
-        geometry = { name, positions, normals, uvs: uvs ?? new Float32Array(vertexCount * 2), indices: createIndexArray(indices, vertexCount) };
+        geometry = { name, positions, normals, uvs: uvs ?? new Float32Array(vertexCount * 2), indices: createIndexArray(indices, vertexCount), skinning };
     }
     else {
         geometry = withFlatNormals(name, positions, uvs, indices);
+        if (skinning)
+            warnings.push(`${name}: sem normais, a malha foi achatada e perdeu o skinning.`);
     }
     return { name, geometry, material: primitive.material ?? null, hadNormals, hadUvs: uvs !== null };
+}
+function readSkinning(reader: GltfReader, primitive: GltfPrimitive, name: string, vertexCount: number, warnings: string[]): MeshSkinning | undefined {
+    const jointsAccessor = primitive.attributes.JOINTS_0;
+    const weightsAccessor = primitive.attributes.WEIGHTS_0;
+    if (jointsAccessor === undefined || weightsAccessor === undefined)
+        return undefined;
+    const joints = reader.readAccessor(jointsAccessor);
+    const weights = reader.readAccessor(weightsAccessor);
+    if (joints.components !== 4 || weights.components !== 4 || joints.count !== vertexCount || weights.count !== vertexCount) {
+        warnings.push(`${name}: JOINTS_0/WEIGHTS_0 com formato inesperado foram ignorados.`);
+        return undefined;
+    }
+    if (primitive.attributes.JOINTS_1 !== undefined)
+        warnings.push(`${name}: apenas quatro influências por vértice são suportadas (JOINTS_1 ignorado).`);
+    const normalized = new Float32Array(weights.data);
+    for (let v = 0; v < vertexCount; v++) {
+        const o = v * 4;
+        const sum = normalized[o] + normalized[o + 1] + normalized[o + 2] + normalized[o + 3];
+        if (sum > 1e-6) {
+            normalized[o] /= sum;
+            normalized[o + 1] /= sum;
+            normalized[o + 2] /= sum;
+            normalized[o + 3] /= sum;
+        }
+        else {
+            normalized[o] = 1;
+        }
+    }
+    return { joints: Uint16Array.from(joints.data), weights: normalized };
+}
+function identityMatrices(count: number): Float32Array {
+    const out = new Float32Array(count * 16);
+    for (let i = 0; i < count; i++)
+        out[i * 16] = out[i * 16 + 5] = out[i * 16 + 10] = out[i * 16 + 15] = 1;
+    return out;
+}
+function convertSkins(doc: GltfDocument, reader: GltfReader, warnings: string[]): ImportedSkin[] {
+    return (doc.skins ?? []).map((skin, index) => {
+        const name = skin.name || `Esqueleto_${index + 1}`;
+        let inverseBindMatrices = identityMatrices(skin.joints.length);
+        if (skin.inverseBindMatrices !== undefined) {
+            const read = reader.readAccessor(skin.inverseBindMatrices);
+            if (read.components === 16 && read.count === skin.joints.length)
+                inverseBindMatrices = read.data;
+            else
+                warnings.push(`${name}: matrizes de ligação inversas com formato inesperado; a pose de ligação foi assumida como identidade.`);
+        }
+        return { name, joints: [...skin.joints], inverseBindMatrices };
+    });
+}
+const INTERPOLATION: Record<string, ImportedInterpolation> = { LINEAR: 'linear', STEP: 'step', CUBICSPLINE: 'cubic' };
+function convertAnimations(doc: GltfDocument, reader: GltfReader, warnings: string[]): ImportedAnimation[] {
+    let morphWarned = false;
+    return (doc.animations ?? []).map((animation, index) => {
+        const name = animation.name || `Animacao_${index + 1}`;
+        const channels: ImportedAnimationChannel[] = [];
+        let duration = 0;
+        for (const channel of animation.channels) {
+            const sampler = animation.samplers[channel.sampler];
+            const nodeIndex = channel.target.node;
+            if (!sampler || nodeIndex === undefined)
+                continue;
+            const { path } = channel.target;
+            if (path === 'weights') {
+                if (!morphWarned)
+                    warnings.push(`${name}: animação de alvos de morph ignorada (não suportada).`);
+                morphWarned = true;
+                continue;
+            }
+            const times = reader.readAccessor(sampler.input).data;
+            const values = reader.readAccessor(sampler.output).data;
+            if (times.length === 0)
+                continue;
+            duration = Math.max(duration, times[times.length - 1]);
+            channels.push({ nodeIndex, path, interpolation: INTERPOLATION[sampler.interpolation ?? 'LINEAR'] ?? 'linear', times, values });
+        }
+        return { name, duration, channels };
+    });
 }
 const nodeMatrix: Mat4 = mat4.create();
 function matrixFromTrs(out: Mat4, translation: number[], rotation: number[], scale: number[]): Mat4 {
@@ -432,9 +513,12 @@ export async function importGltf(file: File, bundle: FileBundle): Promise<Import
         visiting.add(index);
         const meshName = node.mesh !== undefined ? doc.meshes?.[node.mesh]?.name : undefined;
         const out = createImportedNode(node.name || meshName || fallbackName);
+        out.nodeIndex = index;
         applyNodeTransform(node, out);
         if (node.mesh !== undefined)
             out.meshes = meshIndicesFor(node.mesh);
+        if (node.skin !== undefined && doc.skins?.[node.skin])
+            out.skin = node.skin;
         for (const child of node.children ?? []) {
             const converted = convertNode(child, `Nó_${child + 1}`);
             if (converted)
@@ -462,6 +546,8 @@ export async function importGltf(file: File, bundle: FileBundle): Promise<Import
         meshes,
         materials,
         textures,
+        skins: convertSkins(doc, reader, warnings),
+        animations: convertAnimations(doc, reader, warnings),
         upAxis: 'y',
         metersPerUnit: 1,
         warnings,

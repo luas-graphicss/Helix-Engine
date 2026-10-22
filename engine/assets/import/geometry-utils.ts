@@ -290,6 +290,8 @@ export function withSmoothNormals(name: string, positions: ArrayLike<number>, uv
     };
 }
 export function recomputeNormals(mesh: MeshData, mode: 'smooth' | 'flat', angleDegrees = DEFAULT_SMOOTHING_ANGLE_DEGREES): MeshData {
+    if (mesh.skinning)
+        return mesh;
     return mode === 'flat' ? withFlatNormals(mesh.name, mesh.positions, mesh.uvs, mesh.indices) : withSmoothNormals(mesh.name, mesh.positions, mesh.uvs, mesh.indices, angleDegrees);
 }
 export function flipUvV(mesh: MeshData): MeshData {
