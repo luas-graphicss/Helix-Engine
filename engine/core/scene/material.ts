@@ -21,6 +21,8 @@ export interface Material {
     occlusionMap: Texture | null;
     occlusionStrength: number;
     emissiveMap: Texture | null;
+    uvTiling: number;
+    libraryId: string | null;
 }
 export type MaterialOptions = Partial<Material>;
 export const MATERIAL_TEXTURE_SLOTS: ReadonlyArray<{
@@ -53,6 +55,8 @@ export function createMaterial(options: MaterialOptions = {}): Material {
         occlusionMap: options.occlusionMap ?? null,
         occlusionStrength: options.occlusionStrength ?? 1,
         emissiveMap: options.emissiveMap ?? null,
+        uvTiling: options.uvTiling ?? 1,
+        libraryId: options.libraryId ?? null,
     };
 }
 export function cloneMaterial(material: Material): Material {
@@ -60,7 +64,29 @@ export function cloneMaterial(material: Material): Material {
         ...material,
         baseColor: vec3.copy(vec3.create(), material.baseColor),
         emissive: vec3.copy(vec3.create(), material.emissive),
+        libraryId: null,
     };
+}
+export function copyMaterial(out: Material, source: Material): Material {
+    out.name = source.name;
+    vec3.copy(out.baseColor, source.baseColor);
+    out.opacity = source.opacity;
+    out.roughness = source.roughness;
+    out.metallic = source.metallic;
+    vec3.copy(out.emissive, source.emissive);
+    out.emissiveIntensity = source.emissiveIntensity;
+    out.alphaMode = source.alphaMode;
+    out.alphaCutoff = source.alphaCutoff;
+    out.doubleSided = source.doubleSided;
+    out.baseColorMap = source.baseColorMap;
+    out.metallicRoughnessMap = source.metallicRoughnessMap;
+    out.normalMap = source.normalMap;
+    out.normalScale = source.normalScale;
+    out.occlusionMap = source.occlusionMap;
+    out.occlusionStrength = source.occlusionStrength;
+    out.emissiveMap = source.emissiveMap;
+    out.uvTiling = source.uvTiling;
+    return out;
 }
 export function hasAnyTexture(material: Material): boolean {
     return MATERIAL_TEXTURE_SLOTS.some(({ slot }) => material[slot] !== null);
