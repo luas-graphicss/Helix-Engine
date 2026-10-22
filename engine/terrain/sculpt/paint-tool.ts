@@ -17,5 +17,5 @@ export function paintLayer(terrain: Terrain, cx: number, cz: number, radius: num
             splat.blend(tx, tz, layer, amount * weight);
         }
     }
-    terrain.markSplatDirty();
+    terrain.markSplatDirty(outRegion);
 }
