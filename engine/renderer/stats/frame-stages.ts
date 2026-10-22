@@ -1,12 +1,16 @@
-export const FRAME_STAGES = ['cull', 'sky', 'shadows', 'meshes', 'terrain', 'overlay'] as const;
+export const FRAME_STAGES = ['cull', 'sky', 'shadows', 'prepass', 'virtual', 'mask', 'meshes', 'terrain', 'overlay', 'post'] as const;
 export type FrameStage = (typeof FRAME_STAGES)[number];
 export const FRAME_STAGE_LABELS: Record<FrameStage, string> = {
-    cull: 'Culling e LOD',
+    cull: 'Culling, LOD e seleção de clusters',
     sky: 'Céu e nuvens',
     shadows: 'Sombras',
+    prepass: 'Depth pre-pass (malhas e terreno)',
+    virtual: 'Geometria virtual e pirâmide de profundidade',
+    mask: 'Máscara de sombra',
     meshes: 'Malhas opacas',
-    terrain: 'Terreno',
+    terrain: 'Terreno, cache de material e grama',
     overlay: 'Transparentes e fundo',
+    post: 'Antialiasing e composição',
 };
 export const CPU_ONLY_STAGES: ReadonlySet<FrameStage> = new Set<FrameStage>(['cull']);
 export function stageIndex(stage: FrameStage): number {
