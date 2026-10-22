@@ -37,6 +37,9 @@
   --color-axis-x: var(--axis-x);
   --color-axis-y: var(--axis-y);
   --color-axis-z: var(--axis-z);
+  --color-csg-subtract: var(--csg-subtract);
+  --color-csg-union: var(--csg-union);
+  --color-csg-intersect: var(--csg-intersect);
 
   --radius-sm: 2px;
   --radius-md: 3px;
@@ -67,6 +70,11 @@
   --axis-x: oklch(0.63 0.21 25);
   --axis-y: oklch(0.74 0.19 142);
   --axis-z: oklch(0.64 0.17 255);
+
+
+  --csg-subtract: oklch(0.72 0.18 45);
+  --csg-union: oklch(0.74 0.17 150);
+  --csg-intersect: oklch(0.7 0.15 250);
 
   --radius: 3px;
 }
