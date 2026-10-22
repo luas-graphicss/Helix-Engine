@@ -22,10 +22,11 @@ const MAP_BINDINGS: readonly MapBinding[] = [
     { uniform: 'u_emissiveMap', fallback: 'white' },
 ];
 const FIRST_DATA_UNIT = FIRST_PASS_TEXTURE_UNIT + MAP_BINDINGS.length;
-const DATA_SAMPLERS = ['u_visBuffer', 'u_depth', 'u_list', 'u_instances', 'u_clusterInfo', 'u_clusterBounds', 'u_triangles', 'u_vertices'] as const;
+const DATA_SAMPLERS = ['u_visBuffer', 'u_list', 'u_instances', 'u_clusterInfo', 'u_clusterBounds', 'u_triangles', 'u_vertices'] as const;
 export interface ResolveInput {
     lighting: SceneLightingInput;
     states: readonly MaterialState[];
+    rects: Float32Array | null;
     visibility: VisibilityBuffer;
     list: EntryList;
     instances: InstanceTable;
@@ -44,10 +45,9 @@ export class MaterialResolvePass {
             return 0;
         program.use();
         bindSceneLightingUniforms(gl, program, input.lighting);
-        const { visibility, pool } = input;
+        const { visibility, pool, rects } = input;
         const data = [
             visibility.ids,
-            visibility.depth,
             input.list.texture.texture,
             input.instances.texture.texture,
             pool.clusterInfo.texture,
@@ -66,13 +66,34 @@ export class MaterialResolvePass {
         gl.uniform1i(program.uniform('u_debugView'), input.debugView);
         gl.uniform1i(program.uniform('u_wireframe'), input.wireframe ? 1 : 0);
         gl.disable(gl.CULL_FACE);
-        for (const state of input.states) {
-            this.bindMaps(state);
-            gl.uniform1ui(program.uniform('u_stateId'), state.id);
+        gl.disable(gl.DEPTH_TEST);
+        if (rects)
+            gl.enable(gl.SCISSOR_TEST);
+        let drawCalls = 0;
+        for (let i = 0; i < input.states.length; i++) {
+            if (rects && !this.applyScissor(rects, i, visibility.width, visibility.height))
+                continue;
+            this.bindMaps(input.states[i]);
+            gl.uniform1ui(program.uniform('u_stateId'), input.states[i].id);
             this.triangle.draw();
+            drawCalls++;
         }
+        if (rects)
+            gl.disable(gl.SCISSOR_TEST);
+        gl.enable(gl.DEPTH_TEST);
         gl.enable(gl.CULL_FACE);
-        return input.states.length;
+        return drawCalls;
+    }
+    private applyScissor(rects: Float32Array, index: number, width: number, height: number): boolean {
+        const offset = index * 4;
+        const x0 = Math.max(0, Math.floor((rects[offset] * 0.5 + 0.5) * width));
+        const y0 = Math.max(0, Math.floor((rects[offset + 1] * 0.5 + 0.5) * height));
+        const x1 = Math.min(width, Math.ceil((rects[offset + 2] * 0.5 + 0.5) * width));
+        const y1 = Math.min(height, Math.ceil((rects[offset + 3] * 0.5 + 0.5) * height));
+        if (x1 <= x0 || y1 <= y0)
+            return false;
+        this.gl.scissor(x0, y0, x1 - x0, y1 - y0);
+        return true;
     }
     private bindMaps(state: MaterialState): void {
         const { gl, program, textures } = this;

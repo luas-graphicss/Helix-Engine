@@ -5,12 +5,12 @@ precision highp float;
 precision highp int;
 
 uniform highp usampler2D u_visBuffer;
-uniform highp sampler2D u_depth;
 uniform highp usampler2D u_list;
 uniform highp sampler2D u_instances;
+uniform mat4 u_viewProjection;
 uniform uint u_stateId;
 uniform vec2 u_screenSize;
- 
+
 uniform int u_debugView;
 uniform int u_wireframe;
 
@@ -19,7 +19,7 @@ uniform sampler2D u_metallicRoughnessMap;
 uniform sampler2D u_normalMap;
 uniform sampler2D u_occlusionMap;
 uniform sampler2D u_emissiveMap;
- 
+
 uniform int u_textureMask;
 
 ${MYRIAD_POOL_CHUNK}
@@ -45,9 +45,6 @@ struct Barycentrics {
   vec3 ddx;
   vec3 ddy;
 };
-
-
-
 
 
 Barycentrics computeBarycentrics(vec4 c0, vec4 c1, vec4 c2, vec2 pixelNdc) {
@@ -104,9 +101,6 @@ const vec3 LEVEL_PALETTE[8] = vec3[8](
 );
 
 
-
-
-
 vec3 perturbNormal(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2, vec2 uv, float normalScale) {
   vec3 mapN = textureGrad(u_normalMap, uv, duv1, duv2).xyz * 2.0 - 1.0;
   mapN.xy *= vec2(normalScale, -normalScale);
@@ -124,9 +118,8 @@ out vec4 fragColor;
 
 void main() {
   ivec2 px = ivec2(gl_FragCoord.xy);
-  uvec2 vis = texelFetch(u_visBuffer, px, 0);
+  uvec2 vis = texelFetch(u_visBuffer, px, 0).xy;
   if (vis.x == 0u || (vis.y & STATE_MASK) != u_stateId) discard;
-  gl_FragDepth = texelFetch(u_depth, px, 0).r;
 
   uint slot = (vis.x & SLOT_MASK) - 1u;
   uint triangle = vis.x >> TRIANGLE_SHIFT;
@@ -157,9 +150,10 @@ void main() {
   vec3 worldPosition = interpolate(b.lambda, w0, w1, w2);
   vec3 positionDx = interpolate(b.ddx, w0, w1, w2);
   vec3 positionDy = interpolate(b.ddy, w0, w1, w2);
-  vec2 uv = interpolate(b.lambda, v0.uv, v1.uv, v2.uv);
-  vec2 uvDx = interpolate(b.ddx, v0.uv, v1.uv, v2.uv);
-  vec2 uvDy = interpolate(b.ddy, v0.uv, v1.uv, v2.uv);
+  float uvTiling = instanceTexel(instance, 15).x;
+  vec2 uv = interpolate(b.lambda, v0.uv, v1.uv, v2.uv) * uvTiling;
+  vec2 uvDx = interpolate(b.ddx, v0.uv, v1.uv, v2.uv) * uvTiling;
+  vec2 uvDy = interpolate(b.ddy, v0.uv, v1.uv, v2.uv) * uvTiling;
 
   vec3 N = normalize(normalMatrix * interpolate(b.lambda, v0.normal, v1.normal, v2.normal));
   vec3 faceNormal = cross(w1 - w0, w2 - w0);
@@ -193,10 +187,11 @@ void main() {
   } else {
     if (u_debugView == 1) color = hashColor(cluster + 1u);
     else if (u_debugView == 2) color = hashColor(info.z >> 8u);
-    else if (u_debugView == 3) color = LEVEL_PALETTE[int(info.z & 0xffu) & 7];
+
+    else if (u_debugView == 3) color = LEVEL_PALETTE[min(int(info.z & 0xffu), 7)];
     else if (u_debugView == 4) color = hashColor(cluster * 131u + triangle + 7u);
     else color = (vis.y & POST_PASS_BIT) != 0u ? vec3(0.95, 0.55, 0.15) : vec3(0.25, 0.75, 0.35);
-     
+
     color *= 0.55 + 0.45 * max(dot(N, u_sunDirection), 0.0);
     color = mix(color, SELECTION_TINT, mapParams.z * 0.35);
   }
