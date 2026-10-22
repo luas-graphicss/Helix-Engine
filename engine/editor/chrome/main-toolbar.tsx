@@ -1,12 +1,14 @@
 'use client';
-import { Undo2, Redo2, MousePointer2, Move3d, Rotate3d, Scale3d, Magnet, Globe, Box, Plus, ChevronDown, Mountain } from 'lucide-react';
+import { Undo2, Redo2, MousePointer2, Move3d, Rotate3d, Scale3d, Magnet, Globe, Box, Plus, ChevronDown, Mountain, Palette } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { IconButton } from '@/engine/ui/icon-button';
 import { ToolbarSeparator } from '@/engine/ui/toolbar-separator';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorState, useViewportStats } from '@/engine/editor/session/editor-session-context';
 import type { TransformTool } from '@/engine/editor/session/editor-session';
 import { AddEntityMenu } from '@/engine/editor/menus/add-entity-menu';
+import { openMaterialEditor } from '@/engine/editor/materials/material-editor-requests';
 import { PlaytestControls } from '@/engine/editor/playtest/playtest-controls';
+import { PanelToggles } from '@/engine/editor/layout/panel-toggles';
 import { SnapSettingsMenu } from './snap-settings-menu';
 const TOOLS: Array<{
     id: TransformTool;
@@ -21,6 +23,7 @@ const TOOLS: Array<{
 ];
 export function MainToolbar() {
     const session = useEditorState();
+    const stats = useViewportStats();
     const { history } = session;
     return (<div className="flex h-10 shrink-0 items-center gap-0.5 border-b border-border bg-surface px-2">
       <IconButton label={history.undoLabel ? `Desfazer: ${history.undoLabel} (Ctrl+Z)` : 'Desfazer (Ctrl+Z)'} disabled={!history.canUndo} onClick={() => history.undo()}>
@@ -54,12 +57,24 @@ export function MainToolbar() {
       </IconButton>
       <SnapSettingsMenu />
 
+      <ToolbarSeparator />
+
+      <button type="button" onClick={() => openMaterialEditor()} className="flex h-7 items-center gap-1.5 rounded-sm px-2 text-2xs font-medium text-foreground transition-colors hover:bg-highlight" title="Editor de materiais (M)">
+        <Palette className="size-4 text-primary" aria-hidden/>
+        <span>Materiais</span>
+        {session.materials.size > 0 && <span className="font-mono text-[10px] text-muted-foreground">{session.materials.size}</span>}
+      </button>
+
       <div className="flex flex-1 justify-center">
         <PlaytestControls />
       </div>
 
       <span className="font-mono text-[10px] text-muted-foreground">
-        {session.countEntities()} atores · {session.stats.triangles.toLocaleString('pt-BR')} tris
+        {session.countEntities()} atores · {stats.triangles.toLocaleString('pt-BR')} tris
       </span>
+
+      <ToolbarSeparator />
+
+      <PanelToggles />
     </div>);
 }

@@ -1,12 +1,16 @@
 'use client';
 import { useState, type ReactNode } from 'react';
-import { Hexagon, Undo2, Redo2, Copy, ClipboardCopy, ClipboardPaste, FolderInput, Trash2, Grid3x3, Eclipse, Sun, Keyboard, Locate, Import, Play, Pause, Square, StepForward, } from 'lucide-react';
+import { Hexagon, Undo2, Redo2, Copy, ClipboardCopy, ClipboardPaste, FolderInput, Trash2, Grid3x3, Eclipse, Sun, Keyboard, Locate, Import, LibraryBig, Play, Pause, Square, StepForward, PersonStanding, Palette, Ungroup, SquareDashed, Eye, EyeOff, Focus, FolderPlus, Lock, LockOpen, } from 'lucide-react';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
 import { useEditorState } from '@/engine/editor/session/editor-session-context';
-import { copySelected, deleteSelected, duplicateSelected, groupEntity, pasteClipboard } from '@/engine/editor/operations/entity-operations';
+import { addFolder, copySelected, deleteSelected, duplicateSelected, groupSelected, isolateEntities, pasteClipboard, showAllEntities, toggleLockSelected, toggleVisibilitySelected, ungroupSelected, unlockAllEntities, } from '@/engine/editor/operations/entity-operations';
+import { setPlayerSpawnIfMissing } from '@/engine/editor/operations/player-operations';
 import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_SHORTCUT_CLASS } from '@/engine/editor/menus/menu-styles';
 import { ShortcutsDialog } from '@/engine/editor/dialogs/shortcuts-dialog';
 import { openImportFilePicker } from '@/engine/editor/import/import-file-picker';
+import { pickFilesForLibrary } from '@/engine/editor/operations/asset-library-operations';
+import { openMaterialEditor } from '@/engine/editor/materials/material-editor-requests';
+import { PanelsMenuItems } from '@/engine/editor/layout/panels-menu-items';
 function MenuBarMenu({ label, children }: {
     label: string;
     children: ReactNode;
@@ -42,6 +46,11 @@ export function MenuBar() {
               Importar modelo…
               <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+I</DropdownMenuShortcut>
             </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => pickFilesForLibrary(session)}>
+              <LibraryBig aria-hidden/>
+              Adicionar à biblioteca…
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+B</DropdownMenuShortcut>
+            </DropdownMenuItem>
           </DropdownMenuGroup>
         </MenuBarMenu>
 
@@ -70,19 +79,58 @@ export function MenuBar() {
               Copiar
               <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+C</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={session.clipboard === null} onClick={() => pasteClipboard(session)}>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={session.clipboard.length === 0} onClick={() => pasteClipboard(session)}>
               <ClipboardPaste aria-hidden/>
               Colar
               <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+V</DropdownMenuShortcut>
             </DropdownMenuItem>
-            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={!hasSelection} onClick={() => {
-            const entity = session.selectedEntity;
-            if (entity)
-                groupEntity(session, entity);
-        }}>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={!hasSelection} onClick={() => groupSelected(session)}>
               <FolderInput aria-hidden/>
               Agrupar
               <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+G</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={!hasSelection} onClick={() => ungroupSelected(session)}>
+              <Ungroup aria-hidden/>
+              Desagrupar
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+Shift+G</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => session.selectAll()}>
+              <SquareDashed aria-hidden/>
+              Selecionar tudo
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+A</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => addFolder(session)}>
+              <FolderPlus aria-hidden/>
+              Nova pasta
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Alt+N</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={!hasSelection} onClick={() => toggleVisibilitySelected(session)}>
+              <EyeOff aria-hidden/>
+              Ocultar / mostrar seleção
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>H</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={!hasSelection} onClick={() => isolateEntities(session, session.selectedEntities())}>
+              <Focus aria-hidden/>
+              Isolar seleção
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Shift+H</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => showAllEntities(session)}>
+              <Eye aria-hidden/>
+              Mostrar todos
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Alt+H</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} disabled={!hasSelection} onClick={() => toggleLockSelected(session)}>
+              <Lock aria-hidden/>
+              Bloquear / desbloquear seleção
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>L</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => unlockAllEntities(session)}>
+              <LockOpen aria-hidden/>
+              Desbloquear todos
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Alt+L</DropdownMenuShortcut>
             </DropdownMenuItem>
           </DropdownMenuGroup>
           <DropdownMenuSeparator />
@@ -112,6 +160,13 @@ export function MenuBar() {
               <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+Shift+P</DropdownMenuShortcut>
             </DropdownMenuItem>
           </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuCheckboxItem className={MENU_ITEM_CLASS} checked={session.scene.player.enabled && session.scene.player.spawnIfMissing} disabled={!session.scene.player.enabled} onCheckedChange={(checked) => setPlayerSpawnIfMissing(session, checked)}>
+              <PersonStanding aria-hidden/>
+              Personagem do jogador ao simular
+            </DropdownMenuCheckboxItem>
+          </DropdownMenuGroup>
         </MenuBarMenu>
 
         <MenuBarMenu label="Exibir">
@@ -138,6 +193,16 @@ export function MenuBar() {
               <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>F</DropdownMenuShortcut>
             </DropdownMenuItem>
           </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <DropdownMenuGroup>
+            <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => openMaterialEditor()}>
+              <Palette aria-hidden/>
+              Editor de materiais
+              <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>M</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+          <DropdownMenuSeparator />
+          <PanelsMenuItems />
         </MenuBarMenu>
 
         <MenuBarMenu label="Ajuda">

@@ -1,11 +1,12 @@
 'use client';
 import { CircleCheck, Cpu, Monitor, Bell, Clock, TriangleAlert, CircleAlert, Atom } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorState, useViewportStats } from '@/engine/editor/session/editor-session-context';
 import { formatTimeOfDay } from '@/engine/core/environment/celestial';
 export function StatusBar() {
     const session = useEditorState();
-    const { stats, log, playtest } = session;
+    const stats = useViewportStats();
+    const { log, playtest } = session;
     const { sky } = session.scene;
     const physicsStats = playtest.physics?.world.stats ?? null;
     const frameTimeMs = stats.fps > 0 ? (1000 / stats.fps).toFixed(1) : '—';
