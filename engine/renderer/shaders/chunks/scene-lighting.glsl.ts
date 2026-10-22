@@ -1,7 +1,6 @@
 import { BRDF_CHUNK } from './brdf.glsl';
 import { COLOR_CHUNK } from './color.glsl';
 import { HDR_ENCODING_CHUNK, HDR_RANGE_LIGHTING } from './hdr-encoding.glsl';
-import { SHADOW_SAMPLING_CHUNK } from './shadow-sampling.glsl';
 import { SKY_LIGHTING_TEXEL } from '../sky/atmosphere.glsl';
 export const SCENE_LIGHTING_CHUNK = `
 uniform vec3 u_cameraPosition;
@@ -13,21 +12,18 @@ uniform vec3 u_moonDirection;
 uniform vec3 u_moonRadiance;
 uniform vec3 u_skyIrradiance;
 uniform vec3 u_groundIrradiance;
-uniform float u_shadowEnabled;
- 
+
 uniform float u_shadowOnMoon;
 
 uniform sampler2D u_skyLightingLut;
 uniform float u_skyLightingEnabled;
-uniform sampler2D u_cloudShadowMap;
- 
-uniform vec4 u_cloudShadowRegion;
-uniform float u_cloudShadowEnabled;
- 
+
+uniform sampler2D u_shadowMask;
+uniform float u_shadowMaskEnabled;
+
 uniform float u_fogDensity;
 
 ${BRDF_CHUNK}
-${SHADOW_SAMPLING_CHUNK}
 ${HDR_ENCODING_CHUNK}
 ${COLOR_CHUNK}
 
@@ -71,39 +67,41 @@ vec3 directLight(Surface s, vec3 L, vec3 radiance, float visibility) {
   return (diffuse + specular) * radiance * (NdotL * visibility);
 }
 
- 
-float cloudShadow(vec3 worldPos, vec3 L) {
-  if (u_cloudShadowEnabled < 0.5) return 1.0;
-  float t = (u_cloudShadowRegion.w - worldPos.y) / max(L.y, 0.05);
-  vec2 hit = worldPos.xz + L.xz * t;
-  vec2 uv = (hit - u_cloudShadowRegion.xy) * u_cloudShadowRegion.z + 0.5;
-  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 1.0;
-  return texture(u_cloudShadowMap, uv).r;
+
+#ifndef SCENE_LIGHTING_VERTEX_STAGE
+
+vec2 shadowMaskSample() {
+  if (u_shadowMaskEnabled < 0.5) return vec2(1.0);
+  return texelFetch(u_shadowMask, ivec2(gl_FragCoord.xy), 0).rg;
 }
+
+float shadowMaskVisibility(float receiveShadows) {
+  vec2 mask = shadowMaskSample();
+  return mix(1.0, mask.r, receiveShadows) * mask.g;
+}
+#endif
 
 const float FOG_MAX = 0.92;
 
 
-
-
-
-
-vec3 aerialPerspective(vec3 color, vec3 worldPosition, vec3 skyIrradiance, vec3 sunRadiance) {
-  if (u_fogDensity <= 0.0) return color;
+vec4 aerialFog(vec3 worldPosition, vec3 skyIrradiance, vec3 sunRadiance) {
+  if (u_fogDensity <= 0.0) return vec4(0.0);
   vec3 toSurface = worldPosition - u_cameraPosition;
   float dist = length(toSurface);
   vec3 viewDir = toSurface / max(dist, 1e-4);
   float amount = min(1.0 - exp(-dist * u_fogDensity), FOG_MAX);
-   
+
   float sunForward = pow(max(dot(viewDir, u_sunDirection), 0.0), 8.0);
   vec3 fogColor = skyIrradiance * 0.8 + sunRadiance * (0.02 * sunForward);
-  return mix(color, fogColor, amount);
+  return vec4(fogColor, amount);
 }
 
+vec3 aerialPerspective(vec3 color, vec3 worldPosition, vec3 skyIrradiance, vec3 sunRadiance) {
+  vec4 fog = aerialFog(worldPosition, skyIrradiance, sunRadiance);
+  return mix(color, fog.rgb, fog.a);
+}
 
-
-
-
+#ifndef SCENE_LIGHTING_VERTEX_STAGE
 
 vec3 shadeSurface(Surface s, vec3 worldPosition, vec3 positionDx, vec3 positionDy, float occlusion, vec3 emissive, float receiveShadows) {
   vec3 sunRadiance = u_sunRadiance;
@@ -117,19 +115,16 @@ vec3 shadeSurface(Surface s, vec3 worldPosition, vec3 positionDx, vec3 positionD
     groundIrradiance = skyLightingTexel(${SKY_LIGHTING_TEXEL.groundIrradiance});
   }
 
-   
-   
-   
+
+
+
   bool shadowOnMoon = u_shadowOnMoon > 0.5;
   vec3 shadowLight = shadowOnMoon ? u_moonDirection : u_sunDirection;
   vec3 shadowRadiance = shadowOnMoon ? moonRadiance : sunRadiance;
   float shadowNdotL = dot(s.N, shadowLight);
   float visibility = 1.0;
   if (shadowNdotL > 0.0 && any(greaterThan(shadowRadiance, vec3(0.0)))) {
-    if (u_shadowEnabled * receiveShadows > 0.5) {
-      visibility = sampleDirectionalShadow(worldPosition, s.N, shadowLight, shadowNdotL, positionDx, positionDy);
-    }
-    visibility *= cloudShadow(worldPosition, shadowLight);
+    visibility = shadowMaskVisibility(receiveShadows);
   }
 
   vec3 color = vec3(0.0);
@@ -140,7 +135,7 @@ vec3 shadeSurface(Surface s, vec3 worldPosition, vec3 positionDx, vec3 positionD
     color += directLight(s, u_moonDirection, moonRadiance, shadowOnMoon ? visibility : 1.0);
   }
 
-   
+
   float hemisphere = s.N.y * 0.5 + 0.5;
   vec3 ambientIrradiance = mix(groundIrradiance, skyIrradiance, hemisphere) * occlusion;
   color += s.diffuseColor * ambientIrradiance;
@@ -148,10 +143,11 @@ vec3 shadeSurface(Surface s, vec3 worldPosition, vec3 positionDx, vec3 positionD
   return aerialPerspective(color + emissive, worldPosition, skyIrradiance, sunRadiance);
 }
 
- 
+
 vec3 finishSurfaceColor(vec3 hdr, Surface s, float selected) {
   vec3 color = linearToSrgb(tonemapAces(hdr * u_exposure));
   float rim = pow(1.0 - s.NdotV, 3.0);
   return mix(color, SELECTION_TINT, selected * rim * 0.9);
 }
+#endif
 `;

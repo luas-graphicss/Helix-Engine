@@ -22,6 +22,8 @@ void main() {
 export const GRID_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
+const float GRID_DEPTH_BIAS_METERS = 0.004;
+
 in vec3 v_nearPoint;
 in vec3 v_farPoint;
 
@@ -50,7 +52,9 @@ void main() {
 
   vec3 worldPos = v_nearPoint + t * (v_farPoint - v_nearPoint);
 
-  vec4 clip = u_viewProjection * vec4(worldPos, 1.0);
+
+
+  vec4 clip = u_viewProjection * vec4(worldPos + vec3(0.0, GRID_DEPTH_BIAS_METERS, 0.0), 1.0);
   float ndcDepth = clip.z / clip.w;
   gl_FragDepth = ndcDepth * 0.5 + 0.5;
 
@@ -79,7 +83,7 @@ void main() {
   float distanceToCamera = length(worldPos - u_cameraPosition);
   float fade = 1.0 - smoothstep(u_far * 0.08, u_far * 0.35, distanceToCamera);
 
-   
+
   float grazing = clamp(abs(normalize(v_farPoint - v_nearPoint).y) * 3.0, 0.0, 1.0);
 
   fragColor = vec4(color, alpha * fade * grazing);

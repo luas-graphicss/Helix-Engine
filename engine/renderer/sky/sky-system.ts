@@ -1,5 +1,6 @@
 import type { GL } from '@/engine/renderer/gl/context';
 import type { GlCapabilities } from '@/engine/renderer/gl/capabilities';
+import type { RenderProfile } from '@/engine/renderer/quality/render-profile';
 import type { ColorFormat } from '@/engine/renderer/gl/color-render-target';
 import type { FullscreenTriangle } from '@/engine/renderer/gl/fullscreen-triangle';
 import type { ShaderDefines } from '@/engine/renderer/gl/shader-source';
@@ -18,6 +19,8 @@ import { SkyPass } from './sky-pass';
 export interface SkyLightingBinding {
     skyLighting: boolean;
     readonly lightingLut: WebGLTexture;
+    readonly skyViewLut: WebGLTexture;
+    skyViewValid: boolean;
     readonly moonDirection: Vec3;
     readonly moonIrradiance: Vec3;
     shadowOnMoon: boolean;
@@ -41,7 +44,7 @@ export class SkySystem {
     private readonly cloudPass: CloudPass;
     private readonly skyPass: SkyPass;
     private cloudsRenderedLastFrame = false;
-    constructor(private readonly gl: GL, capabilities: GlCapabilities, triangle: FullscreenTriangle) {
+    constructor(private readonly gl: GL, capabilities: GlCapabilities, triangle: FullscreenTriangle, private readonly profile: RenderProfile) {
         const format: ColorFormat = capabilities.floatColorTargets ? 'rgba16f' : 'rgba8';
         const defines = hdrShaderDefines(capabilities);
         this.noise = createCloudNoiseTextures(gl);
@@ -52,6 +55,8 @@ export class SkySystem {
         this.binding = {
             skyLighting: false,
             lightingLut: this.luts.lighting.texture,
+            skyViewLut: this.luts.skyView.texture,
+            skyViewValid: false,
             moonDirection: vec3.create(0, -1, 0),
             moonIrradiance: vec3.create(),
             shadowOnMoon: false,
@@ -63,6 +68,7 @@ export class SkySystem {
         resolveSkyFrame(frame, settings, lighting);
         this.stats.drawCalls = 0;
         binding.skyLighting = frame.skyLighting;
+        binding.skyViewValid = frame.enabled;
         binding.shadowOnMoon = frame.shadowOnMoon;
         vec3.copy(binding.moonDirection, frame.moonDirection);
         if (frame.enabled)
@@ -85,10 +91,12 @@ export class SkySystem {
             }
             if (!this.cloudsRenderedLastFrame)
                 this.cloudPass.invalidateHistory();
-            this.cloudPass.render({
+            this.cloudsRenderedLastFrame = this.cloudPass.render({
                 camera,
                 frame,
                 quality: settings.clouds.quality,
+                stepsPerFrame: this.profile.cloudStepsPerFrame,
+                interleave: this.profile.cloudInterleave,
                 luts: this.luts,
                 clouds: this.clouds,
                 noise: this.noise,
@@ -98,7 +106,6 @@ export class SkySystem {
             this.stats.drawCalls += this.cloudPass.stats.drawCalls;
             this.stats.cloudWidth = this.cloudPass.stats.width;
             this.stats.cloudHeight = this.cloudPass.stats.height;
-            this.cloudsRenderedLastFrame = true;
         }
         else {
             this.cloudsRenderedLastFrame = false;

@@ -14,13 +14,24 @@ import type { CloudNoiseTextures } from './noise/cloud-noise-textures';
 import type { SkyFrame } from './sky-frame';
 const QUALITY_PRESETS: Record<CloudQuality, {
     scale: number;
-    steps: number;
+    maxSteps: number;
 }> = {
-    low: { scale: 0.25, steps: 24 },
-    medium: { scale: 0.5, steps: 40 },
-    high: { scale: 1, steps: 56 },
+    low: { scale: 0.25, maxSteps: 24 },
+    medium: { scale: 0.5, maxSteps: 40 },
+    high: { scale: 1, maxSteps: 56 },
 };
 const HISTORY_BLEND = 0.88;
+const INTERLEAVED_HISTORY_BLEND = 0.85;
+const QUADRANTS: readonly [
+    number,
+    number
+][] = [
+    [0, 0],
+    [1, 1],
+    [1, 0],
+    [0, 1],
+];
+const FAST_ROTATION_RADIANS = 0.02;
 const FOOTPRINT_UNIT = 1;
 const DETAIL_UNIT = 2;
 const TRANSMITTANCE_UNIT = 3;
@@ -31,6 +42,8 @@ export interface CloudPassInput {
     camera: PerspectiveCamera;
     frame: SkyFrame;
     quality: CloudQuality;
+    stepsPerFrame: number;
+    interleave: boolean;
     luts: AtmosphereLuts;
     clouds: CloudLayerState;
     noise: CloudNoiseTextures;
@@ -46,8 +59,11 @@ export class CloudPass {
     private writeIndex = 0;
     private historyValid = false;
     private program: ShaderProgram | null = null;
-    private programQuality: CloudQuality | null = null;
+    private programSteps = 0;
+    private nextProgram: ShaderProgram | null = null;
+    private nextProgramSteps = 0;
     private readonly previousViewProjection = mat4.create();
+    private readonly previousForward = new Float32Array(3);
     private frameIndex = 0;
     constructor(private readonly gl: GL, format: ColorFormat, private readonly defines: ShaderDefines, private readonly triangle: FullscreenTriangle) {
         const create = () => new ColorRenderTarget(gl, { width: 2, height: 2, format });
@@ -59,10 +75,15 @@ export class CloudPass {
     invalidateHistory(): void {
         this.historyValid = false;
     }
-    render(input: CloudPassInput): void {
+    render(input: CloudPassInput): boolean {
         const { gl } = this;
         const preset = QUALITY_PRESETS[input.quality];
-        const program = this.resolveProgram(input.quality, preset.steps);
+        const steps = Math.max(8, Math.min(preset.maxSteps, Math.round(input.stepsPerFrame)));
+        const program = this.resolveProgram(steps);
+        if (!program) {
+            this.stats.drawCalls = 0;
+            return false;
+        }
         const width = Math.max(1, Math.round(input.canvasWidth * preset.scale));
         const height = Math.max(1, Math.round(input.canvasHeight * preset.scale));
         this.writeIndex = 1 - this.writeIndex;
@@ -70,6 +91,10 @@ export class CloudPass {
         const history = this.targets[1 - this.writeIndex];
         if (write.resize(width, height) || history.resize(width, height))
             this.historyValid = false;
+        const rotation = this.measureRotation(input.camera);
+        const interleave = input.interleave && this.historyValid;
+        const halfPattern = interleave && rotation > FAST_ROTATION_RADIANS;
+        const quadrant = QUADRANTS[this.frameIndex % 4];
         program.use();
         gl.uniformMatrix4fv(program.uniform('u_inverseViewProjection'), false, input.camera.inverseViewProjectionMatrix);
         gl.uniformMatrix4fv(program.uniform('u_previousViewProjection'), false, this.previousViewProjection);
@@ -79,8 +104,10 @@ export class CloudPass {
         gl.uniform3fv(program.uniform('u_sunIrradiance'), input.frame.sunIrradiance);
         gl.uniform3fv(program.uniform('u_moonIrradiance'), input.frame.moonIrradiance);
         gl.uniform1f(program.uniform('u_mieScale'), input.frame.mieScale);
-        gl.uniform1f(program.uniform('u_historyBlend'), this.historyValid ? HISTORY_BLEND : 0);
+        gl.uniform1f(program.uniform('u_historyBlend'), this.historyValid ? (interleave ? INTERLEAVED_HISTORY_BLEND : HISTORY_BLEND) : 0);
         gl.uniform1f(program.uniform('u_frameIndex'), this.frameIndex);
+        gl.uniform2i(program.uniform('u_interleaveMask'), interleave ? 1 : 0, interleave && !halfPattern ? 1 : 0);
+        gl.uniform2i(program.uniform('u_quadrant'), quadrant[0], quadrant[1]);
         input.clouds.bind(gl, program, input.noise, FOOTPRINT_UNIT, DETAIL_UNIT);
         this.bindTexture(program, 'u_transmittanceLut', TRANSMITTANCE_UNIT, input.luts.transmittance.texture);
         this.bindTexture(program, 'u_skyViewLut', SKY_VIEW_UNIT, input.luts.skyView.texture);
@@ -96,19 +123,41 @@ export class CloudPass {
         this.stats.drawCalls = 1;
         this.stats.width = width;
         this.stats.height = height;
+        return true;
     }
     dispose(): void {
         this.program?.dispose();
+        this.nextProgram?.dispose();
         for (const target of this.targets)
             target.dispose();
     }
-    private resolveProgram(quality: CloudQuality, steps: number): ShaderProgram {
-        if (this.program && this.programQuality === quality)
+    private measureRotation(camera: PerspectiveCamera): number {
+        const view = camera.viewMatrix;
+        const fx = view[2];
+        const fy = view[6];
+        const fz = view[10];
+        const previous = this.previousForward;
+        const dot = Math.min(1, Math.max(-1, fx * previous[0] + fy * previous[1] + fz * previous[2]));
+        previous[0] = fx;
+        previous[1] = fy;
+        previous[2] = fz;
+        return Math.acos(dot);
+    }
+    private resolveProgram(steps: number): ShaderProgram | null {
+        if (this.program && this.programSteps === steps)
+            return this.program;
+        if (!this.nextProgram || this.nextProgramSteps !== steps) {
+            this.nextProgram?.dispose();
+            const fragment = withDefines(CLOUDS_FRAGMENT_SHADER, { ...this.defines, CLOUD_STEPS: steps });
+            this.nextProgram = new ShaderProgram(this.gl, FULLSCREEN_RAY_VERTEX_SHADER, fragment);
+            this.nextProgramSteps = steps;
+        }
+        if (!this.nextProgram.ready)
             return this.program;
         this.program?.dispose();
-        const fragment = withDefines(CLOUDS_FRAGMENT_SHADER, { ...this.defines, CLOUD_STEPS: steps });
-        this.program = new ShaderProgram(this.gl, FULLSCREEN_RAY_VERTEX_SHADER, fragment);
-        this.programQuality = quality;
+        this.program = this.nextProgram;
+        this.programSteps = steps;
+        this.nextProgram = null;
         this.historyValid = false;
         return this.program;
     }

@@ -62,7 +62,7 @@ vec3 sunDisk(vec3 dir, vec3 sunTransmittance) {
   float edge = u_pixelAngle * sin(u_sunAngularRadius) + 1e-7;
   float disk = smoothstep(cosRadius - edge, cosRadius + edge, cosAngle);
 
-   
+
   float r = clamp(acos(min(cosAngle, 1.0)) / u_sunAngularRadius, 0.0, 1.0);
   float mu = sqrt(max(1.0 - r * r, 0.0));
   vec3 limb = 1.0 - vec3(0.45, 0.6, 0.78) * (1.0 - mu);
@@ -79,14 +79,14 @@ vec3 moonDisk(vec3 dir, vec3 moonTransmittance) {
   vec3 reference = abs(u_moonDirection.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
   vec3 right = normalize(cross(u_moonDirection, reference));
   vec3 up = cross(right, u_moonDirection);
-  float sinRadius = sin(u_moonAngularRadius);
+  float sinRadius = max(sin(u_moonAngularRadius), 1e-5);
   vec2 o = vec2(dot(dir, right), dot(dir, up)) / sinRadius;
   float r2 = dot(o, o);
   float edge = 2.0 * u_pixelAngle / sinRadius + 1e-4;
   float disk = 1.0 - smoothstep(1.0 - edge, 1.0 + edge, r2);
   if (disk <= 0.0) return vec3(0.0);
 
-   
+
   vec3 normal = right * o.x + up * o.y - u_moonDirection * sqrt(max(1.0 - r2, 0.0));
   float lit = max(dot(normal, u_sunDirection), 0.0);
   float mare = valueNoise3(normal * 2.5 + 7.0) * 0.6 + valueNoise3(normal * 6.0 + 3.0) * 0.4;
@@ -134,7 +134,9 @@ void main() {
     vec3 sunTransmittance = decodeHdr(texelFetch(u_skyLightingLut, ivec2(${SKY_LIGHTING_TEXEL.sunTransmittance}, 0), 0), ${HDR_RANGE_LIGHTING}.0).rgb;
     vec3 moonTransmittance = decodeHdr(texelFetch(u_skyLightingLut, ivec2(${SKY_LIGHTING_TEXEL.moonTransmittance}, 0), 0), ${HDR_RANGE_LIGHTING}.0).rgb;
     radiance += sunDisk(dir, sunTransmittance) + moonDisk(dir, moonTransmittance);
-    if (u_starsIntensity > 0.0005) {
+
+
+    if (u_starsIntensity > 0.0005 && u_sunDirection.y < 0.05) {
       radiance += (stars(dir) + AIRGLOW * (1.0 + 2.0 * (1.0 - max(dir.y, 0.0)))) * spaceTransmittance;
     }
   }
