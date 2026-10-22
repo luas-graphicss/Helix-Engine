@@ -2,14 +2,16 @@
 import { useState } from 'react';
 import { Boxes, Gauge, Trash2 } from 'lucide-react';
 import { CollapsibleSection } from '@/engine/ui/collapsible-section';
-import { clearStressTest, countStressActors, generateStressTest, STRESS_GROUP_NAME } from '@/engine/editor/operations/stress-test-operations';
+import { clearStressTest, countStressActors, generateStressTest, STRESS_GROUP_NAME, type StressDetail, } from '@/engine/editor/operations/stress-test-operations';
 import { SliderField } from '@/engine/ui/slider-field';
 import { ToggleField } from '@/engine/ui/toggle-field';
 import { PropertyRow } from '@/engine/ui/property-row';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { SegmentedControl } from '@/engine/ui/segmented-control';
+import { useEditorState, useViewportStats } from '@/engine/editor/session/editor-session-context';
 import { CPU_ONLY_STAGES, FRAME_STAGES, FRAME_STAGE_LABELS } from '@/engine/renderer/stats/frame-stages';
 import { MAX_LOD_LEVELS } from '@/engine/renderer/lod/lod-chain';
 import { TILE_LEVELS } from '@/engine/terrain/chunks/terrain-tiles';
+import { VirtualGeometrySection } from './performance/virtual-geometry-section';
 const integer = (value: number) => value.toLocaleString('pt-BR');
 const milliseconds = (value: number) => `${value.toFixed(2)} ms`;
 const pixels = (value: number) => (value <= 0 ? 'Desligado' : `${value.toFixed(1)} px`);
@@ -42,8 +44,8 @@ function PerLevel({ counts, levels }: {
 }
 export function PerformancePanel() {
     const session = useEditorState();
-    const { stats, render } = session;
-    const { culling, lod } = render;
+    const stats = useViewportStats();
+    const { culling, lod } = session.render;
     const gpu = stats.gpuStageMs;
     const cpuTotal = stats.cpuStageMs.reduce((sum, value) => sum + value, 0);
     const frameMs = stats.fps > 0 ? 1000 / stats.fps : 0;
@@ -57,9 +59,17 @@ export function PerformancePanel() {
           <span className="text-xs font-semibold text-foreground">Desempenho do viewport</span>
           <span className="truncate font-mono text-[10px] text-muted-foreground">
             {stats.fps} fps · {frameMs.toFixed(1)} ms/frame · {stats.width} × {stats.height}
+            {stats.pixelRatio > 1.01 ? ` · DPR ${stats.pixelRatio.toFixed(2)}` : ''}
+          </span>
+          <span className="truncate font-mono text-[10px] text-muted-foreground" title={stats.gpuName}>
+            {stats.gpuName || 'GPU oculta pelo navegador'}
           </span>
         </div>
       </div>
+      {stats.softwareRenderer && (<p role="alert" className="border-b border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[10px] leading-relaxed text-pretty text-destructive">
+          Renderização por software detectada. Ative a aceleração de hardware (chrome://settings/system) ou atualize o driver de vídeo: sem GPU nenhuma
+          otimização chega a 60 FPS.
+        </p>)}
 
       <div className="flex-1 overflow-auto">
         <CollapsibleSection title="Tempo por etapa">
@@ -97,6 +107,8 @@ export function PerformancePanel() {
             </Value>
           </PropertyRow>
         </CollapsibleSection>
+
+        <VirtualGeometrySection />
 
         <CollapsibleSection title="Culling">
           <ToggleField label="Frustum" on={culling.frustumCulling} onToggle={() => session.toggleFrustumCulling()}/>
@@ -166,17 +178,33 @@ const STRESS_MIN = 500;
 const STRESS_MAX = 30000;
 const STRESS_STEP = 500;
 const STRESS_DEFAULT = 5000;
+const DENSE_TRIANGLES_PER_ACTOR = 122000;
+const STRESS_DETAIL_OPTIONS: readonly {
+    value: StressDetail;
+    label: string;
+}[] = [
+    { value: 'classic', label: 'Clássico' },
+    { value: 'dense', label: 'Denso' },
+];
 function StressTestSection() {
     const session = useEditorState();
     const [count, setCount] = useState(STRESS_DEFAULT);
+    const [detail, setDetail] = useState<StressDetail>('dense');
     const current = countStressActors(session);
+    const denseTriangles = count * DENSE_TRIANGLES_PER_ACTOR;
     return (<CollapsibleSection title="Teste de estresse">
+      <PropertyRow label="Detalhe">
+        <SegmentedControl label="Detalhe das malhas" options={STRESS_DETAIL_OPTIONS} value={detail} onChange={setDetail}/>
+      </PropertyRow>
       <SliderField label="Atores" value={count} min={STRESS_MIN} max={STRESS_MAX} step={STRESS_STEP} format={integer} onChange={setCount}/>
+      {detail === 'dense' && (<PropertyRow label="Carga">
+          <Value>{`≈ ${(denseTriangles / 1000000).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} M triângulos na cena`}</Value>
+        </PropertyRow>)}
       <PropertyRow label="Na cena">
         <Value>{current > 0 ? `${integer(current)} no grupo "${STRESS_GROUP_NAME}"` : 'Nenhum'}</Value>
       </PropertyRow>
       <div className="flex gap-1.5 px-2 py-1">
-        <button type="button" onClick={() => generateStressTest(session, count)} className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-sm border border-dashed border-border-strong text-2xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-highlight">
+        <button type="button" onClick={() => generateStressTest(session, count, detail)} className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-sm border border-dashed border-border-strong text-2xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-highlight">
           <Boxes className="size-3.5 text-primary" aria-hidden/>
           Gerar {integer(count)}
         </button>
@@ -186,7 +214,9 @@ function StressTestSection() {
         </button>
       </div>
       <p className="px-2 pb-2 text-[10px] leading-relaxed text-pretty text-muted-foreground">
-        Seis malhas compartilhadas, cores e escalas variadas, apoiadas no terreno. Fora do histórico de desfazer: remova pelo botão.
+        {detail === 'dense'
+            ? 'Seis malhas de 100 a 150 mil triângulos (rochas, nó toroidal, coluna canelada), apoiadas no terreno. Fora do histórico de desfazer: remova pelo botão.'
+            : 'Seis primitivas comuns, cores e escalas variadas, apoiadas no terreno. Fora do histórico de desfazer: remova pelo botão.'}
       </p>
     </CollapsibleSection>);
 }

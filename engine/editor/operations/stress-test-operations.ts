@@ -2,11 +2,13 @@ import * as vec3 from '@/engine/core/math/vec3';
 import * as mat4 from '@/engine/core/math/mat4';
 import { createMaterial } from '@/engine/core/scene/material';
 import type { Entity } from '@/engine/core/scene/entity';
-import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { getTriangleCount, type MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { createBox, createCapsule, createCone, createCylinder, createSphere, createTorus } from '@/engine/renderer/geometry/primitives';
+import { createDenseSphere, createEngravedTorus, createFlutedColumn, createRock, createTorusKnot } from '@/engine/renderer/geometry/dense-primitives';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 export const STRESS_GROUP_NAME = 'Estresse';
 const LOG_SOURCE = 'Estresse';
+export type StressDetail = 'classic' | 'dense';
 const FALLBACK_HALF_SIZE = 60;
 const EDGE_MARGIN = 4;
 const MIN_SCALE = 0.5;
@@ -19,7 +21,10 @@ function createRandom(seed: number): () => number {
         return state / 0x100000000;
     };
 }
-function createSharedMeshes(): MeshData[] {
+function createSharedMeshes(detail: StressDetail): MeshData[] {
+    if (detail === 'dense') {
+        return [createRock(0.5, 360, 1), createRock(0.5, 360, 2), createDenseSphere(), createEngravedTorus(), createTorusKnot(), createFlutedColumn()];
+    }
     return [createBox(), createSphere(0.5, 24, 12), createCylinder(), createCone(), createTorus(), createCapsule()];
 }
 const PALETTE: readonly [
@@ -40,7 +45,7 @@ export function findStressGroup(session: EditorSession): Entity | null {
 export function countStressActors(session: EditorSession): number {
     return findStressGroup(session)?.children.length ?? 0;
 }
-export function generateStressTest(session: EditorSession, count: number): void {
+export function generateStressTest(session: EditorSession, count: number, detail: StressDetail = 'classic'): void {
     const { scene } = session;
     clearStressTest(session, false);
     const started = performance.now();
@@ -48,7 +53,8 @@ export function generateStressTest(session: EditorSession, count: number): void 
     const terrain = terrainEntity?.terrain ?? null;
     const halfSize = terrain ? Math.max(terrain.halfSize - EDGE_MARGIN, 1) : FALLBACK_HALF_SIZE;
     const random = createRandom(SEED);
-    const meshes = createSharedMeshes();
+    const meshes = createSharedMeshes(detail);
+    const meshesBuilt = performance.now();
     const materials = PALETTE.map(([r, g, b]) => createMaterial({ baseColor: vec3.create(r, g, b), roughness: 0.55 }));
     const group = scene.createEntity({ name: STRESS_GROUP_NAME, kind: 'group' });
     const local = vec3.create();
@@ -70,10 +76,17 @@ export function generateStressTest(session: EditorSession, count: number): void 
         vec3.set(entity.transform.position, x, height + scale * 0.5, z);
         entity.transform.rotation[1] = random() * 360;
         vec3.set(entity.transform.scale, scale, scale, scale);
-        triangles += mesh.indices.length / 3;
+        triangles += getTriangleCount(mesh);
     }
     session.notify();
-    session.log.info(LOG_SOURCE, `${count.toLocaleString('pt-BR')} atores gerados (${Math.round(triangles).toLocaleString('pt-BR')} triângulos antes do LOD) em ${Math.round(performance.now() - started)} ms.`);
+    const sourceTriangles = meshes.reduce((sum, mesh) => sum + getTriangleCount(mesh), 0);
+    const meshTime = Math.round(meshesBuilt - started);
+    session.log.info(LOG_SOURCE, `${count.toLocaleString('pt-BR')} atores gerados: ${formatTriangles(triangles)} triângulos na cena a partir de ${meshes.length} malhas (${formatTriangles(sourceTriangles)} únicos, geradas em ${meshTime} ms) em ${Math.round(performance.now() - started)} ms.`);
+}
+function formatTriangles(count: number): string {
+    if (count >= 1000000)
+        return `${(count / 1000000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} M`;
+    return Math.round(count).toLocaleString('pt-BR');
 }
 export function clearStressTest(session: EditorSession, notify = true): void {
     const group = findStressGroup(session);
