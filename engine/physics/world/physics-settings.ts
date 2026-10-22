@@ -20,7 +20,11 @@ export interface PhysicsSettings {
     timeToSleep: number;
     fallLimitY: number;
     warmStarting: boolean;
+    waterDensity: number;
+    waterDrag: number;
+    waterAngularDrag: number;
 }
+export const FRESH_WATER_DENSITY = 1000;
 export const PHYSICS_QUALITY_PRESETS: Record<PhysicsQuality, Pick<PhysicsSettings, 'substeps' | 'solverIterations' | 'relaxIterations'>> = {
     low: { substeps: 2, solverIterations: 1, relaxIterations: 1 },
     medium: { substeps: 4, solverIterations: 1, relaxIterations: 1 },
@@ -46,6 +50,9 @@ export function createPhysicsSettings(overrides: Partial<PhysicsSettings> = {}):
         timeToSleep: 0.5,
         fallLimitY: -500,
         warmStarting: true,
+        waterDensity: FRESH_WATER_DENSITY,
+        waterDrag: 1,
+        waterAngularDrag: 1,
         ...overrides,
     };
 }

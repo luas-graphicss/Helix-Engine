@@ -70,7 +70,7 @@ export function prepareContacts(manifolds: readonly Manifold[], context: Contact
             manifold.invInertiaB.fill(0);
         manifold.friction = Math.sqrt(bodyA.friction * bodyB.friction);
         manifold.restitution = Math.max(bodyA.restitution, bodyB.restitution);
-        const softness = bodyA.isStatic || bodyB.isStatic ? context.staticSoftness : context.contactSoftness;
+        const softness = bodyA.isDynamic && bodyB.isDynamic ? context.contactSoftness : context.staticSoftness;
         manifold.biasRate = softness.biasRate;
         manifold.massScale = softness.massScale;
         manifold.impulseScale = softness.impulseScale;

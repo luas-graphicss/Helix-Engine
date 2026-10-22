@@ -13,6 +13,7 @@ import { integratePositions, integrateVelocities } from '@/engine/physics/solver
 import { computeSoftness, createSoftness } from '@/engine/physics/solver/soft-constraint';
 import { applyRestitution, prepareContacts, solveContacts, warmStartContacts, type ContactSolverContext, } from '@/engine/physics/solver/contact-solver';
 import { IslandSleeper, accumulateSleepTime, wakeTouchingBodies } from './island-sleep';
+import type { ForceField } from './force-field';
 import type { PhysicsSettings } from './physics-settings';
 const MAX_STEPS_PER_ADVANCE = 4;
 const MIN_FIXED_TIMESTEP = 1 / 1000;
@@ -31,10 +32,14 @@ export interface PhysicsWorldEvents {
     onOutOfBounds?(body: RigidBody): void;
     onUnstable?(body: RigidBody): void;
 }
+export type PreStepHook = (fixedTimestep: number) => void;
+export type BodyVisitor = (body: RigidBody) => void;
 export class PhysicsWorld {
     readonly bodies: RigidBody[] = [];
     readonly stats: PhysicsStats = { bodies: 0, awake: 0, manifolds: 0, contactPoints: 0, stepMs: 0, stepsLastAdvance: 0 };
+    time = 0;
     private readonly broadphase = new Broadphase();
+    private readonly forceFields = new Set<ForceField>();
     private readonly contactCache = new ContactCache();
     private readonly contactResult = new ContactResult();
     private readonly islands = new IslandSleeper();
@@ -48,6 +53,7 @@ export class PhysicsWorld {
         invH: 0,
     };
     private readonly pairVisitor = (a: RigidBody, b: RigidBody) => this.collidePair(a, b);
+    private readonly preStepHooks = new Set<PreStepHook>();
     private nextBodyId = 1;
     private accumulator = 0;
     constructor(readonly settings: PhysicsSettings, private readonly events: PhysicsWorldEvents = {}) { }
@@ -79,7 +85,29 @@ export class PhysicsWorld {
         this.bodies.length = 0;
         this.broadphase.clear();
         this.contactCache.clear();
+        this.preStepHooks.clear();
+        this.forceFields.clear();
         this.accumulator = 0;
+    }
+    addPreStepHook(hook: PreStepHook): () => void {
+        this.preStepHooks.add(hook);
+        return () => {
+            this.preStepHooks.delete(hook);
+        };
+    }
+    addForceField(field: ForceField): () => void {
+        this.forceFields.add(field);
+        return () => {
+            this.forceFields.delete(field);
+        };
+    }
+    queryAabb(box: Aabb, except: RigidBody | null, visit: BodyVisitor): void {
+        for (const body of this.bodies) {
+            if (body === except || body.outOfBounds)
+                continue;
+            if (aabb.intersects(body.aabb, box))
+                visit(body);
+        }
     }
     teleport(body: RigidBody, position: Vec3, orientation: Quat): void {
         this.wakeOverlapping(body.aabb, body);
@@ -117,10 +145,14 @@ export class PhysicsWorld {
         const h = dt / substeps;
         const invH = 1 / h;
         for (const body of this.bodies) {
-            if (!body.isSimulated)
-                continue;
-            body.storePreviousPose();
-            this.updateBodyAabb(body);
+            if (body.isSimulated || body.isKinematic)
+                body.storePreviousPose();
+        }
+        for (const hook of this.preStepHooks)
+            hook(dt);
+        for (const body of this.bodies) {
+            if (body.isSimulated || body.isKinematic)
+                this.updateBodyAabb(body);
         }
         this.contactCache.beginStep();
         this.broadphase.findPairs(this.pairVisitor);
@@ -133,6 +165,8 @@ export class PhysicsWorld {
             manifolds.push(manifold);
         });
         wakeTouchingBodies(manifolds);
+        for (const field of this.forceFields)
+            field.wakeAffected(this.bodies, this.time);
         const awake = this.awakeBodies;
         awake.length = 0;
         for (const body of this.bodies) {
@@ -162,7 +196,11 @@ export class PhysicsWorld {
         context.maxPushVelocity = Math.max(settings.contactPushMaxVelocity, 0);
         context.invH = invH;
         prepareContacts(manifolds, context);
+        for (const field of this.forceFields)
+            field.beginStep?.(this.time);
         for (let i = 0; i < substeps; i++) {
+            for (const field of this.forceFields)
+                field.apply(awake, h, this.time + i * h);
             integrateVelocities(awake, settings, h, invH);
             if (settings.warmStarting)
                 warmStartContacts(manifolds);
@@ -176,6 +214,7 @@ export class PhysicsWorld {
         for (const body of awake)
             this.finalizeBody(body, dt);
         this.islands.apply(awake, manifolds, settings.timeToSleep, dt);
+        this.time += dt;
         this.stats.bodies = this.bodies.length;
         this.stats.awake = awake.length;
         this.stats.manifolds = activeCount;

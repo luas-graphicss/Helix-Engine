@@ -6,11 +6,11 @@ export function wakeTouchingBodies(manifolds: readonly Manifold[]): void {
     while (changed) {
         changed = false;
         for (const { bodyA, bodyB } of manifolds) {
-            if (bodyA.isSimulated && bodyB.sleeping && !bodyB.outOfBounds) {
+            if (bodyA.isActive && bodyB.sleeping && !bodyB.outOfBounds) {
                 bodyB.wake();
                 changed = true;
             }
-            else if (bodyB.isSimulated && bodyA.sleeping && !bodyA.outOfBounds) {
+            else if (bodyB.isActive && bodyA.sleeping && !bodyA.outOfBounds) {
                 bodyA.wake();
                 changed = true;
             }
