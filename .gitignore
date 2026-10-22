@@ -6,8 +6,23 @@ __v0_jsx-dev-runtime.ts
 .v0-trash/
 .vercel/
 
-.env*.local
+.env
+.env.*
+*.pem
+*.key
 
 node_modules
 .next/
 .DS_Store
+.v0/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+**/__tests__/
+**/__import_fixtures__/
+**/*.test.*
+**/*.spec.*
+engine/dev-tools/
+app/api/dev/
