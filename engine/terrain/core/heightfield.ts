@@ -35,6 +35,9 @@ export function clampRegion(out: GridRegion, resolution: number, padding = 0): G
     out.z1 = Math.min(out.z1 + padding, resolution - 1);
     return out;
 }
+export function cellDiagonalFrom00(cellX: number, cellZ: number): boolean {
+    return ((cellX + cellZ) & 1) === 1;
+}
 export class Heightfield {
     readonly heights: Float32Array;
     constructor(readonly resolution: number, heights?: Float32Array) {
@@ -65,6 +68,26 @@ export class Heightfield {
         const top = h[row0] + (h[row0 + 1] - h[row0]) * fx;
         const bottom = h[row1] + (h[row1 + 1] - h[row1]) * fx;
         return top + (bottom - top) * fz;
+    }
+    sampleTriangulated(gx: number, gz: number): number {
+        const last = this.resolution - 1;
+        const cx = clamp(gx, 0, last);
+        const cz = clamp(gz, 0, last);
+        const x0 = Math.min(Math.floor(cx), last - 1);
+        const z0 = Math.min(Math.floor(cz), last - 1);
+        const fx = cx - x0;
+        const fz = cz - z0;
+        const row0 = z0 * this.resolution + x0;
+        const row1 = row0 + this.resolution;
+        const h = this.heights;
+        const h00 = h[row0];
+        const h10 = h[row0 + 1];
+        const h01 = h[row1];
+        const h11 = h[row1 + 1];
+        if (cellDiagonalFrom00(x0, z0)) {
+            return fz >= fx ? h00 + (h11 - h01) * fx + (h01 - h00) * fz : h00 + (h10 - h00) * fx + (h11 - h10) * fz;
+        }
+        return fx + fz <= 1 ? h00 + (h10 - h00) * fx + (h01 - h00) * fz : h11 + (h01 - h11) * (1 - fx) + (h10 - h11) * (1 - fz);
     }
     normalAt(out: Vec3, gx: number, gz: number, cellSize: number): Vec3 {
         const dx = (this.sample(gx + 1, gz) - this.sample(gx - 1, gz)) / (2 * cellSize);

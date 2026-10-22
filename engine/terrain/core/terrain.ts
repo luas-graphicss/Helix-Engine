@@ -9,6 +9,8 @@ import { MAX_TERRAIN_LAYERS, SplatMap } from './splat-map';
 import { cloneTerrainLayer, type TerrainLayer } from './terrain-layer';
 import { createTerrainShading, type TerrainShading } from './terrain-shading';
 import { cloneGrassSettings, createGrassSettings, type GrassSettings } from '@/engine/terrain/foliage/grass-settings';
+import { GrassMap } from '@/engine/terrain/foliage/grass-map';
+import { cloneWaterSettings, createWaterSettings, type WaterSettings } from '@/engine/terrain/water/water-settings';
 export const TERRAIN_RESOLUTIONS = [65, 129, 257, 513] as const;
 export const TERRAIN_SPLAT_RESOLUTIONS = [256, 512, 1024] as const;
 export const MIN_TERRAIN_SIZE = 10;
@@ -22,6 +24,8 @@ export interface TerrainOptions {
     layers?: TerrainLayer[];
     shading?: TerrainShading;
     grass?: GrassSettings;
+    grassMap?: GrassMap;
+    water?: WaterSettings;
 }
 export interface TerrainHit {
     distance: number;
@@ -34,25 +38,36 @@ export class Terrain {
     size: number;
     heightfield: Heightfield;
     splat: SplatMap;
+    grassMap: GrassMap;
     readonly layers: TerrainLayer[];
     readonly shading: TerrainShading;
     readonly grass: GrassSettings;
+    readonly water: WaterSettings;
     tiles: TerrainTileBounds;
     readonly heightLog = new RegionChangeLog();
+    readonly splatLog = new RegionChangeLog();
+    readonly grassLog = new RegionChangeLog();
     readonly localBounds: Aabb = aabb.create();
-    splatVersion = 0;
     constructor(options: TerrainOptions = {}) {
         this.size = clamp(options.size ?? 200, MIN_TERRAIN_SIZE, MAX_TERRAIN_SIZE);
         this.heightfield = options.heightfield ?? new Heightfield(options.resolution ?? 257);
         this.splat = options.splat ?? new SplatMap(options.splatResolution ?? 512);
+        this.grassMap = options.grassMap ?? new GrassMap(this.splat.resolution);
         this.layers = options.layers ?? [];
         this.shading = options.shading ?? createTerrainShading();
         this.grass = options.grass ?? createGrassSettings();
+        this.water = options.water ?? createWaterSettings();
         this.tiles = new TerrainTileBounds(this.heightfield.resolution);
         this.heightsChanged();
     }
     get heightVersion(): number {
         return this.heightLog.version;
+    }
+    get splatVersion(): number {
+        return this.splatLog.version;
+    }
+    get grassVersion(): number {
+        return this.grassLog.version;
     }
     get resolution(): number {
         return this.heightfield.resolution;
@@ -69,8 +84,14 @@ export class Terrain {
     gridToLocal(grid: number): number {
         return grid * this.cellSize - this.halfSize;
     }
+    localToTexel(value: number, resolution: number): number {
+        return ((value + this.halfSize) / this.size) * (resolution - 1);
+    }
     localToSplat(value: number): number {
-        return ((value + this.halfSize) / this.size) * (this.splat.resolution - 1);
+        return this.localToTexel(value, this.splat.resolution);
+    }
+    localToGrassTexel(value: number): number {
+        return this.localToTexel(value, this.grassMap.resolution);
     }
     heightAtLocal(x: number, z: number): number {
         return this.heightfield.sample(this.localToGrid(x), this.localToGrid(z));
@@ -90,13 +111,19 @@ export class Terrain {
         out.z1 = clamp(Math.ceil(this.localToGrid(z + radius)), 0, last);
         return out;
     }
-    splatRegionAround(x: number, z: number, radius: number, out: GridRegion): GridRegion {
-        const last = this.splat.resolution - 1;
-        out.x0 = clamp(Math.floor(this.localToSplat(x - radius)), 0, last);
-        out.z0 = clamp(Math.floor(this.localToSplat(z - radius)), 0, last);
-        out.x1 = clamp(Math.ceil(this.localToSplat(x + radius)), 0, last);
-        out.z1 = clamp(Math.ceil(this.localToSplat(z + radius)), 0, last);
+    texelRegionAround(x: number, z: number, radius: number, resolution: number, out: GridRegion): GridRegion {
+        const last = resolution - 1;
+        out.x0 = clamp(Math.floor(this.localToTexel(x - radius, resolution)), 0, last);
+        out.z0 = clamp(Math.floor(this.localToTexel(z - radius, resolution)), 0, last);
+        out.x1 = clamp(Math.ceil(this.localToTexel(x + radius, resolution)), 0, last);
+        out.z1 = clamp(Math.ceil(this.localToTexel(z + radius, resolution)), 0, last);
         return out;
+    }
+    splatRegionAround(x: number, z: number, radius: number, out: GridRegion): GridRegion {
+        return this.texelRegionAround(x, z, radius, this.splat.resolution, out);
+    }
+    grassRegionAround(x: number, z: number, radius: number, out: GridRegion): GridRegion {
+        return this.texelRegionAround(x, z, radius, this.grassMap.resolution, out);
     }
     heightsChanged(region: GridRegion | null = null): void {
         this.tiles.update(this.heightfield, region);
@@ -113,8 +140,17 @@ export class Terrain {
         else
             this.heightLog.reset();
     }
-    markSplatDirty(): void {
-        this.splatVersion++;
+    markSplatDirty(region: GridRegion | null = null): void {
+        if (region)
+            this.splatLog.push(region);
+        else
+            this.splatLog.reset();
+    }
+    grassChanged(region: GridRegion | null = null): void {
+        if (region)
+            this.grassLog.push(region);
+        else
+            this.grassLog.reset();
     }
     get canAddLayer(): boolean {
         return this.layers.length < MAX_TERRAIN_LAYERS;
@@ -131,6 +167,10 @@ export class Terrain {
     replaceSplat(splat: SplatMap): void {
         this.splat = splat;
         this.markSplatDirty();
+    }
+    replaceGrassMap(grassMap: GrassMap): void {
+        this.grassMap = grassMap;
+        this.grassChanged();
     }
     raycast(origin: Vec3, direction: Vec3, out: TerrainHit): TerrainHit | null {
         const half = this.halfSize;
@@ -204,9 +244,11 @@ export class Terrain {
             size: this.size,
             heightfield: this.heightfield.clone(),
             splat: this.splat.clone(),
+            grassMap: this.grassMap.clone(),
             layers: this.layers.map(cloneTerrainLayer),
             shading: { ...this.shading },
             grass: cloneGrassSettings(this.grass),
+            water: cloneWaterSettings(this.water),
         });
     }
 }
