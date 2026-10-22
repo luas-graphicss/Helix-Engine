@@ -1,6 +1,6 @@
 'use client';
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { EditorSession } from './editor-session';
+import { EditorSession, type ViewportStats } from './editor-session';
 const EditorSessionContext = createContext<EditorSession | null>(null);
 declare global {
     interface Window {
@@ -32,4 +32,9 @@ export function useEditorState(): EditorSession {
     const session = useEditorSession();
     useSyncExternalStore(session.subscribe, session.getVersion, session.getVersion);
     return session;
+}
+export function useViewportStats(): ViewportStats {
+    const session = useEditorSession();
+    useSyncExternalStore(session.subscribeStats, session.getStatsVersion, session.getStatsVersion);
+    return session.stats;
 }

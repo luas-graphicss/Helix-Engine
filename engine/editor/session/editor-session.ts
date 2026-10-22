@@ -5,6 +5,7 @@ import { OrbitController } from '@/engine/renderer/camera/orbit-controller';
 import { createFrameStats, type FrameStats } from '@/engine/renderer/renderer';
 import type { CullingOptions } from '@/engine/renderer/culling/visible-set';
 import type { LodSettings } from '@/engine/renderer/lod/lod-selector';
+import type { MyriadSettings } from '@/engine/renderer/myriad/runtime/myriad-settings';
 import * as vec3 from '@/engine/core/math/vec3';
 import * as aabb from '@/engine/core/math/aabb';
 import { degToRad } from '@/engine/core/math/scalar';
@@ -15,17 +16,27 @@ import { History } from '@/engine/editor/history/history';
 import type { GizmoHandle, GizmoMode } from '@/engine/renderer/gizmo/gizmo-frame';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
+import { AnimationEditor } from '@/engine/editor/animation/animation-editor';
+import type { TransformSnapshot } from '@/engine/editor/operations/transform-operations';
+import { ViewportColorPicker } from '@/engine/editor/viewport/viewport-color-picker';
 import { createPhysicsSettings, PHYSICS_QUALITY_PRESETS, type PhysicsQuality, type PhysicsSettings, } from '@/engine/physics/world/physics-settings';
+import { MaterialLibrary } from '@/engine/materials/material-library';
+import { AssetLibrary } from '@/engine/assets/library/asset-library';
+import { CsgSystem } from '@/engine/geometry/csg/csg-system';
+import { syncTerrainMaterialFromDocument } from '@/engine/editor/operations/material-library-operations';
+import { setGhostOpacity } from '@/engine/editor/csg/brush-ghost-materials';
 import { EditorLog } from './editor-log';
-import { AssetLibrary } from './asset-library';
+import { SceneResources } from './scene-resources';
 import { createDefaultScene } from './default-scene';
 import { createRenderSettings, type RenderSettings } from './render-settings';
+import { createCsgPreferences, type CsgPreferences } from './csg-preferences';
 export type TransformTool = 'select' | 'translate' | 'rotate' | 'scale' | 'terrain';
 export type TransformSpace = 'global' | 'local';
 export interface GizmoInteraction {
     hovered: GizmoHandle | null;
     active: GizmoHandle | null;
 }
+export type TransformInterceptor = (entity: Entity, before: TransformSnapshot, after: TransformSnapshot) => boolean;
 export interface SnapSettings {
     enabled: boolean;
     translate: number;
@@ -44,12 +55,21 @@ export class EditorSession {
     readonly orbit: OrbitController;
     readonly history = new History(() => this.notify());
     readonly log = new EditorLog(() => this.notify());
-    readonly assets = new AssetLibrary(() => this.notify());
+    readonly resources = new SceneResources(() => this.notify());
+    readonly materials = new MaterialLibrary(() => this.notify());
+    readonly library = new AssetLibrary(() => this.notify());
     readonly playtest = new PlaytestController(this);
     readonly terrain = new TerrainEditor(this);
+    readonly animation = new AnimationEditor(this);
+    readonly transformInterceptors = new Set<TransformInterceptor>();
+    readonly colorPicker = new ViewportColorPicker(() => this.notify());
+    readonly csg = new CsgSystem();
+    readonly csgPreferences: CsgPreferences = createCsgPreferences();
     selectedId: number | null = null;
-    clipboard: Entity | null = null;
-    showGrid = true;
+    readonly selectedIds = new Set<number>();
+    clipboard: Entity[] = [];
+    viewportCanvas: HTMLCanvasElement | null = null;
+    showGrid = false;
     shadowsEnabled = true;
     tool: TransformTool = 'select';
     space: TransformSpace = 'global';
@@ -59,13 +79,39 @@ export class EditorSession {
     readonly render: RenderSettings = createRenderSettings();
     private version = 0;
     private readonly listeners = new Set<Listener>();
+    private statsVersion = 0;
+    private readonly statsListeners = new Set<Listener>();
+    private selectedCache: Entity | null = null;
     constructor(scene?: Scene) {
-        this.scene = scene ?? createDefaultScene(this.terrain.materials);
+        this.scene = scene ?? createDefaultScene({ onRigReady: () => this.notify() });
         this.orbit = new OrbitController(this.camera);
-        const cube = this.findByName('Cubo');
-        this.selectedId = cube?.id ?? null;
         this.log.info('Núcleo', 'Helix Engine inicializada.');
         this.log.info('Cena', `${this.scene.root.name} aberta (${this.countEntities()} atores).`);
+        this.csg.onRebuilt(() => this.notify());
+        this.subscribe(() => this.animation.syncSelection());
+        this.materials.addSyncListener((document) => syncTerrainMaterialFromDocument(this, document));
+        if (typeof window !== 'undefined') {
+            void this.materials.load().then(() => {
+                if (this.materials.status === 'ready' && this.materials.size > 0) {
+                    this.log.info('Materiais', `Biblioteca carregada: ${this.materials.size} ${this.materials.size === 1 ? 'material' : 'materiais'}.`);
+                }
+                else if (this.materials.error) {
+                    this.log.warn('Materiais', this.materials.error);
+                }
+            });
+            window.addEventListener('beforeunload', () => this.materials.flush());
+            void this.library.load().then(() => {
+                if (this.library.status === 'ready' && this.library.size > 0) {
+                    this.log.info('Biblioteca', `Biblioteca de ativos carregada: ${this.library.size} ${this.library.size === 1 ? 'ativo' : 'ativos'}.`);
+                }
+                else if (this.library.error) {
+                    this.log.warn('Biblioteca', this.library.error);
+                }
+            });
+        }
+    }
+    attachViewport(canvas: HTMLCanvasElement | null): void {
+        this.viewportCanvas = canvas;
     }
     subscribe = (listener: Listener): (() => void) => {
         this.listeners.add(listener);
@@ -74,23 +120,116 @@ export class EditorSession {
     getVersion = (): number => this.version;
     notify(): void {
         this.version++;
+        this.selectedCache = null;
         for (const listener of this.listeners)
+            listener();
+    }
+    subscribeStats = (listener: Listener): (() => void) => {
+        this.statsListeners.add(listener);
+        return () => this.statsListeners.delete(listener);
+    };
+    getStatsVersion = (): number => this.statsVersion;
+    private notifyStats(): void {
+        this.statsVersion++;
+        for (const listener of this.statsListeners)
             listener();
     }
     select(entity: Entity | null): void {
         const nextId = entity?.id ?? null;
-        if (nextId === this.selectedId)
+        if (nextId === this.selectedId && this.selectedIds.size === (nextId === null ? 0 : 1))
             return;
+        this.selectedIds.clear();
+        if (nextId !== null)
+            this.selectedIds.add(nextId);
         this.selectedId = nextId;
         this.notify();
+        this.selectedCache = entity;
+    }
+    setSelection(entities: readonly Entity[], primary: Entity | null = entities[entities.length - 1] ?? null): void {
+        this.selectedIds.clear();
+        for (const entity of entities) {
+            if (entity.parent)
+                this.selectedIds.add(entity.id);
+        }
+        if (primary && !this.selectedIds.has(primary.id))
+            primary = entities.find((entity) => this.selectedIds.has(entity.id)) ?? null;
+        this.selectedId = primary?.id ?? null;
+        this.notify();
+        this.selectedCache = primary;
+    }
+    toggleSelection(entity: Entity): void {
+        if (!entity.parent)
+            return;
+        if (this.selectedIds.has(entity.id)) {
+            this.selectedIds.delete(entity.id);
+            if (this.selectedId === entity.id) {
+                let last: number | null = null;
+                for (const id of this.selectedIds)
+                    last = id;
+                this.selectedId = last;
+            }
+            this.notify();
+            return;
+        }
+        this.selectedIds.add(entity.id);
+        this.selectedId = entity.id;
+        this.notify();
+        this.selectedCache = entity;
+    }
+    selectAll(): void {
+        const all: Entity[] = [];
+        this.scene.traverse((entity) => {
+            if (entity.parent)
+                all.push(entity);
+        });
+        this.setSelection(all, all[0] ?? null);
+    }
+    isSelected(entity: Entity): boolean {
+        return this.selectedIds.has(entity.id);
     }
     get selectedEntity(): Entity | null {
         if (this.selectedId === null)
             return null;
+        const cached = this.selectedCache;
+        if (cached && cached.id === this.selectedId && this.isAttached(cached))
+            return cached;
         const entity = this.findById(this.selectedId);
-        if (!entity)
+        if (!entity) {
+            this.selectedIds.delete(this.selectedId);
             this.selectedId = null;
+        }
+        this.selectedCache = entity;
         return entity;
+    }
+    selectedEntities(): Entity[] {
+        if (this.selectedIds.size === 0)
+            return [];
+        const found: Entity[] = [];
+        const seen = new Set<number>();
+        this.scene.traverse((entity) => {
+            if (entity.parent && this.selectedIds.has(entity.id)) {
+                found.push(entity);
+                seen.add(entity.id);
+            }
+        });
+        if (seen.size !== this.selectedIds.size) {
+            for (const id of Array.from(this.selectedIds))
+                if (!seen.has(id))
+                    this.selectedIds.delete(id);
+            if (this.selectedId !== null && !seen.has(this.selectedId))
+                this.selectedId = found[found.length - 1]?.id ?? null;
+        }
+        return found;
+    }
+    selectionRoots(): Entity[] {
+        const selected = this.selectedEntities();
+        return selected.filter((entity) => {
+            for (let current = entity.parent; current; current = current.parent) {
+                if (this.selectedIds.has(current.id))
+                    return false;
+            }
+            return true;
+        });
     }
     toggleGrid(): void {
         this.showGrid = !this.showGrid;
@@ -111,6 +250,14 @@ export class EditorSession {
         Object.assign(this.render.lod, patch);
         this.notify();
     }
+    updateMyriad(patch: Partial<MyriadSettings>): void {
+        Object.assign(this.render.myriad, patch);
+        this.notify();
+    }
+    toggleTerrainMaterialCache(): void {
+        this.render.terrain.materialCache = !this.render.terrain.materialCache;
+        this.notify();
+    }
     toggleSky(): void {
         this.updateSky({ enabled: !this.scene.sky.enabled });
     }
@@ -128,11 +275,23 @@ export class EditorSession {
         Object.assign(this.scene.sky.clouds, patch);
         this.notify();
     }
-    tick(deltaSeconds: number): void {
+    tick(deltaSeconds: number, elapsedSeconds: number): void {
         if (advanceSkyCycle(this.scene.sky, deltaSeconds))
             syncSunLightToSky(this.scene);
-        this.playtest.tick(deltaSeconds);
+        this.csg.update(this.scene, { deferHeavy: this.csgPreferences.deferHeavyWhileDragging && this.gizmo.active !== null });
+        this.playtest.tick(deltaSeconds, elapsedSeconds);
         this.terrain.tick(deltaSeconds);
+        this.animation.tick(deltaSeconds);
+    }
+    toggleCsgBrushes(): void {
+        this.render.showCsgBrushes = !this.render.showCsgBrushes;
+        this.notify();
+    }
+    updateCsgPreferences(patch: Partial<CsgPreferences>): void {
+        Object.assign(this.csgPreferences, patch);
+        if (patch.ghostOpacity !== undefined)
+            setGhostOpacity(this.csgPreferences.ghostOpacity);
+        this.notify();
     }
     updatePhysics(patch: Partial<PhysicsSettings>): void {
         const { physics } = this.scene;
@@ -211,7 +370,13 @@ export class EditorSession {
     updateStats(frame: FrameStats, fps: number): void {
         Object.assign(this.stats, frame);
         this.stats.fps = fps;
-        this.notify();
+        this.notifyStats();
+    }
+    private isAttached(entity: Entity): boolean {
+        let current: Entity | null = entity;
+        while (current.parent)
+            current = current.parent;
+        return current === this.scene.root;
     }
     findById(id: number): Entity | null {
         let found: Entity | null = null;
