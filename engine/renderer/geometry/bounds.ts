@@ -34,6 +34,8 @@ export function getLocalBounds(mesh: MeshData): Aabb {
 export function getEntityLocalBounds(entity: Entity): Aabb | null {
     if (entity.terrain)
         return entity.terrain.localBounds;
+    if (entity.skin && entity.mesh?.skinning)
+        return entity.skin.localBounds;
     return entity.mesh ? getLocalBounds(entity.mesh) : null;
 }
 export function computeWorldBounds(scene: Scene, root: Entity, out: Aabb = aabb.create()): Aabb {

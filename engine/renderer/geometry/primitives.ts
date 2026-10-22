@@ -70,7 +70,7 @@ class MeshBuilder {
         return createMeshData(name, this.positions, this.normals, this.uvs, this.indices);
     }
 }
-export function createBox(width = 1, height = 1, depth = 1): MeshData {
+export function createBox(width = 1, height = 1, depth = 1, uvTileSize?: number): MeshData {
     const hx = width / 2;
     const hy = height / 2;
     const hz = depth / 2;
@@ -86,13 +86,17 @@ export function createBox(width = 1, height = 1, depth = 1): MeshData {
             number,
             number
         ]>;
+        size: [
+            number,
+            number
+        ];
     }> = [
-        { normal: [0, 0, 1], corners: [[-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]] },
-        { normal: [0, 0, -1], corners: [[hx, -hy, -hz], [-hx, -hy, -hz], [-hx, hy, -hz], [hx, hy, -hz]] },
-        { normal: [1, 0, 0], corners: [[hx, -hy, hz], [hx, -hy, -hz], [hx, hy, -hz], [hx, hy, hz]] },
-        { normal: [-1, 0, 0], corners: [[-hx, -hy, -hz], [-hx, -hy, hz], [-hx, hy, hz], [-hx, hy, -hz]] },
-        { normal: [0, 1, 0], corners: [[-hx, hy, hz], [hx, hy, hz], [hx, hy, -hz], [-hx, hy, -hz]] },
-        { normal: [0, -1, 0], corners: [[-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz], [-hx, -hy, hz]] },
+        { normal: [0, 0, 1], corners: [[-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]], size: [width, height] },
+        { normal: [0, 0, -1], corners: [[hx, -hy, -hz], [-hx, -hy, -hz], [-hx, hy, -hz], [hx, hy, -hz]], size: [width, height] },
+        { normal: [1, 0, 0], corners: [[hx, -hy, hz], [hx, -hy, -hz], [hx, hy, -hz], [hx, hy, hz]], size: [depth, height] },
+        { normal: [-1, 0, 0], corners: [[-hx, -hy, -hz], [-hx, -hy, hz], [-hx, hy, hz], [-hx, hy, -hz]], size: [depth, height] },
+        { normal: [0, 1, 0], corners: [[-hx, hy, hz], [hx, hy, hz], [hx, hy, -hz], [-hx, hy, -hz]], size: [width, depth] },
+        { normal: [0, -1, 0], corners: [[-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz], [-hx, -hy, hz]], size: [width, depth] },
     ];
     const cornerUvs: Array<[
         number,
@@ -100,13 +104,87 @@ export function createBox(width = 1, height = 1, depth = 1): MeshData {
     ]> = [[0, 1], [1, 1], [1, 0], [0, 0]];
     for (const face of faces) {
         const base = builder.vertexCount;
+        const tilesU = uvTileSize ? face.size[0] / uvTileSize : 1;
+        const tilesV = uvTileSize ? face.size[1] / uvTileSize : 1;
         face.corners.forEach((corner, i) => {
-            builder.vertex(corner[0], corner[1], corner[2], face.normal[0], face.normal[1], face.normal[2], cornerUvs[i][0], cornerUvs[i][1]);
+            builder.vertex(corner[0], corner[1], corner[2], face.normal[0], face.normal[1], face.normal[2], cornerUvs[i][0] * tilesU, cornerUvs[i][1] * tilesV);
         });
         builder.triangle(base, base + 1, base + 2);
         builder.triangle(base, base + 2, base + 3);
     }
     return builder.build('Caixa');
+}
+const ROUNDED_BOX_BAND_SEGMENTS = 4;
+function roundedAxisSamples(half: number, radius: number): number[] {
+    const inner = Math.max(half - radius, 0);
+    const samples: number[] = [];
+    for (let i = ROUNDED_BOX_BAND_SEGMENTS; i >= 1; i--) {
+        samples.push(-inner - radius * Math.tan((i / ROUNDED_BOX_BAND_SEGMENTS) * (Math.PI / 4)));
+    }
+    samples.push(-inner);
+    if (inner > 0)
+        samples.push(inner);
+    for (let i = 1; i <= ROUNDED_BOX_BAND_SEGMENTS; i++) {
+        samples.push(inner + radius * Math.tan((i / ROUNDED_BOX_BAND_SEGMENTS) * (Math.PI / 4)));
+    }
+    return samples;
+}
+export function createRoundedBox(width = 1, height = 1, depth = 1, radius = 0.1): MeshData {
+    const half = [width / 2, height / 2, depth / 2];
+    const r = Math.min(radius, half[0], half[1], half[2]);
+    if (r <= 0)
+        return createBox(width, height, depth);
+    const inner = [half[0] - r, half[1] - r, half[2] - r];
+    const builder = new MeshBuilder();
+    const point = [0, 0, 0];
+    const normal = [0, 0, 0];
+    for (let axis = 0; axis < 3; axis++) {
+        const uAxis = (axis + 1) % 3;
+        const vAxis = (axis + 2) % 3;
+        const uSamples = roundedAxisSamples(half[uAxis], r);
+        const vSamples = roundedAxisSamples(half[vAxis], r);
+        for (const sign of [1, -1]) {
+            const base = builder.vertexCount;
+            for (let j = 0; j < vSamples.length; j++) {
+                for (let i = 0; i < uSamples.length; i++) {
+                    point[axis] = sign * half[axis];
+                    point[uAxis] = uSamples[i];
+                    point[vAxis] = vSamples[j];
+                    let lengthSquared = 0;
+                    for (let k = 0; k < 3; k++) {
+                        const clamped = Math.max(-inner[k], Math.min(inner[k], point[k]));
+                        normal[k] = point[k] - clamped;
+                        point[k] = clamped;
+                        lengthSquared += normal[k] * normal[k];
+                    }
+                    const invLength = 1 / Math.sqrt(lengthSquared);
+                    for (let k = 0; k < 3; k++) {
+                        normal[k] *= invLength;
+                        point[k] += normal[k] * r;
+                    }
+                    builder.vertex(point[0], point[1], point[2], normal[0], normal[1], normal[2], i / (uSamples.length - 1), 1 - j / (vSamples.length - 1));
+                }
+            }
+            const stride = uSamples.length;
+            for (let j = 0; j < vSamples.length - 1; j++) {
+                for (let i = 0; i < uSamples.length - 1; i++) {
+                    const a = base + j * stride + i;
+                    const b = a + 1;
+                    const c = a + stride;
+                    const d = c + 1;
+                    if (sign > 0) {
+                        builder.triangle(a, b, c);
+                        builder.triangle(b, d, c);
+                    }
+                    else {
+                        builder.triangle(a, c, b);
+                        builder.triangle(b, c, d);
+                    }
+                }
+            }
+        }
+    }
+    return builder.build('CaixaArredondada');
 }
 export function createPlane(width = 1, depth = 1, segments = 1): MeshData {
     const builder = new MeshBuilder();
