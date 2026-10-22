@@ -1,9 +1,13 @@
 import { SCENE_LIGHTING_CHUNK } from './chunks/scene-lighting.glsl';
+import { TERRAIN_MATERIAL_CHUNK } from './chunks/terrain-material.glsl';
 import { TERRAIN_VERTEX_CHUNK } from './chunks/terrain-vertex.glsl';
-import { MAX_TERRAIN_LAYERS } from '@/engine/terrain/core/splat-map';
+import { OCTAHEDRAL_CHUNK } from './chunks/octahedral.glsl';
+import { MAX_TERRAIN_CACHE_LEVELS } from '@/engine/renderer/terrain/terrain-cache-layout';
 export const TERRAIN_VERTEX_SHADER = `#version 300 es
 precision highp float;
 precision highp int;
+
+invariant gl_Position;
 
 ${TERRAIN_VERTEX_CHUNK}
 
@@ -35,32 +39,34 @@ void main() {
 export const TERRAIN_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 precision highp sampler2DArray;
+precision highp isampler2DArray;
 
 in vec3 v_worldPosition;
 in vec3 v_localPosition;
 in vec3 v_localNormal;
 in vec2 v_uv;
 
-uniform sampler2D u_splat0;
-uniform sampler2D u_splat1;
-uniform sampler2DArray u_albedoArray;
-uniform sampler2DArray u_normalArray;
-uniform sampler2DArray u_ormhArray;
-uniform int u_layerCount;
- 
-uniform vec4 u_layerParams[${MAX_TERRAIN_LAYERS}];
-uniform vec3 u_layerTint[${MAX_TERRAIN_LAYERS}];
-uniform float u_splatResolution;
+${TERRAIN_MATERIAL_CHUNK}
+${OCTAHEDRAL_CHUNK}
+
+
+uniform sampler2DArray u_cacheAlbedo;
+uniform sampler2DArray u_cacheNormal;
+
+uniform highp isampler2DArray u_cachePages;
+
+uniform vec4 u_cache;
+
+uniform vec2 u_cacheCenter;
+
+uniform vec4 u_cacheLevels[${MAX_TERRAIN_CACHE_LEVELS}];
+
+uniform float u_cacheEnabled;
+
+uniform vec2 u_distanceBlend;
 uniform float u_halfSize;
-uniform float u_heightBlendDepth;
- 
-uniform vec2 u_triplanar;
- 
-uniform vec2 u_macro;
- 
-uniform vec3 u_distance;
 uniform mat3 u_normalMatrix;
- 
+
 uniform vec4 u_brush;
 uniform vec3 u_brushColor;
 uniform float u_brushEnabled;
@@ -69,105 +75,39 @@ uniform float u_receiveShadows;
 
 ${SCENE_LIGHTING_CHUNK}
 
-const int MAX_LAYERS = ${MAX_TERRAIN_LAYERS};
-const float WEIGHT_EPSILON = 0.004;
-const vec3 AXIS_X = vec3(1.0, 0.0, 0.0);
-const vec3 AXIS_Y = vec3(0.0, 1.0, 0.0);
-const vec3 AXIS_Z = vec3(0.0, 0.0, 1.0);
 
- 
-struct Footprint {
-  vec3 p;
-  vec3 dx;
-  vec3 dy;
-   
-  vec3 blend;
-   
-  float far;
+const float RING_BLEND_START = 0.7;
+
+struct CacheSample {
+  vec3 albedo;
+  vec3 normal;
+  float roughness;
+  float occlusion;
+  bool valid;
 };
 
-vec4 sampleScaled(sampler2DArray tex, int layer, float invTiling, Footprint f) {
-  vec4 result = vec4(0.0);
-  if (f.blend.y > 0.0) {
-    result += textureGrad(tex, vec3(f.p.xz * invTiling, layer), f.dx.xz * invTiling, f.dy.xz * invTiling) * f.blend.y;
+
+CacheSample sampleCacheLevel(int level, vec2 p) {
+  vec4 info = u_cacheLevels[level];
+  ivec2 tile = ivec2(floor(p / info.z));
+  float tiles = u_cache.w;
+  ivec2 slot = tile - int(tiles) * ivec2(floor(vec2(tile) / tiles));
+  CacheSample s;
+  s.albedo = vec3(0.0);
+  s.normal = AXIS_Y;
+  s.roughness = 1.0;
+  s.occlusion = 1.0;
+  s.valid = all(equal(texelFetch(u_cachePages, ivec3(slot, level), 0).rg, tile));
+  if (s.valid) {
+    vec3 uv = vec3(fract(p * info.y), float(level));
+    vec4 a = textureLod(u_cacheAlbedo, uv, 0.0);
+    vec4 b = textureLod(u_cacheNormal, uv, 0.0);
+    s.albedo = a.rgb;
+    s.roughness = a.a;
+    s.normal = octDecode(b.rg * 2.0 - 1.0);
+    s.occlusion = b.b;
   }
-  if (f.blend.x > 0.0) {
-    result += textureGrad(tex, vec3(vec2(f.p.z, -f.p.y) * invTiling, layer), vec2(f.dx.z, -f.dx.y) * invTiling, vec2(f.dy.z, -f.dy.y) * invTiling) * f.blend.x;
-  }
-  if (f.blend.z > 0.0) {
-    result += textureGrad(tex, vec3(vec2(f.p.x, -f.p.y) * invTiling, layer), vec2(f.dx.x, -f.dx.y) * invTiling, vec2(f.dy.x, -f.dy.y) * invTiling) * f.blend.z;
-  }
-  return result;
-}
-
-
-
-
-
-
-vec4 sampleProjected(sampler2DArray tex, int layer, float invTiling, Footprint f) {
-  if (f.far <= 0.0) return sampleScaled(tex, layer, invTiling, f);
-  vec4 far = sampleScaled(tex, layer, invTiling * u_distance.z, f);
-  if (f.far >= 1.0) return far;
-  return mix(sampleScaled(tex, layer, invTiling, f), far, f.far);
-}
-
-vec3 decodeNormal(vec4 texel, float strength) {
-  vec3 n = texel.xyz * 2.0 - 1.0;
-  n.xy *= strength;
-  return n;
-}
-
-
-
-
-
-
-vec3 sampleScaledNormal(int layer, float invTiling, float strength, vec3 Ng, Footprint f) {
-  vec3 n = vec3(0.0);
-  if (f.blend.y > 0.0) {
-    vec3 m = decodeNormal(textureGrad(u_normalArray, vec3(f.p.xz * invTiling, layer), f.dx.xz * invTiling, f.dy.xz * invTiling), strength);
-    n += (AXIS_X * m.x - AXIS_Z * m.y + Ng * m.z) * f.blend.y;
-  }
-  if (f.blend.x > 0.0) {
-    vec3 m = decodeNormal(textureGrad(u_normalArray, vec3(vec2(f.p.z, -f.p.y) * invTiling, layer), vec2(f.dx.z, -f.dx.y) * invTiling, vec2(f.dy.z, -f.dy.y) * invTiling), strength);
-    n += (AXIS_Z * m.x + AXIS_Y * m.y + Ng * m.z) * f.blend.x;
-  }
-  if (f.blend.z > 0.0) {
-    vec3 m = decodeNormal(textureGrad(u_normalArray, vec3(vec2(f.p.x, -f.p.y) * invTiling, layer), vec2(f.dx.x, -f.dx.y) * invTiling, vec2(f.dy.x, -f.dy.y) * invTiling), strength);
-    n += (AXIS_X * m.x + AXIS_Y * m.y + Ng * m.z) * f.blend.z;
-  }
-  return n;
-}
-
- 
-vec3 sampleProjectedNormal(int layer, float invTiling, float strength, vec3 Ng, Footprint f) {
-  if (f.far <= 0.0) return sampleScaledNormal(layer, invTiling, strength, Ng, f);
-  vec3 far = sampleScaledNormal(layer, invTiling * u_distance.z, strength * 0.5, Ng, f);
-  if (f.far >= 1.0) return far;
-  return mix(sampleScaledNormal(layer, invTiling, strength, Ng, f), far, f.far);
-}
-
-float hash21(vec2 p) {
-  p = fract(p * vec2(123.34, 456.21));
-  p += dot(p, p + 45.32);
-  return fract(p.x * p.y);
-}
-
-float valueNoise(vec2 p) {
-  vec2 i = floor(p);
-  vec2 f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  float a = hash21(i);
-  float b = hash21(i + vec2(1.0, 0.0));
-  float c = hash21(i + vec2(0.0, 1.0));
-  float d = hash21(i + vec2(1.0, 1.0));
-  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
-}
-
- 
-float macroNoise(vec2 p) {
-  return valueNoise(p) * 0.65 + valueNoise(p * 2.7 + 13.1) * 0.35;
+  return s;
 }
 
 vec3 applyBrush(vec3 color, vec2 xz, float ringWidth) {
@@ -182,89 +122,64 @@ vec3 applyBrush(vec3 color, vec2 xz, float ringWidth) {
 out vec4 fragColor;
 
 void main() {
-   
+
   vec3 positionDx = dFdx(v_worldPosition);
   vec3 positionDy = dFdy(v_worldPosition);
-  Footprint f;
-  f.p = v_localPosition;
-  f.dx = dFdx(v_localPosition);
-  f.dy = dFdy(v_localPosition);
+  vec3 localDx = dFdx(v_localPosition);
+  vec3 localDy = dFdy(v_localPosition);
   float brushDistance = distance(v_localPosition.xz, u_brush.xy);
   float brushRingWidth = max(fwidth(brushDistance) * 1.5, u_brush.z * 0.012);
   float edgeDistance = u_halfSize - max(abs(v_localPosition.x), abs(v_localPosition.z));
   float edgeWidth = max(fwidth(edgeDistance) * 1.5, u_halfSize * 0.003);
 
   vec3 Ng = normalize(v_localNormal);
-  float slope = 1.0 - abs(Ng.y);
-  float triplanarAmount = smoothstep(u_triplanar.x, u_triplanar.x + u_triplanar.y, slope);
-  f.far = smoothstep(u_distance.x, u_distance.y, distance(v_worldPosition, u_cameraPosition));
-  f.blend = AXIS_Y;
-  if (triplanarAmount > 0.0) {
-    vec3 w = pow(abs(Ng), vec3(4.0));
-    w /= w.x + w.y + w.z;
-    f.blend = mix(AXIS_Y, w, triplanarAmount);
-  }
 
-   
-  vec2 splatUv = (v_uv * (u_splatResolution - 1.0) + 0.5) / u_splatResolution;
-  vec4 s0 = texture(u_splat0, splatUv);
-  vec4 s1 = texture(u_splat1, splatUv);
-  float weights[MAX_LAYERS];
-  weights[0] = s0.r; weights[1] = s0.g; weights[2] = s0.b; weights[3] = s0.a;
-  weights[4] = s1.r; weights[5] = s1.g; weights[6] = s1.b; weights[7] = s1.a;
-  float total = 0.0;
-  for (int i = 0; i < MAX_LAYERS; i++) {
-    if (i >= u_layerCount) weights[i] = 0.0;
-    total += weights[i];
-  }
-  if (total < 1e-4) {
-    weights[0] = 1.0;
-    total = 1.0;
-  }
 
-   
-  vec4 ormh[MAX_LAYERS];
-  float heights[MAX_LAYERS];
-  float maxHeight = 0.0;
-  for (int i = 0; i < MAX_LAYERS; i++) {
-    float w = weights[i] / total;
-    weights[i] = w;
-    heights[i] = -1.0;
-    if (w < WEIGHT_EPSILON) continue;
-    ormh[i] = sampleProjected(u_ormhArray, i, u_layerParams[i].x, f);
-    heights[i] = ormh[i].b + w;
-    maxHeight = max(maxHeight, heights[i]);
-  }
 
-  float blended[MAX_LAYERS];
-  float blendedTotal = 0.0;
-  for (int i = 0; i < MAX_LAYERS; i++) {
-    blended[i] = heights[i] < 0.0 ? 0.0 : max(heights[i] - maxHeight + u_heightBlendDepth, 0.0);
-    blendedTotal += blended[i];
-  }
+  vec2 offset = v_localPosition.xz - u_cacheCenter;
+  float radius = max(abs(offset.x), abs(offset.y)) / u_cache.y;
+  float ringLog = floor(log2(max(radius, 1e-5)));
+  float within = radius / exp2(ringLog + 1.0);
+  float lodDistance = ringLog + 1.0 + smoothstep(RING_BLEND_START, 1.0, within);
+  float footprint = max(length(localDx.xz), length(localDy.xz)) * u_cache.z;
+  float lodFootprint = log2(max(footprint, 1e-5));
+  float lod = clamp(max(lodDistance, lodFootprint), 0.0, u_cache.x);
+  int level = int(floor(lod));
+  int nextLevel = min(level + 1, int(u_cache.x));
+  float levelMix = fract(lod);
 
-   
   vec3 albedo = vec3(0.0);
-  vec3 normal = vec3(0.0);
-  float roughness = 0.0;
-  float occlusion = 0.0;
-  for (int i = 0; i < MAX_LAYERS; i++) {
-    float w = blended[i] / blendedTotal;
-    if (w < WEIGHT_EPSILON) continue;
-    vec4 params = u_layerParams[i];
-    albedo += sampleProjected(u_albedoArray, i, params.x, f).rgb * u_layerTint[i] * w;
-    normal += sampleProjectedNormal(i, params.x, params.y, Ng, f) * w;
-    roughness += clamp(ormh[i].g * params.z, 0.0, 1.0) * w;
-    occlusion += ormh[i].r * w;
+  vec3 normal = Ng;
+  float roughness = 1.0;
+  float occlusion = 1.0;
+  bool cached = false;
+  if (u_cacheEnabled > 0.5) {
+    CacheSample fine = sampleCacheLevel(level, v_localPosition.xz);
+    CacheSample coarse = sampleCacheLevel(nextLevel, v_localPosition.xz);
+
+    float t = fine.valid ? (coarse.valid ? levelMix : 0.0) : 1.0;
+    cached = fine.valid || coarse.valid;
+    albedo = mix(fine.albedo, coarse.albedo, t);
+    normal = normalize(mix(fine.normal, coarse.normal, t));
+    roughness = mix(fine.roughness, coarse.roughness, t);
+    occlusion = mix(fine.occlusion, coarse.occlusion, t);
   }
 
-   
-   
-  float macro = macroNoise(v_localPosition.xz * u_macro.y) * 0.7 + valueNoise(v_localPosition.xz * u_macro.y * 4.7 + 7.3) * 0.3;
-  vec3 hueShift = mix(vec3(0.94, 0.99, 1.05), vec3(1.06, 1.02, 0.93), macro);
-  albedo *= mix(vec3(1.0), hueShift, u_macro.x) * (1.0 + (macro - 0.5) * u_macro.x * 1.2);
+  if (!cached) {
 
-  vec3 N = normalize(u_normalMatrix * (dot(normal, normal) > 1e-6 ? normalize(normal) : Ng));
+
+
+    float cachedFar = mix(u_cacheLevels[level].w, u_cacheLevels[nextLevel].w, levelMix);
+    float far = u_cacheEnabled > 0.5 ? cachedFar : smoothstep(u_distanceBlend.x, u_distanceBlend.y, distance(v_worldPosition, u_cameraPosition));
+    Footprint f = terrainFootprint(v_localPosition, localDx, localDy, Ng, far);
+    TerrainMaterial m = evaluateTerrainMaterial(f, Ng, v_uv);
+    albedo = m.albedo;
+    normal = m.normal;
+    roughness = m.roughness;
+    occlusion = m.occlusion;
+  }
+
+  vec3 N = normalize(u_normalMatrix * normal);
   if (!gl_FrontFacing) N = -N;
 
   Surface s = makeSurface(N, v_worldPosition, albedo, roughness, 0.0);
