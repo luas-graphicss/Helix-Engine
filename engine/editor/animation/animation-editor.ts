@@ -365,6 +365,65 @@ export class AnimationEditor {
         this.time = 0;
         this.notifyTime();
     }
+    setSpeed(speed: number): void {
+        if (!(speed > 0))
+            return;
+        this.speed = speed;
+        this.notifyTime();
+    }
+    setSnapToFrames(enabled: boolean): void {
+        this.snapToFrames = enabled;
+        this.notify();
+    }
+    setAutoKey(enabled: boolean): void {
+        this.autoKey = enabled;
+        this.notify();
+    }
+    setView(view: AnimationView): void {
+        this.view = view;
+        this.notify();
+    }
+    setShowSkeleton(visible: boolean): void {
+        this.showSkeleton = visible;
+        this.notify();
+    }
+    setXray(xray: boolean): void {
+        this.xray = xray;
+        this.notify();
+    }
+    setIk(limb: LimbId, enabled: boolean): void {
+        this.ik[limb] = enabled;
+        if (!enabled && this.ikDrag?.limb === limb)
+            this.endIkDrag(true);
+        this.notify();
+    }
+    setBoneFilter(filter: string): void {
+        this.boneFilter = filter;
+        this.notify();
+    }
+    toggleCollapsed(name: string): void {
+        if (this.collapsedBones.has(name))
+            this.collapsedBones.delete(name);
+        else
+            this.collapsedBones.add(name);
+        this.notify();
+    }
+    setOnlyAnimated(enabled: boolean): void {
+        this.onlyAnimated = enabled;
+        this.notify();
+    }
+    revealBone(name: string): void {
+        const rig = this.rig;
+        if (!rig)
+            return;
+        let changed = false;
+        for (let index = rig.parents[rig.jointByName(name)] ?? -1; index !== -1; index = rig.parents[index]) {
+            if (this.collapsedBones.delete(rig.names[index]))
+                changed = true;
+        }
+        if (changed)
+            this.notify();
+    }
     private setDocument(next: AnimationDocument): void {
         this.document = next;
         this.dirty = true;
@@ -390,6 +449,148 @@ export class AnimationEditor {
             return;
         this.session.history.execute(new SetValueCommand<AnimationDocument>(label, (document) => this.setDocument(document), before, after, mergeKey));
     }
+    rename(name: string): void {
+        const trimmed = name.trim();
+        if (!this.document || !trimmed || trimmed === this.document.name)
+            return;
+        this.commit('Renomear animação', { ...this.document, name: trimmed });
+    }
+    setDuration(seconds: number): void {
+        if (!this.document || !Number.isFinite(seconds))
+            return;
+        this.commit('Duração da animação', setDocumentDuration(this.document, seconds), 'anim:duration');
+    }
+    setFrameRate(frameRate: number): void {
+        if (!this.document || !(frameRate > 0))
+            return;
+        this.commit('Taxa de quadros', { ...this.document, frameRate });
+    }
+    setLoop(loop: boolean): void {
+        if (!this.document || this.document.loop === loop)
+            return;
+        this.commit(loop ? 'Animação em laço' : 'Animação sem laço', { ...this.document, loop });
+    }
+    setReferenceSpeed(speed: number): void {
+        if (!this.document || !Number.isFinite(speed))
+            return;
+        this.commit('Velocidade de referência', { ...this.document, referenceSpeed: Math.max(0, speed) }, 'anim:referenceSpeed');
+    }
+    stretch(factor: number): void {
+        if (!this.document)
+            return;
+        this.commit('Esticar animação', stretchDocument(this.document, factor));
+    }
+    addEvent(name: string, time = this.time): void {
+        if (!this.document)
+            return;
+        const events = [...this.document.events, { time, name: name.trim() || 'evento' }].sort((a, b) => a.time - b.time);
+        this.commit('Adicionar evento', { ...this.document, events });
+    }
+    updateEvent(index: number, patch: {
+        name?: string;
+        time?: number;
+    }): void {
+        if (!this.document || !this.document.events[index])
+            return;
+        const events = this.document.events.map((event, position) => (position === index ? { ...event, ...patch } : event)).sort((a, b) => a.time - b.time);
+        this.commit('Editar evento', { ...this.document, events }, `anim:event:${index}`);
+    }
+    removeEvent(index: number): void {
+        if (!this.document || !this.document.events[index])
+            return;
+        this.commit('Remover evento', { ...this.document, events: this.document.events.filter((_, position) => position !== index) });
+    }
+    private pathsToKey(rig: Rig, joint: number): AnimationPath[] {
+        const name = rig.names[joint];
+        const paths: AnimationPath[] = ['rotation'];
+        if (rig.parents[joint] === -1 || (this.document && trackAt(this.document, name, 'translation')))
+            paths.unshift('translation');
+        if (this.document && trackAt(this.document, name, 'scale'))
+            paths.push('scale');
+        return paths;
+    }
+    keyBones(names: readonly string[] = this.selectedBones, paths?: readonly AnimationPath[]): void {
+        const performer = this.primary;
+        if (!this.document || !performer || names.length === 0)
+            return;
+        let next = this.document;
+        const time = this.snapTime(this.time);
+        for (const name of names) {
+            const index = performer.rig.jointByName(name);
+            const joint = index === -1 ? null : performer.rig.joints[index];
+            if (!joint)
+                continue;
+            for (const path of paths ?? this.pathsToKey(performer.rig, index)) {
+                next = setDocumentKey(next, name, path, time, readJointPath(joint, path));
+            }
+            this.pending.delete(joint);
+        }
+        this.commit(names.length === 1 ? `Chave em ${names[0]}` : `Chave em ${names.length} ossos`, next);
+    }
+    keyAllBones(): void {
+        const rig = this.rig;
+        if (!rig)
+            return;
+        this.keyBones(rig.names);
+    }
+    resetBones(names: readonly string[] = this.selectedBones): void {
+        const performer = this.primary;
+        if (!this.document || !performer)
+            return;
+        const { rig } = performer;
+        let next = this.document;
+        const time = this.snapTime(this.time);
+        for (const name of names) {
+            const index = rig.jointByName(name);
+            const joint = index === -1 ? null : rig.joints[index];
+            if (!joint)
+                continue;
+            const before = snapshotTransform(joint);
+            const after: TransformSnapshot = {
+                position: vec3.copy(vec3.create(), rig.bindPositions.subarray(index * 3, index * 3 + 3)),
+                rotation: quat.toEulerDegrees(vec3.create(), rig.bindRotations.subarray(index * 4, index * 4 + 4)),
+                scale: vec3.copy(vec3.create(), rig.bindScales.subarray(index * 3, index * 3 + 3)),
+            };
+            applyTransformSnapshot(joint, after);
+            const paths = changedPaths(before, after);
+            if (this.autoKey)
+                for (const path of paths)
+                    next = setDocumentKey(next, name, path, time, readSnapshotPath(after, path));
+            else if (paths.length > 0)
+                this.pending.set(joint, after);
+        }
+        if (this.autoKey)
+            this.commit(`Repouso de ${names.length === 1 ? names[0] : `${names.length} ossos`}`, next);
+        else
+            this.notify();
+    }
+    deleteSelectedKeys(): void {
+        if (!this.document || this.selectedKeys.length === 0)
+            return;
+        const count = this.selectedKeys.length;
+        this.commit(count === 1 ? 'Excluir chave' : `Excluir ${count} chaves`, removeDocumentKeys(this.document, this.selectedKeys));
+        this.selectedKeys = [];
+        this.notify();
+    }
+    beginKeyDrag(): void {
+        if (!this.document || this.selectedKeys.length === 0 || this.keyDrag)
+            return;
+        this.keyDrag = { base: this.document, refs: this.selectedKeys, baseTime: this.time };
+    }
+    updateKeyDrag(deltaSeconds: number): void {
+        const drag = this.keyDrag;
+        if (!drag)
+            return;
+        const delta = this.snapToFrames ? Math.round(deltaSeconds * this.frameRate) / this.frameRate : deltaSeconds;
+        const earliest = Math.min(...drag.refs.map((ref) => ref.time));
+        const moved = moveDocumentKeys(drag.base, drag.refs, Math.max(delta, -earliest));
+        this.document = moved.document;
+        this.selectedKeys = moved.refs;
+        for (const performer of this.performers)
+            if (performer.source.kind === 'clip')
+                this.compile(performer);
+        this.notify();
+    }
     endKeyDrag(cancel = false): void {
         const drag = this.keyDrag;
         if (!drag || !this.document)
@@ -409,6 +610,119 @@ export class AnimationEditor {
         this.commitFrom(refs.length === 1 ? 'Mover chave' : `Mover ${refs.length} chaves`, drag.base, result);
         this.selectedKeys = refs;
         this.notify();
+    }
+    setSelectedEasing(easing: KeyEasing): void {
+        if (!this.document || this.selectedKeys.length === 0)
+            return;
+        this.commit('Suavização das chaves', easeDocumentKeys(this.document, this.selectedKeys, easing));
+    }
+    setSelectedInterpolation(interpolation: AnimationInterpolation): void {
+        if (!this.document)
+            return;
+        const targets = new Map<string, {
+            joint: string;
+            path: AnimationPath;
+        }>();
+        for (const ref of this.selectedKeys)
+            targets.set(`${ref.joint}/${ref.path}`, ref);
+        if (targets.size === 0) {
+            for (const track of this.document.tracks)
+                if (this.selectedBones.includes(track.joint))
+                    targets.set(`${track.joint}/${track.path}`, track);
+        }
+        if (targets.size === 0)
+            return;
+        this.commit('Interpolação das faixas', setDocumentInterpolation(this.document, targets.values(), interpolation));
+    }
+    setKeyValue(ref: KeyRef, value: Float32Array): void {
+        if (!this.document)
+            return;
+        this.commit('Valor da chave', setDocumentKeyValue(this.document, ref, value), `anim:key:${keyRefKey(ref)}`);
+    }
+    copySelectedKeys(): void {
+        if (!this.document || this.selectedKeys.length === 0)
+            return;
+        this.clipboard = copyDocumentKeys(this.document, this.selectedKeys);
+        if (this.clipboard)
+            this.session.log.info(LOG_SOURCE, `${this.clipboard.entries.length} ${this.clipboard.entries.length === 1 ? 'chave copiada' : 'chaves copiadas'}.`);
+        this.notify();
+    }
+    pasteKeys(time = this.time): void {
+        if (!this.document || !this.clipboard)
+            return;
+        const result = pasteDocumentKeys(this.document, this.clipboard, this.snapTime(time));
+        this.commit('Colar chaves', result.document);
+        this.selectedKeys = result.refs;
+        this.notify();
+    }
+    selectBone(name: string, mode: 'replace' | 'toggle' = 'replace'): void {
+        const joint = this.jointEntity(name);
+        if (!joint)
+            return;
+        if (mode === 'toggle')
+            this.session.toggleSelection(joint);
+        else
+            this.session.select(joint);
+    }
+    selectBones(names: readonly string[]): void {
+        const performer = this.primary;
+        if (!performer)
+            return;
+        const joints = names.map((name) => this.jointEntity(name, performer)).filter((joint): joint is Entity => joint !== null);
+        this.session.setSelection(joints);
+    }
+    clearBoneSelection(): void {
+        if (this.selectedBones.length > 0)
+            this.session.select(null);
+    }
+    setHoveredBone(name: string | null): void {
+        if (this.hoveredBone === name)
+            return;
+        this.hoveredBone = name;
+        this.notify();
+    }
+    selectKeys(refs: readonly KeyRef[], mode: 'replace' | 'toggle' | 'add' = 'replace'): void {
+        if (mode === 'replace') {
+            this.selectedKeys = refs;
+        }
+        else {
+            const next = [...this.selectedKeys];
+            for (const ref of refs) {
+                const index = next.findIndex((candidate) => sameKeyRef(candidate, ref));
+                if (index === -1)
+                    next.push(ref);
+                else if (mode === 'toggle')
+                    next.splice(index, 1);
+            }
+            this.selectedKeys = next;
+        }
+        this.notify();
+    }
+    isKeySelected(ref: KeyRef): boolean {
+        return this.selectedKeys.some((candidate) => sameKeyRef(candidate, ref));
+    }
+    selectKeysAtTime(time = this.time, mode: 'replace' | 'toggle' = 'replace'): void {
+        if (!this.document)
+            return;
+        this.selectKeys(keysAtTime(this.document, time), mode);
+    }
+    focusBone(name: string): void {
+        const performer = this.primary;
+        const index = performer?.rig.jointByName(name) ?? -1;
+        const joint = index === -1 || !performer ? null : performer.rig.joints[index];
+        if (!joint || !performer)
+            return;
+        this.session.scene.updateWorldMatrices();
+        mat4.getTranslation(scratchPosition, joint.worldMatrix);
+        let length = 0;
+        const children = performer.rig.childrenOf(index);
+        const neighbor = children.length > 0 ? performer.rig.joints[children[0]] : performer.rig.parents[index] !== -1 ? performer.rig.joints[performer.rig.parents[index]] : null;
+        if (neighbor) {
+            mat4.getTranslation(scratchOther, neighbor.worldMatrix);
+            length = vec3.distance(scratchPosition, scratchOther);
+        }
+        this.session.orbit.focus(scratchPosition, Math.max(length * FOCUS_DISTANCE_FACTOR, FOCUS_MIN_DISTANCE));
+        this.session.notify();
     }
     syncSelection(): void {
         if (this.performers.length === 0)
