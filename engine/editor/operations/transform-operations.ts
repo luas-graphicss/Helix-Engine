@@ -36,15 +36,32 @@ export function applyTransformSnapshot(entity: Entity, snapshot: TransformSnapsh
     vec3.copy(entity.transform.rotation, snapshot.rotation);
     vec3.copy(entity.transform.scale, snapshot.scale);
 }
+function intercepted(session: EditorSession, entity: Entity, before: TransformSnapshot, after: TransformSnapshot): boolean {
+    for (const interceptor of session.transformInterceptors)
+        if (interceptor(entity, before, after))
+            return true;
+    return false;
+}
 export function setTransformComponent(session: EditorSession, entity: Entity, field: TransformField, axis: Axis, value: number): void {
     if (!Number.isFinite(value) || entity.transform[field][axis] === value)
         return;
     const target = entity.transform[field];
+    if (session.transformInterceptors.size > 0) {
+        const before = snapshotTransform(entity);
+        const after = snapshotTransform(entity);
+        after[field][axis] = value;
+        if (intercepted(session, entity, before, after)) {
+            applyTransformSnapshot(entity, after);
+            return;
+        }
+    }
     session.history.execute(new SetValueCommand(`${FIELD_LABEL[field]} ${'XYZ'[axis]}`, (next) => {
         target[axis] = next;
     }, target[axis], value, `transform:${entity.id}:${field}:${axis}`));
 }
 export function commitTransform(session: EditorSession, entity: Entity, before: TransformSnapshot, after: TransformSnapshot, label: string): void {
+    if (intercepted(session, entity, before, after))
+        return;
     session.history.execute(new SetValueCommand(label, (value) => applyTransformSnapshot(entity, value), before, after, `transform:${entity.id}:gizmo`));
 }
 export function resetTransform(session: EditorSession, entity: Entity, field?: TransformField): void {

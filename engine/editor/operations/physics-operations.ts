@@ -3,8 +3,9 @@ import type { Entity } from '@/engine/core/scene/entity';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { SetValueCommand } from '@/engine/editor/commands/set-value-command';
 import { getLocalBounds } from '@/engine/renderer/geometry/bounds';
-import { cloneRigidBodySettings, copyRigidBodySettings, createRigidBodySettings, type BodyType, type RigidBodySettings, } from '@/engine/physics/body/rigid-body-settings';
+import { cloneRigidBodySettings, colliderRequiresStatic, copyRigidBodySettings, createRigidBodySettings, type BodyType, type RigidBodySettings, } from '@/engine/physics/body/rigid-body-settings';
 import { defaultMassForSettings, fitColliderToBounds } from '@/engine/physics/body/collider-fit';
+import { applyPhysicalProperties } from '@/engine/materials/physical-material';
 import type { ColliderKind } from '@/engine/physics/shapes/collider-shape';
 export type RigidBodyScalar = 'mass' | 'radius' | 'height' | 'friction' | 'restitution' | 'linearDamping' | 'angularDamping' | 'gravityScale';
 export type RigidBodyVector = 'boxSize' | 'center';
@@ -33,8 +34,11 @@ const SCALAR_LABEL: Record<RigidBodyScalar, string> = {
     gravityScale: 'Escala de gravidade',
 };
 const VECTOR_LABEL: Record<RigidBodyVector, string> = { boxSize: 'Tamanho do colisor', center: 'Centro do colisor' };
-const COLLIDER_LABEL: Record<ColliderKind, string> = { box: 'caixa', sphere: 'esfera', capsule: 'cápsula' };
+const COLLIDER_LABEL: Record<ColliderKind, string> = { box: 'caixa', sphere: 'esfera', capsule: 'cápsula', mesh: 'malha' };
+export const BODY_TYPE_LABEL: Record<BodyType, string> = { static: 'estático', kinematic: 'cinemático', dynamic: 'dinâmico' };
 function guessColliderKind(entity: Entity): ColliderKind {
+    if (entity.csg)
+        return 'mesh';
     const name = entity.mesh?.name ?? '';
     if (name === 'Esfera')
         return 'sphere';
@@ -47,7 +51,10 @@ function fitToEntityMesh(settings: RigidBodySettings, entity: Entity): void {
         fitColliderToBounds(settings, getLocalBounds(entity.mesh));
 }
 export function createRigidBodyForEntity(entity: Entity, overrides: Partial<RigidBodySettings> = {}): RigidBodySettings {
-    const settings = createRigidBodySettings({ collider: guessColliderKind(entity), ...overrides });
+    const collider = overrides.collider ?? guessColliderKind(entity);
+    const settings = createRigidBodySettings({ collider, ...overrides });
+    if (colliderRequiresStatic(collider) && settings.type === 'dynamic')
+        settings.type = 'static';
     fitToEntityMesh(settings, entity);
     if (overrides.mass === undefined)
         settings.mass = defaultMassForSettings(settings, entity.transform.scale);
@@ -57,10 +64,13 @@ export function addRigidBody(session: EditorSession, entity: Entity): void {
     if (entity.rigidBody)
         return;
     const settings = createRigidBodyForEntity(entity);
+    const libraryMaterial = session.materials.forMaterial(entity.material);
+    if (libraryMaterial)
+        applyPhysicalProperties(settings, libraryMaterial.physics, entity.transform.scale);
     session.history.execute(new SetValueCommand<RigidBodySettings | null>(`Adicionar corpo rígido a ${entity.name}`, (value) => {
         entity.rigidBody = value;
     }, null, settings));
-    session.log.info('Física', `${entity.name} recebeu um corpo ${settings.type === 'static' ? 'estático' : 'dinâmico'} (${COLLIDER_LABEL[settings.collider]}).`);
+    session.log.info('Física', `${entity.name} recebeu um corpo ${BODY_TYPE_LABEL[settings.type]} (${COLLIDER_LABEL[settings.collider]}).`);
 }
 export function removeRigidBody(session: EditorSession, entity: Entity): void {
     const current = entity.rigidBody;
@@ -80,9 +90,13 @@ export function setRigidBodyType(session: EditorSession, entity: Entity, type: B
     const settings = entity.rigidBody;
     if (!settings || settings.type === type)
         return;
+    if (type === 'dynamic' && colliderRequiresStatic(settings.collider)) {
+        session.log.warn('Física', `${entity.name}: um colisor de malha não pode ser dinâmico. Troque para caixa, esfera ou cápsula antes.`);
+        return;
+    }
     const after = cloneRigidBodySettings(settings);
     after.type = type;
-    commitSettings(session, entity, type === 'static' ? 'Corpo estático' : 'Corpo dinâmico', after);
+    commitSettings(session, entity, `Corpo ${BODY_TYPE_LABEL[type]}`, after);
 }
 export function setRigidBodyCollider(session: EditorSession, entity: Entity, collider: ColliderKind): void {
     const settings = entity.rigidBody;
@@ -90,6 +104,10 @@ export function setRigidBodyCollider(session: EditorSession, entity: Entity, col
         return;
     const after = cloneRigidBodySettings(settings);
     after.collider = collider;
+    if (colliderRequiresStatic(collider) && after.type === 'dynamic') {
+        after.type = 'static';
+        session.log.info('Física', `${entity.name} passou a estático: o colisor de malha segue os triângulos da malha e não é simulado.`);
+    }
     fitToEntityMesh(after, entity);
     commitSettings(session, entity, `Colisor ${COLLIDER_LABEL[collider]}`, after);
 }
