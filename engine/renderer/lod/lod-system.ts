@@ -36,6 +36,9 @@ export class LodSystem {
             if (!this.settings.enabled)
                 return candidate.mesh;
             const chain = this.chains.resolve(candidate.mesh);
+            const viewLevel = this.levelByEntity.get(candidate.entity);
+            if (viewLevel !== undefined)
+                return chain.levels[Math.min(viewLevel, chain.levels.length - 1)];
             const texels = (candidate.bounds.radius * 2) / Math.max(binding.texelWorldSizes[cascade], 1e-6);
             return chain.levels[selectLodLevel(texels, MESH_LOD_THRESHOLD_PIXELS, chain.levels.length, this.settings.bias, -1)];
         };

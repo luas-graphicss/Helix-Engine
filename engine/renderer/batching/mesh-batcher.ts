@@ -7,7 +7,7 @@ import type { InstanceBuffer } from '@/engine/renderer/gl/instance-buffer';
 import { InstanceLayout, MODEL_MATRIX_ATTRIBUTES } from '@/engine/renderer/gl/instance-layout';
 import type { VisibleMesh, VisibleSet } from '@/engine/renderer/culling/visible-set';
 import { MaterialStateRegistry, type MaterialState } from './material-state';
-export const MESH_INSTANCE_FLOATS = 40;
+export const MESH_INSTANCE_FLOATS = 41;
 export const MESH_INSTANCE_LAYOUT = new InstanceLayout([
     ...MODEL_MATRIX_ATTRIBUTES,
     { location: 7, size: 3, offset: 16 },
@@ -16,7 +16,7 @@ export const MESH_INSTANCE_LAYOUT = new InstanceLayout([
     { location: 10, size: 4, offset: 25 },
     { location: 11, size: 4, offset: 29 },
     { location: 12, size: 4, offset: 33 },
-    { location: 13, size: 3, offset: 37 },
+    { location: 13, size: 4, offset: 37 },
 ], MESH_INSTANCE_FLOATS);
 const DEFAULT_MATERIAL = createMaterial({ baseColor: vec3.create(0.6, 0.6, 0.6) });
 const MESH_ID_SPACE = 1 << 20;
@@ -53,6 +53,7 @@ function byStateThenNearest(a: MeshBatch, b: MeshBatch): number {
 export class MeshBatcher {
     readonly opaque: MeshBatch[] = [];
     readonly transparent: MeshBatch[] = [];
+    readonly skinned: MeshBatch[] = [];
     readonly stats: MeshBatcherStats = { instances: 0, batches: 0, triangles: 0 };
     private readonly states = new MaterialStateRegistry();
     private readonly meshIds = new WeakMap<MeshData, number>();
@@ -60,36 +61,51 @@ export class MeshBatcher {
     private readonly itemPool: DrawItem[] = [];
     private itemCount = 0;
     private readonly transparentItems: DrawItem[] = [];
+    private readonly skinnedItems: DrawItem[] = [];
     private readonly opaqueByKey = new Map<number, MeshBatch>();
     private readonly batchPool: MeshBatch[] = [];
     private batchCount = 0;
     private readonly normalMatrix = mat3.create();
-    build(visible: VisibleSet, instances: InstanceBuffer, selectedId: number | null, resolveMesh: MeshResolver): void {
+    build(visible: VisibleSet, instances: InstanceBuffer, selection: ReadonlySet<number> | null, resolveMesh: MeshResolver): void {
         this.reset();
         instances.begin();
-        for (const item of visible.meshes)
-            this.classify(item, resolveMesh);
+        for (const item of visible.meshes) {
+            if (!item.virtual)
+                this.classify(item, resolveMesh);
+        }
         for (const batch of this.opaqueByKey.values()) {
             batch.items.sort(byDistanceAscending);
             this.opaque.push(batch);
         }
         this.opaque.sort(byStateThenNearest);
         for (const batch of this.opaque)
-            this.commit(batch, instances, selectedId);
+            this.commit(batch, instances, selection);
+        if (this.skinnedItems.length > 0) {
+            this.skinnedItems.sort(byDistanceAscending);
+            for (const item of this.skinnedItems) {
+                const batch = this.acquireBatch(item.mesh, item.state);
+                batch.items.push(item);
+                batch.nearest = item.visible.distance;
+                this.skinned.push(batch);
+                this.commit(batch, instances, selection);
+            }
+        }
         if (this.transparentItems.length > 0) {
             this.transparentItems.sort(byDistanceDescending);
             this.groupTransparentRuns();
             for (const batch of this.transparent)
-                this.commit(batch, instances, selectedId);
+                this.commit(batch, instances, selection);
         }
         instances.upload();
         this.stats.instances = instances.count;
-        this.stats.batches = this.opaque.length + this.transparent.length;
+        this.stats.batches = this.opaque.length + this.skinned.length + this.transparent.length;
     }
     private reset(): void {
         this.opaque.length = 0;
         this.transparent.length = 0;
+        this.skinned.length = 0;
         this.transparentItems.length = 0;
+        this.skinnedItems.length = 0;
         this.opaqueByKey.clear();
         this.itemCount = 0;
         this.batchCount = 0;
@@ -97,9 +113,14 @@ export class MeshBatcher {
     }
     private classify(visible: VisibleMesh, resolveMesh: MeshResolver): void {
         const material = visible.entity.material ?? DEFAULT_MATERIAL;
-        const mesh = resolveMesh(visible);
+        const skinned = visible.entity.skin !== null && visible.mesh.skinning !== undefined;
+        const mesh = skinned ? visible.mesh : resolveMesh(visible);
         const state = this.states.resolve(material);
         const item = this.acquireItem(visible, material, mesh, state);
+        if (skinned) {
+            this.skinnedItems.push(item);
+            return;
+        }
         if (state.alphaMode === 'blend') {
             this.transparentItems.push(item);
             return;
@@ -125,16 +146,16 @@ export class MeshBatcher {
                 batch.nearest = item.visible.distance;
         }
     }
-    private commit(batch: MeshBatch, instances: InstanceBuffer, selectedId: number | null): void {
+    private commit(batch: MeshBatch, instances: InstanceBuffer, selection: ReadonlySet<number> | null): void {
         batch.count = batch.items.length;
         batch.firstInstance = instances.allocate(batch.count);
         const trianglesPerInstance = batch.mesh.indices.length / 3;
         for (let i = 0; i < batch.items.length; i++) {
-            this.writeInstance(instances.data, batch.firstInstance + i, batch.items[i], selectedId);
+            this.writeInstance(instances.data, batch.firstInstance + i, batch.items[i], selection);
         }
         this.stats.triangles += trianglesPerInstance * batch.count;
     }
-    private writeInstance(data: Float32Array, index: number, item: DrawItem, selectedId: number | null): void {
+    private writeInstance(data: Float32Array, index: number, item: DrawItem, selection: ReadonlySet<number> | null): void {
         const { entity } = item.visible;
         const material = item.material;
         const offset = index * MESH_INSTANCE_FLOATS;
@@ -156,7 +177,8 @@ export class MeshBatcher {
         data[offset + 36] = material.alphaCutoff;
         data[offset + 37] = material.normalScale;
         data[offset + 38] = material.occlusionStrength;
-        data[offset + 39] = entity.id === selectedId ? 1 : 0;
+        data[offset + 39] = selection !== null && selection.has(entity.id) ? 1 : 0;
+        data[offset + 40] = material.uvTiling;
     }
     private meshId(mesh: MeshData): number {
         let id = this.meshIds.get(mesh);

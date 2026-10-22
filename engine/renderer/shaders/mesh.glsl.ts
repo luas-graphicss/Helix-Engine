@@ -2,6 +2,8 @@ import { SCENE_LIGHTING_CHUNK } from './chunks/scene-lighting.glsl';
 export const MESH_VERTEX_SHADER = `#version 300 es
 precision highp float;
 
+invariant gl_Position;
+
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec2 a_uv;
@@ -9,16 +11,33 @@ layout(location = 3) in mat4 a_model;
 layout(location = 7) in vec3 a_normalMatrix0;
 layout(location = 8) in vec3 a_normalMatrix1;
 layout(location = 9) in vec3 a_normalMatrix2;
- 
+
 layout(location = 10) in vec4 a_baseColorOpacity;
- 
+
 layout(location = 11) in vec4 a_surface;
- 
+
 layout(location = 12) in vec4 a_emissiveCutoff;
- 
-layout(location = 13) in vec3 a_mapParams;
+
+layout(location = 13) in vec4 a_mapParams;
 
 uniform mat4 u_viewProjection;
+
+#ifdef SKINNED
+layout(location = 14) in uvec4 a_joints;
+layout(location = 15) in vec4 a_weights;
+
+uniform highp sampler2D u_jointMatrices;
+
+mat4 jointMatrix(uint joint) {
+  int row = int(joint);
+  return mat4(
+    texelFetch(u_jointMatrices, ivec2(0, row), 0),
+    texelFetch(u_jointMatrices, ivec2(1, row), 0),
+    texelFetch(u_jointMatrices, ivec2(2, row), 0),
+    texelFetch(u_jointMatrices, ivec2(3, row), 0)
+  );
+}
+#endif
 
 out vec3 v_worldPosition;
 out vec3 v_worldNormal;
@@ -26,13 +45,22 @@ out vec2 v_uv;
 flat out vec4 v_baseColorOpacity;
 flat out vec4 v_surface;
 flat out vec4 v_emissiveCutoff;
-flat out vec3 v_mapParams;
+flat out vec4 v_mapParams;
 
 void main() {
+#ifdef SKINNED
+
+  mat4 skin = a_weights.x * jointMatrix(a_joints.x) + a_weights.y * jointMatrix(a_joints.y)
+    + a_weights.z * jointMatrix(a_joints.z) + a_weights.w * jointMatrix(a_joints.w);
+  vec4 worldPosition = skin * vec4(a_position, 1.0);
+  v_worldNormal = normalize(mat3(skin) * a_normal);
+#else
   vec4 worldPosition = a_model * vec4(a_position, 1.0);
-  v_worldPosition = worldPosition.xyz;
   v_worldNormal = mat3(a_normalMatrix0, a_normalMatrix1, a_normalMatrix2) * a_normal;
-  v_uv = a_uv;
+#endif
+  v_worldPosition = worldPosition.xyz;
+
+  v_uv = a_uv * a_mapParams.w;
   v_baseColorOpacity = a_baseColorOpacity;
   v_surface = a_surface;
   v_emissiveCutoff = a_emissiveCutoff;
@@ -49,16 +77,16 @@ in vec2 v_uv;
 flat in vec4 v_baseColorOpacity;
 flat in vec4 v_surface;
 flat in vec4 v_emissiveCutoff;
-flat in vec3 v_mapParams;
+flat in vec4 v_mapParams;
 
- 
+
 uniform float u_alphaMode;
 uniform sampler2D u_baseColorMap;
 uniform sampler2D u_metallicRoughnessMap;
 uniform sampler2D u_normalMap;
 uniform sampler2D u_occlusionMap;
 uniform sampler2D u_emissiveMap;
- 
+
 uniform int u_textureMask;
 
 ${SCENE_LIGHTING_CHUNK}
@@ -72,11 +100,6 @@ const int MAP_EMISSIVE = 16;
 bool hasMap(int bit) {
   return (u_textureMask & bit) != 0;
 }
-
-
-
-
-
 
 
 vec3 perturbNormal(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2, float normalScale) {
@@ -95,7 +118,7 @@ vec3 perturbNormal(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2, float norma
 out vec4 fragColor;
 
 void main() {
-   
+
   vec3 positionDx = dFdx(v_worldPosition);
   vec3 positionDy = dFdy(v_worldPosition);
   vec2 uvDx = dFdx(v_uv);

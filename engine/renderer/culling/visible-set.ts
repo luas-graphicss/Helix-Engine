@@ -15,6 +15,7 @@ export interface VisibleMesh {
     bounds: RenderableBounds;
     distance: number;
     pixelSize: number;
+    virtual: boolean;
 }
 export interface ShadowCaster {
     entity: Entity;
@@ -54,10 +55,12 @@ export class VisibleSet {
     private readonly terrainCasterPool: TerrainShadowCaster[] = [];
     private camera: PerspectiveCamera | null = null;
     private options: CullingOptions = { frustumCulling: true, minPixelSize: 0 };
-    collect(scene: Scene, camera: PerspectiveCamera, viewportHeight: number, options: CullingOptions): void {
+    private showBrushes = true;
+    collect(scene: Scene, camera: PerspectiveCamera, viewportHeight: number, options: CullingOptions, showCsgBrushes = true): void {
         const { stats, meshes, terrains, casters, terrainCasters, grid } = this;
         this.camera = camera;
         this.options = options;
+        this.showBrushes = showCsgBrushes;
         this.pixelScale = pixelsPerTangent(camera, viewportHeight);
         this.frustum.setFromViewProjection(camera.viewProjectionMatrix);
         meshes.length = 0;
@@ -86,8 +89,19 @@ export class VisibleSet {
         const mesh = entity.mesh;
         if (!mesh)
             return;
-        const bounds = this.bounds.resolve(entity, getLocalBounds(mesh), getMeshVersion(mesh));
-        if (entity.castShadows)
+        const brush = entity.csgBrush !== null;
+        if (brush && (!this.showBrushes || !(entity.parent?.csg?.showBrushes ?? true)))
+            return;
+        const { skin } = entity;
+        let bounds: RenderableBounds;
+        if (skin && mesh.skinning) {
+            skin.update(entity);
+            bounds = this.bounds.resolve(entity, skin.localBounds, skin.version);
+        }
+        else {
+            bounds = this.bounds.resolve(entity, getLocalBounds(mesh), getMeshVersion(mesh));
+        }
+        if (entity.castShadows && !brush)
             this.pushCaster(entity, mesh, bounds);
         this.grid.update(entity, bounds);
         this.stats.candidates++;
@@ -112,7 +126,7 @@ export class VisibleSet {
         const index = this.meshes.length;
         let item = this.meshPool[index];
         if (!item) {
-            item = { entity, mesh: entity.mesh as MeshData, bounds, distance, pixelSize };
+            item = { entity, mesh: entity.mesh as MeshData, bounds, distance, pixelSize, virtual: false };
             this.meshPool[index] = item;
         }
         else {
@@ -121,6 +135,7 @@ export class VisibleSet {
             item.bounds = bounds;
             item.distance = distance;
             item.pixelSize = pixelSize;
+            item.virtual = false;
         }
         this.meshes.push(item);
     }
