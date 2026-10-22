@@ -49,7 +49,8 @@ export function moonPhaseName(moonPhase: number): string {
     return 'Minguante côncava';
 }
 export function moonLitFraction(sunDirection: Vec3, moonDirection: Vec3): number {
-    return (1 - vec3.dot(sunDirection, moonDirection)) * 0.5;
+    const fraction = (1 - vec3.dot(sunDirection, moonDirection)) * 0.5;
+    return Math.min(1, Math.max(0, fraction));
 }
 export function sunRotationFromDirection(outRotationDeg: Vec3, direction: Vec3): Vec3 {
     const y = Math.max(-1, Math.min(1, direction[1]));
