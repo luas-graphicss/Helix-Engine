@@ -17,10 +17,10 @@ export class DepthPyramid {
         this.framebuffer = this.supported ? gl.createFramebuffer() : null;
         this.program = this.supported ? new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, MYRIAD_HZB_REDUCE_FRAGMENT_SHADER) : null;
     }
-    build(depth: WebGLTexture, depthWidth: number, depthHeight: number): void {
+    build(depth: WebGLTexture, depthWidth: number, depthHeight: number): number {
         const { gl, program, framebuffer } = this;
         if (!program || !framebuffer)
-            return;
+            return 0;
         this.resize(Math.max(1, depthWidth >> 1), Math.max(1, depthHeight >> 1));
         const texture = this.texture as WebGLTexture;
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
@@ -54,6 +54,10 @@ export class DepthPyramid {
         gl.enable(gl.DEPTH_TEST);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         this.valid = true;
+        return this.levels;
+    }
+    invalidate(): void {
+        this.valid = false;
     }
     private resize(width: number, height: number): void {
         if (width === this.width && height === this.height && this.texture)

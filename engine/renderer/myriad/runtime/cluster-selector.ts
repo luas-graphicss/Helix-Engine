@@ -12,7 +12,6 @@ export interface ErrorProjector {
     texelSize: number;
 }
 export interface SelectionRequest {
-    entry: MyriadMeshEntry;
     world: Float32Array;
     scale: number;
     instance: number;
@@ -43,8 +42,8 @@ export class ClusterSelector {
         stats.triangles = 0;
         stats.perLevel.fill(0);
     }
-    select(request: SelectionRequest, out: EntryList): void {
-        const { entry, world, scale, frustum, projector, threshold } = request;
+    select(entry: MyriadMeshEntry, request: SelectionRequest, out: EntryList): void {
+        const { world, scale, frustum, projector, threshold } = request;
         const packed = entry.packed;
         const residency = entry.residency;
         const stamps = entry.groupStamp;

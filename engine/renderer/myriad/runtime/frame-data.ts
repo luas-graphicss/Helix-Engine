@@ -9,6 +9,7 @@ export const INSTANCE_BASE_COLOR_OFFSET = 44;
 export const INSTANCE_SURFACE_OFFSET = 48;
 export const INSTANCE_EMISSIVE_OFFSET = 52;
 export const INSTANCE_MAP_PARAMS_OFFSET = 56;
+export const INSTANCE_UV_OFFSET = 60;
 const INITIAL_INSTANCES = 256;
 const INITIAL_ENTRIES = 4096;
 export class InstanceTable {
