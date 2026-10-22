@@ -5,11 +5,15 @@ import { decodeImage, mimeTypeFromFileName } from '@/engine/assets/image-decoder
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { Command } from '@/engine/editor/history/command';
 import { CompositeCommand, SetValueCommand } from '@/engine/editor/commands/set-value-command';
-import { AddLayerCommand, HeightsRegionCommand, RemoveLayerCommand, ReplaceTerrainDataCommand, SplatSnapshotCommand, SwapLayersCommand, } from '@/engine/editor/commands/terrain-commands';
+import { AddLayerCommand, GrassSnapshotCommand, HeightsRegionCommand, RemoveLayerCommand, ReplaceTerrainDataCommand, SplatSnapshotCommand, SwapLayersCommand, } from '@/engine/editor/commands/terrain-commands';
 import { Terrain, TERRAIN_RESOLUTIONS, TERRAIN_SPLAT_RESOLUTIONS } from '@/engine/terrain/core/terrain';
 import type { GridRegion } from '@/engine/terrain/core/heightfield';
 import { createAutoRule, createTerrainLayer, type TerrainAutoRule, type TerrainLayer } from '@/engine/terrain/core/terrain-layer';
 import type { TerrainShading } from '@/engine/terrain/core/terrain-shading';
+import { assignGrassSettings, cloneGrassSettings, type GrassSettings } from '@/engine/terrain/foliage/grass-settings';
+import { materialSupportsGrass } from '@/engine/terrain/foliage/grass-placement';
+import { assignWaterSettings, cloneWaterSettings, type WaterSettings, type WaterSettingsPatch } from '@/engine/terrain/water/water-settings';
+import type { WaterFoamSettings } from '@/engine/terrain/water/water-foam-settings';
 import { autoPaintTerrain } from '@/engine/terrain/generation/auto-paint';
 import { generateTerrainHeights, type TerrainGenerationParams, type TerrainPreset } from '@/engine/terrain/generation/terrain-generator';
 import type { CustomMaterialMaps, TerrainMaterialLibrary } from '@/engine/terrain/materials/terrain-material-library';
@@ -158,10 +162,11 @@ export function resizeTerrain(session: EditorSession, entity: Entity, patch: Par
     const size = patch.size ?? terrain.size;
     if (resolution === terrain.resolution && splatResolution === terrain.splat.resolution && size === terrain.size)
         return;
-    const before = { heightfield: terrain.heightfield, splat: terrain.splat, size: terrain.size };
+    const before = { heightfield: terrain.heightfield, splat: terrain.splat, grassMap: terrain.grassMap, size: terrain.size };
     const after = {
         heightfield: resolution === terrain.resolution ? terrain.heightfield : terrain.heightfield.resampled(resolution),
         splat: splatResolution === terrain.splat.resolution ? terrain.splat : terrain.splat.resampled(splatResolution),
+        grassMap: splatResolution === terrain.grassMap.resolution ? terrain.grassMap : terrain.grassMap.resampled(splatResolution),
         size,
     };
     session.history.execute(new ReplaceTerrainDataCommand('Redimensionar terreno', terrain, before, after));
@@ -228,6 +233,58 @@ export function updateTerrainShading(session: EditorSession, entity: Entity, pat
     if (!terrain)
         return;
     session.history.execute(new SetValueCommand('Sombreamento do terreno', (value) => Object.assign(terrain.shading, value), { ...terrain.shading }, { ...terrain.shading, ...patch }, `terrain-shading-${entity.id}`));
+}
+export function updateGrassSettings(session: EditorSession, entity: Entity, patch: Partial<GrassSettings>): void {
+    const { terrain } = entity;
+    if (!terrain)
+        return;
+    const after = cloneGrassSettings(terrain.grass);
+    assignGrassSettings(after, patch);
+    session.history.execute(new SetValueCommand('Grama do terreno', (value) => assignGrassSettings(terrain.grass, value), cloneGrassSettings(terrain.grass), after, `terrain-grass-${entity.id}`));
+}
+export function terrainSupportsGrass(terrain: Terrain): boolean {
+    return terrain.layers.some((layer) => materialSupportsGrass(layer.material));
+}
+export function fillGrass(session: EditorSession, entity: Entity, density: number): void {
+    const { terrain } = entity;
+    if (!terrain)
+        return;
+    if (density > 0 && !terrainSupportsGrass(terrain)) {
+        session.log.warn('Terreno', 'Nenhuma camada aceita grama. Adicione uma camada de vegetação ou de terra antes de cobrir o terreno.');
+        return;
+    }
+    const before = terrain.grassMap.clone();
+    terrain.grassMap.fill(density);
+    terrain.grassChanged();
+    const label = density > 0 ? 'Cobrir o terreno com grama' : 'Limpar grama';
+    session.history.execute(new GrassSnapshotCommand(label, terrain, terrain.grassMap, before, terrain.grassMap.clone()));
+}
+export function updateWaterSettings(session: EditorSession, entity: Entity, patch: WaterSettingsPatch, label = 'Água do terreno'): void {
+    const { terrain } = entity;
+    if (!terrain)
+        return;
+    const after = cloneWaterSettings(terrain.water);
+    assignWaterSettings(after, patch);
+    session.history.execute(new SetValueCommand(label, (value) => assignWaterSettings(terrain.water, value), cloneWaterSettings(terrain.water), after, `terrain-water-${entity.id}`));
+}
+export function updateWaterFoam(session: EditorSession, entity: Entity, patch: Partial<WaterFoamSettings>): void {
+    updateWaterSettings(session, entity, { foam: patch }, 'Espuma da água');
+}
+export function setWaterFoamEnabled(session: EditorSession, entity: Entity, enabled: boolean): void {
+    updateWaterFoam(session, entity, { enabled });
+    session.history.endMerge();
+}
+export function setWaterEnabled(session: EditorSession, entity: Entity, enabled: boolean): void {
+    const { terrain } = entity;
+    if (!terrain)
+        return;
+    const { minHeight, maxHeight } = terrain.tiles;
+    const patch: Partial<WaterSettings> = { enabled };
+    if (enabled && (terrain.water.level <= minHeight || terrain.water.level >= maxHeight)) {
+        patch.level = Math.round((minHeight + (maxHeight - minHeight) * 0.33) * 10) / 10;
+    }
+    updateWaterSettings(session, entity, patch);
+    session.history.endMerge();
 }
 export type CustomMaterialFiles = Partial<Record<keyof CustomMaterialMaps, File>>;
 export async function importTerrainMaterial(session: EditorSession, name: string, files: CustomMaterialFiles): Promise<string | null> {

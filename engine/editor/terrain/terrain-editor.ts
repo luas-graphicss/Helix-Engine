@@ -13,9 +13,11 @@ import { TerrainMaterialLibrary } from '@/engine/terrain/materials/terrain-mater
 import { createBrushSettings, falloffHalfRadius, falloffWeight, MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS, type BrushSettings } from '@/engine/terrain/sculpt/brush';
 import { erodeThermal, sculptFlatten, sculptNoise, sculptRaise, sculptSmooth, sculptTerrace, type Stamp } from '@/engine/terrain/sculpt/sculpt-tools';
 import { paintLayer } from '@/engine/terrain/sculpt/paint-tool';
+import { paintGrass } from '@/engine/terrain/foliage/grass-paint-tool';
+import { materialSupportsGrass } from '@/engine/terrain/foliage/grass-placement';
 import { createGenerationParams, type TerrainGenerationParams } from '@/engine/terrain/generation/terrain-generator';
-import { TerrainStroke } from './terrain-stroke';
-export type TerrainToolId = 'raise' | 'smooth' | 'flatten' | 'noise' | 'terrace' | 'erode' | 'paint';
+import { TerrainStroke, type StrokeKind } from './terrain-stroke';
+export type TerrainToolId = 'raise' | 'smooth' | 'flatten' | 'noise' | 'terrace' | 'erode' | 'paint' | 'grass';
 export interface TerrainToolInfo {
     readonly id: TerrainToolId;
     readonly label: string;
@@ -30,7 +32,18 @@ export const TERRAIN_TOOLS: readonly TerrainToolInfo[] = [
     { id: 'terrace', label: 'Terraço', description: 'Empurra o relevo para degraus de altura regular.', key: '5' },
     { id: 'erode', label: 'Erosão', description: 'Desliza material das encostas íngremes, como o tempo faria.', key: '6' },
     { id: 'paint', label: 'Pintar', description: 'Aplica a camada ativa de material. Shift remove.', key: '7' },
+    { id: 'grass', label: 'Grama', description: 'Planta grama onde o solo aceita (vegetação e terra). Shift arranca.', key: '8' },
 ];
+const STROKE_KIND: Record<TerrainToolId, StrokeKind> = {
+    raise: 'heights',
+    smooth: 'heights',
+    flatten: 'heights',
+    noise: 'heights',
+    terrace: 'heights',
+    erode: 'heights',
+    paint: 'splat',
+    grass: 'grass',
+};
 export interface TerrainToolSettings {
     flattenMode: 'sample' | 'fixed';
     flattenHeight: number;
@@ -51,12 +64,14 @@ const NOISE_RATE = 5;
 const TERRACE_RATE = 6;
 const ERODE_RATE = 3;
 const PAINT_RATE = 5;
+const GRASS_RATE = 4;
 const MAX_STEP_SECONDS = 0.05;
 const FIRST_STEP_SECONDS = 1 / 60;
-const BRUSH_COLORS: Record<'sculpt' | 'invert' | 'paint' | 'erase', Vec3> = {
+const BRUSH_COLORS: Record<'sculpt' | 'invert' | 'paint' | 'grass' | 'erase', Vec3> = {
     sculpt: vec3.create(1, 0.86, 0.45),
     invert: vec3.create(0.5, 0.78, 1),
     paint: vec3.create(0.62, 1, 0.55),
+    grass: vec3.create(0.4, 1, 0.78),
     erase: vec3.create(1, 0.5, 0.45),
 };
 export class TerrainEditor {
@@ -112,8 +127,13 @@ export class TerrainEditor {
         overlay.z = this.hover.z;
         overlay.radius = brush.radius;
         overlay.innerRadius = brush.radius * falloffHalfRadius(brush.falloff);
-        const painting = this.tool === 'paint';
-        vec3.copy(overlay.color, painting ? (this.invert ? BRUSH_COLORS.erase : BRUSH_COLORS.paint) : this.invert ? BRUSH_COLORS.invert : BRUSH_COLORS.sculpt);
+        const kind = STROKE_KIND[this.tool];
+        if (kind === 'heights')
+            vec3.copy(overlay.color, this.invert ? BRUSH_COLORS.invert : BRUSH_COLORS.sculpt);
+        else if (this.invert)
+            vec3.copy(overlay.color, BRUSH_COLORS.erase);
+        else
+            vec3.copy(overlay.color, kind === 'grass' ? BRUSH_COLORS.grass : BRUSH_COLORS.paint);
         return overlay;
     }
     setTool(tool: TerrainToolId): void {
@@ -184,10 +204,14 @@ export class TerrainEditor {
             this.session.log.warn('Terreno', 'Adicione uma camada de material antes de pintar.');
             return false;
         }
+        if (this.tool === 'grass' && !invert && !terrain.layers.some((layer) => materialSupportsGrass(layer.material))) {
+            this.session.log.warn('Terreno', 'Nenhuma camada aceita grama. Adicione uma camada de vegetação ou de terra (grama, campo, terra, lama).');
+            return false;
+        }
         this.invert = invert;
         this.strokeSeed = Math.floor(Math.random() * 65536);
         this.flattenTarget = this.settings.flattenMode === 'fixed' ? this.settings.flattenHeight : this.hover.height;
-        this.stroke = new TerrainStroke(terrain, this.tool === 'paint' ? 'splat' : 'heights');
+        this.stroke = new TerrainStroke(terrain, STROKE_KIND[this.tool]);
         this.apply(terrain, FIRST_STEP_SECONDS);
         return true;
     }
@@ -219,6 +243,8 @@ export class TerrainEditor {
             return 'Rebaixar terreno';
         if (this.tool === 'paint')
             return this.invert ? 'Apagar camada' : 'Pintar camada';
+        if (this.tool === 'grass')
+            return this.invert ? 'Arrancar grama' : 'Plantar grama';
         return `${name} terreno`;
     }
     private apply(terrain: Terrain, deltaSeconds: number): void {
@@ -232,6 +258,11 @@ export class TerrainEditor {
         const region = this.region;
         if (this.tool === 'paint') {
             paintLayer(terrain, x, z, radius, falloff, this.activeLayerIndex, sign * Math.min(strength * PAINT_RATE * step, 1), region);
+            stroke.extend(region);
+            return;
+        }
+        if (this.tool === 'grass') {
+            paintGrass(terrain, x, z, radius, falloff, sign * Math.min(strength * GRASS_RATE * step, 1), region);
             stroke.extend(region);
             return;
         }

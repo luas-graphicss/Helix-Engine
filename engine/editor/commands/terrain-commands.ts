@@ -3,6 +3,7 @@ import type { Terrain } from '@/engine/terrain/core/terrain';
 import type { GridRegion, Heightfield } from '@/engine/terrain/core/heightfield';
 import type { SplatMap } from '@/engine/terrain/core/splat-map';
 import type { TerrainLayer } from '@/engine/terrain/core/terrain-layer';
+import type { GrassMap } from '@/engine/terrain/foliage/grass-map';
 export class HeightsRegionCommand implements Command {
     constructor(readonly label: string, private readonly terrain: Terrain, private readonly heightfield: Heightfield, private readonly region: GridRegion, private readonly before: Float32Array, private readonly after: Float32Array) { }
     execute(): void {
@@ -30,7 +31,37 @@ export class SplatRegionCommand implements Command {
         if (this.terrain.splat !== this.splat)
             return;
         this.splat.pasteRegion(this.region, block);
-        this.terrain.markSplatDirty();
+        this.terrain.markSplatDirty(this.region);
+    }
+}
+export class GrassRegionCommand implements Command {
+    constructor(readonly label: string, private readonly terrain: Terrain, private readonly grassMap: GrassMap, private readonly region: GridRegion, private readonly before: Uint8Array, private readonly after: Uint8Array) { }
+    execute(): void {
+        this.apply(this.after);
+    }
+    undo(): void {
+        this.apply(this.before);
+    }
+    private apply(block: Uint8Array): void {
+        if (this.terrain.grassMap !== this.grassMap)
+            return;
+        this.grassMap.pasteRegion(this.region, block);
+        this.terrain.grassChanged(this.region);
+    }
+}
+export class GrassSnapshotCommand implements Command {
+    constructor(readonly label: string, private readonly terrain: Terrain, private readonly grassMap: GrassMap, private readonly before: GrassMap, private readonly after: GrassMap) { }
+    execute(): void {
+        this.apply(this.after);
+    }
+    undo(): void {
+        this.apply(this.before);
+    }
+    private apply(snapshot: GrassMap): void {
+        if (this.terrain.grassMap !== this.grassMap)
+            return;
+        this.grassMap.copyFrom(snapshot);
+        this.terrain.grassChanged();
     }
 }
 export class SplatSnapshotCommand implements Command {
@@ -51,6 +82,7 @@ export class SplatSnapshotCommand implements Command {
 export interface TerrainDataState {
     heightfield: Heightfield;
     splat: SplatMap;
+    grassMap: GrassMap;
     size: number;
 }
 export class ReplaceTerrainDataCommand implements Command {
@@ -64,6 +96,7 @@ export class ReplaceTerrainDataCommand implements Command {
     private apply(state: TerrainDataState): void {
         this.terrain.replaceHeightfield(state.heightfield, state.size);
         this.terrain.replaceSplat(state.splat);
+        this.terrain.replaceGrassMap(state.grassMap);
     }
 }
 export class AddLayerCommand implements Command {
