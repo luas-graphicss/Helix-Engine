@@ -41,6 +41,14 @@ export class DepthArrayRenderTarget {
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffers[layer]);
         gl.viewport(0, 0, this.size, this.size);
     }
+    copyLayerFrom(source: DepthArrayRenderTarget, sourceLayer: number, layer: number): void {
+        const { gl, size } = this;
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, source.framebuffers[sourceLayer]);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.framebuffers[layer]);
+        gl.blitFramebuffer(0, 0, size, size, 0, 0, size, size, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffers[layer]);
+        gl.viewport(0, 0, size, size);
+    }
     dispose(): void {
         for (const framebuffer of this.framebuffers)
             this.gl.deleteFramebuffer(framebuffer);

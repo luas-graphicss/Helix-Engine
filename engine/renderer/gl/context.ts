@@ -7,9 +7,9 @@ export class WebGLUnsupportedError extends Error {
 }
 export function createContext(canvas: HTMLCanvasElement): GL {
     const gl = canvas.getContext('webgl2', {
-        antialias: true,
+        antialias: false,
         alpha: false,
-        depth: true,
+        depth: false,
         stencil: false,
         premultipliedAlpha: false,
         powerPreference: 'high-performance',
