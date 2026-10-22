@@ -5,8 +5,10 @@ import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { GizmoDrag, type PointerSample } from '@/engine/editor/gizmo/gizmo-drag';
 import { hitTestGizmo } from '@/engine/editor/gizmo/gizmo-hit-test';
 import { computeGizmoFrame, createGizmoFrame, type GizmoHandle, type GizmoMode } from '@/engine/renderer/gizmo/gizmo-frame';
+import * as vec3 from '@/engine/core/math/vec3';
+import { dragPointOnViewPlane, pickBone, pickEffector } from '@/engine/editor/animation/viewport/bone-picking';
 import { pickEntity } from './pick-entity';
-type DragMode = 'orbit' | 'pan' | 'gizmo' | 'terrain' | null;
+type DragMode = 'orbit' | 'pan' | 'gizmo' | 'terrain' | 'ik' | null;
 interface GizmoHit {
     handle: GizmoHandle;
     mode: GizmoMode;
@@ -54,10 +56,34 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             const handle = hitTestGizmo(gizmoMode, frame, session.camera, pointer.x, pointer.y, pointer);
             return handle ? { handle, mode: gizmoMode, entity } : null;
         };
+        const ikTarget = vec3.create();
+        const animating = () => session.animation.active && session.animation.showSkeleton;
         const updateHover = (pointer: PointerSample) => {
             const hit = gizmoHitAt(pointer);
             session.gizmo.hovered = hit?.handle ?? null;
-            canvas.style.cursor = hit ? GIZMO_CURSOR[hit.mode] : '';
+            if (hit) {
+                session.animation.setHoveredBone(null);
+                canvas.style.cursor = GIZMO_CURSOR[hit.mode];
+                return;
+            }
+            if (!animating()) {
+                canvas.style.cursor = '';
+                return;
+            }
+            if (pickEffector(session.animation, session.camera, pointer)) {
+                session.animation.setHoveredBone(null);
+                canvas.style.cursor = 'grab';
+                return;
+            }
+            const bone = pickBone(session.animation, session.camera, pointer);
+            session.animation.setHoveredBone(bone?.name ?? null);
+            canvas.style.cursor = bone ? 'pointer' : '';
+        };
+        const finishIkDrag = (event: PointerEvent, cancelled: boolean) => {
+            session.animation.endIkDrag(cancelled);
+            mode = null;
+            canvas.style.cursor = '';
+            updateHover(samplePointer(event));
         };
         const updateTerrainHover = (pointer: PointerSample, shift: boolean): boolean => {
             const hit = session.terrain.updateHover(pointer.x / pointer.width, pointer.y / pointer.height);
@@ -84,6 +110,20 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             updateHover(samplePointer(event));
         };
         const onPointerDown = (event: PointerEvent) => {
+            if (session.playtest.isPossessing)
+                return;
+            if (session.colorPicker.active) {
+                if (event.button === 0) {
+                    session.colorPicker.move(canvas, event.clientX, event.clientY);
+                    session.colorPicker.commit();
+                }
+                else {
+                    session.colorPicker.cancel();
+                }
+                canvas.style.cursor = '';
+                event.preventDefault();
+                return;
+            }
             if (event.button === 0 && session.tool === 'terrain') {
                 const pointer = samplePointer(event);
                 if (updateTerrainHover(pointer, event.shiftKey) && session.terrain.beginStroke(event.shiftKey)) {
@@ -107,6 +147,17 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                     event.preventDefault();
                     return;
                 }
+                if (animating()) {
+                    const effector = pickEffector(session.animation, session.camera, pointer);
+                    if (effector && session.animation.beginIkDrag(effector.performer, effector.limb)) {
+                        mode = 'ik';
+                        canvas.setPointerCapture(event.pointerId);
+                        canvas.style.cursor = 'grabbing';
+                        canvas.focus();
+                        event.preventDefault();
+                        return;
+                    }
+                }
             }
             if (event.button === 1 || (event.button === 0 && event.shiftKey)) {
                 mode = 'pan';
@@ -126,8 +177,19 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             event.preventDefault();
         };
         const onPointerMove = (event: PointerEvent) => {
+            if (session.colorPicker.active) {
+                session.colorPicker.move(canvas, event.clientX, event.clientY);
+                canvas.style.cursor = 'crosshair';
+                return;
+            }
             if (mode === 'gizmo') {
                 gizmoDrag?.update(samplePointer(event));
+                return;
+            }
+            if (mode === 'ik') {
+                const anchor = session.animation.ikTarget;
+                if (anchor && dragPointOnViewPlane(ikTarget, session.camera, anchor, samplePointer(event)))
+                    session.animation.updateIkDrag(ikTarget);
                 return;
             }
             if (mode === 'terrain') {
@@ -135,6 +197,8 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 return;
             }
             if (!mode) {
+                if (session.playtest.isPossessing)
+                    return;
                 if (session.tool === 'terrain')
                     updateTerrainHover(samplePointer(event), event.shiftKey);
                 else
@@ -164,6 +228,10 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 finishGizmoDrag(event, event.type === 'pointercancel');
                 return;
             }
+            if (mode === 'ik') {
+                finishIkDrag(event, event.type === 'pointercancel');
+                return;
+            }
             if (mode === 'terrain') {
                 finishTerrainStroke(event.type === 'pointercancel');
                 updateTerrainHover(samplePointer(event), event.shiftKey);
@@ -176,32 +244,50 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 return;
             const pointer = samplePointer(event);
             if (button === 0) {
-                session.select(pickAt(pointer));
+                const bone = animating() ? pickBone(session.animation, session.camera, pointer) : null;
+                const hit = bone ? bone.performer.rig.joints[bone.joint] : pickAt(pointer);
+                if (pointer.ctrl && hit)
+                    session.toggleSelection(hit);
+                else if (!pointer.ctrl)
+                    session.select(hit);
                 updateHover(pointer);
             }
             else if (button === 2) {
                 const hit = pickAt(pointer);
-                if (hit)
+                if (hit && !session.isSelected(hit))
                     session.select(hit);
                 handlers.onContextMenu(event.clientX, event.clientY);
             }
         };
         const onPointerLeave = () => {
+            session.colorPicker.leave();
             if (mode)
                 return;
             session.gizmo.hovered = null;
+            session.animation.setHoveredBone(null);
             session.terrain.clearHover();
             canvas.style.cursor = '';
         };
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Shift' && session.tool === 'terrain')
                 session.terrain.setInvert(true);
-            if (event.key !== 'Escape' || (mode !== 'gizmo' && mode !== 'terrain'))
+            if (event.key === 'Escape' && session.colorPicker.active) {
+                session.colorPicker.cancel();
+                canvas.style.cursor = '';
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                return;
+            }
+            if (event.key !== 'Escape' || (mode !== 'gizmo' && mode !== 'terrain' && mode !== 'ik'))
                 return;
             if (mode === 'gizmo') {
                 gizmoDrag?.cancel();
                 gizmoDrag = null;
                 session.gizmo.active = null;
+                mode = null;
+            }
+            else if (mode === 'ik') {
+                session.animation.endIkDrag(true);
                 mode = null;
             }
             else {
@@ -217,6 +303,8 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
         };
         const onWheel = (event: WheelEvent) => {
             event.preventDefault();
+            if (session.playtest.isPossessing)
+                return;
             session.orbit.zoom(event.deltaY);
         };
         const suppressNativeContextMenu = (event: MouseEvent) => {

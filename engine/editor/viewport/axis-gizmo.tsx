@@ -1,5 +1,5 @@
 'use client';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useViewportStats } from '@/engine/editor/session/editor-session-context';
 const AXES = [
     { label: 'X', dir: [1, 0, 0], stroke: 'stroke-axis-x', fill: 'fill-axis-x' },
     { label: 'Y', dir: [0, 1, 0], stroke: 'stroke-axis-y', fill: 'fill-axis-y' },
@@ -7,7 +7,8 @@ const AXES = [
 ] as const;
 const RADIUS = 26;
 export function AxisGizmo() {
-    const { camera } = useEditorState();
+    const { camera } = useEditorSession();
+    useViewportStats();
     const view = camera.viewMatrix;
     const projected = AXES.map((axis) => {
         const [x, y, z] = axis.dir;

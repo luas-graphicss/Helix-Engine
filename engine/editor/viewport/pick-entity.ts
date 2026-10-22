@@ -5,6 +5,7 @@ import type { Scene } from '@/engine/core/scene/scene';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { getLocalBounds } from '@/engine/renderer/geometry/bounds';
+import { raycastMesh } from '@/engine/renderer/geometry/mesh-raycast';
 import type { TerrainHit } from '@/engine/terrain/core/terrain';
 const inverseWorld = mat4.create();
 const worldRay = createRay();
@@ -12,6 +13,12 @@ const localRay = createRay();
 const nearPoint = vec3.create();
 const farPoint = vec3.create();
 const terrainHit: TerrainHit = { distance: 0, point: vec3.create() };
+interface PickCandidate {
+    entity: Entity;
+    entry: number;
+    exact: boolean;
+}
+const candidates: PickCandidate[] = [];
 function unproject(out: vec3.Vec3, x: number, y: number, z: number, inverse: mat4.Mat4): void {
     const w = inverse[3] * x + inverse[7] * y + inverse[11] * z + inverse[15] || 1;
     out[0] = (inverse[0] * x + inverse[4] * y + inverse[8] * z + inverse[12]) / w;
@@ -37,24 +44,72 @@ function intersectLocalRay(entity: Entity): number | null {
     }
     return entity.mesh ? intersectRayAabb(localRay, getLocalBounds(entity.mesh)) : null;
 }
-export function pickEntity(scene: Scene, camera: PerspectiveCamera, u: number, v: number): Entity | null {
+interface PickHit {
+    entity: Entity;
+    distance: number;
+}
+export interface PickOptions {
+    showCsgBrushes?: boolean;
+    includeLocked?: boolean;
+}
+function isPickable(entity: Entity, options: PickOptions): boolean {
+    if (!entity.mesh && !entity.terrain)
+        return false;
+    if (entity.locked && !options.includeLocked)
+        return false;
+    if (entity.csgBrush && (options.showCsgBrushes === false || !(entity.parent?.csg?.showBrushes ?? true)))
+        return false;
+    return true;
+}
+function closestHit(scene: Scene, camera: PerspectiveCamera, u: number, v: number, options: PickOptions): PickHit | null {
     if (!buildPickRay(worldRay, camera, u, v))
         return null;
-    let closest: Entity | null = null;
-    let closestDistance = Infinity;
+    candidates.length = 0;
     scene.traverseVisible((entity) => {
-        if (!entity.mesh && !entity.terrain)
+        if (!isPickable(entity, options))
             return;
         if (!mat4.invert(inverseWorld, entity.worldMatrix))
             return;
         transformRay(localRay, worldRay, inverseWorld);
-        const distance = intersectLocalRay(entity);
-        if (distance === null)
+        const entry = intersectLocalRay(entity);
+        if (entry === null)
             return;
-        if (distance < closestDistance) {
-            closestDistance = distance;
-            closest = entity;
-        }
+        candidates.push({ entity, entry, exact: entity.terrain !== null || entity.skin !== null });
     });
+    if (candidates.length === 0)
+        return null;
+    candidates.sort((a, b) => a.entry - b.entry);
+    let closest: PickHit | null = null;
+    for (const candidate of candidates) {
+        if (closest && candidate.entry >= closest.distance)
+            break;
+        const { entity } = candidate;
+        let distance: number | null = candidate.entry;
+        if (!candidate.exact && entity.mesh) {
+            mat4.invert(inverseWorld, entity.worldMatrix);
+            transformRay(localRay, worldRay, inverseWorld);
+            distance = raycastMesh(localRay, entity.mesh, closest?.distance ?? Infinity);
+        }
+        if (distance !== null && (!closest || distance < closest.distance))
+            closest = { entity, distance };
+    }
+    candidates.length = 0;
     return closest;
+}
+export function pickEntity(scene: Scene, camera: PerspectiveCamera, u: number, v: number, options: PickOptions = {}): Entity | null {
+    return closestHit(scene, camera, u, v, options)?.entity ?? null;
+}
+export function pickSurfacePoint(out: vec3.Vec3, scene: Scene, camera: PerspectiveCamera, u: number, v: number): vec3.Vec3 | null {
+    const hit = closestHit(scene, camera, u, v, { includeLocked: true });
+    if (hit)
+        return vec3.scaleAndAdd(out, worldRay.origin, worldRay.direction, hit.distance);
+    if (!buildPickRay(worldRay, camera, u, v))
+        return null;
+    const planeHeight = camera.target[1];
+    if (Math.abs(worldRay.direction[1]) < 1e-6)
+        return null;
+    const distance = (planeHeight - worldRay.origin[1]) / worldRay.direction[1];
+    if (distance <= 0)
+        return null;
+    return vec3.scaleAndAdd(out, worldRay.origin, worldRay.direction, distance);
 }

@@ -12,7 +12,7 @@ function resolveGizmoRequest(session: EditorSession, request: GizmoRenderRequest
     if (!mode)
         return null;
     const entity = session.selectedEntity;
-    if (!entity)
+    if (!entity || entity.locked)
         return null;
     request.mode = mode;
     request.worldMatrix = entity.worldMatrix;
@@ -46,18 +46,31 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
         const frame = (now: number) => {
             const deltaSeconds = Math.min((now - lastFrameTime) / 1000, MAX_DELTA_SECONDS);
             lastFrameTime = now;
-            session.tick(deltaSeconds);
-            renderer.render(session.scene, session.camera, {
-                showGrid: session.showGrid,
-                shadows: session.shadowsEnabled,
-                selectedId: session.selectedId,
-                gizmo: resolveGizmoRequest(session, gizmoRequest),
-                terrainBrush: session.terrain.brushOverlay,
-                elapsedSeconds: now / 1000,
-                deltaSeconds,
-                culling: session.render.culling,
-                lod: session.render.lod,
-            });
+            const elapsedSeconds = now / 1000;
+            session.tick(deltaSeconds, elapsedSeconds);
+            try {
+                renderer.render(session.scene, session.camera, {
+                    showGrid: session.showGrid,
+                    shadows: session.shadowsEnabled,
+                    selection: session.selectedIds.size > 0 ? session.selectedIds : null,
+                    showCsgBrushes: session.render.showCsgBrushes && session.playtest.state !== 'playing',
+                    gizmo: resolveGizmoRequest(session, gizmoRequest),
+                    terrainBrush: session.terrain.brushOverlay,
+                    skeletons: session.animation.overlayRequest(),
+                    elapsedSeconds,
+                    deltaSeconds,
+                    culling: session.render.culling,
+                    lod: session.render.lod,
+                    myriad: session.render.myriad,
+                    terrainMaterialCache: session.render.terrain.materialCache,
+                });
+            }
+            catch (cause) {
+                setError(cause instanceof Error ? cause.message : 'Falha ao renderizar o frame.');
+                console.error('[Helix] Falha ao renderizar:', cause);
+                return;
+            }
+            session.colorPicker.sample(renderer.gl);
             frameCount++;
             const elapsed = now - lastStatsTime;
             if (elapsed >= STATS_INTERVAL_MS) {

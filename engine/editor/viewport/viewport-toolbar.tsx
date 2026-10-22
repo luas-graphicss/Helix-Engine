@@ -2,6 +2,7 @@
 import { ChevronDown, Grid3x3, Maximize2, Camera, Eye, Locate, Eclipse, Sun } from 'lucide-react';
 import { IconButton } from '@/engine/ui/icon-button';
 import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { ViewModeMenu } from './view-mode-menu';
 function DropdownChip({ label }: {
     label: string;
 }) {
@@ -15,7 +16,7 @@ export function ViewportToolbar() {
     return (<div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-1.5">
       <div className="pointer-events-auto flex items-center gap-0.5 rounded-sm border border-border bg-surface-sunken/85 p-0.5 backdrop-blur-sm">
         <DropdownChip label="Perspectiva"/>
-        <DropdownChip label="Iluminado"/>
+        <ViewModeMenu />
         <DropdownChip label="Exibir"/>
       </div>
 

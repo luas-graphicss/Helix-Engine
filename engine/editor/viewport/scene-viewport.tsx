@@ -1,5 +1,6 @@
 'use client';
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
+import { Pipette } from 'lucide-react';
 import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { ViewportToolbar } from './viewport-toolbar';
 import { AxisGizmo } from './axis-gizmo';
@@ -11,23 +12,39 @@ import { useEditorSession, useEditorState } from '@/engine/editor/session/editor
 import { EntityContextMenuContent } from '@/engine/editor/menus/entity-context-menu';
 import { PlaytestBadge } from '@/engine/editor/playtest/playtest-badge';
 import { requestImport } from '@/engine/editor/import/import-requests';
+import { dropLibraryAssetOnViewport } from '@/engine/editor/operations/asset-library-operations';
 import { IMPORT_FORMAT_SUMMARY } from '@/engine/assets/import/import-registry';
 function ViewportContextMenu() {
     const session = useEditorState();
     return <EntityContextMenuContent entity={session.selectedEntity}/>;
+}
+function ColorPickerHint() {
+    const session = useEditorState();
+    if (!session.colorPicker.active)
+        return null;
+    return (<div className="pointer-events-none absolute inset-x-0 top-12 flex justify-center">
+      <span className="flex items-center gap-2 rounded-sm border border-border bg-surface-raised/95 px-3 py-1.5 font-mono text-2xs text-foreground shadow-xl">
+        <Pipette className="size-3.5 text-primary" aria-hidden/>
+        Clique no viewport para colher a cor · Esc cancela
+      </span>
+    </div>);
 }
 export function SceneViewport() {
     const session = useEditorSession();
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const surfaceRef = useRef<HTMLDivElement>(null);
     const { error } = useViewportRenderer(canvasRef, session);
+    useEffect(() => {
+        session.attachViewport(canvasRef.current);
+        return () => session.attachViewport(null);
+    }, [session]);
     const handlers = useMemo<ViewportInputHandlers>(() => ({
         onContextMenu: (clientX, clientY) => {
             surfaceRef.current?.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX, clientY }));
         },
     }), []);
     useViewportInput(canvasRef, session, handlers);
-    const drop = useFileDrop(requestImport);
+    const drop = useFileDrop(requestImport, (assetId, point) => void dropLibraryAssetOnViewport(session, assetId, point));
     return (<ContextMenu>
       <ContextMenuTrigger render={<div ref={surfaceRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-surface-sunken" aria-label="Viewport da cena" {...drop.handlers}/>}>
         <canvas ref={canvasRef} tabIndex={0} aria-label="Cena 3D. Arraste para orbitar, Shift+arraste para panoramizar, scroll para aproximar, clique para selecionar, clique direito para o menu de contexto, F para enquadrar." className="block size-full touch-none outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-inset"/>
@@ -38,6 +55,7 @@ export function SceneViewport() {
 
         <ViewportToolbar />
         <PlaytestBadge />
+        <ColorPickerHint />
 
         <div className="pointer-events-none absolute right-2 bottom-2">
           <AxisGizmo />
@@ -46,7 +64,9 @@ export function SceneViewport() {
         <ViewportStatsOverlay />
 
         {drop.active && (<div className="pointer-events-none absolute inset-2 flex items-center justify-center rounded-sm border border-dashed border-primary bg-background/60">
-            <span className="rounded-sm border border-border bg-surface-raised px-3 py-1.5 font-mono text-2xs text-foreground">Solte para importar ({IMPORT_FORMAT_SUMMARY})</span>
+            <span className="rounded-sm border border-border bg-surface-raised px-3 py-1.5 font-mono text-2xs text-foreground">
+              {drop.payload === 'asset' ? 'Solte para colocar na cena neste ponto' : `Solte para importar (${IMPORT_FORMAT_SUMMARY})`}
+            </span>
           </div>)}
       </ContextMenuTrigger>
       <ViewportContextMenu />
