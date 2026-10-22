@@ -34,6 +34,8 @@ export class Broadphase {
                 const aabbB = b.aabb;
                 if (aabbB.min[0] > maxX)
                     break;
+                if (!a.isDynamic && !b.isDynamic)
+                    continue;
                 if (a.isResting && b.isResting)
                     continue;
                 if (aabbA.min[1] > aabbB.max[1] || aabbB.min[1] > aabbA.max[1])

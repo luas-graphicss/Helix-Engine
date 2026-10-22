@@ -7,6 +7,10 @@ import type { Scene } from '@/engine/core/scene/scene';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { RigidBody } from '@/engine/physics/body/rigid-body';
 import { cloneRigidBodySettings, createShapeFromSettings, sameRigidBodyShape, type RigidBodySettings, } from '@/engine/physics/body/rigid-body-settings';
+import { createHeightfieldShape } from '@/engine/physics/shapes/collider-shape';
+import { getMeshVersion, type MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { BuoyancyField } from '@/engine/physics/fluids/buoyancy-field';
+import { WaterVolume } from '@/engine/physics/fluids/water-volume';
 import { PhysicsWorld } from '@/engine/physics/world/physics-world';
 export interface PhysicsBinding {
     readonly entity: Entity;
@@ -16,11 +20,20 @@ export interface PhysicsBinding {
     readonly centerOffset: Vec3;
     readonly writtenPosition: Vec3;
     readonly writtenRotation: Vec3;
+    readonly mesh: MeshData | null;
+    readonly meshVersion: number;
+}
+interface TerrainBinding {
+    readonly entity: Entity;
+    readonly body: RigidBody;
+    readonly water: WaterVolume;
+    readonly matrix: Mat4;
 }
 export interface PhysicsSceneEvents {
     onOutOfBounds?(entity: Entity): void;
     onUnstable?(entity: Entity): void;
 }
+const TERRAIN_FRICTION = 0.8;
 const worldPosition = vec3.create();
 const worldRotation = quat.create();
 const worldScale = vec3.create();
@@ -38,11 +51,28 @@ function readWorldScale(out: Vec3, matrix: Mat4): Vec3 {
 function sameVec3(a: Vec3, b: Vec3): boolean {
     return a[0] === b[0] && a[1] === b[1] && a[2] === b[2];
 }
+const SCALE_TOLERANCE = 1e-4;
+function nearlySameScale(a: Vec3, b: Vec3): boolean {
+    for (let axis = 0; axis < 3; axis++) {
+        if (Math.abs(a[axis] - b[axis]) > SCALE_TOLERANCE * Math.max(1, Math.abs(b[axis])))
+            return false;
+    }
+    return true;
+}
+function sameMat4(a: Mat4, b: Mat4): boolean {
+    for (let i = 0; i < 16; i++)
+        if (a[i] !== b[i])
+            return false;
+    return true;
+}
 export class PhysicsScene {
     readonly world: PhysicsWorld;
     private readonly bindings = new Map<Entity, PhysicsBinding>();
+    private readonly terrains = new Map<Entity, TerrainBinding>();
     private readonly entityByBody = new Map<RigidBody, Entity>();
     private readonly visited = new Set<Entity>();
+    private readonly buoyancy: BuoyancyField;
+    private removeBuoyancy: () => void;
     constructor(readonly scene: Scene, events: PhysicsSceneEvents = {}) {
         this.world = new PhysicsWorld(scene.physics, {
             onOutOfBounds: (body) => {
@@ -56,12 +86,16 @@ export class PhysicsScene {
                     events.onUnstable?.(entity);
             },
         });
+        this.buoyancy = new BuoyancyField(() => this.waterVolumes(), scene.physics);
+        this.removeBuoyancy = this.world.addForceField(this.buoyancy);
     }
     bindingOf(entity: Entity): PhysicsBinding | null {
         return this.bindings.get(entity) ?? null;
     }
-    update(deltaSeconds: number): number {
+    update(deltaSeconds: number, sceneTime?: number): number {
         this.reconcile();
+        if (sceneTime !== undefined)
+            this.world.time = sceneTime;
         const steps = this.world.advance(deltaSeconds);
         this.syncToScene(this.world.interpolation);
         return steps;
@@ -73,14 +107,28 @@ export class PhysicsScene {
         this.syncToScene(1);
     }
     dispose(): void {
+        this.removeBuoyancy();
         this.world.clear();
         this.bindings.clear();
+        this.terrains.clear();
         this.entityByBody.clear();
+        this.removeBuoyancy = this.world.addForceField(this.buoyancy);
+    }
+    private *waterVolumes(): Iterable<WaterVolume> {
+        for (const binding of this.terrains.values()) {
+            if (binding.water.enabled)
+                yield binding.water;
+        }
     }
     reconcile(): void {
         this.scene.updateWorldMatrices();
         this.visited.clear();
         this.scene.traverse((entity) => {
+            if (entity.terrain && entity.visible) {
+                this.visited.add(entity);
+                this.reconcileTerrain(entity);
+                return;
+            }
             const settings = entity.rigidBody;
             if (!settings)
                 return;
@@ -107,6 +155,46 @@ export class PhysicsScene {
             if (!this.visited.has(binding.entity))
                 this.destroyBinding(binding);
         }
+        for (const binding of this.terrains.values()) {
+            if (!this.visited.has(binding.entity))
+                this.destroyTerrainBinding(binding);
+        }
+    }
+    private reconcileTerrain(entity: Entity): void {
+        const existing = this.terrains.get(entity);
+        if (existing && sameMat4(existing.matrix, entity.worldMatrix))
+            return;
+        if (existing)
+            this.destroyTerrainBinding(existing);
+        const terrain = entity.terrain;
+        if (!terrain)
+            return;
+        const shape = createHeightfieldShape(terrain, entity.worldMatrix);
+        if (!shape)
+            return;
+        mat4.getTranslation(worldPosition, entity.worldMatrix);
+        quat.fromMat4Rotation(worldRotation, entity.worldMatrix);
+        const body = this.world.createBody({
+            type: 'static',
+            shape,
+            position: worldPosition,
+            orientation: worldRotation,
+            mass: 0,
+            friction: TERRAIN_FRICTION,
+            restitution: 0,
+            linearDamping: 0,
+            angularDamping: 0,
+            gravityScale: 1,
+            canSleep: true,
+        });
+        const matrix = mat4.copy(mat4.create(), entity.worldMatrix);
+        this.terrains.set(entity, { entity, body, water: new WaterVolume(terrain, matrix), matrix });
+        this.entityByBody.set(body, entity);
+    }
+    private destroyTerrainBinding(binding: TerrainBinding): void {
+        this.world.removeBody(binding.body);
+        this.terrains.delete(binding.entity);
+        this.entityByBody.delete(binding.body);
     }
     syncToScene(alpha: number): void {
         this.scene.updateWorldMatrices();
@@ -115,7 +203,7 @@ export class PhysicsScene {
     }
     private writeSubtree(entity: Entity, alpha: number): void {
         const binding = this.bindings.get(entity);
-        if (binding && binding.body.type === 'dynamic') {
+        if (binding && !binding.body.isStatic) {
             this.writePose(binding, alpha);
             entity.transform.updateLocalMatrix();
             if (entity.parent)
@@ -157,8 +245,13 @@ export class PhysicsScene {
     private needsRebuild(binding: PhysicsBinding, settings: RigidBodySettings): boolean {
         if (!sameRigidBodyShape(binding.applied, settings))
             return true;
+        if (settings.collider === 'mesh') {
+            const mesh = binding.entity.mesh;
+            if (mesh !== binding.mesh || (mesh && getMeshVersion(mesh) !== binding.meshVersion))
+                return true;
+        }
         readWorldScale(worldScale, binding.entity.worldMatrix);
-        return !sameVec3(worldScale, binding.scale);
+        return !nearlySameScale(worldScale, binding.scale);
     }
     private readBodyPose(entity: Entity, settings: RigidBodySettings): void {
         const matrix = entity.worldMatrix;
@@ -173,9 +266,10 @@ export class PhysicsScene {
         this.readBodyPose(entity, settings);
         const applied = cloneRigidBodySettings(settings);
         const scale = vec3.copy(vec3.create(), worldScale);
+        const mesh = applied.collider === 'mesh' ? entity.mesh : null;
         const body = this.world.createBody({
             type: applied.type,
-            shape: createShapeFromSettings(applied, scale),
+            shape: createShapeFromSettings(applied, scale, mesh),
             position: bodyPosition,
             orientation: worldRotation,
             mass: applied.mass,
@@ -194,6 +288,8 @@ export class PhysicsScene {
             centerOffset: vec3.create(applied.center[0] * scale[0], applied.center[1] * scale[1], applied.center[2] * scale[2]),
             writtenPosition: vec3.copy(vec3.create(), entity.transform.position),
             writtenRotation: vec3.copy(vec3.create(), entity.transform.rotation),
+            mesh,
+            meshVersion: mesh ? getMeshVersion(mesh) : 0,
         };
         this.bindings.set(entity, binding);
         this.entityByBody.set(body, entity);
