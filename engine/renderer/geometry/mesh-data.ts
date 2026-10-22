@@ -4,6 +4,11 @@ export interface MeshData {
     readonly normals: Float32Array;
     readonly uvs: Float32Array;
     readonly indices: Uint16Array | Uint32Array;
+    readonly skinning?: MeshSkinning;
+}
+export interface MeshSkinning {
+    readonly joints: Uint16Array;
+    readonly weights: Float32Array;
 }
 export function createIndexArray(indices: ArrayLike<number>, vertexCount: number): Uint16Array | Uint32Array {
     return vertexCount > 0xffff ? new Uint32Array(indices) : new Uint16Array(indices);

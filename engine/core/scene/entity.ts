@@ -2,10 +2,14 @@ import * as mat4 from '@/engine/core/math/mat4';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import type { RigidBodySettings } from '@/engine/physics/body/rigid-body-settings';
 import type { Terrain } from '@/engine/terrain/core/terrain';
+import type { CharacterSettings } from '@/engine/character/character-settings';
+import type { CsgBrushSettings, CsgSettings } from '@/engine/geometry/csg/csg-settings';
 import { Transform } from './transform';
 import type { Material } from './material';
 import type { Light } from './light';
-export type EntityKind = 'group' | 'mesh' | 'light' | 'camera' | 'terrain';
+import type { Skin } from './skin';
+import type { Rig } from './rig';
+export type EntityKind = 'group' | 'mesh' | 'light' | 'camera' | 'terrain' | 'character';
 export interface EntityOptions {
     id: number;
     name: string;
@@ -15,8 +19,14 @@ export interface EntityOptions {
     light?: Light;
     terrain?: Terrain;
     rigidBody?: RigidBodySettings;
+    character?: CharacterSettings;
+    skin?: Skin;
+    rig?: Rig;
+    csg?: CsgSettings;
+    csgBrush?: CsgBrushSettings;
     castShadows?: boolean;
     receiveShadows?: boolean;
+    locked?: boolean;
 }
 export class Entity {
     readonly id: number;
@@ -33,8 +43,14 @@ export class Entity {
     light: Light | null;
     terrain: Terrain | null;
     rigidBody: RigidBodySettings | null;
+    character: CharacterSettings | null;
+    skin: Skin | null;
+    rig: Rig | null;
+    csg: CsgSettings | null;
+    csgBrush: CsgBrushSettings | null;
     castShadows: boolean;
     receiveShadows: boolean;
+    locked: boolean;
     constructor(options: EntityOptions) {
         this.id = options.id;
         this.name = options.name;
@@ -44,8 +60,14 @@ export class Entity {
         this.light = options.light ?? null;
         this.terrain = options.terrain ?? null;
         this.rigidBody = options.rigidBody ?? null;
+        this.character = options.character ?? null;
+        this.skin = options.skin ?? null;
+        this.rig = options.rig ?? null;
+        this.csg = options.csg ?? null;
+        this.csgBrush = options.csgBrush ?? null;
         this.castShadows = options.castShadows ?? true;
         this.receiveShadows = options.receiveShadows ?? true;
+        this.locked = options.locked ?? false;
     }
     add(child: Entity): Entity {
         return this.insert(child, this.children.length);

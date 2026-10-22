@@ -1,16 +1,19 @@
 import * as mat4 from '@/engine/core/math/mat4';
 import { createSkySettings, type SkySettings } from '@/engine/core/environment/sky-settings';
 import { createPhysicsSettings, type PhysicsSettings } from '@/engine/physics/world/physics-settings';
+import { createPlayerSettings, type PlayerSettings } from '@/engine/character/player-settings';
 import { Entity, type EntityOptions } from './entity';
 export class Scene {
     readonly root: Entity;
     readonly sky: SkySettings;
     readonly physics: PhysicsSettings;
+    readonly player: PlayerSettings;
     private nextId = 1;
-    constructor(rootName = 'Cena', sky: SkySettings = createSkySettings(), physics: PhysicsSettings = createPhysicsSettings()) {
+    constructor(rootName = 'Cena', sky: SkySettings = createSkySettings(), physics: PhysicsSettings = createPhysicsSettings(), player: PlayerSettings = createPlayerSettings()) {
         this.root = new Entity({ id: this.nextId++, name: rootName, kind: 'group' });
         this.sky = sky;
         this.physics = physics;
+        this.player = player;
     }
     findSunLight(): Entity | null {
         let found: Entity | null = null;
