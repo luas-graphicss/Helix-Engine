@@ -1,7 +1,8 @@
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
-import { createBoxShape, createCapsuleShape, createSphereShape, type ColliderKind, type ColliderShape, } from '@/engine/physics/shapes/collider-shape';
-export type BodyType = 'static' | 'dynamic';
+import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { createBoxShape, createCapsuleShape, createMeshShape, createSphereShape, type ColliderKind, type ColliderShape, } from '@/engine/physics/shapes/collider-shape';
+export type BodyType = 'static' | 'kinematic' | 'dynamic';
 export interface RigidBodySettings {
     type: BodyType;
     collider: ColliderKind;
@@ -68,11 +69,20 @@ export function sameRigidBodyShape(a: RigidBodySettings, b: RigidBodySettings): 
         a.boxSize[0] === b.boxSize[0] && a.boxSize[1] === b.boxSize[1] && a.boxSize[2] === b.boxSize[2] &&
         a.center[0] === b.center[0] && a.center[1] === b.center[1] && a.center[2] === b.center[2]);
 }
-export function createShapeFromSettings(settings: RigidBodySettings, scale: Vec3): ColliderShape {
+export function colliderRequiresStatic(collider: ColliderKind): boolean {
+    return collider === 'mesh';
+}
+export function createShapeFromSettings(settings: RigidBodySettings, scale: Vec3, mesh: MeshData | null = null): ColliderShape {
     const sx = Math.abs(scale[0]);
     const sy = Math.abs(scale[1]);
     const sz = Math.abs(scale[2]);
     switch (settings.collider) {
+        case 'mesh': {
+            const shape = mesh ? createMeshShape(mesh, scale) : null;
+            if (shape)
+                return shape;
+            return createBoxShape(settings.boxSize[0] * 0.5 * sx, settings.boxSize[1] * 0.5 * sy, settings.boxSize[2] * 0.5 * sz);
+        }
         case 'box':
             return createBoxShape(settings.boxSize[0] * 0.5 * sx, settings.boxSize[1] * 0.5 * sy, settings.boxSize[2] * 0.5 * sz);
         case 'sphere':

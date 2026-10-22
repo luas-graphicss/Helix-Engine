@@ -26,6 +26,8 @@ export interface RigidBodyOptions extends RigidBodyMaterial {
 const MIN_MASS = 0.001;
 const FALLBACK_MASS = 1;
 const scratchInertia = vec3.create();
+const inverseOrientation = quat.create();
+const orientationDelta = quat.create();
 function finiteOr(value: number, fallback: number): number {
     return Number.isFinite(value) ? value : fallback;
 }
@@ -78,11 +80,27 @@ export class RigidBody {
     get isStatic(): boolean {
         return this.type === 'static';
     }
+    get isKinematic(): boolean {
+        return this.type === 'kinematic';
+    }
+    get isDynamic(): boolean {
+        return this.type === 'dynamic';
+    }
+    get isMoving(): boolean {
+        const v = this.linearVelocity;
+        const w = this.angularVelocity;
+        return v[0] !== 0 || v[1] !== 0 || v[2] !== 0 || w[0] !== 0 || w[1] !== 0 || w[2] !== 0;
+    }
     get isResting(): boolean {
-        return this.type === 'static' || this.sleeping;
+        if (this.type === 'static' || this.sleeping)
+            return true;
+        return this.type === 'kinematic' && !this.isMoving;
     }
     get isSimulated(): boolean {
         return this.type === 'dynamic' && !this.sleeping && !this.outOfBounds;
+    }
+    get isActive(): boolean {
+        return this.isSimulated || (this.type === 'kinematic' && this.isMoving);
     }
     get motionSpeed(): number {
         return vec3.length(this.linearVelocity) + vec3.length(this.angularVelocity) * this.maxExtent;
@@ -102,11 +120,40 @@ export class RigidBody {
         this.storePreviousPose();
         this.resetStepDeltas();
     }
+    applyImpulse(impulse: Vec3): void {
+        if (this.type !== 'dynamic' || this.outOfBounds)
+            return;
+        vec3.scaleAndAdd(this.linearVelocity, this.linearVelocity, impulse, this.invMass);
+        this.wake();
+    }
     teleport(position: Vec3, orientation: Quat): void {
         this.setPose(position, orientation);
         vec3.set(this.linearVelocity, 0, 0, 0);
         vec3.set(this.angularVelocity, 0, 0, 0);
         this.wake();
+    }
+    moveKinematic(position: Vec3, orientation: Quat, h: number): void {
+        const invH = h > 0 ? 1 / h : 0;
+        const v = this.linearVelocity;
+        v[0] = (position[0] - this.position[0]) * invH;
+        v[1] = (position[1] - this.position[1]) * invH;
+        v[2] = (position[2] - this.position[2]) * invH;
+        quat.conjugate(inverseOrientation, this.orientation);
+        quat.multiply(orientationDelta, orientation, inverseOrientation);
+        quat.normalize(orientationDelta, orientationDelta);
+        const sinHalf = Math.hypot(orientationDelta[0], orientationDelta[1], orientationDelta[2]);
+        const angle = 2 * Math.atan2(sinHalf, Math.abs(orientationDelta[3]));
+        const w = this.angularVelocity;
+        if (sinHalf > 1e-9 && angle > 0) {
+            const scale = (angle * invH * (orientationDelta[3] < 0 ? -1 : 1)) / sinHalf;
+            vec3.set(w, orientationDelta[0] * scale, orientationDelta[1] * scale, orientationDelta[2] * scale);
+        }
+        else {
+            vec3.set(w, 0, 0, 0);
+        }
+        vec3.copy(this.position, position);
+        quat.normalize(this.orientation, orientation);
+        this.updateRotation();
     }
     updateRotation(): void {
         mat3.fromQuat(this.rotation, this.orientation);

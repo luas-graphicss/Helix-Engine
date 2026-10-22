@@ -1,4 +1,5 @@
 import type { Aabb } from '@/engine/core/math/aabb';
+import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import { shapeVolume } from '@/engine/physics/shapes/collider-shape';
 import { createShapeFromSettings, DEFAULT_DENSITY, type RigidBodySettings } from './rigid-body-settings';
@@ -12,6 +13,12 @@ export function fitColliderToBounds(settings: RigidBodySettings, bounds: Aabb): 
     let centerY = (bounds.min[1] + bounds.max[1]) * 0.5;
     const centerZ = (bounds.min[2] + bounds.max[2]) * 0.5;
     switch (settings.collider) {
+        case 'mesh':
+            settings.boxSize[0] = sizeX;
+            settings.boxSize[1] = sizeY;
+            settings.boxSize[2] = sizeZ;
+            vec3.set(settings.center, 0, 0, 0);
+            return;
         case 'box': {
             let height = sizeY;
             if (sizeY < FLAT_THRESHOLD) {
@@ -40,4 +47,8 @@ export function fitColliderToBounds(settings: RigidBodySettings, bounds: Aabb): 
 export function defaultMassForSettings(settings: RigidBodySettings, scale: Vec3): number {
     const volume = shapeVolume(createShapeFromSettings(settings, scale));
     return Math.max(Number((DEFAULT_DENSITY * volume).toFixed(2)), 0.01);
+}
+export function densityForSettings(settings: RigidBodySettings, scale: Vec3): number {
+    const volume = shapeVolume(createShapeFromSettings(settings, scale));
+    return volume > 0 ? settings.mass / volume : Number.POSITIVE_INFINITY;
 }

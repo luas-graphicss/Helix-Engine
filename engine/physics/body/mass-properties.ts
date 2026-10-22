@@ -34,5 +34,21 @@ export function computeLocalInertia(out: Vec3, shape: ColliderShape, mass: numbe
             out[2] = transverse;
             return out;
         }
+        case 'heightfield':
+            out[0] = Infinity;
+            out[1] = Infinity;
+            out[2] = Infinity;
+            return out;
+        case 'mesh': {
+            const { min, max } = shape.localBounds;
+            const w = Math.max(max[0] - min[0], 0);
+            const h = Math.max(max[1] - min[1], 0);
+            const d = Math.max(max[2] - min[2], 0);
+            const k = mass / 12;
+            out[0] = k * (h * h + d * d);
+            out[1] = k * (w * w + d * d);
+            out[2] = k * (w * w + h * h);
+            return out;
+        }
     }
 }
