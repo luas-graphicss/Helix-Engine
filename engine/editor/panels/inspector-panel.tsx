@@ -1,7 +1,8 @@
 'use client';
-import { Box, Sun, Camera, Folder, MousePointer2, RotateCcw, Locate, Copy, Trash2, X, Mountain } from 'lucide-react';
+import { Box, Sun, Camera, Folder, MousePointer2, RotateCcw, Locate, Copy, Trash2, Mountain, PersonStanding, Pickaxe } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { CollapsibleSection } from '@/engine/ui/collapsible-section';
+import { ActionButton, ActionRow } from '@/engine/ui/action-button';
 import { ToggleField } from '@/engine/ui/toggle-field';
 import { PropertyRow } from '@/engine/ui/property-row';
 import { FieldInput } from '@/engine/ui/field-input';
@@ -21,11 +22,15 @@ import { setLightColor, setLightIntensity, setLightShadows } from '@/engine/edit
 import { loadTextureIntoSlot } from '@/engine/editor/operations/texture-operations';
 import { TextureSlotRow } from './inspector/texture-slot-row';
 import { RigidBodySection } from './inspector/rigid-body-section';
+import { CsgSection } from './inspector/csg-section';
+import { CharacterSection } from './inspector/character-section';
+import { BoneSection, RigSection } from './inspector/rig-section';
+import { LibraryMaterialSection, MaterialPickerButton, OwnMaterialRow } from './inspector/material-library-section';
 import { formatNumber, ScalarField, Vector3Input } from './inspector/number-fields';
 import { INSPECTOR_NAME_INPUT_ID } from '@/engine/editor/shortcuts/focus-targets';
 const AXES = ['x', 'y', 'z'] as const;
-const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain };
-const KIND_LABEL: Record<EntityKind, string> = { group: 'Grupo', mesh: 'Malha estática', light: 'Luz', camera: 'Câmera', terrain: 'Terreno' };
+const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain, character: PersonStanding };
+const KIND_LABEL: Record<EntityKind, string> = { group: 'Grupo', mesh: 'Malha estática', light: 'Luz', camera: 'Câmera', terrain: 'Terreno', character: 'Personagem' };
 const ALPHA_MODES: ReadonlyArray<{
     value: AlphaMode;
     label: string;
@@ -83,7 +88,11 @@ function MaterialSection({ entity }: {
     const material = entity.material;
     if (!material)
         return null;
-    return (<CollapsibleSection title="Material">
+    const document = session.materials.forMaterial(material);
+    if (document)
+        return <LibraryMaterialSection entity={entity} document={document}/>;
+    return (<CollapsibleSection title="Material" trailing={<MaterialPickerButton entity={entity}/>}>
+      <OwnMaterialRow entity={entity}/>
       <PropertyRow label="Nome">
         <FieldInput readOnly value={material.name} aria-label="Nome do material"/>
       </PropertyRow>
@@ -107,9 +116,9 @@ function TexturesSection({ entity }: {
 }) {
     const session = useEditorState();
     const material = entity.material;
-    if (!material)
+    if (!material || material.libraryId)
         return null;
-    const library = session.assets.byKind('texture').map((asset) => asset.texture);
+    const library = session.resources.byKind('texture').map((resource) => resource.texture);
     return (<CollapsibleSection title="Texturas">
       {MATERIAL_TEXTURE_SLOTS.map(({ slot, label }) => (<TextureSlotRow key={slot} label={label} texture={material[slot]} library={library} onLoadFile={(file) => void loadTextureIntoSlot(session, entity, slot, file)} onPick={(texture) => setMaterialTexture(session, entity, slot, texture)} onRemove={() => setMaterialTexture(session, entity, slot, null)}/>))}
       {material.normalMap && (<SliderField label="Escala normal" value={material.normalScale} min={0} max={4} onChange={(value) => setMaterialScalar(session, entity, 'normalScale', value)}/>)}
@@ -134,6 +143,31 @@ function LightSection({ entity }: {
           <ColorField label="Céu" value={light.skyColor} onChange={(rgb) => setLightColor(session, entity, 'skyColor', rgb)}/>
           <ColorField label="Chão" value={light.groundColor} onChange={(rgb) => setLightColor(session, entity, 'groundColor', rgb)}/>
         </>)}
+    </CollapsibleSection>);
+}
+function TerrainSection({ entity }: {
+    entity: Entity;
+}) {
+    const session = useEditorState();
+    const terrain = entity.terrain;
+    if (!terrain)
+        return null;
+    const { minHeight, maxHeight } = terrain.tiles;
+    return (<CollapsibleSection title="Terreno">
+      <PropertyRow label="Tamanho">
+        <FieldInput readOnly value={`${terrain.size} m · ${terrain.resolution}² vértices`} aria-label="Tamanho do terreno"/>
+      </PropertyRow>
+      <PropertyRow label="Alturas">
+        <FieldInput readOnly value={`${formatNumber(minHeight)} a ${formatNumber(maxHeight)} m`} aria-label="Faixa de alturas"/>
+      </PropertyRow>
+      <PropertyRow label="Camadas">
+        <FieldInput readOnly value={terrain.layers.map((layer) => layer.name).join(', ') || 'Nenhuma'} aria-label="Camadas"/>
+      </PropertyRow>
+      <ActionRow>
+        <ActionButton icon={Pickaxe} variant="primary" onClick={() => session.setTool('terrain')}>
+          Editar terreno (T)
+        </ActionButton>
+      </ActionRow>
     </CollapsibleSection>);
 }
 export function InspectorPanel() {
@@ -186,7 +220,12 @@ export function InspectorPanel() {
           </PropertyRow>
         </CollapsibleSection>
 
+        <CharacterSection entity={entity}/>
+        <RigSection entity={entity}/>
+        <BoneSection entity={entity}/>
+        <TerrainSection entity={entity}/>
         <MeshSection entity={entity}/>
+        <CsgSection entity={entity}/>
         <RigidBodySection entity={entity}/>
         <MaterialSection entity={entity}/>
         <TexturesSection entity={entity}/>
