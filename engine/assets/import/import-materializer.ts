@@ -3,12 +3,59 @@ import type { Entity } from '@/engine/core/scene/entity';
 import type { Scene } from '@/engine/core/scene/scene';
 import { createMaterial, type Material } from '@/engine/core/scene/material';
 import { createTexture, setTextureImage, type Texture, type TextureColorSpace, type TextureImage } from '@/engine/core/scene/texture';
+import { Skin } from '@/engine/core/scene/skin';
+import { Rig } from '@/engine/core/scene/rig';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { getLocalBounds } from '@/engine/renderer/geometry/bounds';
 import { decodeImage } from '@/engine/assets/image-decoder';
 import { heightMapToNormalMap, isLikelyHeightMap, packMetallicRoughness } from '@/engine/assets/texture-packing';
 import { DEFAULT_SMOOTHING_ANGLE_DEGREES, flipUvV, flipWinding, recomputeNormals } from './geometry-utils';
-import type { ImportedNode, ImportedScene, ImportUpAxis } from './import-types';
+import type { ImportedNode, ImportedScene, ImportedSkin, ImportUpAxis } from './import-types';
 export type ImportNormalsMode = 'keep' | 'smooth' | 'flat';
+function skinUnitScale(imported: ImportedScene, skin: ImportedSkin): number {
+    const parentOf = new Map<number, ImportedNode>();
+    const byIndex = new Map<number, ImportedNode>();
+    const visit = (node: ImportedNode, parent: ImportedNode | null) => {
+        if (node.nodeIndex !== undefined) {
+            byIndex.set(node.nodeIndex, node);
+            if (parent)
+                parentOf.set(node.nodeIndex, parent);
+        }
+        for (const child of node.children)
+            visit(child, node);
+    };
+    for (const root of imported.roots)
+        visit(root, null);
+    const jointSet = new Set(skin.joints);
+    const rootJoint = skin.joints.find((index) => {
+        let ancestor = parentOf.get(index);
+        while (ancestor && ancestor.nodeIndex !== undefined && !jointSet.has(ancestor.nodeIndex))
+            ancestor = parentOf.get(ancestor.nodeIndex);
+        return !ancestor || ancestor.nodeIndex === undefined;
+    });
+    let scale = 1;
+    for (let ancestor = rootJoint === undefined ? undefined : parentOf.get(rootJoint); ancestor; ancestor = ancestor.nodeIndex === undefined ? undefined : parentOf.get(ancestor.nodeIndex)) {
+        scale *= ancestor.scale[1];
+    }
+    return scale;
+}
+function rigOwnerFor(joints: readonly Entity[], root: Entity): Entity {
+    const jointSet = new Set(joints);
+    const rootJoint = joints.find((joint) => {
+        let ancestor = joint.parent;
+        while (ancestor && !jointSet.has(ancestor))
+            ancestor = ancestor.parent;
+        return ancestor === null;
+    });
+    const owner = rootJoint?.parent;
+    return owner && owner !== root && isDescendant(owner, root) ? owner : root;
+}
+function isDescendant(entity: Entity, ancestor: Entity): boolean {
+    for (let current = entity.parent; current; current = current.parent)
+        if (current === ancestor)
+            return true;
+    return false;
+}
 export type ImportUpAxisOption = 'auto' | ImportUpAxis;
 export interface MaterializeOptions {
     scale: number;
@@ -42,6 +89,7 @@ export interface MaterializedImport {
     materials: Material[];
     textures: Texture[];
     meshes: MaterializedMesh[];
+    nodes: Map<number, Entity>;
     missingTextures: number;
     notes: string[];
 }
@@ -63,6 +111,12 @@ class Materializer {
     private readonly meshes: MaterializedMesh[] = [];
     private readonly geometries: MeshData[] = [];
     private readonly notes: string[] = [];
+    private readonly nodes = new Map<number, Entity>();
+    private readonly pendingSkins: Array<{
+        entity: Entity;
+        skin: number;
+    }> = [];
+    private readonly skinsByIndex = new Map<number, Skin | null>();
     private defaultMaterial: Material | null = null;
     private missingTextures = 0;
     constructor(private readonly scene: Scene, private readonly imported: ImportedScene, private readonly options: MaterializeOptions) { }
@@ -201,14 +255,69 @@ class Materializer {
         vec3.copy(entity.transform.position, node.position);
         vec3.copy(entity.transform.rotation, node.rotation);
         vec3.copy(entity.transform.scale, node.scale);
-        if (!single) {
-            for (const meshIndex of meshes) {
-                scene.createEntity({ name: this.imported.meshes[meshIndex].name, kind: 'mesh', mesh: this.geometries[meshIndex], material: this.materialFor(meshIndex) }, entity);
-            }
-            for (const child of node.children)
-                this.buildNode(child, entity);
+        if (node.nodeIndex !== undefined)
+            this.nodes.set(node.nodeIndex, entity);
+        if (single) {
+            this.trackSkinned(entity, node, meshes[0]);
+            return entity;
         }
+        for (const meshIndex of meshes) {
+            const child = scene.createEntity({ name: this.imported.meshes[meshIndex].name, kind: 'mesh', mesh: this.geometries[meshIndex], material: this.materialFor(meshIndex) }, entity);
+            this.trackSkinned(child, node, meshIndex);
+        }
+        for (const child of node.children)
+            this.buildNode(child, entity);
         return entity;
+    }
+    private trackSkinned(entity: Entity, node: ImportedNode, meshIndex: number): void {
+        if (node.skin !== undefined && this.geometries[meshIndex].skinning)
+            this.pendingSkins.push({ entity, skin: node.skin });
+    }
+    private attachSkins(): void {
+        for (const { entity, skin: index } of this.pendingSkins) {
+            let skin = this.skinsByIndex.get(index);
+            if (skin === undefined) {
+                skin = this.createSkin(index, entity);
+                this.skinsByIndex.set(index, skin);
+            }
+            if (skin)
+                entity.skin = skin;
+        }
+    }
+    private createSkin(index: number, firstMesh: Entity): Skin | null {
+        const definition = this.imported.skins[index];
+        if (!definition || !firstMesh.mesh)
+            return null;
+        const joints = this.resolveJoints(definition);
+        if (!joints) {
+            this.notes.push(`${definition.name}: junta ausente; a malha ficou na pose de ligação.`);
+            return null;
+        }
+        return new Skin(joints, definition.inverseBindMatrices, getLocalBounds(firstMesh.mesh));
+    }
+    private resolveJoints(definition: ImportedSkin): Entity[] | null {
+        const joints: Entity[] = [];
+        for (const nodeIndex of definition.joints) {
+            const joint = this.nodes.get(nodeIndex);
+            if (!joint)
+                return null;
+            joints.push(joint);
+        }
+        return joints;
+    }
+    private attachRigs(root: Entity): void {
+        this.imported.skins.forEach((definition, index) => {
+            const joints = this.resolveJoints(definition);
+            if (!joints || joints.length === 0)
+                return;
+            const rig = new Rig({ name: definition.name, joints, inverseBindMatrices: definition.inverseBindMatrices, unitScale: skinUnitScale(this.imported, definition) });
+            const owner = index === 0 || root.rig === null ? root : rigOwnerFor(joints, root);
+            if (owner.rig) {
+                this.notes.push(`${definition.name}: mais de um esqueleto no mesmo ator; só o primeiro ficou como rig.`);
+                return;
+            }
+            owner.rig = rig;
+        });
     }
     async materialize(): Promise<MaterializedImport> {
         await this.buildMaterials();
@@ -232,7 +341,9 @@ class Materializer {
             if (options.rootName?.trim())
                 root.name = rootName;
         }
-        return { root, materials: this.materials, textures: this.textures, meshes: this.meshes, missingTextures: this.missingTextures, notes: this.notes };
+        this.attachSkins();
+        this.attachRigs(root);
+        return { root, materials: this.materials, textures: this.textures, meshes: this.meshes, nodes: this.nodes, missingTextures: this.missingTextures, notes: this.notes };
     }
 }
 export function materializeImportedScene(scene: Scene, imported: ImportedScene, options: MaterializeOptions = DEFAULT_MATERIALIZE_OPTIONS): Promise<MaterializedImport> {
