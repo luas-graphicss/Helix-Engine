@@ -83,6 +83,56 @@ export function getColumn(out: Vec3, m: Mat3, index: 0 | 1 | 2): Vec3 {
     out[2] = m[index * 3 + 2];
     return out;
 }
+export function add(out: Mat3, a: Mat3, b: Mat3): Mat3 {
+    for (let i = 0; i < 9; i++)
+        out[i] = a[i] + b[i];
+    return out;
+}
+export function fromScalar(out: Mat3, s: number): Mat3 {
+    out.fill(0);
+    out[0] = s;
+    out[4] = s;
+    out[8] = s;
+    return out;
+}
+export function invert(out: Mat3, m: Mat3): Mat3 | null {
+    const a00 = m[0], a10 = m[1], a20 = m[2];
+    const a01 = m[3], a11 = m[4], a21 = m[5];
+    const a02 = m[6], a12 = m[7], a22 = m[8];
+    const c00 = a11 * a22 - a21 * a12;
+    const c01 = a21 * a02 - a01 * a22;
+    const c02 = a01 * a12 - a11 * a02;
+    const det = a00 * c00 + a10 * c01 + a20 * c02;
+    if (!Number.isFinite(det) || Math.abs(det) < 1e-18)
+        return null;
+    const inv = 1 / det;
+    out[0] = c00 * inv;
+    out[1] = (a20 * a12 - a10 * a22) * inv;
+    out[2] = (a10 * a21 - a20 * a11) * inv;
+    out[3] = c01 * inv;
+    out[4] = (a00 * a22 - a20 * a02) * inv;
+    out[5] = (a20 * a01 - a00 * a21) * inv;
+    out[6] = c02 * inv;
+    out[7] = (a10 * a02 - a00 * a12) * inv;
+    out[8] = (a00 * a11 - a10 * a01) * inv;
+    return out;
+}
+export function subtractSkewSandwich(out: Mat3, r: Vec3, M: Mat3): Mat3 {
+    const x = r[0], y = r[1], z = r[2];
+    const p00 = -z * M[1] + y * M[2], p10 = z * M[0] - x * M[2], p20 = -y * M[0] + x * M[1];
+    const p01 = -z * M[4] + y * M[5], p11 = z * M[3] - x * M[5], p21 = -y * M[3] + x * M[4];
+    const p02 = -z * M[7] + y * M[8], p12 = z * M[6] - x * M[8], p22 = -y * M[6] + x * M[7];
+    out[0] -= p01 * z - p02 * y;
+    out[1] -= p11 * z - p12 * y;
+    out[2] -= p21 * z - p22 * y;
+    out[3] -= -p00 * z + p02 * x;
+    out[4] -= -p10 * z + p12 * x;
+    out[5] -= -p20 * z + p22 * x;
+    out[6] -= p00 * y - p01 * x;
+    out[7] -= p10 * y - p11 * x;
+    out[8] -= p20 * y - p21 * x;
+    return out;
+}
 export function rotateDiagonal(out: Mat3, rotation: Mat3, diagonal: Vec3): Mat3 {
     const r = rotation;
     const dx = diagonal[0], dy = diagonal[1], dz = diagonal[2];
