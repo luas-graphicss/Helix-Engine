@@ -1,11 +1,13 @@
 'use client';
-import { useCallback, useLayoutEffect, useRef, type PointerEvent as ReactPointerEvent, type WheelEvent } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, type PointerEvent as ReactPointerEvent, type WheelEvent } from 'react';
 import type { KeyRef } from '@/engine/core/animation/track-editing';
 import type { AnimationEditor } from '@/engine/editor/animation/animation-editor';
 import { prepareCanvas, readCanvasTheme } from '@/engine/editor/animation/ui/canvas-theme';
 import { drawDiamond, drawPlayhead, drawRuler, drawTimeGrid, hitTestEvent } from '@/engine/editor/animation/ui/timeline-draw';
 import { DRAG_THRESHOLD_PX, KEY_HIT_RADIUS, ROW_HEIGHT, RULER_HEIGHT, formatFrame, rowJoint, rowKeyRefs, timeSpan, timeToX, xToTime, type TimelineRow, } from '@/engine/editor/animation/ui/timeline-model';
-import { useAnimationEditor, useAnimationTime, useElementSize } from '@/engine/editor/animation/ui/use-animation-editor';
+import { useAnimationEditor } from '@/engine/editor/animation/ui/use-animation-editor';
+import { useCanvasLayer } from '@/engine/ui/use-canvas-layer';
+import { useElementSize } from '@/engine/ui/use-element-size';
 type DopesheetCanvasProps = {
     rows: readonly TimelineRow[];
     scrollTop: number;
@@ -51,9 +53,9 @@ function timeKey(time: number): string {
 }
 export function DopesheetCanvas({ rows, scrollTop, onWheelScroll, selectedEvent, onSelectEvent }: DopesheetCanvasProps) {
     const editor = useAnimationEditor();
-    const time = useAnimationTime();
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const overlayRef = useRef<HTMLCanvasElement>(null);
     const size = useElementSize(containerRef);
     const dragRef = useRef<Drag | null>(null);
     const hoverRef = useRef<KeyHit | null>(null);
@@ -166,12 +168,17 @@ export function DopesheetCanvas({ rows, scrollTop, onWheelScroll, selectedEvent,
             ctx.strokeRect(Math.round(x) + 0.5, Math.round(y) + 0.5, Math.round(w), Math.round(h));
         }
         drawRuler(ctx, theme, { width, duration, frameRate, events: document.events, selectedEvent, hoveredEvent: hoveredEventRef.current });
-        drawPlayhead(ctx, theme, timeToX(editor.time, duration, width), height, formatFrame(editor.time, frameRate));
-    }, [editor, rows, scrollTop, size, selectedEvent, time]);
+    }, [editor, rows, scrollTop, size, selectedEvent]);
     const version = editor.getVersion();
     useLayoutEffect(() => {
         draw();
     }, [draw, version]);
+    const playheadSubscribes = useMemo(() => [editor.subscribeTime, editor.subscribe], [editor]);
+    useCanvasLayer(overlayRef, size, playheadSubscribes, (ctx, theme, width, height) => {
+        if (!editor.document)
+            return;
+        drawPlayhead(ctx, theme, timeToX(editor.time, editor.duration, width), height, formatFrame(editor.time, editor.frameRate));
+    });
     const setCursor = (event: ReactPointerEvent, cursor: string) => {
         ;
         (event.currentTarget as HTMLElement).style.cursor = cursor;
@@ -327,5 +334,6 @@ export function DopesheetCanvas({ rows, scrollTop, onWheelScroll, selectedEvent,
     };
     return (<div ref={containerRef} className="relative h-full w-full overflow-hidden">
       <canvas ref={canvasRef} role="img" aria-label="Linha do tempo das chaves de animação" className="block h-full w-full touch-none" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave} onWheel={onWheel}/>
+      <canvas ref={overlayRef} aria-hidden className="pointer-events-none absolute inset-0 block h-full w-full"/>
     </div>);
 }
