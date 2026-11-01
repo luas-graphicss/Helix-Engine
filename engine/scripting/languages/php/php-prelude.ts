@@ -569,5 +569,285 @@ final class Game
         $text = rtrim($this->pendingOutput, "\n");
         $at = $this->pendingOutputAt;
         $this->pendingOutput = '';
+        $this->pendingOutputAt = null;
+        $this->host->console('info', $text, $at[0] ?? null, $at[1] ?? 0);
+    }
+
+    private function warning(int $level, string $message, string $file, int $line): bool
+    {
+        if ((error_reporting() & $level) === 0) {
+            return true;
+        }
+        $severity = match ($level) {
+            E_USER_ERROR, E_RECOVERABLE_ERROR => 'error',
+            E_DEPRECATED, E_USER_DEPRECATED, E_NOTICE, E_USER_NOTICE => 'debug',
+            default => 'warn',
+        };
+        $label = match ($level) {
+            E_DEPRECATED, E_USER_DEPRECATED => 'Deprecated',
+            E_NOTICE, E_USER_NOTICE => 'Notice',
+            E_USER_ERROR, E_RECOVERABLE_ERROR => 'Error',
+            default => 'Warning',
+        };
+        $at = str_starts_with($file, SCRIPT_DIR) ? [$file, $line] : $this->scriptFrame(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS));
+        $this->host->console($severity, $label . ': ' . $message, $at[0] ?? null, $at[1] ?? 0);
+        return true;
+    }
+
+                                                                                                    
+    private function scriptFrame(array $trace): ?array
+    {
+        foreach ($trace as $index => $frame) {
+            $file = $frame['file'] ?? '';
+            if (str_starts_with($file, SCRIPT_DIR)) {
+                $function = $trace[$index + 1]['function'] ?? null;
+                return [$file, (int) ($frame['line'] ?? 0), is_string($function) ? $function : ''];
+            }
+        }
+        return null;
+    }
+
+    public function where(): ?string
+    {
+        $at = $this->scriptFrame(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS));
+        return $at === null ? null : json_encode($at, JSON_OUT);
+    }
+
+                                                                                                   
+
+       
+                                                                                
+                                                                              
+                                                                               
+                                                               
+       
+    private function include(string $key, string $file, string $path, string $version, ?Ref $helix, mixed $script): Included
+    {
+        $existing = $this->included[$key] ?? null;
+        if ($existing !== null && $existing->declared) {
+            if ($existing->version !== $version) {
+                throw new EngineError(sprintf('%s mudou durante o playtest, mas declara funções ou classes e o PHP não as recarrega a quente. Reinicie o playtest para aplicar a alteração.', $file));
+            }
+            return $existing;
+        }
+        $classesBefore = count(get_declared_classes());
+        $functionsBefore = count(get_defined_functions()['user']);
+        $this->keysByPath[$path] = $key;
+        $returned = (static function (string $__path, ?Ref $helix, mixed $script): mixed {
+            return require $__path;
+        })($path, $helix, $script);
+        $classes = array_values(array_filter(array_slice(get_declared_classes(), $classesBefore), fn (string $class) => (new \ReflectionClass($class))->getFileName() === $path));
+        $functions = array_values(array_filter(array_slice(get_defined_functions()['user'], $functionsBefore), fn (string $function) => (new \ReflectionFunction($function))->getFileName() === $path));
+        $declared = $classes !== [] || $functions !== [];
+        $included = new Included($version, $declared, $classes, $functions, $returned);
+        $this->included[$key] = $included;
+        return $included;
+    }
+
+                                                                                                                               
+    private function hooksFromValue(mixed $value): array
+    {
+        $hooks = [];
+        if ($value instanceof Data) {
+            $value = $value->getArrayCopy();
+        }
+        if (is_array($value)) {
+            foreach (HOOKS as $hook => $aliases) {
+                foreach ($aliases as $alias) {
+                    $candidate = $value[$alias] ?? null;
+                    if ($candidate instanceof \Closure) {
+                        $hooks[$hook] = $candidate;
+                        break;
+                    }
+                }
+            }
+        } elseif (is_object($value) && !$value instanceof Ref && !$value instanceof Func) {
+            $hooks = $this->hooksFromInstance($value);
+        }
+        return $hooks;
+    }
+
+    private function hooksFromInstance(object $instance): array
+    {
+        $hooks = [];
+        foreach (HOOKS as $hook => $aliases) {
+            foreach ($aliases as $alias) {
+                if (method_exists($instance, $alias)) {
+                    $hooks[$hook] = \Closure::fromCallable([$instance, $alias]);
+                    break;
+                }
+            }
+        }
+        return $hooks;
+    }
+
+    private static function declaresHooks(string $class): bool
+    {
+        foreach (HOOKS as $aliases) {
+            foreach ($aliases as $alias) {
+                if (method_exists($class, $alias)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+       
+                                                                             
+                                                                        
+                                                                             
+                                                                              
+                                                 
+       
+    private function hooksFromClass(Included $included, string $file, string $classId, ?Ref $helix, mixed $script): array
+    {
+        $candidates = array_values(array_filter($included->classes, fn (string $class) => self::declaresHooks($class) && !(new \ReflectionClass($class))->isAbstract()));
+        if ($candidates === []) {
+            return [];
+        }
+        $wanted = strtolower($classId);
+        $named = array_values(array_filter($candidates, fn (string $class) => strtolower((new \ReflectionClass($class))->getShortName()) === $wanted));
+        if (count($named) === 1) {
+            $class = $named[0];
+        } elseif (count($candidates) === 1) {
+            $class = $candidates[0];
+        } else {
+            throw new EngineError(sprintf('%s define várias classes com hooks (%s); nomeie uma como o arquivo ou deixe só uma.', $file, implode(', ', array_map(fn (string $class) => (new \ReflectionClass($class))->getShortName(), $candidates))));
+        }
+        $reflection = new \ReflectionClass($class);
+        $constructor = $reflection->getConstructor();
+        if ($constructor !== null && $constructor->getNumberOfRequiredParameters() > 0) {
+            throw new EngineError(sprintf('a classe %s precisa de um construtor sem parâmetros obrigatórios para a engine instanciá-la por ator.', $reflection->getShortName()));
+        }
+        $instance = $reflection->newInstance();
+        $entity = $helix?->self;
+        foreach (['helix' => $helix, 'self' => $entity, 'actor' => $entity, 'entity' => $entity, 'script' => $script] as $name => $value) {
+            if ($instance instanceof Script || property_exists($instance, $name)) {
+                $instance->{$name} = $value;
+            }
+        }
+        return $this->hooksFromInstance($instance);
+    }
+
+    private function exportsOf(Included $included): mixed
+    {
+        if ($included->returned !== null && $included->returned !== 1) {
+            return $included->returned;
+        }
+        $exports = [];
+        foreach ($included->functions as $function) {
+            $exports[(new \ReflectionFunction($function))->getShortName()] = \Closure::fromCallable($function);
+        }
+        return $exports;
+    }
+
+                                                                                                                                                        
+    public function requireScript(string $name, ?string $fromPath): mixed
+    {
+        if ($name === 'helix') {
+            return $this->root;
+        }
+        $fromKey = $fromPath !== null ? ($this->keysByPath[$fromPath] ?? null) : null;
+        $resolved = $this->materialize($this->host->resolve($fromKey, $name));
+        if ($resolved instanceof Data && ($resolved[KIND] ?? null) === 'module') {
+            return $this->requireModule((string) $resolved['key'], (string) $resolved['file'], (string) $resolved['path'], (string) $resolved['version']);
+        }
+        if ($resolved instanceof Data && ($resolved[KIND] ?? null) === 'missing') {
+            throw new EngineError((string) $resolved['message']);
+        }
+        return $resolved;
+    }
+
+    public function requireModule(string $key, string $file, string $path, string $version): mixed
+    {
+        if (array_key_exists($key, $this->modules)) {
+            return $this->modules[$key];
+        }
+        foreach ($this->loading as $index => [$loadingKey]) {
+            if ($loadingKey === $key) {
+                $chain = array_map(fn (array $entry) => $entry[1], array_slice($this->loading, $index));
+                $chain[] = $file;
+                throw new EngineError('Importação circular: ' . implode(' → ', $chain) . '. Quebre o ciclo movendo o que os dois usam para um terceiro módulo.');
+            }
+        }
+        $this->loading[] = [$key, $file];
+        try {
+            $included = $this->include($key, $file, $path, $version, $this->root, null);
+        } finally {
+            array_pop($this->loading);
+        }
+        $exports = $this->exportsOf($included);
+        $this->modules[$key] = $exports;
+        return $exports;
+    }
+
+                                                                                                  
+
+       
+                                                                            
+                                                                                   
+                                                                                  
+                                                                             
+       
+    private function failure(\Throwable $exception): array
+    {
+        $frames = [];
+        $location = [$exception->getFile(), $exception->getLine()];
+        foreach ($exception->getTrace() as $frame) {
+            if (str_starts_with($location[0], SCRIPT_DIR)) {
+                $frames[] = [$location[0], $location[1], self::frameName($frame)];
+            }
+            $location = [(string) ($frame['file'] ?? ''), (int) ($frame['line'] ?? 0)];
+        }
+        if (str_starts_with($location[0], SCRIPT_DIR)) {
+            $frames[] = [$location[0], $location[1], ''];
+        }
+        $name = $exception instanceof EngineError ? $exception->engineName : (new \ReflectionClass($exception))->getShortName();
+        return [KIND => 'err', 'message' => $exception->getMessage() !== '' ? $exception->getMessage() : $name, 'name' => $name, 'frames' => array_reverse($frames)];
+    }
+
+    private static function frameName(array $frame): string
+    {
+        $function = (string) ($frame['function'] ?? '');
+        if ($function === '' || in_array($function, ['require', 'require_once', 'include', 'include_once'], true)) {
+            return '';
+        }
+        if (str_starts_with($function, '{closure')) {
+            return 'closure';
+        }
+        return (string) ($frame['class'] ?? '') . (string) ($frame['type'] ?? '') . $function;
+    }
+
+    private function reply(array $result): string
+    {
+        $this->flushOutput();
+        $encoded = json_encode($result, JSON_OUT);
+        return $encoded === false ? '["error",{"' . KIND . '":"err","message":"resposta do prelúdio não serializável","name":"Error","frames":[]}]' : $encoded;
+    }
+
+    private function error(\Throwable $exception): string
+    {
+        return $this->reply(['error', $this->failure($exception)]);
+    }
+
+                                                                                                        
+
+    public function setRoot(string $json): void
+    {
+        $this->root = $this->materialize($json);
+    }
+
+    public function instantiate(string $key, string $file, string $path, string $version, string $classId, string $helixJson, string $scriptJson): string
+    {
+        try {
+            $helix = $this->materialize($helixJson);
+            $script = $this->materialize($scriptJson);
+            $included = $this->include($key, $file, $path, $version, $helix, $script);
+                                                                                                                                    
+            $hooks = $this->hooksFromClass($included, $file, $classId, $helix, $script);
+            if ($hooks === [] && !$included->declared) {
+                $hooks = $this->hooksFromValue($included->returned);
+            }
 `;
 }
