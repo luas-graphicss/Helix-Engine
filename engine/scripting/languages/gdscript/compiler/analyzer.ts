@@ -2714,4 +2714,104 @@ class Analyzer {
                 return false;
         }
     }
+    private evaluateConstant(e: Expression): unknown {
+        switch (e.kind) {
+            case 'literal':
+                return e.value;
+            case 'string':
+                return e.value;
+            case 'unary': {
+                const operand = this.evaluateConstant(e.operand);
+                if (typeof operand === 'number') {
+                    if (e.operator === '-')
+                        return -operand;
+                    if (e.operator === '+')
+                        return operand;
+                    if (e.operator === '~')
+                        return ~operand;
+                }
+                if (typeof operand === 'boolean' && e.operator === 'not')
+                    return !operand;
+                return undefined;
+            }
+            case 'binary': {
+                const left = this.evaluateConstant(e.left);
+                const right = this.evaluateConstant(e.right);
+                if (typeof left === 'number' && typeof right === 'number') {
+                    const ints = Number.isInteger(left) && Number.isInteger(right);
+                    switch (e.operator) {
+                        case '+':
+                            return left + right;
+                        case '-':
+                            return left - right;
+                        case '*':
+                            return left * right;
+                        case '/':
+                            return right === 0 ? undefined : ints ? Math.trunc(left / right) : left / right;
+                        case '%':
+                            return right === 0 ? undefined : left % right;
+                        case '**':
+                            return left ** right;
+                        case '<<':
+                            return left * 2 ** right;
+                        case '>>':
+                            return Math.floor(left / 2 ** right);
+                        case '&':
+                            return left & right;
+                        case '|':
+                            return left | right;
+                        case '^':
+                            return left ^ right;
+                        default:
+                            return undefined;
+                    }
+                }
+                if (typeof left === 'string' && typeof right === 'string' && e.operator === '+')
+                    return left + right;
+                return undefined;
+            }
+            case 'identifier': {
+                const resolution = e.resolved;
+                if (!resolution)
+                    return undefined;
+                if (resolution.kind === 'constant')
+                    return CONSTANTS[resolution.name] ?? TYPE_CONSTANTS[resolution.name] ?? GODOT_CONSTANTS[resolution.name];
+                if (resolution.kind === 'member') {
+                    const member = this.findMember(this.fn!.cls, e.name) ?? this.findStaticInOuters(this.fn!.cls, e.name);
+                    if (member && (member.kind === 'const' || member.kind === 'enum_value')) {
+                        this.touchStatic(member);
+                        return member.constValue;
+                    }
+                }
+                return undefined;
+            }
+            case 'member': {
+                const type = e.object.type ?? '';
+                if (type.startsWith('@enum:')) {
+                    const dot = type.lastIndexOf('.');
+                    const owner = this.classesByTypeName.get(type.slice(6, dot));
+                    const enumMember = owner ? this.findMember(owner, type.slice(dot + 1)) : null;
+                    return enumMember?.enumValues?.get(e.name);
+                }
+                if (type.startsWith('@class:')) {
+                    const cls = this.classesByTypeName.get(type.slice(7));
+                    const member = cls ? this.findMember(cls, e.name) : null;
+                    if (member && (member.kind === 'const' || member.kind === 'enum_value')) {
+                        this.touchStatic(member);
+                        return member.constValue;
+                    }
+                }
+                if (type.startsWith('@singleton:')) {
+                    const entry = SINGLETON_MEMBERS[type.slice(11)]?.[e.name];
+                    return entry?.kind === 'constant' ? entry.value : undefined;
+                }
+                return undefined;
+            }
+            default:
+                return undefined;
+        }
+    }
+}
+export function analyze(input: AnalyzeInput): AnalysisResult {
+    return new Analyzer(input).run();
 }
