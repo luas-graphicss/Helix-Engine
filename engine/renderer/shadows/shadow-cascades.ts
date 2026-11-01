@@ -8,10 +8,11 @@ import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-cam
 export const MAX_SHADOW_CASCADES = 4;
 const WORLD_UP = vec3.create(0, 1, 0);
 const WORLD_FORWARD = vec3.create(0, 0, 1);
-const SPLIT_LAMBDA = 0.8;
+const SPLIT_LAMBDA = 1;
 const RADIUS_PADDING = 1.04;
-const MIN_SPLIT_NEAR = 0.3;
+const MIN_SPLIT_NEAR = 1;
 const MIN_SHADOW_FAR = 4;
+const SHADOW_FAR_STEP = 1.25;
 const DEPTH_PADDING = 1;
 const DEPTH_SLACK_FRACTION = 0.25;
 const CLIP_TO_TEXTURE = new Float32Array([0.5, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 0.5, 0, 0.5, 0.5, 0.5, 1]);
@@ -33,6 +34,7 @@ export class ShadowCascades {
     private readonly cameraWorld = mat4.create();
     private readonly lightViews: Mat4[] = [];
     private readonly depthRanges: Float64Array;
+    private committedFar = 0;
     private readonly lightProjection = mat4.create();
     private readonly shadowMatrix = mat4.create();
     private readonly forward = vec3.create();
@@ -54,7 +56,7 @@ export class ShadowCascades {
         }
     }
     prepare(camera: PerspectiveCamera, casterBounds: Aabb, maxDistance: number): void {
-        const shadowFar = this.computeShadowFar(camera, casterBounds, maxDistance);
+        const shadowFar = this.stabilizeShadowFar(this.computeShadowFar(camera, casterBounds, maxDistance), maxDistance);
         this.computeSplits(Math.min(Math.max(camera.near, MIN_SPLIT_NEAR), shadowFar * 0.5), shadowFar);
         mat4.invert(this.cameraWorld, camera.viewMatrix);
         vec3.set(this.forward, -this.cameraWorld[8], -this.cameraWorld[9], -this.cameraWorld[10]);
@@ -104,6 +106,14 @@ export class ShadowCascades {
             farthest = Math.max(farthest, vec3.distance(camera.position, this.corner));
         }
         return Math.max(Math.min(camera.far, maxDistance, farthest), MIN_SHADOW_FAR);
+    }
+    private stabilizeShadowFar(desired: number, maxDistance: number): number {
+        const current = this.committedFar;
+        if (desired > current || desired * SHADOW_FAR_STEP * SHADOW_FAR_STEP <= current) {
+            const exponent = Math.ceil(Math.log(desired) / Math.log(SHADOW_FAR_STEP));
+            this.committedFar = Math.min(Math.pow(SHADOW_FAR_STEP, exponent), Math.max(maxDistance, MIN_SHADOW_FAR));
+        }
+        return this.committedFar;
     }
     private computeSplits(near: number, far: number): void {
         const { splits, count } = this;
