@@ -841,5 +841,229 @@ public class DebugJogo : ActorScript
         assinaturas.Add(Helix.Play.OnStopped(() => Helix.Log.Info("Debug", "play.onStopped disparou")));
         assinaturas.Add(Helix.Play.OnPaused(() => Helix.Log.Info("Debug", "pausado")));
         assinaturas.Add(Helix.Play.OnResumed(() => Helix.Log.Info("Debug", "retomado")));
+        return Task.CompletedTask;
+    }
+
+    private async Task Tempo()
+    {
+        var t = Helix.Time;
+        Checar("time.now", t.Now >= 0 && t.Frame >= 0);
+        Checar("time.delta", t.Delta >= 0 && t.FixedDelta > 0 && t.UnscaledDelta >= 0);
+        Checar("time.realtime", t.Realtime >= 0);
+        var inicio = t.Now;
+        await t.Wait(0.1);
+        Checar("time.wait", t.Now - inicio >= 0.09, $"{t.Now - inicio:F3}");
+        var quadro = t.Frame;
+        await t.WaitFrames(2);
+        Checar("time.waitFrames", t.Frame >= quadro + 2, t.Frame - quadro);
+        assinaturas.Add(t.Every(2, () => Helix.Gui.Bind("atores", Helix.Scene.Count())));
+        var disparou = false;
+        t.Delay(0.2, () => { disparou = true; });
+        t.NextFrame(() => { });
+        var tarefa = Helix.Task.Spawn(async () => { await t.Wait(0.3); });
+        Checar("task.spawn", tarefa.Finished == false && Helix.Task.Running >= 1);
+        await tarefa.Done;
+        Checar("task.done", tarefa.Finished == true && tarefa.Cancelled == false);
+        Checar("time.delay", disparou);
+        var cancelada = Helix.Task.Spawn(async () => { await t.Wait(10); });
+        Helix.Task.Cancel(cancelada);
+        Checar("task.cancel", cancelada.Cancelled == true);
+        await Helix.Task.All(new[] { Helix.Task.Spawn(() => 1), Helix.Task.Spawn(() => 2) });
+    }
+
+    private async Task DadosEProjeto()
+    {
+        await Helix.Storage.Ready();
+        int execucoes = (int)(Helix.Storage.Get("execucoes", 0) ?? 0) + 1;
+        await Helix.Storage.Set("execucoes", execucoes);
+        Checar("storage.get/set", Helix.Storage.Get("execucoes") == execucoes && Helix.Storage.Has("execucoes"));
+        Checar("storage.keys", Helix.Storage.Keys().Contains("execucoes"));
+        var slot = Helix.Storage.Slot("debug");
+        await slot.Set("linguagem", LINGUAGEM);
+        Checar("storage.slot", slot.Get("linguagem") == LINGUAGEM && Helix.Storage.Slots().Contains("debug"));
+        Checar("storage.snapshot", Helix.Storage.Snapshot() != null);
+        Helix.Storage.Session.Set("volatil", 1);
+        Checar("storage.session", Helix.Storage.Session.Get("volatil") == 1);
+        Helix.Log.Info("Debug", $"Execução nº {execucoes} deste jogo de teste neste projeto.");
+
+        var cfg = await Helix.Assets.Data("DebugConfig");
+        Checar("assets.data(toml)", cfg != null && cfg.Jogador != null && cfg.Jogador.Velocidade == 6.5, cfg);
+        Checar("assets.text", ((string)await Helix.Assets.Text("DebugConfig")).Contains("velocidade"));
+        Checar("assets.bytes", (await Helix.Assets.Bytes("DebugConfig")).Length > 0);
+        Checar("assets.byName", Helix.Assets.ByName("DebugJogo", "script") != null);
+        Checar("assets.get", Helix.Assets.Get(Helix.Assets.ByName("DebugJogo", "script").Id) != null);
+        Checar("assets.list/kinds", Helix.Assets.List().Length > 0 && Helix.Assets.Kinds().Contains("script"));
+        Checar("assets.exists", Helix.Assets.Exists("DebugUtil") && !Helix.Assets.Exists("NaoExiste"));
+        Checar("assets.search", Helix.Assets.Search("Debug").Length >= 5);
+        Checar("assets.tags", Helix.Assets.Tags("DebugUtil") is Array);
+        var script = await Helix.Assets.Script("DebugUtil");
+        Checar("assets.script", script.Language.Length > 0 && script.Source.Length > 0);
+        Checar("assets.file", (await Helix.Assets.File("DebugConfig")).Size > 0);
+        Checar("assets.url", ((string)await Helix.Assets.Url("DebugConfig")).Length > 0);
+        Checar("assets.status/count", Helix.Assets.Count > 0 && new[] { "idle", "loading", "ready", "unavailable" }.Contains((string)Helix.Assets.Status));
+        assinaturas.Add(Helix.Assets.OnChange(e => Helix.Log.Debug("Debug", $"ativo {e.Type}: {e.Asset.Name}")));
+
+        Checar("project.name", Helix.Project.Name is string);
+        Checar("project.stats", Helix.Project.Stats.Entities > 0);
+        Checar("project.settings", Helix.Project.Settings.Physics.FixedTimestep > 0);
+        Checar("project.info", Helix.Project.Info().Id == Helix.Project.Id);
+        Checar("autosave", new[] { "clean", "dirty", "saving", "error" }.Contains((string)Helix.Project.Autosave.State));
+        Checar("project.quota", (await Helix.Project.Quota()).Used is double);
+
+        Helix.Net.Rpc("eco", x => x);
+        Checar("net.rpc/call", (await Helix.Net.Call("eco", 42)) == 42 && Helix.Net.HasRpc("eco") && Helix.Net.Rpcs().Contains("eco"));
+        Checar("net.localPlayer", Helix.Net.LocalPlayer.Local == true && Helix.Net.Players().Length >= 1);
+        Checar("net.transport", Helix.Net.Transport == "local" && Helix.Net.IsServer is bool);
+        Checar("net.replicate", Helix.Net.Replicate(torus, new[] { "name" }) is Array);
+
+        Checar("play.state", Helix.Play.State == "playing" && Helix.Play.IsRunning);
+        Checar("play.timeScale", Helix.Play.TimeScale == Helix.Time.Scale);
+        Checar("play.elapsed", Helix.Play.Elapsed >= 0);
+    }
+
+    private async Task Salvamentos()
+    {
+        var alvo = Helix.Scene.Find("CaixaFurada");
+        var prefab = await Helix.Scene.SaveAsPrefab(alvo, "DebugPrefab");
+        Checar("saveAsPrefab", ((string)prefab.Name).StartsWith("DebugPrefab"), prefab.Kind);
+        var instancia = await Helix.Scene.InstantiatePrefab(prefab);
+        Helix.Transform.SetPosition(instancia, V(7, 0.5f, 4));
+        Checar("instantiatePrefab", Helix.Scene.IsAttached(instancia));
+        var modelo = await Helix.Mesh.ToModelAsset(Helix.Mesh.TorusKnot(0.5, 0.15), "DebugModelo");
+        Checar("toModelAsset", modelo.Kind == "model");
+        var malha = await Helix.Mesh.FromModelAsset(modelo);
+        Checar("fromModelAsset", Helix.Mesh.TriangleCount(malha) > 0);
+        var no = await Helix.Scene.Instantiate(modelo, new { position = V(-7, 1, -4), name = "NoDoModelo" });
+        Checar("scene.instantiate", Helix.Scene.IsAttached(no));
+        var doc = Helix.Animation.SetKey(Helix.Animation.Create("DebugClipe", new { duration = 1 }), "hips", "rotation", 0, new[] { 0f, 0f, 0f, 1f });
+        var clipe = await Helix.Animation.Save(doc, "DebugClipe");
+        Checar("animation.save", clipe.Kind == "animation");
+        Checar("animation.document", (await Helix.Animation.Document(clipe)).Tracks.Length == 1);
+        var salvo = Helix.Materials.Save(Helix.Material.Create(new { baseColor = "#9b5de5" }), "DebugMaterial");
+        Checar("materials.save/get", salvo != null && Helix.Materials.Get("DebugMaterial") != null);
+        if (salvo != null)
+        {
+            var instanciado = Helix.Materials.Instantiate("DebugMaterial");
+            Checar("materials.instantiate", instanciado != null && Helix.Materials.ForMaterial(instanciado) != null);
+            Checar("materials.apply", Helix.Materials.Apply(Helix.Scene.Find("Cone"), "DebugMaterial") == true);
+            Helix.Materials.Remove("DebugMaterial");
+            Checar("materials.remove", Helix.Materials.Get("DebugMaterial") == null);
+        }
+    }
+
+                                                                                                      
+
+    public override void OnLoad()
+    {
+        Helix.Log.Info("Debug", "OnLoad do script de entrada");
+    }
+
+    public override async void OnStart()
+    {
+        Helix.Log.Info("Debug", $"Jogo de teste em {LINGUAGEM}: percorrendo a API…");
+        await Area("Núcleo", Nucleo);
+        await Area("Módulo (classe irmã)", Modulo);
+        await Area("Matemática", Matematica);
+        await Area("Cena", Cena);
+        await Area("Transformações", Transformacao);
+        await Area("Malhas e CSG", Malhas);
+        await Area("Materiais e texturas", Materiais);
+        await Area("Luzes", Luzes);
+        await Area("Céu e mundo", Ceu);
+        await Area("Câmera", Camera);
+        await Area("Pós-processamento", Pos);
+        await Area("Render", Render);
+        await Area("Física", Fisica);
+        await Area("Personagem e jogador", Personagem);
+        await Area("Terreno", Terreno);
+        await Area("Interface", InterfaceGrafica);
+        await Area("Áudio", Audio);
+        await Area("Animação", Animacao);
+        await Area("VFX", Vfx);
+        await Area("Entrada", Entrada);
+        await Area("Eventos", Eventos);
+        await Area("Tempo e tarefas", Tempo);
+        await Area("Dados, projeto e rede", DadosEProjeto);
+        await Area("Salvamentos na biblioteca", Salvamentos);
+        var girador = Helix.Assets.ByName("DebugGirador", "script");
+        if (girador != null)
+        {
+            var extra = Helix.Scene.SpawnPrimitive("box", new { name = "GiradorDinamico", position = V(-2, 0.5f, -3), rigidBody = new { type = "kinematic", collider = "box" }, script = new { assetId = girador.Id, props = new { velocidade = 180, cor = "#00b4d8" } } });
+            Checar("spawn com script", extra.Script != null && extra.Script.AssetId == girador.Id);
+        }
+        else
+        {
+            Checar("ativo DebugGirador", false, "não está na biblioteca");
+        }
+        Resumo();
+    }
+
+    private void Resumo()
+    {
+        const string dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.";
+        if (falhas == 0) Helix.Log.Info("Debug", $"API percorrida em {LINGUAGEM}: {checagens} checagens, nenhuma falha. {dica}");
+        else Helix.Log.Warn("Debug", $"API percorrida em {LINGUAGEM}: {checagens} checagens, {falhas} falhas (veja FALHOU/ERRO acima). {dica}");
+        Helix.Gui.Bind("checagens", checagens);
+        Helix.Gui.Bind("falhas", falhas);
+    }
+
+    public override void OnUpdate(float dt)
+    {
+        quadros++;
+        if (torus != null) Helix.Transform.Rotate(torus, V(0, 40 * dt, 0));
+        var d = Helix.Debug;
+        d.Line(V(-6, 0.05f, -6), V(6, 0.05f, -6), "#ff006e");
+        d.Box(new { center = V(0, 1, 3), size = V(3, 2, 3) }, "#ffbe0b");
+        if (heroi != null)
+        {
+            d.Axes(heroi, 1);
+            d.Text(Helix.Math.Vec3.Add(Helix.Transform.WorldPosition(heroi), V(0, 2.2f, 0)), $"Heroi · {pontos} pts", "#ffffff");
+        }
+        if (torus != null) d.Bounds(torus, "#3a86ff");
+        d.Ray(V(0, 3, 0), V(0, -1, 0), 3, "#06d6a0");
+        hudTimer += dt;
+        if (hudTimer >= 0.5f)
+        {
+            hudTimer = 0;
+            Helix.Gui.Bind("fps", Math.Round((double)Helix.Render.Stats.Fps));
+            Helix.Gui.Bind("checagens", checagens);
+            Helix.Gui.Bind("falhas", falhas);
+        }
+    }
+
+    public override void OnFixedUpdate(float h)
+    {
+        passosFisica++;
+        if (passosFisica == 1) Checar("OnFixedUpdate recebe o passo", h > 0 && h < 1, h);
+    }
+
+    public override void OnLateUpdate(float dt)
+    {
+        lateUpdates++;
+    }
+
+    public void OnRender(dynamic frame)
+    {
+        rendersHook++;
+        if (rendersHook == 1) Checar("OnRender recebe o frame", frame.Width is double);
+    }
+
+    public object OnBeforeHotReload()
+    {
+        return new { pontos = pontos };
+    }
+
+    public void OnHotReload(dynamic anterior)
+    {
+        pontos = anterior != null && anterior.Pontos is int ? (int)anterior.Pontos : 0;
+        Helix.Log.Info("Debug", $"Recarga a quente: {pontos} pontos preservados");
+    }
+
+    public override void OnStop()
+    {
+        foreach (var desligar in assinaturas) desligar();
+        Helix.Log.Info("Debug", $"Parou: {quadros} quadros, {passosFisica} passos de física, {lateUpdates} lateUpdates, {renders} frames (onAfterFrame), {rendersHook} OnRender, {colisoes} colisões.");
+    }
+}
 `;
 }
