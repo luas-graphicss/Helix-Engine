@@ -1900,3 +1900,154 @@ export class Viewport extends GodotObject {
 }
 markScriptClass(Viewport, 'Viewport');
 setGodotBase(Viewport, 'Viewport');
+export class Window extends Viewport {
+    static readonly MODE_WINDOWED = 0;
+    static readonly MODE_MINIMIZED = 1;
+    static readonly MODE_MAXIMIZED = 2;
+    static readonly MODE_FULLSCREEN = 3;
+    static readonly MODE_EXCLUSIVE_FULLSCREEN = 4;
+    static readonly CONTENT_SCALE_MODE_DISABLED = 0;
+    static readonly CONTENT_SCALE_MODE_CANVAS_ITEMS = 1;
+    static readonly CONTENT_SCALE_MODE_VIEWPORT = 2;
+    static readonly CONTENT_SCALE_ASPECT_IGNORE = 0;
+    static readonly CONTENT_SCALE_ASPECT_KEEP = 1;
+    static readonly CONTENT_SCALE_ASPECT_EXPAND = 4;
+    title = '';
+    content_scale_mode = 0;
+    content_scale_aspect = 1;
+    content_scale_size = new Vector2i(0, 0);
+    get mode(): number {
+        const doc = (globalThis as unknown as {
+            document?: {
+                fullscreenElement?: unknown;
+            };
+        }).document;
+        return doc?.fullscreenElement ? 3 : 0;
+    }
+    set mode(value: unknown) {
+        const doc = (globalThis as unknown as {
+            document?: {
+                fullscreenElement?: unknown;
+                exitFullscreen?: () => Promise<void>;
+                documentElement?: {
+                    requestFullscreen?: () => Promise<void>;
+                };
+            };
+        }).document;
+        if (!doc)
+            return;
+        if (Number(value) >= 3)
+            doc.documentElement?.requestFullscreen?.()?.catch(() => { });
+        else if (doc.fullscreenElement)
+            doc.exitFullscreen?.()?.catch(() => { });
+    }
+    get size_changed(): Signal {
+        return this.$builtinSignal('size_changed');
+    }
+    get close_requested(): Signal {
+        return this.$builtinSignal('close_requested');
+    }
+    get_position(): Vector2i {
+        return new Vector2i(0, 0);
+    }
+    set_size(_value: unknown): void {
+        this.$game.warnOnce('window_size', 'Window.size: o tamanho da janela é do navegador; a chamada foi ignorada.');
+    }
+    get_contents_minimum_size(): Vector2 {
+        return new Vector2();
+    }
+    has_focus(): boolean {
+        const doc = (globalThis as unknown as {
+            document?: {
+                hasFocus?: () => boolean;
+            };
+        }).document;
+        return doc?.hasFocus?.() ?? true;
+    }
+    grab_focus(): void { }
+    get_node(path: unknown): NodeBase {
+        return this.$rootNode().get_node(path);
+    }
+    get_node_or_null(path: unknown): NodeBase | null {
+        return this.$rootNode().get_node_or_null(path);
+    }
+    has_node(path: unknown): boolean {
+        return this.$rootNode().has_node(path);
+    }
+    add_child(node: unknown, forceReadableName = false, internal = 0): void {
+        this.$rootNode().add_child(node, forceReadableName, internal);
+    }
+    remove_child(node: unknown): void {
+        this.$rootNode().remove_child(node);
+    }
+    get_children(): NodeBase[] {
+        return this.$rootNode().get_children();
+    }
+    get_child_count(): number {
+        return this.$rootNode().get_child_count();
+    }
+    get_child(index: unknown): NodeBase {
+        return this.$rootNode().get_child(index);
+    }
+    find_child(pattern: unknown, recursive = true, owned = true): NodeBase | null {
+        return this.$rootNode().find_child(pattern, recursive, owned);
+    }
+    find_children(pattern: unknown, type: unknown = '', recursive = true, owned = true): NodeBase[] {
+        return this.$rootNode().find_children(pattern, type, recursive, owned);
+    }
+    get_path(): string {
+        return '/root';
+    }
+    get name(): string {
+        return 'root';
+    }
+    $rootNode(): NodeBase {
+        return wrapEntity(this.$game.scene.root as EngineEntity, this.$game);
+    }
+}
+markScriptClass(Window, 'Window');
+setGodotBase(Window, 'Window');
+export class SceneTreeTimer extends GodotObject {
+    private $left: number;
+    private $cancel: (() => void) | null = null;
+    constructor(readonly $game: GameContext, seconds: number, private readonly ignoreTimeScale: boolean) {
+        super({ entity: null, helix: $game.helix, script: null });
+        this.$left = Math.max(0, seconds);
+        const delay = $game.time.delay as ((seconds: number, fn: () => void) => () => void) | undefined;
+        const startedAt = Number($game.time.now ?? 0);
+        if (typeof delay === 'function') {
+            this.$cancel = delay(this.$left, () => {
+                this.$cancel = null;
+                this.$left = 0;
+                this.$emit('timeout');
+            });
+        }
+        this.$startedAt = startedAt;
+    }
+    private readonly $startedAt: number;
+    get timeout(): Signal {
+        return this.$builtinSignal('timeout');
+    }
+    get time_left(): number {
+        if (!this.$cancel)
+            return 0;
+        const now = Number(this.$game.time.now ?? 0);
+        return Math.max(0, this.$left - (now - this.$startedAt));
+    }
+    set time_left(value: unknown) {
+        this.$cancel?.();
+        this.$left = Math.max(0, Number(value));
+        const delay = this.$game.time.delay as ((seconds: number, fn: () => void) => () => void) | undefined;
+        if (typeof delay === 'function') {
+            this.$cancel = delay(this.$left, () => {
+                this.$cancel = null;
+                this.$emit('timeout');
+            });
+        }
+    }
+    is_ignoring_time_scale(): boolean {
+        return this.ignoreTimeScale;
+    }
+}
+markScriptClass(SceneTreeTimer, 'SceneTreeTimer');
+setGodotBase(SceneTreeTimer, 'SceneTreeTimer');
