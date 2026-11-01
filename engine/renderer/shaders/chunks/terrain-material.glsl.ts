@@ -6,22 +6,22 @@ uniform sampler2DArray u_albedoArray;
 uniform sampler2DArray u_normalArray;
 uniform sampler2DArray u_ormhArray;
 uniform int u_layerCount;
-
+                                                                                                                                           
 uniform vec4 u_layerParams[${MAX_TERRAIN_LAYERS}];
 uniform vec3 u_layerTint[${MAX_TERRAIN_LAYERS}];
 uniform float u_splatResolution;
-
+                                                                            
 uniform sampler2D u_grassMap;
-
+                                                                                          
 uniform vec2 u_grassMapInfo;
-
+                                                                                           
 uniform vec3 u_grassShade;
 uniform float u_heightBlendDepth;
-
+                                                                                          
 uniform vec2 u_triplanar;
-
+                                                                     
 uniform vec2 u_macro;
-
+                                                     
 uniform float u_farTiling;
 
 const int MAX_LAYERS = ${MAX_TERRAIN_LAYERS};
@@ -30,26 +30,26 @@ const vec3 AXIS_X = vec3(1.0, 0.0, 0.0);
 const vec3 AXIS_Y = vec3(0.0, 1.0, 0.0);
 const vec3 AXIS_Z = vec3(0.0, 0.0, 1.0);
 
-
+                                                                                                      
 struct Footprint {
   vec3 p;
   vec3 dx;
   vec3 dy;
-
+                                                                                         
   vec3 blend;
-
+                                                                      
   float far;
 };
 
 struct TerrainMaterial {
   vec3 albedo;
-
+                                                        
   vec3 normal;
   float roughness;
   float occlusion;
 };
 
-
+                                                                                                           
 Footprint terrainFootprint(vec3 p, vec3 dx, vec3 dy, vec3 Ng, float far) {
   Footprint f;
   f.p = p;
@@ -67,26 +67,54 @@ Footprint terrainFootprint(vec3 p, vec3 dx, vec3 dy, vec3 Ng, float far) {
   return f;
 }
 
-vec4 sampleScaled(sampler2DArray tex, int layer, float invTiling, Footprint f) {
+const int MAP_ALBEDO = 0;
+const int MAP_NORMAL = 1;
+const int MAP_ORMH = 2;
+
+   
+                                                                            
+                                                                            
+                                                                             
+                                                               
+   
+vec4 fetchLayer(int map, int layer, vec2 uv, vec2 dx, vec2 dy) {
+  if (map == MAP_ORMH) return textureGrad(u_ormhArray, vec3(uv, layer), dx, dy);
+#ifdef TERRAIN_VIRTUAL_TEXTURE
+  vec4 virtualTexel;
+  if (map == MAP_ALBEDO) {
+    if (u_vtLayer[layer].x > 0.0 && vtSample(u_vtCacheAlbedo, layer, u_vtLayer[layer].x, uv, dx, dy, virtualTexel)) return virtualTexel;
+  } else if (u_vtLayer[layer].y > 0.0 && vtSample(u_vtCacheNormal, MAX_LAYERS + layer, u_vtLayer[layer].y, uv, dx, dy, virtualTexel)) {
+    return virtualTexel;
+  }
+#endif
+  if (map == MAP_ALBEDO) return textureGrad(u_albedoArray, vec3(uv, layer), dx, dy);
+  return textureGrad(u_normalArray, vec3(uv, layer), dx, dy);
+}
+
+vec4 sampleScaled(int map, int layer, float invTiling, Footprint f) {
   vec4 result = vec4(0.0);
   if (f.blend.y > 0.0) {
-    result += textureGrad(tex, vec3(f.p.xz * invTiling, layer), f.dx.xz * invTiling, f.dy.xz * invTiling) * f.blend.y;
+    result += fetchLayer(map, layer, f.p.xz * invTiling, f.dx.xz * invTiling, f.dy.xz * invTiling) * f.blend.y;
   }
   if (f.blend.x > 0.0) {
-    result += textureGrad(tex, vec3(vec2(f.p.z, -f.p.y) * invTiling, layer), vec2(f.dx.z, -f.dx.y) * invTiling, vec2(f.dy.z, -f.dy.y) * invTiling) * f.blend.x;
+    result += fetchLayer(map, layer, vec2(f.p.z, -f.p.y) * invTiling, vec2(f.dx.z, -f.dx.y) * invTiling, vec2(f.dy.z, -f.dy.y) * invTiling) * f.blend.x;
   }
   if (f.blend.z > 0.0) {
-    result += textureGrad(tex, vec3(vec2(f.p.x, -f.p.y) * invTiling, layer), vec2(f.dx.x, -f.dx.y) * invTiling, vec2(f.dy.x, -f.dy.y) * invTiling) * f.blend.z;
+    result += fetchLayer(map, layer, vec2(f.p.x, -f.p.y) * invTiling, vec2(f.dx.x, -f.dx.y) * invTiling, vec2(f.dy.x, -f.dy.y) * invTiling) * f.blend.z;
   }
   return result;
 }
 
-
-vec4 sampleProjected(sampler2DArray tex, int layer, float invTiling, Footprint f) {
-  if (f.far <= 0.0) return sampleScaled(tex, layer, invTiling, f);
-  vec4 far = sampleScaled(tex, layer, invTiling * u_farTiling, f);
+   
+                                                                           
+                                                                           
+                                                                               
+   
+vec4 sampleProjected(int map, int layer, float invTiling, Footprint f) {
+  if (f.far <= 0.0) return sampleScaled(map, layer, invTiling, f);
+  vec4 far = sampleScaled(map, layer, invTiling * u_farTiling, f);
   if (f.far >= 1.0) return far;
-  return mix(sampleScaled(tex, layer, invTiling, f), far, f.far);
+  return mix(sampleScaled(map, layer, invTiling, f), far, f.far);
 }
 
 vec3 decodeNormal(vec4 texel, float strength) {
@@ -95,25 +123,29 @@ vec3 decodeNormal(vec4 texel, float strength) {
   return n;
 }
 
-
+   
+                                                                          
+                                                                                    
+                                                                     
+   
 vec3 sampleScaledNormal(int layer, float invTiling, float strength, vec3 Ng, Footprint f) {
   vec3 n = vec3(0.0);
   if (f.blend.y > 0.0) {
-    vec3 m = decodeNormal(textureGrad(u_normalArray, vec3(f.p.xz * invTiling, layer), f.dx.xz * invTiling, f.dy.xz * invTiling), strength);
+    vec3 m = decodeNormal(fetchLayer(MAP_NORMAL, layer, f.p.xz * invTiling, f.dx.xz * invTiling, f.dy.xz * invTiling), strength);
     n += (AXIS_X * m.x - AXIS_Z * m.y + Ng * m.z) * f.blend.y;
   }
   if (f.blend.x > 0.0) {
-    vec3 m = decodeNormal(textureGrad(u_normalArray, vec3(vec2(f.p.z, -f.p.y) * invTiling, layer), vec2(f.dx.z, -f.dx.y) * invTiling, vec2(f.dy.z, -f.dy.y) * invTiling), strength);
+    vec3 m = decodeNormal(fetchLayer(MAP_NORMAL, layer, vec2(f.p.z, -f.p.y) * invTiling, vec2(f.dx.z, -f.dx.y) * invTiling, vec2(f.dy.z, -f.dy.y) * invTiling), strength);
     n += (AXIS_Z * m.x + AXIS_Y * m.y + Ng * m.z) * f.blend.x;
   }
   if (f.blend.z > 0.0) {
-    vec3 m = decodeNormal(textureGrad(u_normalArray, vec3(vec2(f.p.x, -f.p.y) * invTiling, layer), vec2(f.dx.x, -f.dx.y) * invTiling, vec2(f.dy.x, -f.dy.y) * invTiling), strength);
+    vec3 m = decodeNormal(fetchLayer(MAP_NORMAL, layer, vec2(f.p.x, -f.p.y) * invTiling, vec2(f.dx.x, -f.dx.y) * invTiling, vec2(f.dy.x, -f.dy.y) * invTiling), strength);
     n += (AXIS_X * m.x + AXIS_Y * m.y + Ng * m.z) * f.blend.z;
   }
   return n;
 }
 
-
+                                                                                                        
 vec3 sampleProjectedNormal(int layer, float invTiling, float strength, vec3 Ng, Footprint f) {
   if (f.far <= 0.0) return sampleScaledNormal(layer, invTiling, strength, Ng, f);
   vec3 far = sampleScaledNormal(layer, invTiling * u_farTiling, strength * 0.5, Ng, f);
@@ -138,14 +170,14 @@ float valueNoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-
+                                                                                        
 float macroNoise(vec2 p) {
   return valueNoise(p) * 0.65 + valueNoise(p * 2.7 + 13.1) * 0.35;
 }
 
-
+                                                                                                                              
 TerrainMaterial evaluateTerrainMaterial(Footprint f, vec3 Ng, vec2 uv) {
-
+                                                                                        
   vec2 splatUv = (uv * (u_splatResolution - 1.0) + 0.5) / u_splatResolution;
   vec4 s0 = texture(u_splat0, splatUv);
   vec4 s1 = texture(u_splat1, splatUv);
@@ -162,7 +194,7 @@ TerrainMaterial evaluateTerrainMaterial(Footprint f, vec3 Ng, vec2 uv) {
     total = 1.0;
   }
 
-
+                                                                                         
   vec4 ormh[MAX_LAYERS];
   float heights[MAX_LAYERS];
   float maxHeight = 0.0;
@@ -171,7 +203,7 @@ TerrainMaterial evaluateTerrainMaterial(Footprint f, vec3 Ng, vec2 uv) {
     weights[i] = w;
     heights[i] = -1.0;
     if (w < WEIGHT_EPSILON) continue;
-    ormh[i] = sampleProjected(u_ormhArray, i, u_layerParams[i].x, f);
+    ormh[i] = sampleProjected(MAP_ORMH, i, u_layerParams[i].x, f);
     heights[i] = ormh[i].b + w;
     maxHeight = max(maxHeight, heights[i]);
   }
@@ -183,7 +215,7 @@ TerrainMaterial evaluateTerrainMaterial(Footprint f, vec3 Ng, vec2 uv) {
     blendedTotal += blended[i];
   }
 
-
+                                                                            
   vec3 albedo = vec3(0.0);
   vec3 normal = vec3(0.0);
   float roughness = 0.0;
@@ -192,19 +224,19 @@ TerrainMaterial evaluateTerrainMaterial(Footprint f, vec3 Ng, vec2 uv) {
     float w = blended[i] / blendedTotal;
     if (w < WEIGHT_EPSILON) continue;
     vec4 params = u_layerParams[i];
-    albedo += sampleProjected(u_albedoArray, i, params.x, f).rgb * u_layerTint[i] * w;
+    albedo += sampleProjected(MAP_ALBEDO, i, params.x, f).rgb * u_layerTint[i] * w;
     normal += sampleProjectedNormal(i, params.x, params.y, Ng, f) * w;
     roughness += clamp(ormh[i].g * params.z, 0.0, 1.0) * w;
     occlusion += ormh[i].r * w;
   }
 
-
-
+                                                                                        
+                                                                                
   float macro = macroNoise(f.p.xz * u_macro.y) * 0.7 + valueNoise(f.p.xz * u_macro.y * 4.7 + 7.3) * 0.3;
   vec3 hueShift = mix(vec3(0.94, 0.99, 1.05), vec3(1.06, 1.02, 0.93), macro);
   albedo *= mix(vec3(1.0), hueShift, u_macro.x) * (1.0 + (macro - 0.5) * u_macro.x * 1.2);
 
-
+                                                                                                      
   if (u_grassMapInfo.y > 0.0) {
     float grassSupport = 0.0;
     for (int i = 0; i < MAX_LAYERS; i++) grassSupport += weights[i] * u_layerParams[i].w;
