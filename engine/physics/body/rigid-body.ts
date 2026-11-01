@@ -22,10 +22,13 @@ export interface RigidBodyOptions extends RigidBodyMaterial {
     position: Vec3;
     orientation: Quat;
     mass: number;
+    layer?: number;
+    collisionMask?: number;
 }
 const MIN_MASS = 0.001;
 const FALLBACK_MASS = 1;
 const scratchInertia = vec3.create();
+const scratchArm = vec3.create();
 const inverseOrientation = quat.create();
 const orientationDelta = quat.create();
 function finiteOr(value: number, fallback: number): number {
@@ -54,16 +57,25 @@ export class RigidBody {
     readonly maxExtent: number;
     readonly deltaPosition = vec3.create();
     readonly deltaOrientation = quat.create();
+    readonly force = vec3.create();
+    readonly torque = vec3.create();
+    jointCount = 0;
     readonly aabb = aabb.create();
     sleeping = false;
     sleepTime = 0;
     outOfBounds = false;
     islandSlot = -1;
+    layer = 0;
+    collisionMask = ~0 >>> 0;
     constructor(readonly id: number, options: RigidBodyOptions) {
         this.type = options.type;
         this.shape = options.shape;
         this.maxExtent = shapeMaxExtent(options.shape);
         this.setMaterial(options);
+        if (options.layer !== undefined)
+            this.layer = options.layer;
+        if (options.collisionMask !== undefined)
+            this.collisionMask = options.collisionMask >>> 0;
         if (options.type === 'dynamic') {
             const requested = finiteOr(options.mass, FALLBACK_MASS);
             this.mass = Math.max(requested > 0 ? requested : FALLBACK_MASS, MIN_MASS);
@@ -125,6 +137,84 @@ export class RigidBody {
             return;
         vec3.scaleAndAdd(this.linearVelocity, this.linearVelocity, impulse, this.invMass);
         this.wake();
+    }
+    applyAngularImpulse(impulse: Vec3): void {
+        if (this.type !== 'dynamic' || this.outOfBounds)
+            return;
+        const m = this.invInertiaWorld;
+        const w = this.angularVelocity;
+        w[0] += m[0] * impulse[0] + m[3] * impulse[1] + m[6] * impulse[2];
+        w[1] += m[1] * impulse[0] + m[4] * impulse[1] + m[7] * impulse[2];
+        w[2] += m[2] * impulse[0] + m[5] * impulse[1] + m[8] * impulse[2];
+        this.wake();
+    }
+    applyImpulseAtPoint(impulse: Vec3, point: Vec3): void {
+        if (this.type !== 'dynamic' || this.outOfBounds)
+            return;
+        vec3.subtract(scratchArm, point, this.position);
+        vec3.cross(scratchArm, scratchArm, impulse);
+        this.applyImpulse(impulse);
+        this.applyAngularImpulse(scratchArm);
+    }
+    addForce(force: Vec3): void {
+        if (this.type !== 'dynamic' || this.outOfBounds)
+            return;
+        if (!Number.isFinite(force[0]) || !Number.isFinite(force[1]) || !Number.isFinite(force[2]))
+            return;
+        vec3.add(this.force, this.force, force);
+        this.wake();
+    }
+    addForceAtPoint(force: Vec3, point: Vec3): void {
+        if (this.type !== 'dynamic' || this.outOfBounds)
+            return;
+        vec3.subtract(scratchArm, point, this.position);
+        vec3.cross(scratchArm, scratchArm, force);
+        this.addForce(force);
+        this.addTorque(scratchArm);
+    }
+    addTorque(torque: Vec3): void {
+        if (this.type !== 'dynamic' || this.outOfBounds)
+            return;
+        if (!Number.isFinite(torque[0]) || !Number.isFinite(torque[1]) || !Number.isFinite(torque[2]))
+            return;
+        vec3.add(this.torque, this.torque, torque);
+        this.wake();
+    }
+    get hasForces(): boolean {
+        const f = this.force;
+        const t = this.torque;
+        return f[0] !== 0 || f[1] !== 0 || f[2] !== 0 || t[0] !== 0 || t[1] !== 0 || t[2] !== 0;
+    }
+    clearForces(): void {
+        vec3.set(this.force, 0, 0, 0);
+        vec3.set(this.torque, 0, 0, 0);
+    }
+    velocityAtPoint(out: Vec3, point: Vec3): Vec3 {
+        const r0 = point[0] - this.position[0];
+        const r1 = point[1] - this.position[1];
+        const r2 = point[2] - this.position[2];
+        const w = this.angularVelocity;
+        const v = this.linearVelocity;
+        out[0] = v[0] + w[1] * r2 - w[2] * r1;
+        out[1] = v[1] + w[2] * r0 - w[0] * r2;
+        out[2] = v[2] + w[0] * r1 - w[1] * r0;
+        return out;
+    }
+    localToWorld(out: Vec3, local: Vec3): Vec3 {
+        quat.rotateVec3(out, this.orientation, local);
+        return vec3.add(out, out, this.position);
+    }
+    worldToLocal(out: Vec3, point: Vec3): Vec3 {
+        vec3.subtract(out, point, this.position);
+        quat.conjugate(inverseOrientation, this.orientation);
+        return quat.rotateVec3(out, inverseOrientation, out);
+    }
+    localDirectionToWorld(out: Vec3, local: Vec3): Vec3 {
+        return quat.rotateVec3(out, this.orientation, local);
+    }
+    worldDirectionToLocal(out: Vec3, direction: Vec3): Vec3 {
+        quat.conjugate(inverseOrientation, this.orientation);
+        return quat.rotateVec3(out, inverseOrientation, direction);
     }
     teleport(position: Vec3, orientation: Quat): void {
         this.setPose(position, orientation);
@@ -189,6 +279,7 @@ export class RigidBody {
         this.sleepTime = 0;
         vec3.set(this.linearVelocity, 0, 0, 0);
         vec3.set(this.angularVelocity, 0, 0, 0);
+        this.clearForces();
         this.storePreviousPose();
     }
 }
