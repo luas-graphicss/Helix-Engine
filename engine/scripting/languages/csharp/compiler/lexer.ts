@@ -260,4 +260,277 @@ class Lexer {
             this.error('Literal de char vazio.', start);
         this.push('char', this.source.slice(startIndex, this.index), value, start, startIndex);
     }
+    private escape(start: {
+        line: number;
+        column: number;
+    }): string {
+        this.advance();
+        const code = this.source[this.index] ?? '';
+        this.advance();
+        switch (code) {
+            case "'":
+                return "'";
+            case '"':
+                return '"';
+            case '\\':
+                return '\\';
+            case '0':
+                return '\0';
+            case 'a':
+                return '\u0007';
+            case 'b':
+                return '\b';
+            case 'f':
+                return '\f';
+            case 'n':
+                return '\n';
+            case 'r':
+                return '\r';
+            case 't':
+                return '\t';
+            case 'v':
+                return '\v';
+            case 'e':
+                return '\u001b';
+            case 'u':
+            case 'U': {
+                const length = code === 'u' ? 4 : 8;
+                const hex = this.source.slice(this.index, this.index + length);
+                if (!new RegExp(`^[0-9a-fA-F]{${length}}$`).test(hex)) {
+                    this.error(`Escape \\${code} precisa de ${length} dígitos hexadecimais.`, start);
+                    return '';
+                }
+                this.advance(length);
+                return String.fromCodePoint(Number.parseInt(hex, 16));
+            }
+            case 'x': {
+                const hexStart = this.index;
+                while (this.index - hexStart < 4 && /[0-9a-fA-F]/.test(this.source[this.index] ?? ''))
+                    this.advance();
+                const hex = this.source.slice(hexStart, this.index);
+                if (hex.length === 0) {
+                    this.error('Escape \\x precisa de ao menos um dígito hexadecimal.', start);
+                    return '';
+                }
+                return String.fromCharCode(Number.parseInt(hex, 16));
+            }
+            default:
+                this.error(`Sequência de escape desconhecida: \\${code}.`, start);
+                return code;
+        }
+    }
+    private regularString(start: {
+        line: number;
+        column: number;
+    }, startIndex: number): void {
+        this.advance();
+        let value = '';
+        while (this.index < this.source.length) {
+            const char = this.source[this.index];
+            if (char === '"')
+                break;
+            if (char === '\n') {
+                this.error('String sem fechamento ("). Para texto em várias linhas use @"…" ou """…""".', start);
+                this.push('string', this.source.slice(startIndex, this.index), value, start, startIndex);
+                return;
+            }
+            if (char === '\\')
+                value += this.escape(start);
+            else {
+                value += char;
+                this.advance();
+            }
+        }
+        if (this.index >= this.source.length)
+            this.error('String sem fechamento (").', start);
+        else
+            this.advance();
+        this.push('string', this.source.slice(startIndex, this.index), value, start, startIndex);
+    }
+    private verbatimString(start: {
+        line: number;
+        column: number;
+    }, startIndex: number): void {
+        this.advance();
+        let value = '';
+        while (this.index < this.source.length) {
+            const char = this.source[this.index];
+            if (char === '"') {
+                if (this.source[this.index + 1] === '"') {
+                    value += '"';
+                    this.advance(2);
+                    continue;
+                }
+                break;
+            }
+            value += char;
+            this.advance();
+        }
+        if (this.index >= this.source.length)
+            this.error('String verbatim (@"…") sem fechamento.', start);
+        else
+            this.advance();
+        this.push('string', this.source.slice(startIndex, this.index), value, start, startIndex);
+    }
+    private rawString(start: {
+        line: number;
+        column: number;
+    }, startIndex: number): void {
+        let quotes = 0;
+        while (this.source[this.index] === '"') {
+            quotes++;
+            this.advance();
+        }
+        const closing = '"'.repeat(quotes);
+        const end = this.source.indexOf(closing, this.index);
+        if (end === -1) {
+            while (this.index < this.source.length)
+                this.advance();
+            this.error('String bruta ("""…""") sem fechamento.', start);
+            this.push('string', this.source.slice(startIndex, this.index), '', start, startIndex);
+            return;
+        }
+        let value = this.source.slice(this.index, end);
+        this.advance(end - this.index + quotes);
+        if (value.includes('\n')) {
+            const lines = value.replace(/^\r?\n/, '').split('\n');
+            const last = lines[lines.length - 1];
+            const indentation = /^[ \t]*$/.test(last) ? last.length : 0;
+            value = lines
+                .slice(0, -1)
+                .map((line) => line.slice(Math.min(indentation, line.length - line.trimStart().length)))
+                .join('\n')
+                .replace(/\r$/, '');
+        }
+        this.push('string', this.source.slice(startIndex, this.index), value, start, startIndex);
+    }
+    private interpolatedString(start: {
+        line: number;
+        column: number;
+    }, startIndex: number, verbatim: boolean): void {
+        this.advance();
+        const parts: InterpolationPart[] = [];
+        let text = '';
+        const flush = () => {
+            if (text.length > 0)
+                parts.push({ kind: 'text', value: text });
+            text = '';
+        };
+        while (this.index < this.source.length) {
+            const char = this.source[this.index];
+            if (char === '"') {
+                if (verbatim && this.source[this.index + 1] === '"') {
+                    text += '"';
+                    this.advance(2);
+                    continue;
+                }
+                break;
+            }
+            if (!verbatim && char === '\n') {
+                this.error('String interpolada sem fechamento ("). Para várias linhas use $@"…".', start);
+                flush();
+                this.push('interpolated', this.source.slice(startIndex, this.index), parts, start, startIndex);
+                return;
+            }
+            if (char === '{') {
+                if (this.source[this.index + 1] === '{') {
+                    text += '{';
+                    this.advance(2);
+                    continue;
+                }
+                flush();
+                parts.push(this.interpolation(start));
+                continue;
+            }
+            if (char === '}') {
+                if (this.source[this.index + 1] === '}') {
+                    text += '}';
+                    this.advance(2);
+                    continue;
+                }
+                this.error('"}" solto numa string interpolada; escreva "}}" para um "}" literal.', start);
+                this.advance();
+                continue;
+            }
+            if (!verbatim && char === '\\')
+                text += this.escape(start);
+            else {
+                text += char;
+                this.advance();
+            }
+        }
+        flush();
+        if (this.index >= this.source.length)
+            this.error('String interpolada sem fechamento (").', start);
+        else
+            this.advance();
+        this.push('interpolated', this.source.slice(startIndex, this.index), parts, start, startIndex);
+    }
+    private interpolation(stringStart: {
+        line: number;
+        column: number;
+    }): InterpolationPart {
+        this.advance();
+        const exprStart = this.position();
+        const exprIndex = this.index;
+        let depth = 0;
+        let quote: string | null = null;
+        let alignmentIndex = -1;
+        let formatIndex = -1;
+        while (this.index < this.source.length) {
+            const char = this.source[this.index];
+            if (quote) {
+                if (char === '\\' && quote !== '`')
+                    this.advance();
+                else if (char === quote)
+                    quote = null;
+                this.advance();
+                continue;
+            }
+            if (char === '"' || char === "'")
+                quote = char;
+            else if (char === '(' || char === '[' || char === '{')
+                depth++;
+            else if (char === ')' || char === ']')
+                depth--;
+            else if (char === '}') {
+                if (depth === 0)
+                    break;
+                depth--;
+            }
+            else if (depth === 0 && char === ',' && alignmentIndex === -1 && formatIndex === -1)
+                alignmentIndex = this.index;
+            else if (depth === 0 && char === ':' && formatIndex === -1)
+                formatIndex = this.index;
+            this.advance();
+        }
+        if (this.index >= this.source.length) {
+            this.error('Interpolação sem fechamento (}).', stringStart);
+            return { kind: 'expression', source: this.source.slice(exprIndex, this.index), line: exprStart.line, column: exprStart.column, alignment: null, format: null };
+        }
+        const end = this.index;
+        this.advance();
+        const expressionEnd = alignmentIndex !== -1 ? alignmentIndex : formatIndex !== -1 ? formatIndex : end;
+        const source = this.source.slice(exprIndex, expressionEnd);
+        const alignment = alignmentIndex !== -1 ? this.source.slice(alignmentIndex + 1, formatIndex !== -1 ? formatIndex : end).trim() : null;
+        const format = formatIndex !== -1 ? this.source.slice(formatIndex + 1, end) : null;
+        if (source.trim().length === 0)
+            this.error('Interpolação vazia ({}).', stringStart);
+        return { kind: 'expression', source, line: exprStart.line, column: exprStart.column, alignment: alignment && alignment.length > 0 ? alignment : null, format };
+    }
+    private punctuation(start: {
+        line: number;
+        column: number;
+    }, startIndex: number): void {
+        for (const candidate of PUNCTUATION) {
+            if (this.source.startsWith(candidate, this.index)) {
+                this.advance(candidate.length);
+                this.push('punct', candidate, null, start, startIndex);
+                return;
+            }
+        }
+        const char = this.source[this.index];
+        this.advance();
+        this.error(`Caractere inesperado: "${char}".`, start);
+    }
 }
