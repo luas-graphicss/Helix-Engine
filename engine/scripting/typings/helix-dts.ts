@@ -529,3 +529,215 @@ const ROOT_TYPES = `
     executionOrder: number
   }
 `;
+const MATH_TYPES = `
+  export interface Vec3Math {
+    create(x?: number, y?: number, z?: number): Vec3
+    from(value: Vec3Like): Vec3
+    clone(a: Vec3Like): Vec3
+    copy(out: Vec3, a: Vec3Like): Vec3
+    set(out: Vec3, x: number, y: number, z: number): Vec3
+    add(a: Vec3Like, b: Vec3Like): Vec3
+    sub(a: Vec3Like, b: Vec3Like): Vec3
+    subtract(a: Vec3Like, b: Vec3Like): Vec3
+    scale(a: Vec3Like, s: number): Vec3
+    multiply(a: Vec3Like, b: Vec3Like): Vec3
+    scaleAndAdd(a: Vec3Like, b: Vec3Like, s: number): Vec3
+    negate(a: Vec3Like): Vec3
+    dot(a: Vec3Like, b: Vec3Like): number
+    cross(a: Vec3Like, b: Vec3Like): Vec3
+    length(a: Vec3Like): number
+    squaredLength(a: Vec3Like): number
+    normalize(a: Vec3Like): Vec3
+    lerp(a: Vec3Like, b: Vec3Like, t: number): Vec3
+    distance(a: Vec3Like, b: Vec3Like): number
+    squaredDistance(a: Vec3Like, b: Vec3Like): number
+    transformMat4(a: Vec3Like, m: Mat4): Vec3
+    transformQuat(a: Vec3Like, r: QuatLike): Vec3
+    transformDirection(a: Vec3Like, m: Mat4): Vec3
+    rotateY(a: Vec3Like, radians: number): Vec3
+    rotateAroundAxis(a: Vec3Like, axis: Vec3Like, radians: number): Vec3
+    min(a: Vec3Like, b: Vec3Like): Vec3
+    max(a: Vec3Like, b: Vec3Like): Vec3
+    abs(a: Vec3Like): Vec3
+    equals(a: Vec3Like, b: Vec3Like, epsilon?: number): boolean
+    angle(a: Vec3Like, b: Vec3Like): number
+    project(a: Vec3Like, onto: Vec3Like): Vec3
+    reflect(a: Vec3Like, normal: Vec3Like): Vec3
+    moveTowards(a: Vec3Like, b: Vec3Like, maxDelta: number): Vec3
+    toArray(a: Vec3Like): number[]
+    toObject(a: Vec3Like): { x: number; y: number; z: number }
+    zero(): Vec3
+    one(): Vec3
+    up(): Vec3
+    down(): Vec3
+    right(): Vec3
+    left(): Vec3
+    forward(): Vec3
+    back(): Vec3
+  }
+  export interface QuatMath {
+    create(): Quat
+    identity(): Quat
+    from(value: QuatLike): Quat
+    clone(a: QuatLike): Quat
+    set(out: Quat, x: number, y: number, z: number, w: number): Quat
+    fromEuler(eulerDegrees: Vec3Like): Quat
+    toEuler(a: QuatLike): Vec3
+    fromAxisAngle(axis: Vec3Like, degrees: number): Quat
+    fromMat4(m: Mat4): Quat
+    multiply(a: QuatLike, b: QuatLike): Quat
+    normalize(a: QuatLike): Quat
+    conjugate(a: QuatLike): Quat
+    inverse(a: QuatLike): Quat
+    dot(a: QuatLike, b: QuatLike): number
+    slerp(a: QuatLike, b: QuatLike, t: number): Quat
+    nlerp(a: QuatLike, b: QuatLike, t: number): Quat
+    rotateVec3(a: QuatLike, vector: Vec3Like): Vec3
+    lookRotation(forward: Vec3Like, up?: Vec3Like): Quat
+    angle(a: QuatLike, b: QuatLike): number
+    toArray(a: QuatLike): number[]
+  }
+  export interface Mat4Math {
+    create(): Mat4
+    identity(): Mat4
+    clone(a: Mat4): Mat4
+    copy(out: Mat4, a: Mat4): Mat4
+    multiply(a: Mat4, b: Mat4): Mat4
+    invert(a: Mat4): Mat4 | null
+    compose(translation: Vec3Like, rotation: QuatLike, scale: Vec3Like): Mat4
+    fromTRS(translation: Vec3Like, rotationDegrees: Vec3Like, scale: Vec3Like): Mat4
+    decompose(a: Mat4): { translation: Vec3; rotation: Vec3; scale: Vec3 }
+    fromAxisAngle(axis: Vec3Like, degrees: number): Mat4
+    fromRotationDegrees(euler: Vec3Like): Mat4
+    fromQuat(rotation: QuatLike): Mat4
+    getTranslation(a: Mat4): Vec3
+    getRotation(a: Mat4): Quat
+    getScale(a: Mat4): Vec3
+    transformPoint(a: Mat4, point: Vec3Like): Vec3
+    transformDirection(a: Mat4, direction: Vec3Like): Vec3
+    perspective(fovDegrees: number, aspect: number, near: number, far: number): Mat4
+    ortho(left: number, right: number, bottom: number, top: number, near: number, far: number): Mat4
+    lookAt(eye: Vec3Like, target: Vec3Like, up?: Vec3Like): Mat4
+    normalMatrix(a: Mat4): Mat3 | null
+    toArray(a: Mat4): number[]
+  }
+  export interface Mat3Math {
+    create(): Mat3
+    identity(): Mat3
+    clone(a: Mat3): Mat3
+    multiply(a: Mat3, b: Mat3): Mat3
+    fromQuat(rotation: QuatLike): Mat3
+    fromAxisAngle(axis: Vec3Like, degrees: number): Mat3
+    transformVec3(a: Mat3, vector: Vec3Like): Vec3
+    invert(a: Mat3): Mat3 | null
+    toArray(a: Mat3): number[]
+  }
+  export interface AabbMath {
+    create(min?: Vec3Like, max?: Vec3Like): Aabb
+    fromPoints(points: ArrayLike<number> | readonly Vec3Like[]): Aabb
+    fromCenterSize(center: Vec3Like, size: Vec3Like): Aabb
+    isEmpty(a: Aabb): boolean
+    contains(a: Aabb, point: Vec3Like): boolean
+    intersects(a: Aabb, b: Aabb): boolean
+    union(a: Aabb, b: Aabb): Aabb
+    expand(a: Aabb, amount: number | Vec3Like): Aabb
+    expandByPoint(a: Aabb, point: Vec3Like): Aabb
+    center(a: Aabb): Vec3
+    size(a: Aabb): Vec3
+    halfDiagonal(a: Aabb): number
+    distanceToPoint(a: Aabb, point: Vec3Like): number
+    transform(a: Aabb, matrix: Mat4): Aabb
+  }
+  export interface RayMath {
+    create(origin?: Vec3Like, direction?: Vec3Like): Ray
+    at(r: Ray, t: number): Vec3
+    transform(r: Ray, matrix: Mat4): Ray
+    intersectAabb(r: Ray, a: Aabb): number | null
+    intersectPlane(r: Ray, planePoint: Vec3Like, planeNormal: Vec3Like): number | null
+    intersectSphere(r: Ray, center: Vec3Like, radius: number): number | null
+  }
+  export interface ScalarMath {
+    clamp(value: number, min: number, max: number): number
+    clamp01(value: number): number
+    lerp(a: number, b: number, t: number): number
+    inverseLerp(a: number, b: number, value: number): number
+    remap(value: number, inMin: number, inMax: number, outMin: number, outMax: number): number
+    smoothstep(edge0: number, edge1: number, value: number): number
+                                                                                  
+    damp(current: number, target: number, lambda: number, dt: number): number
+    wrap(value: number, min: number, max: number): number
+    wrapAngle(degrees: number): number
+    deltaAngle(from: number, to: number): number
+    degToRad(degrees: number): number
+    radToDeg(radians: number): number
+    sign(value: number): number
+    approximately(a: number, b: number, epsilon?: number): boolean
+    pingPong(value: number, length: number): number
+    readonly DEG_TO_RAD: number
+    readonly RAD_TO_DEG: number
+    readonly EPSILON: number
+    readonly TAU: number
+  }
+  export interface NoiseMath {
+    perlin2(x: number, y: number, period?: number, seed?: number): number
+    perlin3(x: number, y: number, z: number, seed?: number): number
+    value2(x: number, y: number, seed?: number): number
+    value3(x: number, y: number, z: number, seed?: number): number
+    worley2(x: number, y: number, cells?: number, seed?: number): number
+    worley3(x: number, y: number, z: number, cells?: number, seed?: number): number
+    fbm(x: number, y: number, z?: number, octaves?: number, seed?: number, gain?: number): number
+    fbm2(x: number, y: number, period?: number, octaves?: number, seed?: number): number
+    ridged(x: number, y: number, z?: number, octaves?: number, seed?: number): number
+  }
+  export interface ColorMath {
+    srgbToLinear(channel: number): number
+    linearToSrgb(channel: number): number
+    hexToVec3(hex: string): Vec3
+    vec3ToHex(rgb: Vec3Like): string
+    vec3ToCss(rgb: Vec3Like): string
+    parse(value: ColorLike): Vec3
+    temperatureToColor(kelvin: number): Vec3
+    lerp(a: ColorLike, b: ColorLike, t: number): Vec3
+    luminance(rgb: Vec3Like): number
+    rgb(r: number, g: number, b: number): Vec3
+    hsl(h: number, s: number, l: number): Vec3
+  }
+  export interface RandomSource {
+    seed(value: number | string): void
+    value(): number
+    range(min: number, max: number): number
+    int(min: number, max: number): number
+    gaussian(mean?: number, deviation?: number): number
+    unitVector(): Vec3
+    pick<T>(list: readonly T[]): T | undefined
+  }
+  export interface RandomMath extends RandomSource {
+    bool(probability?: number): boolean
+    shuffle<T>(list: readonly T[]): T[]
+    insideSphere(radius?: number): Vec3
+    onCircle(radius?: number): Vec3
+    color(): Vec3
+                                                                         
+    create(seed: number | string): RandomSource
+  }
+  export interface MathApi {
+    readonly vec3: Vec3Math
+    readonly quat: QuatMath
+    readonly mat4: Mat4Math
+    readonly mat3: Mat3Math
+    readonly aabb: AabbMath
+    readonly ray: RayMath
+    readonly scalar: ScalarMath
+    readonly noise: NoiseMath
+    readonly color: ColorMath
+    readonly random: RandomMath
+    clamp(value: number, min: number, max: number): number
+    lerp(a: number, b: number, t: number): number
+    degToRad(degrees: number): number
+    radToDeg(radians: number): number
+    readonly PI: number
+    readonly TAU: number
+  }
+`;
+const SCENE_API = `
+`;
