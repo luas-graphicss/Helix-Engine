@@ -553,3 +553,19 @@ export function createGuiDocument(name = 'Nova tela', referenceSize: GuiPoint = 
 export function resolveUDim(dim: UDim, parentLength: number, offsetScale = 1): number {
     return dim.scale * parentLength + dim.offset * offsetScale;
 }
+export function guiOffsetScale(document: GuiDocument, viewport: GuiPoint): number {
+    const sx = viewport.x / document.referenceSize.x;
+    const sy = viewport.y / document.referenceSize.y;
+    switch (document.scaleMode) {
+        case 'none':
+            return 1;
+        case 'width':
+            return sx;
+        case 'height':
+            return sy;
+        case 'shorter':
+            return Math.min(sx, sy);
+        case 'longer':
+            return Math.max(sx, sy);
+    }
+}
