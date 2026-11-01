@@ -277,3 +277,12 @@ export function createMaterialApi(host: RuntimeHost) {
     };
     return { material: materialApi, materials: materialsApi, texture: textureApi };
 }
+function sharedBy(session: RuntimeHost['session'], material: Material): number {
+    let count = 0;
+    session.scene.traverse((entity) => {
+        if (entity.material === material)
+            count++;
+    });
+    return count;
+}
+export { vec3 };
