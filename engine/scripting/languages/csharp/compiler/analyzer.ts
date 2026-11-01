@@ -2145,4 +2145,281 @@ class Analyzer {
         if (actual.kind !== expected.kind)
             this.error(argument.span, `"${method}" espera ${describeType(expected)}, mas o argumento é ${describeType(actual)}.`);
     }
+    private declareOutVariable(argument: Argument, scope: Scope): void {
+        const declaration = argument.declaration;
+        if (!declaration || argument.expression.kind !== 'identifier')
+            return;
+        const type = declaration.type ? this.typeFromRef(declaration.type, scope.fn.cls) : STATIC_TYPES.dynamic;
+        const info = scope.declare(declaration.name, type);
+        argument.expression.resolution = { kind: 'local', jsName: info.jsName, byRef: false };
+        argument.expression.staticType = type;
+    }
+    private checkRefTarget(expression: Expression): void {
+        if (expression.kind === 'identifier' || expression.kind === 'member' || expression.kind === 'element')
+            return;
+        this.error(expression.span, 'Um argumento ref/out precisa ser uma variável, um campo ou um elemento.');
+    }
+    private construction(e: Expression & {
+        kind: 'new';
+    }, scope: Scope, expected: StaticType | null): StaticType {
+        let type: StaticType;
+        if (e.type)
+            type = this.typeFromRef(e.type, scope.fn.cls);
+        else if (expected && expected.kind !== 'dynamic')
+            type = expected;
+        else {
+            this.error(e.span, 'new() sem tipo precisa de um alvo com tipo declarado (List<int> xs = new();).');
+            type = STATIC_TYPES.dynamic;
+        }
+        const typeName = e.type?.name ?? (type.kind === 'class' || type.kind === 'collection' || type.kind === 'enum' ? type.name : '?');
+        const argumentTypes = e.arguments.map((argument) => this.expression(argument.expression, scope, null));
+        if (type.kind === 'class' && !type.runtime) {
+            const cls = this.classOf(type);
+            if (!cls) {
+                e.construction = { kind: 'dynamic', name: typeName };
+            }
+            else {
+                if (cls.isStatic)
+                    this.error(e.span, `"${cls.name}" é uma classe estática e não pode ser instanciada.`);
+                if (cls.decl.modifiers.includes('abstract'))
+                    this.error(e.span, `"${cls.name}" é abstrata e não pode ser instanciada.`);
+                const ctor = this.pickConstructor(cls, e.arguments.length);
+                if (cls.ctors.length > 0 && !ctor)
+                    this.error(e.span, `Nenhum construtor de "${cls.name}" aceita ${e.arguments.length} ${e.arguments.length === 1 ? 'argumento' : 'argumentos'} (${cls.ctors.map((candidate) => candidate.params.length).join(', ')}).`);
+                if (cls.ctors.length === 0 && e.arguments.length > 0)
+                    this.error(e.span, `"${cls.name}" só tem o construtor padrão, sem parâmetros.`);
+                this.useType(cls);
+                e.construction = { kind: 'script', name: cls.jsName, sibling: cls.script, ctorJsName: ctor?.jsName ?? '$ctor', isActor: this.isActorClass(cls) };
+                if (ctor) {
+                    e.arguments.forEach((argument, index) => {
+                        const parameter = ctor.params[index];
+                        if (parameter)
+                            this.checkArgumentType(argument, argumentTypes[index], parameter.type, cls.name);
+                        if (parameter?.modifier === 'out' || parameter?.modifier === 'ref')
+                            this.checkRefTarget(argument.expression);
+                    });
+                }
+            }
+        }
+        else if (type.kind === 'class' && type.runtime) {
+            e.construction = { kind: 'runtime', name: type.name };
+        }
+        else if (type.kind === 'collection') {
+            e.construction = { kind: 'runtime', name: type.name };
+        }
+        else if (type.kind === 'enum') {
+            this.error(e.span, `"${type.name}" é um enum; use um dos valores (${type.name}.…) em vez de new.`);
+            e.construction = { kind: 'dynamic', name: type.name };
+        }
+        else if (e.type && RUNTIME_FACTORIES.has(e.type.name)) {
+            e.construction = { kind: 'runtime', name: e.type.name };
+            type = STATIC_TYPES.dynamic;
+        }
+        else if (e.type && PRIMITIVE_TYPE_KEYWORDS.has(e.type.name)) {
+            this.error(e.span, `"${e.type.name}" é um tipo primitivo: use um literal (0, "", false) em vez de new.`);
+            e.construction = { kind: 'dynamic', name: e.type.name };
+        }
+        else if (e.type && e.initializer?.kind === 'object' && e.arguments.length === 0) {
+            e.construction = { kind: 'options' };
+            type = STATIC_TYPES.dynamic;
+        }
+        else if (e.type) {
+            this.error(e.type.span, `Tipo desconhecido: "${e.type.name}".${hint(e.type.name, this.typeNames())}`);
+            e.construction = { kind: 'dynamic', name: e.type.name };
+        }
+        else {
+            e.construction = { kind: 'dynamic', name: typeName };
+        }
+        if (e.initializer)
+            this.initializer(e.initializer, type, scope);
+        return type;
+    }
+    private pickConstructor(cls: ClassInfo, arity: number): ConstructorInfo | null {
+        if (cls.ctors.length === 0)
+            return null;
+        const exact = cls.ctors.find((ctor) => ctor.params.length === arity);
+        if (exact)
+            return exact;
+        return cls.ctors.find((ctor) => {
+            const required = ctor.params.filter((parameter) => !parameter.hasDefault && parameter.modifier !== 'params').length;
+            return arity >= required && (arity <= ctor.params.length || ctor.params.some((parameter) => parameter.modifier === 'params'));
+        }) ?? null;
+    }
+    private initializer(initializer: Initializer, type: StaticType, scope: Scope): void {
+        if (initializer.kind === 'collection') {
+            const element = elementTypeOf(type);
+            for (const entry of initializer.elements) {
+                if (Array.isArray(entry)) {
+                    const pair = entry as readonly Expression[];
+                    pair.forEach((item, index) => this.expression(item, scope, type.kind === 'collection' ? (type.args[index] ?? null) : null));
+                }
+                else
+                    this.expression(entry as Expression, scope, element);
+            }
+            if (type.kind !== 'collection' && type.kind !== 'dynamic' && type.kind !== 'class')
+                this.error(initializer.span, `${describeType(type)} não aceita inicializador de coleção.`);
+            return;
+        }
+        const cls = this.classOf(type);
+        for (const entry of initializer.entries) {
+            if (entry.kind === 'index') {
+                for (const argument of entry.arguments)
+                    this.expression(argument.expression, scope, null);
+                this.expression(entry.value, scope, type.kind === 'collection' ? (type.args[1] ?? null) : null);
+                continue;
+            }
+            const member = cls ? this.findMember(cls, entry.name) : null;
+            if (cls && !member)
+                this.error(entry.span, `"${cls.name}" não tem o membro "${entry.name}" para inicializar.${hint(entry.name, this.memberNames(cls))}`);
+            if (member?.kind === 'method')
+                this.error(entry.span, `"${entry.name}" é um método e não pode receber valor no inicializador.`);
+            const memberType = member?.type ?? STATIC_TYPES.dynamic;
+            if ('kind' in entry.value && (entry.value.kind === 'object' || entry.value.kind === 'collection'))
+                this.initializer(entry.value as Initializer, memberType, scope);
+            else
+                this.expression(entry.value as Expression, scope, memberType.kind === 'dynamic' ? null : memberType);
+        }
+    }
+    private lambda(e: LambdaExpression, scope: Scope, expected: StaticType | null): StaticType {
+        const delegate = expected?.kind === 'delegate' ? expected : null;
+        const fn: FunctionContext = { cls: scope.fn.cls, isStatic: scope.fn.isStatic, returnType: delegate?.returns && delegate.returns.kind !== 'void' ? delegate.returns : null, usesAwait: false, usesYield: false, catchDepth: 0 };
+        const inner = new Scope(scope, fn);
+        const paramTypes: StaticType[] = [];
+        e.parameters.forEach((parameter, index) => {
+            const type = parameter.type ? this.typeFromRef(parameter.type, scope.fn.cls) : (delegate?.params?.[index] ?? STATIC_TYPES.dynamic);
+            parameter.jsName = parameter.name === '_' ? `$_${index}` : localJsName(parameter.name);
+            if (parameter.name !== '_')
+                inner.declare(parameter.name, type, parameter.modifier === 'ref' || parameter.modifier === 'out');
+            if (parameter.defaultValue)
+                this.expression(parameter.defaultValue, scope, type);
+            paramTypes.push(type);
+        });
+        let returns: StaticType | null = fn.returnType;
+        if (e.body.kind === 'block') {
+            this.block(e.body, inner);
+            returns = returns ?? (fn.usesAwait || e.isAsync ? STATIC_TYPES.task : null);
+        }
+        else {
+            const bodyType = this.expression(e.body, inner, fn.returnType);
+            returns = returns ?? bodyType;
+        }
+        e.needsAsync = fn.usesAwait && !e.isAsync;
+        if (fn.usesYield)
+            this.error(e.span, 'Lambdas não podem usar yield; escreva um método ou função local com yield return.');
+        if ((e.isAsync || fn.usesAwait) && returns && returns.kind !== 'task')
+            returns = { kind: 'task', result: returns.kind === 'void' ? null : returns };
+        return { kind: 'delegate', params: paramTypes, returns };
+    }
+    private unary(e: Expression & {
+        kind: 'unary';
+    }, scope: Scope): StaticType {
+        const operand = this.expression(e.operand, scope, e.operator === '!' ? STATIC_TYPES.bool : null);
+        switch (e.operator) {
+            case '!':
+                if (isNumericType(operand) || operand.kind === 'string')
+                    this.error(e.span, `O operador ! não vale para ${describeType(operand)}.`);
+                return STATIC_TYPES.bool;
+            case '-':
+            case '+':
+                if (operand.kind === 'string' || operand.kind === 'bool')
+                    this.error(e.span, `O operador ${e.operator} não vale para ${describeType(operand)}.`);
+                return operand.kind === 'char' || operand.kind === 'enum' ? STATIC_TYPES.int : isNumericType(operand) ? operand : STATIC_TYPES.dynamic;
+            case '~':
+                return STATIC_TYPES.int;
+            case '++':
+            case '--':
+                this.checkAssignable(e.operand);
+                return operand;
+        }
+    }
+    private binary(e: Expression & {
+        kind: 'binary';
+    }, scope: Scope): StaticType {
+        const { operator } = e;
+        if (operator === '&&' || operator === '||') {
+            this.condition(e.left, scope);
+            this.condition(e.right, scope);
+            return STATIC_TYPES.bool;
+        }
+        const left = this.expression(e.left, scope, null);
+        const right = this.expression(e.right, scope, operator === '==' || operator === '!=' ? left : null);
+        switch (operator) {
+            case '??':
+                return left.kind === 'null' ? right : this.commonType(left, right);
+            case '==':
+            case '!=':
+                if ((left.kind === 'string' && isNumericType(right)) || (isNumericType(left) && right.kind === 'string'))
+                    this.error(e.span, `Não dá para comparar ${describeType(left)} com ${describeType(right)}.`);
+                if ((left.kind === 'bool' && isNumericType(right)) || (isNumericType(left) && right.kind === 'bool'))
+                    this.error(e.span, `Não dá para comparar ${describeType(left)} com ${describeType(right)}.`);
+                return STATIC_TYPES.bool;
+            case '<':
+            case '>':
+            case '<=':
+            case '>=':
+                if (left.kind === 'string' || right.kind === 'string' || left.kind === 'bool' || right.kind === 'bool')
+                    this.error(e.span, `O operador ${operator} não vale entre ${describeType(left)} e ${describeType(right)}; use CompareTo.`);
+                return STATIC_TYPES.bool;
+            case '+':
+                if (left.kind === 'string' || right.kind === 'string')
+                    return STATIC_TYPES.string;
+                if (left.kind === 'bool' || right.kind === 'bool')
+                    this.error(e.span, 'O operador + não vale para bool.');
+                if (left.kind === 'delegate' || right.kind === 'delegate')
+                    return STATIC_TYPES.delegate;
+                return this.arithmeticType(left, right);
+            case '-':
+                if (left.kind === 'delegate' || right.kind === 'delegate')
+                    return STATIC_TYPES.delegate;
+                if (left.kind === 'string' || right.kind === 'string' || left.kind === 'bool' || right.kind === 'bool')
+                    this.error(e.span, `O operador - não vale entre ${describeType(left)} e ${describeType(right)}.`);
+                return this.arithmeticType(left, right);
+            case '*':
+            case '/':
+            case '%':
+                if (left.kind === 'string' || right.kind === 'string' || left.kind === 'bool' || right.kind === 'bool')
+                    this.error(e.span, `O operador ${operator} não vale entre ${describeType(left)} e ${describeType(right)}.`);
+                return this.arithmeticType(left, right);
+            case '&':
+            case '|':
+            case '^':
+                if (left.kind === 'bool' && right.kind === 'bool')
+                    return STATIC_TYPES.bool;
+                if (left.kind === 'enum' && right.kind === 'enum')
+                    return left;
+                return isIntegralType(left) && isIntegralType(right) ? STATIC_TYPES.int : STATIC_TYPES.dynamic;
+            case '<<':
+            case '>>':
+                return STATIC_TYPES.int;
+            default:
+                return STATIC_TYPES.dynamic;
+        }
+    }
+    private arithmeticType(left: StaticType, right: StaticType): StaticType {
+        const l = left.kind === 'char' || left.kind === 'enum' ? STATIC_TYPES.int : left;
+        const r = right.kind === 'char' || right.kind === 'enum' ? STATIC_TYPES.int : right;
+        if (l.kind === 'float' || r.kind === 'float')
+            return isNumericType(l) && isNumericType(r) ? STATIC_TYPES.float : STATIC_TYPES.dynamic;
+        if (l.kind === 'int' && r.kind === 'int')
+            return STATIC_TYPES.int;
+        return STATIC_TYPES.dynamic;
+    }
+    private assignment(e: Expression & {
+        kind: 'assign';
+    }, scope: Scope): StaticType {
+        const targetType = this.expression(e.target, scope, null);
+        this.checkAssignable(e.target);
+        const valueType = this.expression(e.value, scope, targetType.kind === 'dynamic' || targetType.kind === 'engine' ? null : targetType);
+        if (e.operator === '=') {
+            if (targetType.kind === 'int' && valueType.kind === 'float')
+                this.error(e.span, 'Não dá para guardar um float num int sem converter: use (int) ou declare como float.');
+            if (targetType.kind === 'string' && isNumericType(valueType))
+                this.error(e.span, 'Não dá para guardar um número numa string; use ToString().');
+            if (isNumericType(targetType) && valueType.kind === 'string')
+                this.error(e.span, `Não dá para guardar uma string em ${describeType(targetType)}; use int.Parse ou double.Parse.`);
+            if (targetType.kind === 'bool' && (isNumericType(valueType) || valueType.kind === 'string'))
+                this.error(e.span, `Não dá para guardar ${describeType(valueType)} num bool.`);
+        }
+        return targetType.kind === 'dynamic' || targetType.kind === 'engine' ? valueType : targetType;
+    }
 }
