@@ -275,4 +275,81 @@ export class LocalLightSet {
         f[o + 30] = 1 / (entry.range * entry.range);
         f[o + 31] = 0;
     }
+    private buildTiles(viewProjection: Mat4): void {
+        const { lights, stats, width, height } = this;
+        const tilesX = Math.max(1, Math.ceil(width / LIGHT_TILE_SIZE));
+        const tilesY = Math.max(1, Math.ceil(height / LIGHT_TILE_SIZE));
+        this.tilesY = tilesY;
+        this.tileCount = tilesX * tilesY;
+        this.binding.tilesX = tilesX;
+        const f = this.ensureFloats(TILES_OFFSET + this.tileCount);
+        f.fill(0, TILES_OFFSET * 4, (TILES_OFFSET + this.tileCount) * 4);
+        stats.tiles = this.tileCount;
+        for (const light of lights) {
+            const rect = this.screenRect(light, viewProjection);
+            if (!rect)
+                continue;
+            const channel = Math.floor(light.index / TILE_BITS_PER_CHANNEL);
+            const bit = 1 << (light.index - channel * TILE_BITS_PER_CHANNEL);
+            const x0 = Math.max(0, Math.floor(rect[0] / LIGHT_TILE_SIZE));
+            const x1 = Math.min(tilesX - 1, Math.floor(rect[2] / LIGHT_TILE_SIZE));
+            const y0 = Math.max(0, Math.floor(rect[1] / LIGHT_TILE_SIZE));
+            const y1 = Math.min(tilesY - 1, Math.floor(rect[3] / LIGHT_TILE_SIZE));
+            for (let y = y0; y <= y1; y++) {
+                const row = (TILES_OFFSET + y * tilesX) * 4 + channel;
+                for (let x = x0; x <= x1; x++)
+                    f[row + x * 4] += bit;
+            }
+        }
+        let lit = 0;
+        for (let i = 0; i < this.tileCount; i++) {
+            const base = (TILES_OFFSET + i) * 4;
+            if (f[base] + f[base + 1] + f[base + 2] + f[base + 3] > 0)
+                lit++;
+        }
+        stats.tilesLit = lit;
+    }
+    private readonly rect = new Float32Array(4);
+    private screenRect(light: CollectedLocalLight, m: Mat4): Float32Array | null {
+        const { rect, width, height } = this;
+        const c = light.boundsCenter;
+        const r = light.boundsRadius;
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (let i = 0; i < 8; i++) {
+            vec3.set(corner, c[0] + (i & 1 ? r : -r), c[1] + (i & 2 ? r : -r), c[2] + (i & 4 ? r : -r));
+            const w = m[3] * corner[0] + m[7] * corner[1] + m[11] * corner[2] + m[15];
+            if (w <= 1e-4) {
+                rect[0] = 0;
+                rect[1] = 0;
+                rect[2] = width;
+                rect[3] = height;
+                return rect;
+            }
+            clip[0] = (m[0] * corner[0] + m[4] * corner[1] + m[8] * corner[2] + m[12]) / w;
+            clip[1] = (m[1] * corner[0] + m[5] * corner[1] + m[9] * corner[2] + m[13]) / w;
+            minX = Math.min(minX, clip[0]);
+            maxX = Math.max(maxX, clip[0]);
+            minY = Math.min(minY, clip[1]);
+            maxY = Math.max(maxY, clip[1]);
+        }
+        if (maxX < -1 || minX > 1 || maxY < -1 || minY > 1)
+            return null;
+        rect[0] = (Math.max(minX, -1) * 0.5 + 0.5) * width;
+        rect[2] = (Math.min(maxX, 1) * 0.5 + 0.5) * width;
+        rect[1] = (Math.max(minY, -1) * 0.5 + 0.5) * height;
+        rect[3] = (Math.min(maxY, 1) * 0.5 + 0.5) * height;
+        return rect;
+    }
+    dispose(): void {
+        this.data.dispose();
+    }
+}
+function importanceOf(light: CollectedLocalLight, cameraPosition: Vec3): number {
+    const luminance = light.radiance[0] * 0.2126 + light.radiance[1] * 0.7152 + light.radiance[2] * 0.0722;
+    vec3.subtract(toCamera, light.boundsCenter, cameraPosition);
+    const distance = Math.max(vec3.length(toCamera) - light.boundsRadius, 0) + 1;
+    return (luminance * light.boundsRadius * light.boundsRadius) / (distance * distance);
 }
