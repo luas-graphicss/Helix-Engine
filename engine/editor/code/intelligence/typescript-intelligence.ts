@@ -468,4 +468,189 @@ class TypeScriptIntelligence implements LanguageIntelligence {
         this.transient(view, pos, `${where}\n\n${this.docText(info?.documentation, info?.tags)}`, line);
         return true;
     }
+    async renameSymbol(view: EditorView): Promise<boolean> {
+        const path = this.sync(view.state.doc);
+        if (!path)
+            return false;
+        const pos = view.state.selection.main.head;
+        const doc = view.state.doc;
+        let info: TS.RenameInfo;
+        let locations: readonly TS.RenameLocation[];
+        try {
+            info = await this.project.renameInfo(path, pos);
+            if (!info.canRename) {
+                if (!this.disposed)
+                    this.transient(view, pos, info.localizedErrorMessage);
+                return false;
+            }
+            locations = await this.project.renameLocations(path, pos);
+        }
+        catch (cause) {
+            this.host.session.log.warn(LOG_SOURCE, `Não foi possível renomear: ${cause instanceof Error ? cause.message : String(cause)}`);
+            return false;
+        }
+        if (this.disposed || view.state.doc !== doc || locations.length === 0)
+            return false;
+        const own = locations.filter((location) => location.fileName === path);
+        const others = locations.filter((location) => location.fileName !== path);
+        const otherFiles = new Set(others.map((location) => location.fileName)).size;
+        const oldName = info.displayName;
+        const decorations = Decoration.set(own.map((location) => renameMark.range(location.textSpan.start, location.textSpan.start + location.textSpan.length)), true);
+        const summary = `${locations.length} ${locations.length === 1 ? 'ocorrência' : 'ocorrências'}${otherFiles > 0 ? ` em ${otherFiles + 1} scripts` : ''}`;
+        const tooltip: Tooltip = {
+            pos: info.triggerSpan.start,
+            above: false,
+            strictSide: true,
+            create: () => {
+                const dom = document.createElement('div');
+                dom.className = 'hx-rename';
+                const label = document.createElement('div');
+                label.className = 'hx-rename-label';
+                label.textContent = `Renomear · ${summary}`;
+                const input = document.createElement('input');
+                input.className = 'hx-rename-input';
+                input.value = oldName;
+                input.spellcheck = false;
+                input.setAttribute('aria-label', `Novo nome para ${oldName}`);
+                const hint = document.createElement('div');
+                hint.className = 'hx-rename-hint';
+                hint.textContent = 'Enter renomeia · Esc cancela';
+                dom.append(label, input, hint);
+                const cancel = () => {
+                    view.dispatch({ effects: setRename.of(null) });
+                    view.focus();
+                };
+                input.addEventListener('keydown', (event) => {
+                    if (event.isComposing || event.keyCode === 229)
+                        return;
+                    if (event.key === 'Escape') {
+                        event.preventDefault();
+                        cancel();
+                    }
+                    else if (event.key === 'Enter') {
+                        event.preventDefault();
+                        const newName = input.value.trim();
+                        if (!IDENTIFIER.test(newName)) {
+                            input.setAttribute('aria-invalid', 'true');
+                            return;
+                        }
+                        if (newName === oldName) {
+                            cancel();
+                            return;
+                        }
+                        void this.applyRename(view, oldName, newName, own, others);
+                    }
+                });
+                input.addEventListener('input', () => input.removeAttribute('aria-invalid'));
+                return {
+                    dom,
+                    mount: () => {
+                        input.focus();
+                        input.select();
+                    },
+                };
+            },
+        };
+        view.dispatch({ effects: setRename.of({ tooltip, decorations }) });
+        return true;
+    }
+    private async applyRename(view: EditorView, oldName: string, newName: string, own: readonly TS.RenameLocation[], others: readonly TS.RenameLocation[]): Promise<void> {
+        view.dispatch({
+            changes: own.map((location) => ({ from: location.textSpan.start, to: location.textSpan.start + location.textSpan.length, insert: newName })),
+            effects: setRename.of(null),
+            userEvent: 'rename',
+        });
+        view.focus();
+        const byFile = new Map<string, TS.RenameLocation[]>();
+        for (const location of others) {
+            const list = byFile.get(location.fileName) ?? [];
+            list.push(location);
+            byFile.set(location.fileName, list);
+        }
+        let touched = 0;
+        for (const [fileName, locations] of byFile) {
+            const owner = this.project.assetOfPath(fileName);
+            const text = this.project.textOf(fileName);
+            if (!owner || text === null)
+                continue;
+            const renamed = applySpans(text, locations.map((location) => ({ start: location.textSpan.start, length: location.textSpan.length, newText: newName })));
+            if (await this.replaceScriptSource(owner.assetId, renamed))
+                touched++;
+        }
+        const { session } = this.host;
+        if (touched > 0)
+            session.log.info(LOG_SOURCE, `${oldName} → ${newName} também em ${touched} ${touched === 1 ? 'outro script, que ficou' : 'outros scripts, que ficaram'} com alterações pendentes.`);
+    }
+    private async replaceScriptSource(assetId: string, source: string): Promise<boolean> {
+        const { session } = this.host;
+        const { code, library } = session;
+        if (code.tab(assetId)) {
+            code.updateSource(assetId, source);
+            return true;
+        }
+        const asset = library.get(assetId);
+        if (!asset || asset.kind !== 'script')
+            return false;
+        try {
+            const document = await loadScriptAsset(session, asset);
+            const active = code.activeId;
+            code.open(document, assetId, { pin: true });
+            code.updateSource(assetId, source);
+            if (active)
+                code.setActive(active);
+            return true;
+        }
+        catch (cause) {
+            session.log.warn(LOG_SOURCE, `Não foi possível renomear em ${asset.name}: ${cause instanceof Error ? cause.message : String(cause)}`);
+            return false;
+        }
+    }
+    private transient(view: EditorView, pos: number, message: string, signature: string | null = null): void {
+        const dom = infoNode({ signature, doc: message, className: 'hx-hover' });
+        if (!dom)
+            return;
+        view.dispatch({ effects: setTransientTooltip.of({ pos, above: true, create: () => ({ dom }) }) });
+    }
+    dispose(): void {
+        this.disposed = true;
+        if (this.signatureTimer)
+            clearTimeout(this.signatureTimer);
+        this.signatureTimer = null;
+    }
+}
+function renderSignatureHelp(help: SignatureHelp): HTMLElement {
+    const root = document.createElement('div');
+    root.className = 'hx-signature-help';
+    const { items } = help;
+    const item = items.items[help.selected];
+    const line = document.createElement('div');
+    line.className = 'hx-signature-line';
+    if (items.items.length > 1) {
+        const count = document.createElement('span');
+        count.className = 'hx-signature-count';
+        count.textContent = `${help.selected + 1}/${items.items.length} ↕`;
+        line.append(count);
+    }
+    const activeIndex = item.isVariadic ? Math.min(items.argumentIndex, item.parameters.length - 1) : items.argumentIndex;
+    line.append(textNode(displayPartsToString(item.prefixDisplayParts)));
+    item.parameters.forEach((parameter, index) => {
+        if (index > 0)
+            line.append(textNode(displayPartsToString(item.separatorDisplayParts)));
+        const span = document.createElement('span');
+        span.textContent = displayPartsToString(parameter.displayParts);
+        if (index === activeIndex)
+            span.className = 'hx-signature-active';
+        line.append(span);
+    });
+    line.append(textNode(displayPartsToString(item.suffixDisplayParts)));
+    root.append(line);
+    const active = item.parameters[activeIndex];
+    const doc = (active ? displayPartsToString(active.documentation) : '') || displayPartsToString(item.documentation);
+    if (doc) {
+        const block = document.createElement('div');
+        block.className = 'hx-doc';
+        renderDocText(block, doc);
+        root.append(block);
+    }
+    return root;
 }
