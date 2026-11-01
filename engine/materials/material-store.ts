@@ -1,24 +1,16 @@
-import { EDITOR_STORES, isIndexedDbSupported, openEditorDatabase, requestToPromise, withTransaction } from '@/engine/core/storage/editor-database';
+import { PROJECT_STORES, type ProjectDatabase } from '@/engine/core/storage/project-database';
 import type { StoredMaterial } from './material-serialization';
-const STORE_NAME = EDITOR_STORES.materials;
+const STORE_NAME = PROJECT_STORES.materials;
 export class MaterialStore {
-    static get supported(): boolean {
-        return isIndexedDbSupported();
-    }
+    constructor(private readonly database: ProjectDatabase) { }
     async loadAll(): Promise<StoredMaterial[]> {
-        const db = await openEditorDatabase();
-        const store = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME);
-        const records = await requestToPromise(store.getAll() as IDBRequest<StoredMaterial[]>);
+        const records = await this.database.getAll<StoredMaterial>(STORE_NAME);
         return records.sort((a, b) => a.createdAt - b.createdAt);
     }
     async save(record: StoredMaterial): Promise<void> {
-        await withTransaction(STORE_NAME, 'readwrite', (transaction) => {
-            transaction.objectStore(STORE_NAME).put(record);
-        });
+        await this.database.put(STORE_NAME, record);
     }
     async remove(id: string): Promise<void> {
-        await withTransaction(STORE_NAME, 'readwrite', (transaction) => {
-            transaction.objectStore(STORE_NAME).delete(id);
-        });
+        await this.database.delete(STORE_NAME, id);
     }
 }
