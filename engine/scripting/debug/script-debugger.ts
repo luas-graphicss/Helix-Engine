@@ -548,4 +548,255 @@ export class ScriptDebugger {
             return [];
         return this.host.stacks.map(stack).frames.filter((frame) => frame.script);
     }
+    resume(): void {
+        if (!this.paused)
+            return;
+        this.clearPause();
+        if (this.host.mode === 'play' && this.host.session.playtest.state === 'paused')
+            this.host.session.playtest.play();
+        this.notify();
+    }
+    stepFrame(): void {
+        const { playtest } = this.host.session;
+        if (playtest.state === 'stopped')
+            return;
+        this.clearPause();
+        playtest.stepOnce();
+        this.notify();
+    }
+    pauseGame(): void {
+        const { playtest } = this.host.session;
+        if (playtest.state === 'playing')
+            playtest.pause();
+    }
+    private clearPause(): void {
+        this.paused = null;
+        this.pausedScope = null;
+        this.pausedInstance = null;
+    }
+    frameBegin(): void {
+        if (this.paused && this.host.session.playtest.state === 'playing') {
+            this.clearPause();
+            this.notify();
+        }
+        for (const activity of this.activities.values())
+            activity.frameMs = 0;
+    }
+    frameEnd(instances: readonly ScriptInstance[]): void {
+        const now = performance.now();
+        for (const activity of this.activities.values())
+            activity.smoothedMs += (activity.frameMs - activity.smoothedMs) * SMOOTHING;
+        if (this.activities.size > 0)
+            this.activityDirty = true;
+        if (now - this.lastActivityNotify < ACTIVITY_NOTIFY_MS)
+            return;
+        if (!this.activityDirty && this.watches.length === 0)
+            return;
+        this.lastActivityNotify = now;
+        this.activityDirty = false;
+        this.syncStates(instances);
+        if (!this.paused && this.watches.length > 0)
+            this.refreshWatches();
+        this.notify();
+    }
+    reset(): void {
+        this.frames.length = 0;
+        this.activities.clear();
+        this.instances.clear();
+        this.moduleScopes.clear();
+        this.hooks.clear();
+        this.hits.clear();
+        this.clearPause();
+        this.lastHit = null;
+        this.watchValues = this.idleWatchValues();
+        this.notify();
+    }
+    runEnded(): void {
+        this.frames.length = 0;
+        this.moduleScopes.clear();
+        this.hooks.clear();
+        this.instances.clear();
+        for (const activity of this.activities.values())
+            activity.state = 'destroyed';
+        this.clearPause();
+        this.watchValues = this.idleWatchValues();
+        this.notify();
+    }
+    private idleWatchValues(): WatchValue[] {
+        return this.watches.map((watch) => ({ id: watch.id, expression: watch.expression, value: null, error: null }));
+    }
+    enter(instance: ScriptInstance | null, owner: {
+        name: string;
+    } | null, phase: string): void {
+        this.frames.push({
+            kind: isHookPhase(phase) ? 'hook' : 'callback',
+            label: phase,
+            script: instance?.name ?? owner?.name ?? null,
+            file: instance?.file ?? null,
+            assetId: instance?.assetId ?? null,
+            actor: instance?.self?.name ?? null,
+            language: instance?.language ?? null,
+            startedAt: performance.now(),
+        });
+    }
+    exit(): void {
+        this.frames.pop();
+    }
+    get liveFrames(): readonly DebugFrame[] {
+        return this.frames.slice().reverse();
+    }
+    recordCall(instance: ScriptInstance | null, phase: string, ms: number, failed: boolean, error: unknown): void {
+        if (!instance)
+            return;
+        const activity = this.activityOf(instance);
+        let record = activity.phases.get(phase);
+        if (!record) {
+            record = { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, errors: 0 };
+            activity.phases.set(phase, record);
+        }
+        record.calls++;
+        record.totalMs += ms;
+        record.lastMs = ms;
+        if (ms > record.maxMs)
+            record.maxMs = ms;
+        activity.frameMs += ms;
+        activity.lastActiveAt = performance.now();
+        if (failed)
+            this.noteError(activity, record, error);
+        activity.state = stateOf(instance);
+        this.activityDirty = true;
+    }
+    recordAsyncFailure(instance: ScriptInstance | null, phase: string, error: unknown): void {
+        if (!instance)
+            return;
+        const activity = this.activityOf(instance);
+        let record = activity.phases.get(phase);
+        if (!record) {
+            record = { calls: 0, totalMs: 0, lastMs: 0, maxMs: 0, errors: 0 };
+            activity.phases.set(phase, record);
+        }
+        this.noteError(activity, record, error);
+        activity.state = stateOf(instance);
+        this.activityDirty = true;
+    }
+    private noteError(activity: ScriptActivity, record: PhaseActivity, error: unknown): void {
+        record.errors++;
+        activity.errors++;
+        activity.lastError = error instanceof Error ? error.message : error === undefined ? null : String(error);
+    }
+    syncStates(instances: readonly ScriptInstance[]): void {
+        const alive = new Set<number>();
+        for (const instance of instances) {
+            alive.add(instance.id);
+            const activity = this.activityOf(instance);
+            activity.state = stateOf(instance);
+        }
+        for (const activity of this.activities.values())
+            if (!alive.has(activity.key) && activity.state !== 'destroyed')
+                activity.state = 'destroyed';
+    }
+    private activityOf(instance: ScriptInstance): ScriptActivity {
+        let activity = this.activities.get(instance.id);
+        if (!activity) {
+            activity = {
+                key: instance.id,
+                assetId: instance.assetId,
+                name: instance.name,
+                file: instance.file,
+                language: instance.language,
+                actor: instance.self?.name ?? null,
+                role: instance.role,
+                state: stateOf(instance),
+                phases: new Map(),
+                frameMs: 0,
+                smoothedMs: 0,
+                errors: 0,
+                lastError: null,
+                lastActiveAt: performance.now(),
+            };
+            this.activities.set(instance.id, activity);
+        }
+        return activity;
+    }
+    get activity(): readonly ScriptActivity[] {
+        return Array.from(this.activities.values());
+    }
+    addWatch(expression: string): Watch | null {
+        const text = expression.trim();
+        if (!text)
+            return null;
+        const watch: Watch = { id: nextWatchId++, expression: text };
+        this.watches = [...this.watches, watch];
+        this.refreshWatches();
+        this.notify();
+        return watch;
+    }
+    updateWatch(id: number, expression: string): void {
+        const text = expression.trim();
+        if (!text) {
+            this.removeWatch(id);
+            return;
+        }
+        this.watches = this.watches.map((watch) => (watch.id === id ? { ...watch, expression: text } : watch));
+        this.refreshWatches();
+        this.notify();
+    }
+    removeWatch(id: number): void {
+        if (!this.watches.some((watch) => watch.id === id))
+            return;
+        this.watches = this.watches.filter((watch) => watch.id !== id);
+        this.evaluators.clear();
+        this.refreshWatches();
+        this.notify();
+    }
+    clearWatches(): void {
+        if (this.watches.length === 0)
+            return;
+        this.watches = [];
+        this.watchValues = [];
+        this.evaluators.clear();
+        this.notify();
+    }
+    get watchResults(): readonly WatchValue[] {
+        return this.watchValues;
+    }
+    get watchContext(): {
+        label: string;
+        instance: ScriptInstance | null;
+    } {
+        if (this.paused && this.pausedScope)
+            return { label: `${this.paused.file}:${this.paused.line}`, instance: this.pausedInstance };
+        const target = this.liveScopeTarget();
+        if (!target)
+            return { label: this.host.running ? 'helix' : 'sem jogo em execução', instance: null };
+        return { label: `${target.module.file} (módulo)`, instance: target.instance };
+    }
+    private liveScopeTarget(): {
+        module: LoadedModule;
+        scope: ModuleScope;
+        instance: ScriptInstance | null;
+    } | null {
+        const activeId = this.host.session.code.activeId;
+        const preferred = activeId ? this.moduleScopes.get(activeId) : undefined;
+        const scope = preferred ?? this.moduleScopes.values().next().value;
+        if (!scope)
+            return null;
+        return { module: scope.module, scope, instance: this.instanceOf(scope.module.compiled.assetId) };
+    }
+    private instanceOf(assetId: string): ScriptInstance | null {
+        for (const activity of this.activities.values())
+            if (activity.assetId === assetId && activity.state === 'active')
+                return this.instances.get(activity.key) ?? null;
+        return null;
+    }
+    private readonly instances = new Map<number, ScriptInstance>();
+    trackInstance(instance: ScriptInstance): void {
+        this.instances.set(instance.id, instance);
+    }
+    untrackInstance(instance: ScriptInstance): void {
+        this.instances.delete(instance.id);
+        const activity = this.activities.get(instance.id);
+        if (activity)
+            activity.state = 'destroyed';
+    }
 }
