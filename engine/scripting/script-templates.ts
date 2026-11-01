@@ -783,3 +783,283 @@ export interface WatString {
     readonly offset: number;
     readonly length: number;
 }
+export function watStrings<const K extends string>(texts: Readonly<Record<K, string>>): {
+    readonly at: Record<K, WatString>;
+    readonly data: string[];
+    readonly next: number;
+} {
+    const encoder = new TextEncoder();
+    const at = {} as Record<K, {
+        offset: number;
+        length: number;
+    }>;
+    const data: string[] = [];
+    let offset = 0;
+    for (const key of Object.keys(texts) as K[]) {
+        const length = encoder.encode(texts[key]).length;
+        at[key] = { offset, length };
+        const escaped = texts[key].replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        data.push(`(data (i32.const ${offset}) "${escaped}") ;; ${key}: ${length} ${length === 1 ? 'byte' : 'bytes'}`);
+        offset += Math.ceil(Math.max(1, length) / 8) * 8;
+    }
+    return { at, data, next: Math.max(256, Math.ceil(offset / 256) * 256) };
+}
+function watBody(template: ScriptTemplateId, name: string, tab: string): string {
+    const ref = (entry: {
+        offset: number;
+        length: number;
+    }): string => `(i32.const ${entry.offset}) (i32.const ${entry.length})`;
+    switch (template) {
+        case 'module': {
+            const strings = watStrings({ prefix: 'Olá, ' });
+            const buffer = strings.next;
+            return [
+                `;; Outros scripts recebem este módulo com require("${name}") e chamam as funções exportadas.`,
+                ';; Números passam como f64/i32; textos e objetos chegam como handles (i32) da engine.',
+                '(module',
+                `${tab}(import "helix" "string" (func $hx_string (param i32 i32) (result i32)))`,
+                `${tab}(import "helix" "string_copy" (func $hx_string_copy (param i32 i32 i32) (result i32)))`,
+                '',
+                `${tab}(memory (export "memory") 1)`,
+                ...strings.data.map((line) => `${tab}${line}`),
+                '',
+                `${tab}(func (export "soma") (param $a f64) (param $b f64) (result f64)`,
+                `${tab}${tab}(f64.add (local.get $a) (local.get $b)))`,
+                '',
+                `${tab};; saudacao("mundo") devolve "Olá, mundo": monta o texto num buffer e cria uma String da engine.`,
+                `${tab}(func (export "saudacao") (param $quem i32) (result i32)`,
+                `${tab}${tab}(local $tamanho i32)`,
+                `${tab}${tab}(memory.copy (i32.const ${buffer}) ${ref(strings.at.prefix)})`,
+                `${tab}${tab}(local.set $tamanho (call $hx_string_copy (local.get $quem) (i32.const ${buffer + strings.at.prefix.length}) (i32.const 200)))`,
+                `${tab}${tab}(if (i32.gt_u (local.get $tamanho) (i32.const 199)) (then (local.set $tamanho (i32.const 199))))`,
+                `${tab}${tab}(call $hx_string (i32.const ${buffer}) (i32.add (i32.const ${strings.at.prefix.length}) (local.get $tamanho))))`,
+                ')',
+                '',
+            ].join('\n');
+        }
+        case 'game': {
+            const strings = watStrings({ scene: 'scene', count: 'count', find: 'find', player: 'Player', started: `${name}: a partida começou`, missing: 'não há um ator chamado Player na cena' });
+            const args = strings.next;
+            return [
+                ';; Script de entrada: começa a partida e liga as regras do jogo.',
+                ';; Níveis de hx_log: 0 debug, 1 info, 2 aviso, 3 erro. Tipos de hx_type: 0 undefined, 1 null, 2 bool, 3 número, 4 texto, 5 lista, 6 objeto, 7 função.',
+                '(module',
+                `${tab}(import "helix" "root" (func $hx_root (result i32)))`,
+                `${tab}(import "helix" "get" (func $hx_get (param i32 i32 i32) (result i32)))`,
+                `${tab}(import "helix" "invoke" (func $hx_invoke (param i32 i32 i32 i32 i32) (result i32)))`,
+                `${tab}(import "helix" "string" (func $hx_string (param i32 i32) (result i32)))`,
+                `${tab}(import "helix" "type" (func $hx_type (param i32) (result i32)))`,
+                `${tab}(import "helix" "log" (func $hx_log (param i32 i32 i32)))`,
+                '',
+                `${tab}(memory (export "memory") 1)`,
+                ...strings.data.map((line) => `${tab}${line}`),
+                '',
+                `${tab}(func (export "onStart")`,
+                `${tab}${tab}(local $scene i32)`,
+                `${tab}${tab}(call $hx_log (i32.const 1) ${ref(strings.at.started)})`,
+                `${tab}${tab}(local.set $scene (call $hx_get (call $hx_root) ${ref(strings.at.scene)}))`,
+                `${tab}${tab};; helix.scene.find("Player"): os argumentos de hx_invoke são uma lista de handles (i32) na memória.`,
+                `${tab}${tab}(i32.store (i32.const ${args}) (call $hx_string ${ref(strings.at.player)}))`,
+                `${tab}${tab}(if (i32.le_u (call $hx_type (call $hx_invoke (local.get $scene) ${ref(strings.at.find)} (i32.const ${args}) (i32.const 1))) (i32.const 1))`,
+                `${tab}${tab}${tab}(then (call $hx_log (i32.const 2) ${ref(strings.at.missing)}))))`,
+                '',
+                `${tab}(func (export "onUpdate") (param $dt f64))`,
+                ')',
+                '',
+            ].join('\n');
+        }
+        default: {
+            const strings = watStrings({ name: 'name', transform: 'transform', position: 'position', x: 'x', woke: ' acordou' });
+            const buffer = strings.next;
+            return [
+                ';; Cada ator com este script recebe uma instância própria do módulo: memória e globais são o estado daquele ator.',
+                ';; A engine inteira chega pelas importações helix.* (a ABI de helix.h): valores são handles (i32), textos vivem na memória.',
+                '(module',
+                `${tab}(import "helix" "self" (func $hx_self (result i32)))`,
+                `${tab}(import "helix" "get" (func $hx_get (param i32 i32 i32) (result i32)))`,
+                `${tab}(import "helix" "set" (func $hx_set (param i32 i32 i32 i32)))`,
+                `${tab}(import "helix" "number" (func $hx_number (param f64) (result i32)))`,
+                `${tab}(import "helix" "to_number" (func $hx_to_number (param i32) (result f64)))`,
+                `${tab}(import "helix" "string_copy" (func $hx_string_copy (param i32 i32 i32) (result i32)))`,
+                `${tab}(import "helix" "log" (func $hx_log (param i32 i32 i32)))`,
+                '',
+                `${tab}(memory (export "memory") 1)`,
+                ...strings.data.map((line) => `${tab}${line}`),
+                '',
+                `${tab}(global $velocidade (mut f64) (f64.const 1.0))`,
+                `${tab}(global $quadros (mut i32) (i32.const 0))`,
+                '',
+                `${tab};; Monta "<nome do ator> acordou" num buffer e manda ao console (nível 1 = info).`,
+                `${tab}(func (export "onStart")`,
+                `${tab}${tab}(local $tamanho i32)`,
+                `${tab}${tab}(local.set $tamanho (call $hx_string_copy (call $hx_get (call $hx_self) ${ref(strings.at.name)}) (i32.const ${buffer}) (i32.const 128)))`,
+                `${tab}${tab}(if (i32.gt_u (local.get $tamanho) (i32.const 127)) (then (local.set $tamanho (i32.const 127))))`,
+                `${tab}${tab}(memory.copy (i32.add (i32.const ${buffer}) (local.get $tamanho)) ${ref(strings.at.woke)})`,
+                `${tab}${tab}(call $hx_log (i32.const 1) (i32.const ${buffer}) (i32.add (local.get $tamanho) (i32.const ${strings.at.woke.length}))))`,
+                '',
+                `${tab};; self.transform.position.x += velocidade * dt, a cada quadro.`,
+                `${tab}(func (export "onUpdate") (param $dt f64)`,
+                `${tab}${tab}(local $posicao i32)`,
+                `${tab}${tab}(global.set $quadros (i32.add (global.get $quadros) (i32.const 1)))`,
+                `${tab}${tab}(local.set $posicao (call $hx_get (call $hx_get (call $hx_self) ${ref(strings.at.transform)}) ${ref(strings.at.position)}))`,
+                `${tab}${tab}(call $hx_set (local.get $posicao) ${ref(strings.at.x)}`,
+                `${tab}${tab}${tab}(call $hx_number (f64.add`,
+                `${tab}${tab}${tab}${tab}(call $hx_to_number (call $hx_get (local.get $posicao) ${ref(strings.at.x)}))`,
+                `${tab}${tab}${tab}${tab}(f64.mul (global.get $velocidade) (local.get $dt))))))`,
+                '',
+                `${tab}(func (export "onDestroy"))`,
+                ')',
+                '',
+            ].join('\n');
+        }
+    }
+}
+function cLikeBody(language: ScriptLanguageId, template: ScriptTemplateId, name: string, tab: string): string {
+    switch (language) {
+        case 'c':
+            return cBody(template, name, tab);
+        case 'cpp':
+            return cppBody(template, name, tab);
+        case 'wat':
+            return watBody(template, name, tab);
+        case 'rust':
+            return rustBody(template, name, tab);
+        case 'go':
+            return goBody(template, name, tab);
+        case 'java':
+            return javaBody(template, name, tab);
+        case 'kotlin':
+            return kotlinBody(template, name, tab);
+        case 'swift':
+            return swiftBody(template, name, tab);
+        case 'dart':
+        case 'haxe':
+        case 'zig':
+            return [`${commentLine(language, 'Ciclo de vida do ator: onStart, onUpdate(deltaSeconds), onDestroy')}`, ''].join('\n');
+        default:
+            return '';
+    }
+}
+function webBody(language: ScriptLanguageId, name: string, tab: string): string {
+    switch (language) {
+        case 'html':
+            return ['<section class="hud">', `${tab}<h1>${name}</h1>`, `${tab}<p data-bind="player.score">0</p>`, '</section>', ''].join('\n');
+        case 'css':
+            return ['.hud {', `${tab}position: absolute;`, `${tab}inset: 24px auto auto 24px;`, `${tab}font: 600 14px/1.4 system-ui, sans-serif;`, `${tab}color: white;`, '}', ''].join('\n');
+        case 'svg':
+            return ['<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="4">', `${tab}<circle cx="32" cy="32" r="24" />`, '</svg>', ''].join('\n');
+        default:
+            return '';
+    }
+}
+function shaderBody(language: ScriptLanguageId, tab: string): string {
+    if (language === 'wgsl') {
+        return [
+            '// Pós-processamento: roda sobre a imagem final da engine, uma vez por pixel.',
+            "// No script: const effect = helix.post.custom.add({ fragment: 'NomeDesteShader' });",
+            "//            effect.uniforms.set('tint', [0.1, 0.0, 0.2]);",
+            '// A engine entrega helix.time, helix.resolution, sceneColor/sceneDepth e companhia.',
+            'struct Params {',
+            `${tab}tint: vec3<f32>,`,
+            '};',
+            '@group(1) @binding(0) var<uniform> params: Params;',
+            '',
+            '@fragment',
+            'fn main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {',
+            `${tab}let color = textureSample(sceneColor, sceneSampler, uv).rgb;`,
+            `${tab}let edge = smoothstep(0.35, 0.9, distance(uv, vec2<f32>(0.5)));`,
+            `${tab}return vec4<f32>(mix(color, params.tint, edge * 0.8), 1.0);`,
+            '}',
+            '',
+        ].join('\n');
+    }
+    return [
+        '// Pós-processamento: roda sobre a imagem final da engine, uma vez por pixel.',
+        "// No script: const effect = helix.post.custom.add({ fragment: 'NomeDesteShader' });",
+        "//            effect.uniforms.set('tint', [0.1, 0.0, 0.2]);",
+        '// A engine entrega uTime, uResolution, uSceneColor, uSceneDepth e companhia.',
+        'uniform vec3 tint;',
+        '',
+        'void main() {',
+        `${tab}vec3 color = texture(uSceneColor, vUv).rgb;`,
+        `${tab}float edge = smoothstep(0.35, 0.9, distance(vUv, vec2(0.5)));`,
+        `${tab}fragColor = vec4(mix(color, tint, edge * 0.8), 1.0);`,
+        '}',
+        '',
+    ].join('\n');
+}
+export function buildScriptSource(language: ScriptLanguageId, templateId: ScriptTemplateId, name: string): string {
+    const template = findScriptTemplate(templateId);
+    const tab = indentUnit(language);
+    const head = header(language, name, template);
+    if (templateId === 'blank')
+        return head;
+    if (templateId === 'netServer' || templateId === 'netClient')
+        return head + netTemplateBody(language, templateId, name, tab);
+    let body = '';
+    switch (language) {
+        case 'luau':
+            body = luaBody(templateId, name, tab, true);
+            break;
+        case 'lua':
+            body = luaBody(templateId, name, tab, false);
+            break;
+        case 'javascript':
+            body = jsBody(templateId, name, tab, false);
+            break;
+        case 'typescript':
+            body = jsBody(templateId, name, tab, true);
+            break;
+        case 'python':
+            body = pythonBody(templateId, name, tab);
+            break;
+        case 'ruby':
+            body = rubyBody(templateId, name, tab);
+            break;
+        case 'gdscript':
+            body = gdscriptBody(templateId, name, tab);
+            break;
+        case 'csharp':
+            body = csharpBody(templateId, name, tab);
+            break;
+        case 'php':
+            body = phpBody(templateId, name, tab);
+            break;
+        case 'html':
+        case 'css':
+        case 'svg':
+            body = webBody(language, name, tab);
+            break;
+        case 'glsl':
+        case 'wgsl':
+            body = shaderBody(language, tab);
+            break;
+        default:
+            body = cLikeBody(language, templateId, name, tab);
+    }
+    return head + body;
+}
+export function identifierFromName(name: string): string {
+    const cleaned = name
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, ' ')
+        .trim()
+        .split(' ')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join('');
+    const safe = cleaned || 'Script';
+    return /^[0-9]/.test(safe) ? `S${safe}` : safe;
+}
+export function buildScriptDocument(language: ScriptLanguageId, templateId: ScriptTemplateId, name?: string): ScriptDocument {
+    const template = findScriptTemplate(templateId);
+    const finalName = name?.trim() || template.defaultName;
+    return createScriptDocument({
+        name: finalName,
+        language,
+        source: buildScriptSource(language, templateId, identifierFromName(finalName)),
+        runContext: template.runContext,
+        entry: templateId === 'game',
+    });
+}
