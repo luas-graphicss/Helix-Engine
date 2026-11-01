@@ -276,5 +276,246 @@ export class EmitterSimulator {
         const gy = gravity[1];
         const gz = gravity[2];
         const scale = frame.scale;
+        const m = frame.worldMatrix;
+        const inverse = frame.inverseWorldMatrix;
+        for (let i = 0; i < pool.count;) {
+            const nextAge = age[i] + dt;
+            if (nextAge >= lifetime[i]) {
+                pool.kill(i);
+                continue;
+            }
+            age[i] = nextAge;
+            const life = nextAge / lifetime[i];
+            const p = i * 3;
+            let vx = velocity[p];
+            let vy = velocity[p + 1];
+            let vz = velocity[p + 2];
+            let speedMultiplier = 1;
+            let addX = 0;
+            let addY = 0;
+            let addZ = 0;
+            let sizeX = size0[i] * aspect;
+            let sizeY = size0[i];
+            let spin = angularVelocity[i];
+            let alignToVelocity = false;
+            let killed = false;
+            let r = color0[i * 4];
+            let g = color0[i * 4 + 1];
+            let b = color0[i * 4 + 2];
+            let a = color0[i * 4 + 3];
+            const px = position[p];
+            const py = position[p + 1];
+            const pz = position[p + 2];
+            for (let k = 0; k < modules.length; k++) {
+                const module = modules[k];
+                if (!module.enabled)
+                    continue;
+                switch (module.kind) {
+                    case 'gravity': {
+                        vx += gx * module.scale * dt;
+                        vy += gy * module.scale * dt;
+                        vz += gz * module.scale * dt;
+                        break;
+                    }
+                    case 'force': {
+                        const variation = 1 + module.randomize * (seed[i] * 2 - 1);
+                        scratch[0] = module.force[0] * variation * scale;
+                        scratch[1] = module.force[1] * variation * scale;
+                        scratch[2] = module.force[2] * variation * scale;
+                        const force = module.space === 'world' ? this.toSimulationSpace(scratch, scratchB) : isWorld ? this.rotateToWorld(scratch, scratchB) : scratch;
+                        vx += force[0] * dt;
+                        vy += force[1] * dt;
+                        vz += force[2] * dt;
+                        break;
+                    }
+                    case 'drag': {
+                        const factor = Math.max(0, 1 - module.coefficient * sampleCurve(module.curve, life) * dt);
+                        vx *= factor;
+                        vy *= factor;
+                        vz *= factor;
+                        break;
+                    }
+                    case 'noise': {
+                        const frequency = module.frequency / Math.max(scale, 1e-3);
+                        const t = frame.clock * module.scrollSpeed;
+                        let nx = 0;
+                        let ny = 0;
+                        let nz = 0;
+                        let amplitude = 1;
+                        let octaveFrequency = frequency;
+                        for (let octave = 0; octave < module.octaves; octave++) {
+                            noiseField(px * octaveFrequency + t, py * octaveFrequency + t * 0.7, pz * octaveFrequency - t * 0.4, this.noise);
+                            nx += this.noise[0] * amplitude;
+                            ny += this.noise[1] * amplitude;
+                            nz += this.noise[2] * amplitude;
+                            amplitude *= 0.5;
+                            octaveFrequency *= 2;
+                        }
+                        const strength = module.strength * sampleCurve(module.curve, life) * scale * dt * 2;
+                        vx += nx * strength;
+                        vy += ny * strength;
+                        vz += nz * strength;
+                        break;
+                    }
+                    case 'vortex': {
+                        const cx = isWorld ? m[12] : 0;
+                        const cy = isWorld ? m[13] : 0;
+                        const cz = isWorld ? m[14] : 0;
+                        scratch[0] = module.axis[0];
+                        scratch[1] = module.axis[1];
+                        scratch[2] = module.axis[2];
+                        const axis = isWorld ? this.rotateToWorld(scratch, scratchB) : scratch;
+                        const axisLength = Math.hypot(axis[0], axis[1], axis[2]) || 1;
+                        const ax = axis[0] / axisLength;
+                        const ay = axis[1] / axisLength;
+                        const az = axis[2] / axisLength;
+                        const rx = px - cx;
+                        const ry = py - cy;
+                        const rz = pz - cz;
+                        const along = rx * ax + ry * ay + rz * az;
+                        const qx = rx - ax * along;
+                        const qy = ry - ay * along;
+                        const qz = rz - az * along;
+                        const radius = Math.hypot(qx, qy, qz);
+                        if (radius > 1e-4) {
+                            const tx = ay * qz - az * qy;
+                            const ty = az * qx - ax * qz;
+                            const tz = ax * qy - ay * qx;
+                            const tangential = module.strength * scale * dt;
+                            const pull = (module.pull * scale * dt) / radius;
+                            vx += (tx / radius) * tangential - qx * pull;
+                            vy += (ty / radius) * tangential - qy * pull;
+                            vz += (tz / radius) * tangential - qz * pull;
+                        }
+                        break;
+                    }
+                    case 'attractor': {
+                        scratch[0] = module.position[0] * scale;
+                        scratch[1] = module.position[1] * scale;
+                        scratch[2] = module.position[2] * scale;
+                        const target = isWorld ? mat4.transformPoint(scratchB, m, scratch) : scratch;
+                        const dx = target[0] - px;
+                        const dy = target[1] - py;
+                        const dz = target[2] - pz;
+                        const distance = Math.hypot(dx, dy, dz);
+                        if (distance <= module.radius * scale) {
+                            if (module.kill) {
+                                killed = true;
+                                break;
+                            }
+                            vx *= 0.9;
+                            vy *= 0.9;
+                            vz *= 0.9;
+                        }
+                        else {
+                            const pull = (module.strength * scale * dt) / Math.max(distance, 0.05);
+                            vx += dx * pull;
+                            vy += dy * pull;
+                            vz += dz * pull;
+                        }
+                        break;
+                    }
+                    case 'orbit': {
+                        const cx = isWorld ? m[12] : 0;
+                        const cy = isWorld ? m[13] : 0;
+                        const cz = isWorld ? m[14] : 0;
+                        scratch[0] = module.axis[0];
+                        scratch[1] = module.axis[1];
+                        scratch[2] = module.axis[2];
+                        const axis = isWorld ? this.rotateToWorld(scratch, scratchB) : scratch;
+                        vec3.normalize(axis, axis);
+                        scratch[0] = px - cx;
+                        scratch[1] = py - cy;
+                        scratch[2] = pz - cz;
+                        vec3.rotateAroundAxis(localDirection, scratch, axis, module.speed * dt);
+                        const along = vec3.dot(localDirection, axis);
+                        const qx = localDirection[0] - axis[0] * along;
+                        const qy = localDirection[1] - axis[1] * along;
+                        const qz = localDirection[2] - axis[2] * along;
+                        const radius = Math.hypot(qx, qy, qz);
+                        const radial = radius > 1e-4 ? (module.radial * scale * dt) / radius : 0;
+                        addX += (localDirection[0] - scratch[0] + qx * radial) / dt;
+                        addY += (localDirection[1] - scratch[1] + qy * radial) / dt;
+                        addZ += (localDirection[2] - scratch[2] + qz * radial) / dt;
+                        break;
+                    }
+                    case 'velocityOverLife': {
+                        speedMultiplier *= sampleCurve(module.speedCurve, life);
+                        scratch[0] = module.linear[0] * scale;
+                        scratch[1] = module.linear[1] * scale;
+                        scratch[2] = module.linear[2] * scale;
+                        const linear = module.space === 'world' ? this.toSimulationSpace(scratch, scratchB) : isWorld ? this.rotateToWorld(scratch, scratchB) : scratch;
+                        addX += linear[0];
+                        addY += linear[1];
+                        addZ += linear[2];
+                        break;
+                    }
+                    case 'limitVelocity': {
+                        const limit = module.speed * scale;
+                        const current = Math.hypot(vx, vy, vz);
+                        if (current > limit && current > 1e-6) {
+                            const target = limit / current;
+                            const factor = 1 + (target - 1) * clamp(module.dampen * dt * 10, 0, 1);
+                            vx *= factor;
+                            vy *= factor;
+                            vz *= factor;
+                        }
+                        break;
+                    }
+                    case 'sizeOverLife': {
+                        sizeX *= sampleCurve(module.curve, life);
+                        sizeY *= module.separateAxes ? sampleCurve(module.curveY, life) : sampleCurve(module.curve, life);
+                        break;
+                    }
+                    case 'sizeBySpeed': {
+                        const current = Math.hypot(vx, vy, vz) / Math.max(scale, 1e-3);
+                        const t = module.speedMax > module.speedMin ? clamp((current - module.speedMin) / (module.speedMax - module.speedMin), 0, 1) : 1;
+                        const factor = sampleCurve(module.curve, t);
+                        sizeX *= factor;
+                        sizeY *= factor;
+                        break;
+                    }
+                    case 'colorOverLife': {
+                        sampleGradient(module.gradient, life, sample);
+                        r *= sample[0];
+                        g *= sample[1];
+                        b *= sample[2];
+                        a *= sample[3];
+                        break;
+                    }
+                    case 'colorBySpeed': {
+                        const current = Math.hypot(vx, vy, vz) / Math.max(scale, 1e-3);
+                        const t = module.speedMax > module.speedMin ? clamp((current - module.speedMin) / (module.speedMax - module.speedMin), 0, 1) : 1;
+                        sampleGradient(module.gradient, t, sample);
+                        r *= sample[0];
+                        g *= sample[1];
+                        b *= sample[2];
+                        a *= sample[3];
+                        break;
+                    }
+                    case 'rotationOverLife': {
+                        if (module.alignToVelocity)
+                            alignToVelocity = true;
+                        else
+                            spin = sampleCurve(module.curve, life) * DEG_TO_RAD;
+                        break;
+                    }
+                    case 'collision':
+                        break;
+                }
+                if (killed)
+                    break;
+            }
+            if (killed) {
+                pool.kill(i);
+                continue;
+            }
+            velocity[p] = vx;
+            velocity[p + 1] = vy;
+            velocity[p + 2] = vz;
+            let nx = px + (vx * speedMultiplier + addX) * dt;
+            let ny = py + (vy * speedMultiplier + addY) * dt;
+            let nz = pz + (vz * speedMultiplier + addZ) * dt;
+        }
     }
 }
