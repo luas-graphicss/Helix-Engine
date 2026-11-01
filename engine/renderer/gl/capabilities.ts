@@ -2,6 +2,7 @@ import type { GL } from './context';
 export type GpuTier = 'low' | 'mid' | 'high';
 export interface GlCapabilities {
     readonly floatColorTargets: boolean;
+    readonly packedFloatColorTargets: boolean;
     readonly renderer: string;
     readonly software: boolean;
     readonly tier: GpuTier;
@@ -20,10 +21,11 @@ export function classifyGpuTier(renderer: string, software: boolean): GpuTier {
     return 'mid';
 }
 export function detectCapabilities(gl: GL): GlCapabilities {
-    const floatColorTargets = gl.getExtension('EXT_color_buffer_float') !== null || gl.getExtension('EXT_color_buffer_half_float') !== null;
+    const packedFloatColorTargets = gl.getExtension('EXT_color_buffer_float') !== null;
+    const floatColorTargets = packedFloatColorTargets || gl.getExtension('EXT_color_buffer_half_float') !== null;
     const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
     const renderer = debugInfo ? String(gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) ?? '') : String(gl.getParameter(gl.RENDERER) ?? '');
     const software = SOFTWARE_RENDERER.test(renderer);
     const parallelShaderCompile = gl.getExtension('KHR_parallel_shader_compile');
-    return { floatColorTargets, renderer, software, tier: classifyGpuTier(renderer, software), parallelShaderCompile };
+    return { floatColorTargets, packedFloatColorTargets, renderer, software, tier: classifyGpuTier(renderer, software), parallelShaderCompile };
 }
