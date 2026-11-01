@@ -281,5 +281,285 @@ final class DebugJogo extends \\Helix\\Script
         $this->checar('material.assign/of', $mat->of($caixa) !== null);
         $mat->own($caixa);
         $mat->setColor($caixa, '#d98c2b');
+        $tela = $h->texture->canvas(64, 64);
+        $tela->update();
+        $mat->setTexture($caixa, 'baseColorMap', $tela->texture);
+        $this->checar('texture.canvas + setTexture', $mat->hasAnyTexture($mat->of($caixa)) && $h->texture->isTexture($tela->texture));
+        $this->checar('material.slots', count($mat->slots()) > 0);
+        $this->checar('materials.list', is_array($h->materials->list()));
+        $sombreado = $mat->fromShader('DebugSuperficie', ['glow' => [1, 0.45, 0.1], 'speed' => 2]);
+        $this->checar('material.fromShader', $sombreado !== null);
+        if ($sombreado !== null) {
+            $esfera = $h->scene->spawnPrimitive('sphere', ['name' => 'EsferaShader', 'position' => [0, 1, -3], 'scale' => 1.4]);
+            $mat->assign($esfera, $sombreado);
+            $mat->uniforms($esfera)->set('speed', 3);
+            $this->checar('material.uniforms.list', count($mat->uniforms($esfera)->list()) >= 1);
+        }
+    }
+
+    private function luzes(): void
+    {
+        $h = $this->helix;
+        $l = $h->light;
+        $this->checar('light.types', in_array('point', $l->types(), true) && in_array('spot', $l->localTypes(), true));
+        $lampada = $l->spawn('point', ['name' => 'Lampada', 'position' => [0, 3, 0], 'color' => '#ffd166', 'intensity' => 60, 'range' => 14]);
+        $this->checar('light.spawn', $lampada->light !== null && $lampada->light->type === 'point');
+        $l->set($lampada, ['intensity' => 80]);
+        $this->checar('light.set', (float) $lampada->light->intensity === 80.0);
+        $l->setTemperature($lampada, 3200);
+        $this->checar('setTemperature', (float) $lampada->light->temperature === 3200.0);
+        $foco = $l->spawn('spot', ['name' => 'Holofote', 'position' => [4, 4, 0], 'rotation' => [-90, 0, 0], 'intensity' => 120, 'range' => 16, 'innerAngle' => 20, 'outerAngle' => 35, 'color' => '#ffffff']);
+        $this->checar('spot', $foco->light->type === 'spot');
+        $convertido = $l->convert($foco, 'disc');
+        $this->checar('light.convert', $convertido->type === 'disc' && $foco->light->type === 'disc');
+        $l->convert($foco, 'spot');
+        $presets = $l->presets();
+        $this->checar('light.presets', count($presets) > 0);
+        if (count($presets) > 0) {
+            $preset = $l->spawn($presets[0]->id, ['name' => 'LuzPreset', 'position' => [-4, 2.5, 4]]);
+            $this->checar('light.fromPreset', $preset->light !== null && $l->fromPreset($presets[0]->id)->type === $presets[0]->type);
+        }
+        $this->checar('light.all', count($l->all(['local' => true])) >= 2);
+        $this->checar('effectiveRange', (float) $l->effectiveRange($lampada) > 0);
+        $this->checar('light.isLocal', $l->isLocal($lampada) === true);
+        $this->checar('temperatureToColor', $l->temperatureToColor(6500) !== null);
+        $l->setColor($lampada, '#ffffff');
+        $this->checar('light.setColor', $h->math->vec3->equals($lampada->light->color, [1, 1, 1], 0.01));
+    }
+
+    private function ceu(): void
+    {
+        $h = $this->helix;
+        $sky = $h->sky;
+        $sky->set(['timeOfDay' => 10.5, 'haze' => 0.3, 'clouds' => ['enabled' => true, 'coverage' => 0.45]]);
+        $this->checar('sky.set', self::aprox((float) $sky->timeOfDay, 10.5) && $sky->clouds->enabled === true);
+        $this->checar('sky.isDay', $sky->isDay === true);
+        $this->checar('sky.sunDirection', (float) $sky->sunDirection()->y > 0);
+        $this->checar('sky.formatTimeOfDay', preg_match('/\\\\d{1,2}:\\\\d{2}/', (string) $sky->formatTimeOfDay(10.5)) === 1, $sky->formatTimeOfDay(10.5));
+        $this->checar('sky.wrapTimeOfDay', (float) $sky->wrapTimeOfDay(25) === 1.0);
+        $this->checar('sky.presets', count($sky->presets()) > 0);
+        $this->assinar($sky->onHourChanged(function ($hora) use ($h): void {
+            $h->log->info('Debug', "Hora do céu: {$hora}");
+        }));
+        $sky->cycleSpeed = 0;
+        $this->checar('sky.cycleSpeed', (float) $sky->cycleSpeed === 0.0);
+        $this->checar('world.gravity', (float) $h->world->gravity->y < 0);
+        $h->world->wind->set(['speed' => 2, 'direction' => 45]);
+        $this->checar('world.wind.set', (float) $h->world->wind->speed === 2.0);
+    }
+
+    private function camera(): void
+    {
+        $h = $this->helix;
+        $c = $h->camera;
+        $this->checar('camera.fov', (float) $c->fov > 0 && (float) $c->aspect > 0);
+        $this->checar('camera.near/far', (float) $c->near > 0 && (float) $c->far > (float) $c->near);
+        $this->checar('viewport', (float) $c->viewport->width > 0);
+        $tela = $c->worldToScreen([0, 0, 0]);
+        $this->checar('worldToScreen', $tela === null || is_numeric($tela->x));
+        $raio = $c->screenToRay($c->viewport->width / 2, $c->viewport->height / 2);
+        $this->checar('screenToRay', $raio === null || self::aprox((float) $h->math->vec3->length($raio->direction), 1, 0.01));
+        $this->checar('viewMatrix', count($c->viewMatrix) === 16);
+        $c->player->set(['distance' => 7, 'pitch' => 18]);
+        $this->checar('player.set', (float) $c->player->settings->distance === 7.0);
+        $this->checar('distanceTo', (float) $c->distanceTo([0, 0, 0]) >= 0);
+        $this->checar('camera.position', $c->position !== null && $c->forward !== null);
+        $this->assinar($c->onMainChanged(function ($e) use ($h): void {
+            $h->log->info('Debug', 'Câmera principal: ' . ($e !== null ? $e->name : 'editor/jogador'));
+        }));
+    }
+
+    private function pos(): void
+    {
+        $p = $this->helix->post;
+        $this->checar('post.toneMappers', count($p->toneMappers()) > 0);
+        $p->set([
+            'bloom' => ['enabled' => true, 'intensity' => 0.5, 'threshold' => 1, 'softKnee' => 0.5, 'radius' => 0.6],
+            'vignette' => ['enabled' => true, 'intensity' => 0.35, 'smoothness' => 0.5, 'roundness' => 1],
+        ]);
+        $this->checar('post.set', $p->bloom->enabled === true && $p->vignette->enabled === true);
+        $p->exposure = 1.05;
+        $this->checar('post.exposure', self::aprox((float) $p->exposure, 1.05));
+        $p->toneMapper = 'agx';
+        $this->checar('post.toneMapper', $p->toneMapper === 'agx');
+        $this->checar('post.presets', count($p->presets()) > 0);
+        $efeito = $p->custom->add(['fragment' => 'DebugPost', 'name' => 'DebugPost', 'uniforms' => ['tint' => [0.15, 0.05, 0.3], 'strength' => 0.6]]);
+        $this->efeito = $efeito;
+        $this->checar('post.custom.add', $efeito !== null && $p->custom->get('DebugPost') !== null);
+        $efeito->uniforms->set('strength', 0.8);
+        $this->checar('efeito.uniforms.list', count($efeito->uniforms->list()) >= 2);
+    }
+
+    private function render(): void
+    {
+        $r = $this->helix->render;
+        $this->checar('render.passNames', count($r->passNames()) > 0);
+        $this->checar('render.stats', is_numeric($r->stats->drawCalls));
+        $this->checar('render.frame', is_numeric($r->frame->width));
+        $this->assinar($r->onAfterFrame(function (): void {
+            $this->renders++;
+        }));
+        $r->showGrid = false;
+        $this->checar('render.showGrid', $r->showGrid === false);
+        $this->checar('render.pixelRatio', (float) $r->pixelRatio > 0);
+    }
+
+                                                                                                         
+
+    private function fisica(): void
+    {
+        $h = $this->helix;
+        $ph = $h->physics;
+        $this->checar('physics.enabled', $ph->enabled === true);
+        $this->checar('physics.gravity', (float) $ph->gravity->y < 0);
+        $this->checar('physics.settings', (float) $ph->settings->fixedTimestep > 0);
+        for ($i = 1; $i <= 5; $i++) {
+            $caixa = $h->scene->spawnPrimitive('box', ['name' => "Caixa{$i}", 'position' => [-2 + ($i - 1) * 1.1, 3 + ($i - 1) * 1.2, 3], 'rigidBody' => ['type' => 'dynamic', 'collider' => 'box', 'mass' => 2, 'restitution' => 0.3], 'tags' => ['caixa']]);
+            $h->material->setColor($caixa, $h->math->color->hsl(30 + $i * 12, 0.7, 0.5));
+        }
+        $caixas = $h->scene->byTag('caixa');
+        $this->checar('caixas dinâmicas', count($caixas) === 5 && $ph->hasBody($caixas[0]));
+        $corpo = $ph->bodyOf($caixas[0]);
+        $this->checar('bodyOf', $corpo->isDynamic === true && (float) $corpo->mass > 0);
+        $corpo->applyImpulse([0, 2, 0]);
+        $corpo->applyTorque([0, 1, 0]);
+        $corpo->setMaterial(['friction' => 0.8]);
+        $corpo->wake();
+        $this->checar('body.linearVelocity', $corpo->linearVelocity !== null);
+        $this->checar('bodies()', count($ph->bodies()) >= 6);
+        $hit = $ph->raycast([0, 5, 0], [0, -1, 0], 20);
+        $this->checar('physics.raycast', $hit !== null && $hit->entity !== null, $hit?->entity?->name);
+        $this->checar('raycastAll', count($ph->raycastAll([0, 5, 0], [0, -1, 0], 20)) >= 1);
+        $this->checar('overlapSphere', is_array($ph->overlapSphere([0, 3, 3], 4)));
+        $this->checar('massProperties', (float) $ph->massProperties($caixas[0])->mass > 0);
+        $this->checar('colliderVolume', (float) $ph->colliderVolume($caixas[0]) > 0);
+        $this->checar('shapes.sphere volume', self::aprox((float) $ph->shapes->volume($ph->shapes->sphere(1)), 4.18879, 0.01));
+        $this->assinar($ph->onCollisionBegin(function ($e) use ($h): void {
+            $this->colisoes++;
+            if ($this->colisoes <= 3) {
+                $h->log->info('Debug', sprintf('Colisão: %s × %s (impulso %.2f)', $e->a->name, $e->b->name, (float) $e->contact->impulse));
+            }
+        }));
+        $this->assinar($ph->onOutOfBounds(function ($e) use ($h): void {
+            $h->log->warn('Debug', "{$e->name} caiu do mundo");
+        }));
+        $gatilho = $h->scene->spawn('group', ['name' => 'Gatilho', 'position' => [0, 1, 3], 'trigger' => ['shape' => 'box', 'size' => [3, 2, 3]]]);
+        $this->checar('trigger spawn', $gatilho !== null && $h->scene->isAttached($gatilho));
+        $this->checar('physics.stats', is_numeric($ph->stats->bodies));
+    }
+
+    private function personagem(): void
+    {
+        $h = $this->helix;
+        $heroi = $h->character->spawn(['name' => 'Heroi', 'position' => [0, 1.2, 8], 'character' => ['walkSpeed' => 4, 'runSpeed' => 7, 'jumpHeight' => 1.4]]);
+        $this->heroi = $heroi;
+        $this->checar('character.spawn', $heroi->character !== null && $h->character->has($heroi));
+        $c = $h->character->of($heroi);
+        $this->checar('character.of', is_bool($c->isGrounded));
+        $this->checar('settingsOf', (float) $h->character->settingsOf($heroi)->walkSpeed === 4.0);
+        $h->player->possess($heroi);
+        $this->checar('player.possess', self::mesmo($h->player->possessed, $heroi) && $h->player->isPossessing === true);
+        $this->assinar($h->character->onJumped(function ($e) use ($h): void {
+            $h->log->info('Debug', "{$e->entity->name} pulou");
+        }));
+        $this->assinar($h->player->onPossessed(function ($e) use ($h): void {
+            $h->log->info('Debug', 'Possuindo ' . ($e !== null ? $e->name : 'ninguém'));
+        }));
+        $this->checar('character.all', count($h->character->all()) >= 1);
+        $this->checar('player.spawnPoint', $h->player->spawnPoint !== null);
+        $this->checar('character.velocity', $c->velocity !== null && $c->position !== null);
+    }
+
+    private function terreno(): void
+    {
+        $te = $this->helix->terrain;
+        $this->checar('terrain.presets', count($te->presets()) > 0);
+        $colinas = $te->spawn(['name' => 'Colinas', 'size' => 48, 'resolution' => 65, 'preset' => 'hills', 'seed' => 7, 'position' => [0, -6, -70]]);
+        $this->checar('terrain.spawn', $colinas->terrain !== null && count($te->all()) >= 1);
+        $this->checar('terrain.of', (int) $te->of($colinas)->resolution === 65);
+        $altura = $te->heightAt([0, 0, -70], $colinas);
+        $this->checar('heightAt', $altura !== null && is_numeric($altura), $altura);
+        $this->checar('contains', $te->contains([0, 0, -70], $colinas) && !$te->contains([500, 0, 0], $colinas));
+        $te->sculpt($colinas, 'raise', [5, 0, -70], ['radius' => 6, 'strength' => 1], 1);
+        $te->markDirty($colinas);
+        $te->grass->set($colinas, ['enabled' => true, 'density' => 0.5]);
+        $this->checar('grass.set', $te->grass->settingsOf($colinas)->enabled === true);
+        $te->water->set($colinas, ['enabled' => true, 'level' => -2]);
+        $this->checar('water.set', $te->water->settingsOf($colinas)->enabled === true);
+        $this->checar('terrain.raycast', $te->raycast([0, 50, -70], [0, -1, 0], $colinas) !== null);
+    }
+
+                                                                                                        
+
+    private function interfaceGrafica(): \\Generator
+    {
+        $h = $this->helix;
+        $g = $h->gui;
+        $g->css('DebugEstilo');
+        $hud = $g->html('DebugHud', ['id' => 'debug-hud']);
+        $this->checar('gui.html', $hud !== null && $g->element('#debug-hud') !== null);
+        $icone = $g->svg('DebugIcone', ['id' => 'debug-icone']);
+        $this->checar('gui.svg', $icone !== null);
+        $slot = $g->element('[data-slot=icone]');
+        if ($slot !== null && $icone !== null) {
+            $slot->appendChild($icone);
+        }
+        $this->checar('gui.bind', (int) $g->bind('linguagem', self::LINGUAGEM) >= 1);
+        $g->bind('titulo', 'Helix · Debug');
+        $this->assinar($g->onAction('caixa', function (): void {
+            $this->soltarCaixa();
+        }));
+        $this->assinar($g->onAction('reiniciar', function () use ($h): void {
+            $h->play->restart();
+        }));
+        $this->checar('gui.elements', count($g->elements('[data-bind]')) >= 5);
+        $this->checar('gui.size', (float) $g->size->width > 0);
+        $tela = $g->create('DebugTela', ['referenceSize' => ['x' => 1280, 'y' => 720]]);
+        $painel = $g->add($tela, 'frame', ['name' => 'Painel', 'rect' => ['position' => ['x' => ['scale' => 1, 'offset' => -236], 'y' => ['scale' => 0, 'offset' => 16]], 'size' => ['x' => ['scale' => 0, 'offset' => 220], 'y' => ['scale' => 0, 'offset' => 48]]]]);
+        $g->add($tela, 'text', ['name' => 'Rotulo', 'text' => 'Tela declarativa OK'], $painel->node->id);
+        $this->checar('gui.add/find', $g->find($tela, 'Rotulo')->kind === 'text');
+        $g->setText($tela, 'Rotulo', 'Tela declarativa OK · ' . self::LINGUAGEM);
+        $this->tela = yield $g->show($tela, 'debug-tela');
+        $this->checar('gui.show/isShown', $this->tela !== null && $g->isShown($this->tela));
+        $this->checar('gui.kinds', in_array('button', $g->kinds(), true));
+    }
+
+    private function audio(): void
+    {
+        $h = $this->helix;
+        $a = $h->audio;
+        $this->checar('audio.supported', is_bool($a->supported));
+        $a->mixer->setVolumeDb('sfx', -3);
+        $this->checar('mixer.setVolumeDb', (float) $a->mixer->bus('sfx')->volumeDb === -3.0);
+        $this->checar('audio.clips', is_array($a->clips()));
+        $fonte = $h->scene->spawn('sound', ['name' => 'FonteSonora', 'position' => [3, 1, 3], 'audioSource' => ['trigger' => 'manual', 'spatial' => true]]);
+        $this->checar('spawn sound', $fonte->audioSource !== null);
+        $a->sources->set($fonte, ['volumeDb' => -4]);
+        $this->checar('sources.set', (float) $fonte->audioSource->volumeDb === -4.0);
+        $this->checar('sources.isPlaying', $a->sources->isPlaying($fonte) === false);
+    }
+
+    private function vfx(): \\Generator
+    {
+        $v = $this->helix->vfx;
+        $ids = $v->templates->ids();
+        $this->checar('vfx.templates', count($ids) > 0);
+        $this->checar('vfx.moduleKinds', count($v->moduleKinds()) > 0);
+        $doc = $v->fromTemplate($ids[0], 'DebugFaiscas');
+        $doc = $v->addEmitter($doc, ['name' => 'Extra', 'maxParticles' => 50]);
+        $doc = $v->set($doc, ['loop' => true]);
+        $this->checar('vfx.fromTemplate/addEmitter', count($doc->emitters) >= 2 && $doc->loop === true);
+        $ativo = yield $v->save($doc, 'DebugFaiscas');
+        $this->checar('vfx.save', $ativo !== null && $ativo->kind === 'vfx');
+        $ator = $v->emitAt($ativo, [0, 1.5, -8], ['destroyWhenFinished' => false]);
+        $this->checar('vfx.emitAt', $v->has($ator) === true);
+        $v->burst($ator, 20);
+        $this->checar('vfx.stats', is_numeric($v->stats()->effects));
+    }
+
+                                                                                                        
+
+    private function soltarCaixa(): void
+    {
 `;
 }
