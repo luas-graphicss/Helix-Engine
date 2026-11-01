@@ -1,64 +1,17 @@
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Scene } from '@/engine/core/scene/scene';
 import type { Entity } from '@/engine/core/scene/entity';
-import { createMaterial, type Material } from '@/engine/core/scene/material';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { createBox, createSphere } from '@/engine/renderer/geometry/primitives';
-import { createRigidBodySettings, type RigidBodySettings } from '@/engine/physics/body/rigid-body-settings';
-import { defaultMassForSettings } from '@/engine/physics/body/collider-fit';
-type Rgb = readonly [
-    number,
-    number,
-    number
-];
-const CONCRETE: Rgb = [0.64, 0.65, 0.68];
-const ACCENT: Rgb = [0.16, 0.4, 0.76];
-const CRATE: Rgb = [0.76, 0.54, 0.3];
+import { createRigidBodySettings } from '@/engine/physics/body/rigid-body-settings';
+import { accent, concrete, crate } from '../props/prop-materials';
+import { dynamicBody, staticBlock } from '../props/static-block';
 const STAIR_STEPS = 6;
 const STAIR_RISE = 0.2;
 const STAIR_TREAD = 0.35;
 const STAIR_WIDTH = 2.4;
 const CRATE_SIZE = 0.5;
 const CRATE_ROWS = 3;
-function concrete(name: string): Material {
-    return createMaterial({ name, baseColor: vec3.create(...CONCRETE), roughness: 0.88 });
-}
-function accent(name: string): Material {
-    return createMaterial({ name, baseColor: vec3.create(...ACCENT), roughness: 0.45 });
-}
-function crate(name: string): Material {
-    return createMaterial({ name, baseColor: vec3.create(...CRATE), roughness: 0.75 });
-}
-interface BlockOptions {
-    rotation?: readonly [
-        number,
-        number,
-        number
-    ];
-    material?: Material;
-    body?: Partial<RigidBodySettings>;
-}
-function staticBlock(scene: Scene, parent: Entity, name: string, size: readonly [
-    number,
-    number,
-    number
-], position: readonly [
-    number,
-    number,
-    number
-], options: BlockOptions = {}): Entity {
-    const entity = scene.createEntity({ name, kind: 'mesh', mesh: createBox(size[0], size[1], size[2]), material: options.material ?? concrete(`${name} · Concreto`) }, parent);
-    vec3.set(entity.transform.position, position[0], position[1], position[2]);
-    if (options.rotation)
-        vec3.set(entity.transform.rotation, options.rotation[0], options.rotation[1], options.rotation[2]);
-    entity.rigidBody = createRigidBodySettings({ type: 'static', collider: 'box', boxSize: vec3.create(size[0], size[1], size[2]), friction: 0.8, ...options.body });
-    return entity;
-}
-function dynamicBody(entity: Entity, settings: Partial<RigidBodySettings>): void {
-    const body = createRigidBodySettings(settings);
-    body.mass = defaultMassForSettings(body, entity.transform.scale);
-    entity.rigidBody = body;
-}
 function createStaircase(scene: Scene, parent: Entity): void {
     const group = scene.createEntity({ name: 'Escadaria', kind: 'group' }, parent);
     vec3.set(group.transform.position, 7, 0, -3);
