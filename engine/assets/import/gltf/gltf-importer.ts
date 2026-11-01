@@ -6,6 +6,7 @@ import type { TextureFilter, TextureWrap } from '@/engine/core/scene/texture';
 import { mimeTypeFromFileName } from '@/engine/assets/image-decoder';
 import { dataUriToBlob, isDataUri, type FileBundle } from '../file-bundle';
 import { stripOrFanToTriangles, withFlatNormals } from '../geometry-utils';
+import { IGNORE_PROGRESS, progressBetween, STAGE_GEOMETRY, STAGE_HIERARCHY, STAGE_READING, STAGE_TEXTURES, type ImportProgressReporter } from '../import-progress';
 import { baseNameWithoutExtension, createImportedMaterial, createImportedNode, createImportedTexture, type ImportedAnimation, type ImportedAnimationChannel, type ImportedInterpolation, type ImportedMaterial, type ImportedMesh, type ImportedNode, type ImportedScene, type ImportedSkin, type ImportedTexture, } from '../import-types';
 import type { GltfAccessor, GltfDocument, GltfMaterial, GltfNode, GltfPrimitive, GltfTextureInfo } from './gltf-types';
 const GLB_MAGIC = 0x46546c67;
@@ -344,7 +345,8 @@ function convertPrimitive(reader: GltfReader, primitive: GltfPrimitive, name: st
         const normals = reader.readAccessor(normalAccessor).data;
         if (normals.length !== positions.length)
             throw new Error(`${name}: NORMAL e POSITION com contagens diferentes.`);
-        geometry = { name, positions, normals, uvs: uvs ?? new Float32Array(vertexCount * 2), indices: createIndexArray(indices, vertexCount), skinning };
+        const tangents = uvs ? readTangents(reader, primitive, name, vertexCount, warnings) : undefined;
+        geometry = { name, positions, normals, uvs: uvs ?? new Float32Array(vertexCount * 2), indices: createIndexArray(indices, vertexCount), tangents, skinning };
     }
     else {
         geometry = withFlatNormals(name, positions, uvs, indices);
@@ -352,6 +354,16 @@ function convertPrimitive(reader: GltfReader, primitive: GltfPrimitive, name: st
             warnings.push(`${name}: sem normais, a malha foi achatada e perdeu o skinning.`);
     }
     return { name, geometry, material: primitive.material ?? null, hadNormals, hadUvs: uvs !== null };
+}
+function readTangents(reader: GltfReader, primitive: GltfPrimitive, name: string, vertexCount: number, warnings: string[]): Float32Array | undefined {
+    const accessor = primitive.attributes.TANGENT;
+    if (accessor === undefined)
+        return undefined;
+    const read = reader.readAccessor(accessor);
+    if (read.components === 4 && read.count === vertexCount)
+        return read.data;
+    warnings.push(`${name}: TANGENT com formato inesperado foi ignorado; as tangentes foram recalculadas.`);
+    return undefined;
 }
 function readSkinning(reader: GltfReader, primitive: GltfPrimitive, name: string, vertexCount: number, warnings: string[]): MeshSkinning | undefined {
     const jointsAccessor = primitive.attributes.JOINTS_0;
@@ -465,7 +477,10 @@ function applyNodeTransform(node: GltfNode, out: ImportedNode): void {
     }
     mat4.decomposeTranslationRotationScale(out.position, out.rotation, out.scale, nodeMatrix);
 }
-export async function importGltf(file: File, bundle: FileBundle): Promise<ImportedScene> {
+const GEOMETRY_PROGRESS_START = 0.2;
+const GEOMETRY_PROGRESS_END = 0.95;
+export async function importGltf(file: File, bundle: FileBundle, progress: ImportProgressReporter = IGNORE_PROGRESS): Promise<ImportedScene> {
+    progress(0, STAGE_READING);
     const buffer = await file.arrayBuffer();
     const glb = isGlb(buffer);
     const { json: doc, binary } = glb ? parseGlb(buffer) : { json: JSON.parse(new TextDecoder().decode(buffer)) as GltfDocument, binary: null };
@@ -476,11 +491,16 @@ export async function importGltf(file: File, bundle: FileBundle): Promise<Import
         if (UNSUPPORTED_REQUIRED_EXTENSIONS.includes(extension))
             warnings.push(`Extensão obrigatória não suportada: ${extension}. Partes do modelo podem faltar.`);
     }
+    progress(0.08, STAGE_READING);
     const buffers = await loadBuffers(doc, binary, bundle, file.name);
     const reader = new GltfReader(doc, buffers);
+    progress(0.12, STAGE_TEXTURES);
     const textures = await loadTextures(doc, reader, bundle, file.name, warnings);
     const materials = (doc.materials ?? []).map((material, index) => convertMaterial(material, index, warnings));
     nameAnonymousTextures(textures, materials);
+    const totalPrimitives = (doc.meshes ?? []).reduce((total, mesh) => total + mesh.primitives.length, 0);
+    let convertedPrimitives = 0;
+    progress(GEOMETRY_PROGRESS_START, STAGE_GEOMETRY);
     const meshes: ImportedMesh[] = [];
     const meshLookup = new Map<number, number[]>();
     const meshIndicesFor = (meshIndex: number): number[] => {
@@ -494,6 +514,7 @@ export async function importGltf(file: File, bundle: FileBundle): Promise<Import
             definition.primitives.forEach((primitive, primitiveIndex) => {
                 const name = definition.primitives.length > 1 ? `${baseName}_${primitiveIndex + 1}` : baseName;
                 const converted = convertPrimitive(reader, primitive, name, warnings);
+                progress(progressBetween(GEOMETRY_PROGRESS_START, GEOMETRY_PROGRESS_END, ++convertedPrimitives, totalPrimitives), STAGE_GEOMETRY);
                 if (!converted)
                     return;
                 indices.push(meshes.length);
@@ -538,6 +559,7 @@ export async function importGltf(file: File, bundle: FileBundle): Promise<Import
         .filter((node): node is ImportedNode => node !== null);
     if (roots.length === 0 && meshes.length === 0)
         throw new Error('O arquivo não contém malhas nem nós.');
+    progress(GEOMETRY_PROGRESS_END, STAGE_HIERARCHY);
     return {
         format: glb ? 'glb' : 'gltf',
         name: sceneName,
