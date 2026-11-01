@@ -1150,3 +1150,123 @@ export function resourceName(path: string): string {
     const base = stripped.split('/').pop() ?? stripped;
     return base.replace(/\.[^.]+$/, '');
 }
+export function loadResource(context: GameContext, path: unknown, where = 'load()'): Resource | null {
+    const target = text(path, where);
+    const name = resourceName(target);
+    const cache = context.service('resourceCache', () => new Map<string, Resource>());
+    const cached = cache.get(target);
+    if (cached)
+        return cached;
+    let resource: Resource | null = null;
+    if (SCRIPT_EXTENSIONS.test(target) || !/\.[^./]+$/.test(target)) {
+        const module = requireModule(context, name);
+        if (module !== undefined) {
+            const cls = classOfModule(module);
+            if (cls)
+                resource = new ScriptResource(context.helix, cls, target);
+            else if (module !== null && typeof module === 'object')
+                resource = new DataResource(context.helix, (module as AnyRecord).default ?? module, target);
+        }
+    }
+    else if (DATA_EXTENSIONS.test(target)) {
+        const module = requireModule(context, name);
+        if (module !== undefined)
+            resource = new DataResource(context.helix, module !== null && typeof module === 'object' && 'default' in (module as AnyRecord) ? (module as AnyRecord).default : module, target);
+    }
+    if (!resource) {
+        const assets = context.helix.assets as AnyRecord | undefined;
+        const byName = assets?.byName as ((name: string) => AnyRecord | null) | undefined;
+        const asset = typeof byName === 'function' ? byName(name) : null;
+        if (asset)
+            resource = new AssetResource(context.helix, asset, target);
+    }
+    if (resource)
+        cache.set(target, resource);
+    return resource;
+}
+function requireModule(context: GameContext, name: string): unknown {
+    if (!context.require)
+        return undefined;
+    try {
+        return context.require(name);
+    }
+    catch {
+        return undefined;
+    }
+}
+function createResourceLoader(context: GameContext): Singleton {
+    const pending = new Map<string, Resource | null>();
+    function exists(path: unknown): boolean {
+        if (typeof path !== 'string')
+            return false;
+        const name = resourceName(path);
+        const assets = context.helix.assets as AnyRecord | undefined;
+        const byName = assets?.byName as ((name: string) => AnyRecord | null) | undefined;
+        if (typeof byName === 'function' && byName(name))
+            return true;
+        return requireModule(context, name) !== undefined;
+    }
+    const loader: Singleton = {
+        load: (path: unknown, _typeHint: unknown = '', _cacheMode: unknown = 1) => {
+            const resource = loadResource(context, path, 'ResourceLoader.load()');
+            if (!resource)
+                fail(`ResourceLoader.load(): não existe o recurso "${str(path)}" na biblioteca do projeto.`);
+            return resource;
+        },
+        exists: (path: unknown, _typeHint: unknown = '') => exists(path),
+        has_cached: (path: unknown) => {
+            const cache = context.services.get('resourceCache') as Map<string, Resource> | undefined;
+            return typeof path === 'string' && Boolean(cache?.has(path));
+        },
+        get_recognized_extensions_for_type: (_type: unknown) => [...KNOWN_EXTENSIONS],
+        get_dependencies: (_path: unknown) => [],
+        get_resource_uid: (_path: unknown) => -1,
+        load_threaded_request: (path: unknown, _typeHint: unknown = '', _useSubThreads: unknown = false, _cacheMode: unknown = 1) => {
+            const target = text(path, 'ResourceLoader.load_threaded_request()');
+            pending.set(target, loadResource(context, target, 'ResourceLoader.load_threaded_request()'));
+            return OK;
+        },
+        load_threaded_get: (path: unknown) => {
+            const target = text(path, 'ResourceLoader.load_threaded_get()');
+            const resource = pending.has(target) ? pending.get(target) : loadResource(context, target, 'ResourceLoader.load_threaded_get()');
+            if (!resource)
+                fail(`ResourceLoader.load_threaded_get(): não existe o recurso "${target}".`);
+            return resource;
+        },
+        load_threaded_get_status: (path: unknown, _progress: unknown = []) => {
+            const target = text(path, 'ResourceLoader.load_threaded_get_status()');
+            if (pending.has(target))
+                return pending.get(target) ? 3 : 2;
+            return exists(target) ? 3 : 0;
+        },
+        set_abort_on_missing_resources: (_abort: unknown) => undefined,
+    };
+    return withConstants('ResourceLoader', loader);
+}
+export type Singletons = Readonly<Record<string, Singleton>>;
+export function singletonsOf(context: GameContext): Singletons {
+    return context.service('singletons', (): Singletons => {
+        const all: Record<string, Singleton> = {};
+        const input = createInput(context);
+        all.Input = input;
+        all.InputMap = createInputMap(context, input);
+        all.Time = createTime(context);
+        all.Engine = createEngine(context, () => all);
+        all.OS = createOS(context);
+        all.Performance = createPerformance(context);
+        all.JSON = createJSON(context);
+        all.DisplayServer = createDisplayServer(context, input);
+        all.ProjectSettings = createProjectSettings(context);
+        all.ResourceLoader = createResourceLoader(context);
+        for (const name of Object.keys(SINGLETON_MEMBERS))
+            if (!all[name])
+                fail(`Runtime GDScript: o singleton ${name} está declarado em godot-api.ts mas não foi implementado.`);
+        return all;
+    });
+}
+export function implementedSingletonMembers(context: GameContext): Record<string, string[]> {
+    const result: Record<string, string[]> = {};
+    for (const [name, singleton] of Object.entries(singletonsOf(context)))
+        result[name] = Object.keys(singleton);
+    return result;
+}
