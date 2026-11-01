@@ -7,6 +7,7 @@ import { IconButton } from '@/engine/ui/icon-button';
 import { SelectField } from '@/engine/ui/select-field';
 import { COMPONENT_LABELS, PATH_LABELS, displayUnit, keyDisplayValue, rawValueFromDisplay } from '@/engine/editor/animation/ui/timeline-model';
 import { useAnimationEditor } from '@/engine/editor/animation/ui/use-animation-editor';
+import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
 type KeyInspectorProps = {
     selectedEvent: number;
     onSelectEvent: (index: number) => void;
@@ -26,10 +27,11 @@ function stopKeys(event: React.KeyboardEvent<HTMLInputElement>) {
 function Label({ children }: {
     children: string;
 }) {
-    return <span className="shrink-0 text-[10px] text-muted-foreground">{children}</span>;
+    return <span className="shrink-0 text-3xs text-muted-foreground">{children}</span>;
 }
 export function KeyInspector({ selectedEvent, onSelectEvent }: KeyInspectorProps) {
     const editor = useAnimationEditor();
+    const hint = useShortcutHint();
     const { document } = editor;
     if (!document)
         return null;
@@ -50,7 +52,7 @@ export function KeyInspector({ selectedEvent, onSelectEvent }: KeyInspectorProps
             }}>
           <Trash2 />
         </IconButton>
-        <button type="button" className="text-[10px] text-muted-foreground hover:text-foreground" onClick={() => onSelectEvent(-1)}>
+        <button type="button" className="text-3xs text-muted-foreground hover:text-foreground" onClick={() => onSelectEvent(-1)}>
           Concluir
         </button>
       </Strip>);
@@ -66,7 +68,7 @@ export function KeyInspector({ selectedEvent, onSelectEvent }: KeyInspectorProps
         const earliest = Math.min(...keys.map((ref) => ref.time));
         return (<Strip>
         <Diamond className="size-3 shrink-0 text-warning" aria-hidden/>
-        <span className="shrink-0 truncate text-2xs text-foreground">{single ? `${single.joint} · ${PATH_LABELS[single.path]}` : `${keys.length} chaves`}</span>
+        <span className="max-w-full shrink-0 truncate text-2xs text-foreground">{single ? `${single.joint} · ${PATH_LABELS[single.path]}` : `${keys.length} chaves`}</span>
         <Label>Quadro</Label>
         <FieldInput key={`${earliest}:${keys.length}`} type="number" min={0} step={1} defaultValue={Math.round(earliest * editor.frameRate)} aria-label={single ? 'Quadro da chave' : 'Quadro da primeira chave selecionada'} className="w-14 flex-none" onBlur={(e) => {
                 const frame = parseNumber(e.currentTarget.value);
@@ -95,7 +97,7 @@ export function KeyInspector({ selectedEvent, onSelectEvent }: KeyInspectorProps
         <div className="w-28 flex-none">
           <SelectField<AnimationInterpolation | ''> label="Interpolação das faixas" options={interpolation ? INTERPOLATION_OPTIONS : MIXED_INTERPOLATION} value={interpolation} onChange={(value) => value && editor.setSelectedInterpolation(value)}/>
         </div>
-        <IconButton label="Copiar chaves (Ctrl+C)" size="sm" onClick={() => editor.copySelectedKeys()}>
+        <IconButton label={hint('Copiar chaves', 'animation.copyKeys')} size="sm" onClick={() => editor.copySelectedKeys()}>
           <Copy />
         </IconButton>
         <IconButton label="Excluir chaves (Del)" size="sm" onClick={() => editor.deleteSelectedKeys()}>
@@ -106,30 +108,30 @@ export function KeyInspector({ selectedEvent, onSelectEvent }: KeyInspectorProps
     const bones = editor.selectedBones;
     if (bones.length > 0) {
         return (<Strip>
-        <span className="shrink-0 truncate text-2xs text-foreground">{bones.length === 1 ? bones[0] : `${bones.length} ossos`}</span>
-        <button type="button" onClick={() => editor.keyBones()} className="flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border-strong px-2 text-2xs text-foreground hover:bg-highlight" title="Grava a pose atual destes ossos neste quadro">
+        <span className="max-w-full shrink-0 truncate text-2xs text-foreground">{bones.length === 1 ? bones[0] : `${bones.length} ossos`}</span>
+        <button type="button" onClick={() => editor.keyBones()} className="flex h-control shrink-0 items-center gap-1 rounded-sm border border-border-strong px-2 text-2xs text-foreground hover:bg-highlight" title="Grava a pose atual destes ossos neste quadro">
           <Diamond className="size-3 text-warning" aria-hidden/>
           Inserir chave
-          <kbd className="font-mono text-[10px] text-muted-foreground">K</kbd>
+          <kbd className="font-mono text-3xs text-muted-foreground">K</kbd>
         </button>
-        <button type="button" onClick={() => editor.resetBones()} className="flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border-strong px-2 text-2xs text-muted-foreground hover:bg-highlight hover:text-foreground" title="Volta estes ossos à pose de repouso neste quadro">
+        <button type="button" onClick={() => editor.resetBones()} className="flex h-control shrink-0 items-center gap-1 rounded-sm border border-border-strong px-2 text-2xs text-muted-foreground hover:bg-highlight hover:text-foreground" title="Volta estes ossos à pose de repouso neste quadro">
           <RotateCcw className="size-3" aria-hidden/>
           Repouso
         </button>
-        {editor.pendingCount > 0 && (<span className="shrink-0 rounded-sm bg-warning/15 px-1.5 py-0.5 text-[10px] text-warning">
+        {editor.pendingCount > 0 && (<span className="shrink-0 rounded-sm bg-warning/15 px-1.5 py-0.5 text-3xs text-warning">
             {editor.pendingCount === 1 ? '1 pose pendente' : `${editor.pendingCount} poses pendentes`} · K para gravar
           </span>)}
-        {editor.clipboard && (<button type="button" onClick={() => editor.pasteKeys()} className="shrink-0 text-[10px] text-muted-foreground hover:text-foreground" title="Cola as chaves copiadas neste quadro (Ctrl+V)">
+        {editor.clipboard && (<button type="button" onClick={() => editor.pasteKeys()} className="shrink-0 text-3xs text-muted-foreground hover:text-foreground" title={hint('Cola as chaves copiadas neste quadro', 'animation.pasteKeys')}>
             Colar {editor.clipboard.entries.length} {editor.clipboard.entries.length === 1 ? 'chave' : 'chaves'}
           </button>)}
       </Strip>);
     }
     return (<Strip>
-      <span className="truncate text-[10px] text-muted-foreground">Selecione um osso no viewport ou na lista. Gire com o gizmo ou arraste mãos e pés (IK): com a gravação automática, cada pose vira chave.</span>
+      <span className="min-w-0 flex-1 py-0.5 text-3xs leading-4 text-pretty text-muted-foreground">Selecione um osso no viewport ou na lista. Gire com o gizmo ou arraste mãos e pés (IK): com a gravação automática, cada pose vira chave.</span>
     </Strip>);
 }
 function Strip({ children }: {
     children: React.ReactNode;
 }) {
-    return <div className="flex h-7 shrink-0 items-center gap-1.5 overflow-x-auto border-t border-border bg-surface px-2 [scrollbar-width:none]">{children}</div>;
+    return <div className="flex min-h-7 shrink-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 border-t border-border bg-surface px-2 py-0.5">{children}</div>;
 }
