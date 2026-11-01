@@ -1,6 +1,19 @@
 import type { TextureImage } from '@/engine/core/scene/texture';
 export const THUMBNAIL_SIZE = 192;
 const WEBP_QUALITY = 0.86;
+export interface ThumbnailCanvas {
+    readonly canvas: HTMLCanvasElement;
+    readonly context: CanvasRenderingContext2D;
+}
+export function createThumbnailCanvas(width = THUMBNAIL_SIZE, height = width): ThumbnailCanvas | null {
+    if (typeof document === 'undefined')
+        return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    return context ? { canvas, context } : null;
+}
 export function encodeCanvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
     return new Promise((resolve, reject) => {
         canvas.toBlob((webp) => {
@@ -12,23 +25,21 @@ export function encodeCanvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 }
 function drawSource(context: CanvasRenderingContext2D, image: TextureImage, sx: number, sy: number, sw: number, sh: number, size: number): void {
     if (image instanceof ImageData) {
-        const scratch = document.createElement('canvas');
-        scratch.width = image.width;
-        scratch.height = image.height;
-        scratch.getContext('2d')?.putImageData(image, 0, 0);
-        context.drawImage(scratch, sx, sy, sw, sh, 0, 0, size, size);
+        const scratch = createThumbnailCanvas(image.width, image.height);
+        if (!scratch)
+            return;
+        scratch.context.putImageData(image, 0, 0);
+        context.drawImage(scratch.canvas, sx, sy, sw, sh, 0, 0, size, size);
     }
     else {
         context.drawImage(image, sx, sy, sw, sh, 0, 0, size, size);
     }
 }
 export async function renderImageThumbnail(image: TextureImage, size = THUMBNAIL_SIZE): Promise<Blob> {
-    const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const context = canvas.getContext('2d');
-    if (!context)
+    const target = createThumbnailCanvas(size);
+    if (!target)
         throw new Error('Canvas 2D indisponível para gerar a miniatura.');
+    const { canvas, context } = target;
     const side = Math.min(image.width, image.height);
     const sx = (image.width - side) / 2;
     const sy = (image.height - side) / 2;
