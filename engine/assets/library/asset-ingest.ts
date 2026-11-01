@@ -1,16 +1,36 @@
 import { FileBundle, isDataUri } from '@/engine/assets/import/file-bundle';
-import { importModelFile, isModelFile } from '@/engine/assets/import/import-registry';
+import { isModelFile } from '@/engine/assets/import/import-registry';
+import { readModelFile } from '@/engine/assets/import/import-worker-client';
 import { baseNameWithoutExtension, computeImportStats, fileExtension, type ImportedScene } from '@/engine/assets/import/import-types';
 import { decodeImage, mimeTypeFromFileName } from '@/engine/assets/image-decoder';
 import type { AnimationDocument } from '@/engine/core/animation/animation-document';
 import { animationDocumentsFromScene } from '@/engine/core/animation/animation-from-imported';
 import { animationDocumentToFile, readAnimations } from '@/engine/core/animation/animation-io';
+import type { GuiDocument } from '@/engine/gui/document/gui-document';
+import { guiDocumentToFile, readGuiDocument } from '@/engine/gui/document/gui-io';
+import type { PrefabDocument } from '@/engine/project/prefab/prefab-document';
+import { prefabDocumentToFile, readPrefabDocument } from '@/engine/project/prefab/prefab-io';
+import type { ScriptDocument } from '@/engine/scripting/script-document';
+import { readScriptDocument, scriptDocumentToFile } from '@/engine/scripting/script-io';
+import type { VfxDocument } from '@/engine/vfx/document/vfx-document';
+import { readVfxDocument, vfxDocumentToFile } from '@/engine/vfx/document/vfx-io';
 import { animationAssetDetails, isAnimationOnlyScene, modelRigDetails } from './animation-asset';
 import { detectAssetKind } from './asset-kinds';
 import type { AssetLibrary } from './asset-library';
-import type { AssetDetails, AssetFileEntry, AssetKind, AssetSnapshot, AssetThumbnail, LibraryAsset } from './asset-types';
+import type { AssetDetails, AssetFileEntry, AssetKind, AssetSnapshot, AssetThumbnail, AudioAssetDetails, LibraryAsset } from './asset-types';
+import { audioAssetDetails, decodeAndAnalyzeAudio, probeAudioDuration, renderAudioThumbnail } from './audio-asset';
+import { readFontDetails } from './font-asset';
+import { guiAssetDetails } from './gui-asset';
+import { prefabAssetDetails } from './prefab-asset';
 import { renderAnimationThumbnail } from './thumbnails/animation-thumbnail';
+import { renderFontThumbnail } from './thumbnails/font-thumbnail';
+import { renderGuiThumbnail } from './thumbnails/gui-thumbnail';
 import { renderImageThumbnail } from './thumbnails/image-thumbnail';
+import { renderScriptThumbnail } from './thumbnails/script-thumbnail';
+import { renderVfxThumbnail } from './thumbnails/vfx-thumbnail';
+import { scriptAssetDetails } from './script-asset';
+import { vfxAssetDetails } from './vfx-asset';
+import { probeVideo } from './video-asset';
 export interface ModelRendering {
     blob: Blob;
     dimensions: readonly [
@@ -39,8 +59,11 @@ export interface IngestReport {
         file: File;
         message: string;
     }>;
+    warnings: Array<{
+        file: File;
+        message: string;
+    }>;
 }
-const AUDIO_PROBE_TIMEOUT_MS = 4000;
 function errorMessage(cause: unknown): string {
     return cause instanceof Error ? cause.message : String(cause);
 }
@@ -99,25 +122,20 @@ async function collectModelCompanions(file: File, scene: ImportedScene, bundle: 
     }
     return Array.from(companions);
 }
-function probeAudioDuration(file: File): Promise<number | null> {
-    return new Promise((resolve) => {
-        const url = URL.createObjectURL(file);
-        const audio = new Audio();
-        let settled = false;
-        const finish = (value: number | null) => {
-            if (settled)
-                return;
-            settled = true;
-            URL.revokeObjectURL(url);
-            audio.removeAttribute('src');
-            resolve(value);
-        };
-        audio.preload = 'metadata';
-        audio.onloadedmetadata = () => finish(Number.isFinite(audio.duration) ? audio.duration : null);
-        audio.onerror = () => finish(null);
-        setTimeout(() => finish(null), AUDIO_PROBE_TIMEOUT_MS);
-        audio.src = url;
-    });
+interface IngestedAudio {
+    details: AudioAssetDetails;
+    thumbnail: AssetThumbnail | null;
+    warning: string | null;
+}
+async function ingestAudio(file: File): Promise<IngestedAudio> {
+    try {
+        const decoded = await decodeAndAnalyzeAudio(file);
+        const blob = await renderAudioThumbnail(decoded);
+        return { details: audioAssetDetails(decoded.analysis, null), thumbnail: blob ? { blob, custom: false } : null, warning: null };
+    }
+    catch (cause) {
+        return { details: audioAssetDetails(null, await probeAudioDuration(file)), thumbnail: null, warning: errorMessage(cause) };
+    }
 }
 function createAsset(kind: AssetKind, name: string, primary: File, companions: File[], contentHash: string, details: AssetDetails, thumbnail: AssetThumbnail | null): LibraryAsset {
     const files: AssetFileEntry[] = [primary, ...companions].map((file) => ({ path: file.name, mimeType: mimeTypeOf(file), size: file.size }));
@@ -176,8 +194,168 @@ export async function ingestAnimationReplacement(library: AssetLibrary, asset: L
     };
     return { asset: replaced, files: [file] };
 }
+export interface GuiIngestResult {
+    added: IngestedAsset | null;
+    duplicate: LibraryAsset | null;
+}
+export async function ingestGuiDocument(library: AssetLibrary, document: GuiDocument, options: {
+    reservedNames?: Set<string>;
+    forceNew?: boolean;
+} = {}): Promise<GuiIngestResult> {
+    const file = guiDocumentToFile(document);
+    const contentHash = await hashFile(file);
+    if (!options.forceNew) {
+        const existing = library.findByHash(contentHash);
+        if (existing)
+            return { added: null, duplicate: existing };
+    }
+    const name = library.uniqueName(document.name.trim() || baseNameWithoutExtension(file.name), options.reservedNames);
+    options.reservedNames?.add(name);
+    const named = name === document.name ? document : { ...document, name };
+    const namedFile = named === document ? file : guiDocumentToFile(named);
+    const thumbnailBlob = await renderGuiThumbnail(named);
+    const asset = createAsset('gui', name, namedFile, [], named === document ? contentHash : await hashFile(namedFile), guiAssetDetails(named), thumbnailBlob ? { blob: thumbnailBlob, custom: false } : null);
+    return { added: { snapshot: { asset, files: [namedFile] }, scene: null }, duplicate: null };
+}
+export async function ingestGuiReplacement(library: AssetLibrary, asset: LibraryAsset, document: GuiDocument): Promise<AssetSnapshot | null> {
+    const file = guiDocumentToFile(document);
+    const contentHash = await hashFile(file);
+    if (contentHash === asset.contentHash)
+        return null;
+    const trimmed = document.name.trim();
+    const name = !trimmed || trimmed === asset.name ? asset.name : library.uniqueName(trimmed);
+    const thumbnail = asset.thumbnail?.custom ? asset.thumbnail : await renderGuiThumbnail(document).then((blob) => (blob ? { blob, custom: false } : null));
+    const replaced: LibraryAsset = {
+        ...asset,
+        name,
+        primaryPath: file.name,
+        files: [{ path: file.name, mimeType: mimeTypeOf(file), size: file.size }],
+        format: fileExtension(file.name),
+        size: file.size,
+        contentHash,
+        updatedAt: Date.now(),
+        details: guiAssetDetails(document),
+        thumbnail,
+    };
+    return { asset: replaced, files: [file] };
+}
+export interface VfxIngestResult {
+    added: IngestedAsset | null;
+    duplicate: LibraryAsset | null;
+}
+export async function ingestVfxDocument(library: AssetLibrary, document: VfxDocument, options: {
+    reservedNames?: Set<string>;
+    forceNew?: boolean;
+} = {}): Promise<VfxIngestResult> {
+    const file = vfxDocumentToFile(document);
+    const contentHash = await hashFile(file);
+    if (!options.forceNew) {
+        const existing = library.findByHash(contentHash);
+        if (existing)
+            return { added: null, duplicate: existing };
+    }
+    const name = library.uniqueName(document.name.trim() || baseNameWithoutExtension(file.name), options.reservedNames);
+    options.reservedNames?.add(name);
+    const named = name === document.name ? document : { ...document, name };
+    const namedFile = named === document ? file : vfxDocumentToFile(named);
+    const thumbnailBlob = await renderVfxThumbnail(named);
+    const asset = createAsset('vfx', name, namedFile, [], named === document ? contentHash : await hashFile(namedFile), vfxAssetDetails(named), thumbnailBlob ? { blob: thumbnailBlob, custom: false } : null);
+    return { added: { snapshot: { asset, files: [namedFile] }, scene: null }, duplicate: null };
+}
+export async function ingestVfxReplacement(library: AssetLibrary, asset: LibraryAsset, document: VfxDocument): Promise<AssetSnapshot | null> {
+    const file = vfxDocumentToFile(document);
+    const contentHash = await hashFile(file);
+    if (contentHash === asset.contentHash)
+        return null;
+    const trimmed = document.name.trim();
+    const name = !trimmed || trimmed === asset.name ? asset.name : library.uniqueName(trimmed);
+    const thumbnail = asset.thumbnail?.custom ? asset.thumbnail : await renderVfxThumbnail(document).then((blob) => (blob ? { blob, custom: false } : null));
+    const replaced: LibraryAsset = {
+        ...asset,
+        name,
+        primaryPath: file.name,
+        files: [{ path: file.name, mimeType: mimeTypeOf(file), size: file.size }],
+        format: fileExtension(file.name),
+        size: file.size,
+        contentHash,
+        updatedAt: Date.now(),
+        details: vfxAssetDetails(document),
+        thumbnail,
+    };
+    return { asset: replaced, files: [file] };
+}
+export interface PrefabIngestResult {
+    added: IngestedAsset | null;
+    duplicate: LibraryAsset | null;
+}
+export async function ingestPrefabDocument(library: AssetLibrary, document: PrefabDocument, options: {
+    reservedNames?: Set<string>;
+    forceNew?: boolean;
+} = {}): Promise<PrefabIngestResult> {
+    const file = await prefabDocumentToFile(document);
+    const contentHash = await hashFile(file);
+    if (!options.forceNew) {
+        const existing = library.findByHash(contentHash);
+        if (existing)
+            return { added: null, duplicate: existing };
+    }
+    const name = library.uniqueName(document.json.name.trim() || baseNameWithoutExtension(file.name), options.reservedNames);
+    options.reservedNames?.add(name);
+    const named: PrefabDocument = name === document.json.name ? document : { ...document, json: { ...document.json, name } };
+    const namedFile = named === document ? file : await prefabDocumentToFile(named);
+    const asset = createAsset('prefab', name, namedFile, [], named === document ? contentHash : await hashFile(namedFile), prefabAssetDetails(named.json), null);
+    return { added: { snapshot: { asset, files: [namedFile] }, scene: null }, duplicate: null };
+}
+export interface ScriptIngestResult {
+    added: IngestedAsset | null;
+    duplicate: LibraryAsset | null;
+}
+export async function ingestScriptDocument(library: AssetLibrary, document: ScriptDocument, options: {
+    reservedNames?: Set<string>;
+    forceNew?: boolean;
+} = {}): Promise<ScriptIngestResult> {
+    const file = scriptDocumentToFile(document);
+    const contentHash = await hashFile(file);
+    if (!options.forceNew) {
+        const existing = library.findByHash(contentHash);
+        if (existing)
+            return { added: null, duplicate: existing };
+    }
+    const name = library.uniqueName(document.name.trim() || baseNameWithoutExtension(file.name), options.reservedNames);
+    options.reservedNames?.add(name);
+    const named = name === document.name ? document : { ...document, name };
+    const namedFile = named === document ? file : scriptDocumentToFile(named);
+    const thumbnailBlob = await renderScriptThumbnail(named);
+    const asset = createAsset('script', name, namedFile, [], contentHash, scriptAssetDetails(named), thumbnailBlob ? { blob: thumbnailBlob, custom: false } : null);
+    return { added: { snapshot: { asset, files: [namedFile] }, scene: null }, duplicate: null };
+}
+export async function ingestScriptReplacement(library: AssetLibrary, asset: LibraryAsset, document: ScriptDocument): Promise<AssetSnapshot | null> {
+    const file = scriptDocumentToFile(document);
+    const contentHash = await hashFile(file);
+    const details = scriptAssetDetails(document);
+    const previous = asset.details.kind === 'script' ? asset.details : null;
+    const metadataChanged = !previous || previous.runContext !== details.runContext || previous.entry !== details.entry || previous.language !== details.language;
+    if (contentHash === asset.contentHash && !metadataChanged)
+        return null;
+    const trimmed = document.name.trim();
+    const name = !trimmed || trimmed === asset.name ? asset.name : library.uniqueName(trimmed);
+    const thumbnail = asset.thumbnail?.custom || contentHash === asset.contentHash ? asset.thumbnail : await renderScriptThumbnail(document).then((blob) => (blob ? { blob, custom: false } : null));
+    const replaced: LibraryAsset = {
+        ...asset,
+        name,
+        primaryPath: file.name,
+        files: [{ path: file.name, mimeType: mimeTypeOf(file), size: file.size }],
+        format: fileExtension(file.name),
+        size: file.size,
+        contentHash,
+        updatedAt: Date.now(),
+        details,
+        thumbnail,
+    };
+    return { asset: replaced, files: [file] };
+}
 export async function ingestFiles(library: AssetLibrary, files: File[], hooks: IngestHooks = {}): Promise<IngestReport> {
-    const report: IngestReport = { added: [], duplicates: [], unsupported: [], failures: [] };
+    const report: IngestReport = { added: [], duplicates: [], unsupported: [], failures: [], warnings: [] };
     const bundle = new FileBundle(files);
     const consumed = new Set<File>();
     const reservedNames = new Set<string>();
@@ -213,7 +391,7 @@ export async function ingestFiles(library: AssetLibrary, files: File[], hooks: I
                 report.duplicates.push({ file, existing });
                 continue;
             }
-            const scene = hooks.parsedScenes?.get(file) ?? (await importModelFile(file, bundle));
+            const scene = hooks.parsedScenes?.get(file) ?? (await readModelFile(file, bundle));
             const companions = await collectModelCompanions(file, scene, bundle);
             for (const companion of companions)
                 consumed.add(companion);
@@ -262,6 +440,38 @@ export async function ingestFiles(library: AssetLibrary, files: File[], hooks: I
                 }
                 continue;
             }
+            if (kind === 'gui') {
+                const result = await ingestGuiDocument(library, await readGuiDocument(file), { reservedNames });
+                if (result.added)
+                    report.added.push(result.added);
+                else if (result.duplicate)
+                    report.duplicates.push({ file, existing: result.duplicate });
+                continue;
+            }
+            if (kind === 'vfx') {
+                const result = await ingestVfxDocument(library, await readVfxDocument(file), { reservedNames });
+                if (result.added)
+                    report.added.push(result.added);
+                else if (result.duplicate)
+                    report.duplicates.push({ file, existing: result.duplicate });
+                continue;
+            }
+            if (kind === 'prefab') {
+                const result = await ingestPrefabDocument(library, await readPrefabDocument(file), { reservedNames });
+                if (result.added)
+                    report.added.push(result.added);
+                else if (result.duplicate)
+                    report.duplicates.push({ file, existing: result.duplicate });
+                continue;
+            }
+            if (kind === 'script') {
+                const result = await ingestScriptDocument(library, await readScriptDocument(file), { reservedNames });
+                if (result.added)
+                    report.added.push(result.added);
+                else if (result.duplicate)
+                    report.duplicates.push({ file, existing: result.duplicate });
+                continue;
+            }
             const contentHash = await hashFile(file);
             const existing = library.findByHash(contentHash);
             if (existing) {
@@ -278,8 +488,26 @@ export async function ingestFiles(library: AssetLibrary, files: File[], hooks: I
                 if (image instanceof ImageBitmap)
                     image.close();
             }
+            else if (kind === 'font') {
+                details = await readFontDetails(file);
+                const blob = await renderFontThumbnail(file);
+                thumbnail = blob ? { blob, custom: false } : null;
+                if (!blob)
+                    report.warnings.push({ file, message: 'O navegador não conseguiu carregar esta fonte; ela pode não aparecer nas telas.' });
+            }
+            else if (kind === 'video') {
+                const probed = await probeVideo(file);
+                details = probed.details;
+                thumbnail = probed.thumbnail ? { blob: probed.thumbnail, custom: false } : null;
+                if (probed.warning)
+                    report.warnings.push({ file, message: probed.warning });
+            }
             else {
-                details = { kind: 'audio', durationSeconds: await probeAudioDuration(file) };
+                const ingested = await ingestAudio(file);
+                details = ingested.details;
+                thumbnail = ingested.thumbnail;
+                if (ingested.warning)
+                    report.warnings.push({ file, message: ingested.warning });
             }
             const asset = createAsset(kind, claimName(file), primary, [], contentHash, details, thumbnail);
             report.added.push({ snapshot: { asset, files: [primary] }, scene: null });
