@@ -275,4 +275,273 @@ export function createMathApi() {
         angle: (a: unknown, b: unknown) => radToDeg(2 * Math.acos(clamp(Math.abs(quat.dot(quat.normalize(quat.create(), q(a, 'quat.angle')), quat.normalize(quat.create(), q(b, 'quat.angle')))), -1, 1))),
         toArray: (a: unknown) => Array.from(q(a, 'quat.toArray')),
     };
+    const mat4Api = {
+        create: () => mat4.create(),
+        identity: () => mat4.identity(mat4.create()),
+        clone: (a: unknown) => mat4.copy(mat4.create(), m4(a, 'mat4.clone')),
+        copy: (out: unknown, a: unknown) => mat4.copy(m4(out, 'mat4.copy'), m4(a, 'mat4.copy')),
+        multiply: (a: unknown, b: unknown) => mat4.multiply(mat4.create(), m4(a, 'mat4.multiply'), m4(b, 'mat4.multiply')),
+        invert: (a: unknown) => mat4.invert(mat4.create(), m4(a, 'mat4.invert')),
+        compose: (translation: unknown, rotation: unknown, scale: unknown) => {
+            const r = rotation;
+            const euler = r instanceof Float32Array && r.length === 4 ? quat.toEulerDegrees(vec3.create(), r) : Array.isArray(r) && r.length === 4 ? quat.toEulerDegrees(vec3.create(), q(r, 'mat4.compose')) : v(r, 'mat4.compose');
+            return mat4.fromTranslationRotationScale(mat4.create(), v(translation, 'mat4.compose'), euler, v(scale, 'mat4.compose'));
+        },
+        fromTRS: (translation: unknown, rotationDegrees: unknown, scale: unknown) => mat4.fromTranslationRotationScale(mat4.create(), v(translation, 'mat4.fromTRS'), v(rotationDegrees, 'mat4.fromTRS'), v(scale, 'mat4.fromTRS')),
+        decompose: (a: unknown) => {
+            const translation = vec3.create();
+            const rotation = vec3.create();
+            const scale = vec3.create();
+            mat4.decomposeTranslationRotationScale(translation, rotation, scale, m4(a, 'mat4.decompose'));
+            return { translation, rotation, scale };
+        },
+        fromAxisAngle: (axis: unknown, degrees: unknown) => mat4.fromAxisAngle(mat4.create(), vec3.normalize(vec3.create(), v(axis, 'mat4.fromAxisAngle')), degToRad(n(degrees, 'mat4.fromAxisAngle', 'o ângulo'))),
+        fromRotationDegrees: (euler: unknown) => mat4.fromRotationDegrees(mat4.create(), v(euler, 'mat4.fromRotationDegrees')),
+        fromQuat: (rotation: unknown) => mat4.fromTranslationRotationScale(mat4.create(), vec3.create(), quat.toEulerDegrees(vec3.create(), q(rotation, 'mat4.fromQuat')), vec3.create(1, 1, 1)),
+        getTranslation: (a: unknown) => mat4.getTranslation(vec3.create(), m4(a, 'mat4.getTranslation')),
+        getRotation: (a: unknown) => quat.fromMat4Rotation(quat.create(), m4(a, 'mat4.getRotation')),
+        getScale: (a: unknown) => {
+            const m = m4(a, 'mat4.getScale');
+            return vec3.create(Math.hypot(m[0], m[1], m[2]), Math.hypot(m[4], m[5], m[6]), Math.hypot(m[8], m[9], m[10]));
+        },
+        transformPoint: (a: unknown, point: unknown) => mat4.transformPoint(vec3.create(), m4(a, 'mat4.transformPoint'), v(point, 'mat4.transformPoint')),
+        transformDirection: (a: unknown, direction: unknown) => mat4.transformDirection(vec3.create(), m4(a, 'mat4.transformDirection'), v(direction, 'mat4.transformDirection')),
+        perspective: (fovDegrees: unknown, aspect: unknown, near: unknown, far: unknown) => mat4.perspective(mat4.create(), degToRad(n(fovDegrees, 'mat4.perspective', 'o campo de visão')), n(aspect, 'mat4.perspective', 'a proporção'), n(near, 'mat4.perspective', 'o plano próximo'), n(far, 'mat4.perspective', 'o plano distante')),
+        ortho: (left: unknown, right: unknown, bottom: unknown, top: unknown, near: unknown, far: unknown) => mat4.ortho(mat4.create(), n(left, 'mat4.ortho'), n(right, 'mat4.ortho'), n(bottom, 'mat4.ortho'), n(top, 'mat4.ortho'), n(near, 'mat4.ortho'), n(far, 'mat4.ortho')),
+        lookAt: (eye: unknown, target: unknown, up: unknown = vec3.create(0, 1, 0)) => mat4.lookAt(mat4.create(), v(eye, 'mat4.lookAt'), v(target, 'mat4.lookAt'), v(up, 'mat4.lookAt')),
+        normalMatrix: (a: unknown) => mat4.normalMatrix(mat3.create(), m4(a, 'mat4.normalMatrix')),
+        toArray: (a: unknown) => Array.from(m4(a, 'mat4.toArray')),
+    };
+    const mat3Api = {
+        create: () => mat3.create(),
+        identity: () => mat3.identity(mat3.create()),
+        clone: (a: unknown) => mat3.copy(mat3.create(), m3(a, 'mat3.clone')),
+        multiply: (a: unknown, b: unknown) => mat3.multiply(mat3.create(), m3(a, 'mat3.multiply'), m3(b, 'mat3.multiply')),
+        fromQuat: (rotation: unknown) => mat3.fromQuat(mat3.create(), q(rotation, 'mat3.fromQuat')),
+        fromAxisAngle: (axis: unknown, degrees: unknown) => mat3.fromAxisAngle(mat3.create(), vec3.normalize(vec3.create(), v(axis, 'mat3.fromAxisAngle')), degToRad(n(degrees, 'mat3.fromAxisAngle', 'o ângulo'))),
+        transformVec3: (a: unknown, vector: unknown) => mat3.transformVec3(vec3.create(), m3(a, 'mat3.transformVec3'), v(vector, 'mat3.transformVec3')),
+        invert: (a: unknown) => {
+            const m = m3(a, 'mat3.invert');
+            const big = mat4.identity(mat4.create());
+            big[0] = m[0];
+            big[1] = m[1];
+            big[2] = m[2];
+            big[4] = m[3];
+            big[5] = m[4];
+            big[6] = m[5];
+            big[8] = m[6];
+            big[9] = m[7];
+            big[10] = m[8];
+            const inverse = mat4.invert(mat4.create(), big);
+            if (!inverse)
+                return null;
+            const out = mat3.create();
+            out[0] = inverse[0];
+            out[1] = inverse[1];
+            out[2] = inverse[2];
+            out[3] = inverse[4];
+            out[4] = inverse[5];
+            out[5] = inverse[6];
+            out[6] = inverse[8];
+            out[7] = inverse[9];
+            out[8] = inverse[10];
+            return out;
+        },
+        toArray: (a: unknown) => Array.from(m3(a, 'mat3.toArray')),
+    };
+    const aabbApi = {
+        create: (min?: unknown, max?: unknown) => {
+            const out = aabb.create();
+            if (min !== undefined)
+                vec3.copy(out.min, v(min, 'aabb.create'));
+            if (max !== undefined)
+                vec3.copy(out.max, v(max, 'aabb.create'));
+            return out;
+        },
+        fromPoints: (points: unknown) => {
+            if (!Array.isArray(points))
+                throw new HelixArgumentError(`${M}.aabb.fromPoints`, 'esperava uma lista de pontos.');
+            const out = aabb.create();
+            for (const point of points) {
+                const p = v(point, 'aabb.fromPoints');
+                for (let axis = 0; axis < 3; axis++) {
+                    out.min[axis] = Math.min(out.min[axis], p[axis]);
+                    out.max[axis] = Math.max(out.max[axis], p[axis]);
+                }
+            }
+            return out;
+        },
+        fromCenterSize: (center: unknown, size: unknown) => {
+            const c = v(center, 'aabb.fromCenterSize');
+            const s = v(size, 'aabb.fromCenterSize');
+            return { min: vec3.create(c[0] - s[0] / 2, c[1] - s[1] / 2, c[2] - s[2] / 2), max: vec3.create(c[0] + s[0] / 2, c[1] + s[1] / 2, c[2] + s[2] / 2) };
+        },
+        isEmpty: (a: unknown) => aabb.isEmpty(box(a, 'aabb.isEmpty')),
+        contains: (a: unknown, point: unknown) => {
+            const b = box(a, 'aabb.contains');
+            const p = v(point, 'aabb.contains');
+            return p[0] >= b.min[0] && p[0] <= b.max[0] && p[1] >= b.min[1] && p[1] <= b.max[1] && p[2] >= b.min[2] && p[2] <= b.max[2];
+        },
+        intersects: (a: unknown, b: unknown) => aabb.intersects(box(a, 'aabb.intersects'), box(b, 'aabb.intersects')),
+        union: (a: unknown, b: unknown) => aabb.union(aabb.create(), box(a, 'aabb.union'), box(b, 'aabb.union')),
+        expand: (a: unknown, amount: unknown) => {
+            const b = box(a, 'aabb.expand');
+            const delta = typeof amount === 'number' ? vec3.create(amount, amount, amount) : v(amount, 'aabb.expand');
+            return { min: vec3.subtract(vec3.create(), b.min, delta), max: vec3.add(vec3.create(), b.max, delta) };
+        },
+        expandByPoint: (a: unknown, point: unknown) => {
+            const b = box(a, 'aabb.expandByPoint');
+            const p = v(point, 'aabb.expandByPoint');
+            const out = { min: vec3.copy(vec3.create(), b.min), max: vec3.copy(vec3.create(), b.max) };
+            for (let axis = 0; axis < 3; axis++) {
+                out.min[axis] = Math.min(out.min[axis], p[axis]);
+                out.max[axis] = Math.max(out.max[axis], p[axis]);
+            }
+            return out;
+        },
+        center: (a: unknown) => aabb.center(vec3.create(), box(a, 'aabb.center')),
+        size: (a: unknown) => {
+            const b = box(a, 'aabb.size');
+            return vec3.subtract(vec3.create(), b.max, b.min);
+        },
+        halfDiagonal: (a: unknown) => aabb.halfDiagonal(box(a, 'aabb.halfDiagonal')),
+        distanceToPoint: (a: unknown, point: unknown) => aabb.distanceToPoint(box(a, 'aabb.distanceToPoint'), v(point, 'aabb.distanceToPoint')),
+        transform: (a: unknown, matrix: unknown) => aabb.transform(aabb.create(), box(a, 'aabb.transform'), m4(matrix, 'aabb.transform')),
+    };
+    const rayApi = {
+        create: (origin?: unknown, direction?: unknown) => {
+            const out = createRay();
+            if (origin !== undefined)
+                vec3.copy(out.origin, v(origin, 'ray.create'));
+            if (direction !== undefined)
+                vec3.normalize(out.direction, v(direction, 'ray.create'));
+            return out;
+        },
+        at: (r: unknown, t: unknown) => {
+            const parsed = ray(r, 'ray.at');
+            return vec3.scaleAndAdd(vec3.create(), parsed.origin, parsed.direction, n(t, 'ray.at', 'a distância t'));
+        },
+        transform: (r: unknown, matrix: unknown) => transformRay(createRay(), ray(r, 'ray.transform'), m4(matrix, 'ray.transform')),
+        intersectAabb: (r: unknown, a: unknown) => intersectRayAabb(ray(r, 'ray.intersectAabb'), box(a, 'ray.intersectAabb')),
+        intersectPlane: (r: unknown, planePoint: unknown, planeNormal: unknown) => {
+            const parsed = ray(r, 'ray.intersectPlane');
+            const point = v(planePoint, 'ray.intersectPlane');
+            const normal = vec3.normalize(vec3.create(), v(planeNormal, 'ray.intersectPlane'));
+            const denominator = vec3.dot(parsed.direction, normal);
+            if (Math.abs(denominator) < 1e-8)
+                return null;
+            const t = vec3.dot(vec3.subtract(vec3.create(), point, parsed.origin), normal) / denominator;
+            return t >= 0 ? t : null;
+        },
+        intersectSphere: (r: unknown, center: unknown, radius: unknown) => {
+            const parsed = ray(r, 'ray.intersectSphere');
+            const c = v(center, 'ray.intersectSphere');
+            const rad = n(radius, 'ray.intersectSphere', 'o raio');
+            const oc = vec3.subtract(vec3.create(), parsed.origin, c);
+            const b = vec3.dot(oc, parsed.direction);
+            const cc = vec3.dot(oc, oc) - rad * rad;
+            const discriminant = b * b - cc;
+            if (discriminant < 0)
+                return null;
+            const t = -b - Math.sqrt(discriminant);
+            return t >= 0 ? t : -b + Math.sqrt(discriminant) >= 0 ? -b + Math.sqrt(discriminant) : null;
+        },
+    };
+    const scalarApi = {
+        clamp: (value: unknown, min: unknown, max: unknown) => clamp(n(value, 'scalar.clamp'), n(min, 'scalar.clamp'), n(max, 'scalar.clamp')),
+        clamp01: (value: unknown) => clamp(n(value, 'scalar.clamp01'), 0, 1),
+        lerp: (a: unknown, b: unknown, t: unknown) => lerp(n(a, 'scalar.lerp'), n(b, 'scalar.lerp'), n(t, 'scalar.lerp')),
+        inverseLerp: (a: unknown, b: unknown, value: unknown) => {
+            const start = n(a, 'scalar.inverseLerp');
+            const end = n(b, 'scalar.inverseLerp');
+            return end === start ? 0 : (n(value, 'scalar.inverseLerp') - start) / (end - start);
+        },
+        remap: (value: unknown, inMin: unknown, inMax: unknown, outMin: unknown, outMax: unknown) => {
+            const a = n(inMin, 'scalar.remap');
+            const b = n(inMax, 'scalar.remap');
+            const t = b === a ? 0 : (n(value, 'scalar.remap') - a) / (b - a);
+            return lerp(n(outMin, 'scalar.remap'), n(outMax, 'scalar.remap'), t);
+        },
+        smoothstep: (edge0: unknown, edge1: unknown, value: unknown) => {
+            const a = n(edge0, 'scalar.smoothstep');
+            const b = n(edge1, 'scalar.smoothstep');
+            const t = clamp(b === a ? 0 : (n(value, 'scalar.smoothstep') - a) / (b - a), 0, 1);
+            return t * t * (3 - 2 * t);
+        },
+        damp: (current: unknown, target: unknown, lambda: unknown, dt: unknown) => {
+            const a = n(current, 'scalar.damp');
+            const b = n(target, 'scalar.damp');
+            return lerp(a, b, 1 - Math.exp(-n(lambda, 'scalar.damp', 'a constante') * n(dt, 'scalar.damp', 'o delta')));
+        },
+        wrap: (value: unknown, min: unknown, max: unknown) => {
+            const a = n(min, 'scalar.wrap');
+            const b = n(max, 'scalar.wrap');
+            const range = b - a;
+            if (range <= 0)
+                return a;
+            const x = n(value, 'scalar.wrap');
+            return a + ((((x - a) % range) + range) % range);
+        },
+        wrapAngle: (degrees: unknown) => {
+            const x = n(degrees, 'scalar.wrapAngle');
+            return ((((x + 180) % 360) + 360) % 360) - 180;
+        },
+        deltaAngle: (from: unknown, to: unknown) => {
+            let delta = (n(to, 'scalar.deltaAngle') - n(from, 'scalar.deltaAngle')) % 360;
+            if (delta > 180)
+                delta -= 360;
+            if (delta < -180)
+                delta += 360;
+            return delta;
+        },
+        degToRad: (degrees: unknown) => degToRad(n(degrees, 'scalar.degToRad')),
+        radToDeg: (radians: unknown) => radToDeg(n(radians, 'scalar.radToDeg')),
+        sign: (value: unknown) => Math.sign(n(value, 'scalar.sign')),
+        approximately: (a: unknown, b: unknown, epsilon = 1e-6) => Math.abs(n(a, 'scalar.approximately') - n(b, 'scalar.approximately')) <= epsilon,
+        pingPong: (value: unknown, length: unknown) => {
+            const l = n(length, 'scalar.pingPong');
+            const t = ((n(value, 'scalar.pingPong') % (l * 2)) + l * 2) % (l * 2);
+            return l - Math.abs(t - l);
+        },
+        DEG_TO_RAD,
+        RAD_TO_DEG,
+        EPSILON: 1e-6,
+        TAU: Math.PI * 2,
+    };
+    const noiseApi = {
+        perlin2: (x: unknown, y: unknown, period = 256, seed = 0) => perlin2(n(x, 'noise.perlin2'), n(y, 'noise.perlin2'), n(period, 'noise.perlin2'), n(seed, 'noise.perlin2')),
+        perlin3: (x: unknown, y: unknown, z: unknown, seed = 0) => valueNoise3(n(x, 'noise.perlin3'), n(y, 'noise.perlin3'), n(z, 'noise.perlin3'), n(seed, 'noise.perlin3')),
+        value2: (x: unknown, y: unknown, seed = 0) => valueNoise3(n(x, 'noise.value2'), n(y, 'noise.value2'), 0, n(seed, 'noise.value2')),
+        value3: (x: unknown, y: unknown, z: unknown, seed = 0) => valueNoise3(n(x, 'noise.value3'), n(y, 'noise.value3'), n(z, 'noise.value3'), n(seed, 'noise.value3')),
+        worley2: (x: unknown, y: unknown, cells = 8, seed = 0) => worley2(n(x, 'noise.worley2'), n(y, 'noise.worley2'), n(cells, 'noise.worley2'), n(seed, 'noise.worley2')),
+        worley3: (x: unknown, y: unknown, z: unknown, cells = 8, seed = 0) => worley3(n(x, 'noise.worley3'), n(y, 'noise.worley3'), n(z, 'noise.worley3'), n(cells, 'noise.worley3'), n(seed, 'noise.worley3')),
+        fbm: (x: unknown, y: unknown, z = 0, octaves = 4, seed = 0, gain = 0.5) => fbm3(n(x, 'noise.fbm'), n(y, 'noise.fbm'), n(z, 'noise.fbm'), Math.max(1, Math.floor(n(octaves, 'noise.fbm'))), n(seed, 'noise.fbm'), n(gain, 'noise.fbm')),
+        fbm2: (x: unknown, y: unknown, period = 256, octaves = 4, seed = 0) => perlinFbm2(n(x, 'noise.fbm2'), n(y, 'noise.fbm2'), n(period, 'noise.fbm2'), Math.max(1, Math.floor(n(octaves, 'noise.fbm2'))), n(seed, 'noise.fbm2')),
+        ridged: (x: unknown, y: unknown, z = 0, octaves = 4, seed = 0) => ridgedFbm3(n(x, 'noise.ridged'), n(y, 'noise.ridged'), n(z, 'noise.ridged'), Math.max(1, Math.floor(n(octaves, 'noise.ridged'))), n(seed, 'noise.ridged')),
+    };
+    const colorApi = {
+        srgbToLinear: (channel: unknown) => srgbToLinear(n(channel, 'color.srgbToLinear')),
+        linearToSrgb: (channel: unknown) => linearToSrgb(n(channel, 'color.linearToSrgb')),
+        hexToVec3: (hex: unknown) => hexToLinearRgb(vec3.create(), String(hex)),
+        vec3ToHex: (rgb: unknown) => linearRgbToHex(v(rgb, 'color.vec3ToHex')),
+        vec3ToCss: (rgb: unknown) => linearRgbToCss(v(rgb, 'color.vec3ToCss')),
+        parse: (value: unknown) => toLinearColor(value, `${M}.color.parse`),
+        temperatureToColor: (kelvin: unknown) => temperatureToLinearRgb(vec3.create(), n(kelvin, 'color.temperatureToColor', 'a temperatura em Kelvin')),
+        lerp: (a: unknown, b: unknown, t: unknown) => vec3Api.lerp(toLinearColor(a, `${M}.color.lerp`), toLinearColor(b, `${M}.color.lerp`), t),
+        luminance: (rgb: unknown) => {
+            const c = v(rgb, 'color.luminance');
+            return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        },
+        rgb: (r: unknown, g: unknown, b: unknown) => vec3.create(srgbToLinear(n(r, 'color.rgb') / 255), srgbToLinear(n(g, 'color.rgb') / 255), srgbToLinear(n(b, 'color.rgb') / 255)),
+        hsl: (h: unknown, s: unknown, l: unknown) => {
+            const hue = ((n(h, 'color.hsl') % 360) + 360) % 360;
+            const sat = clamp(n(s, 'color.hsl'), 0, 1);
+            const light = clamp(n(l, 'color.hsl'), 0, 1);
+            const c = (1 - Math.abs(2 * light - 1)) * sat;
+            const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+            const m = light - c / 2;
+            const [r, g, b] = hue < 60 ? [c, x, 0] : hue < 120 ? [x, c, 0] : hue < 180 ? [0, c, x] : hue < 240 ? [0, x, c] : hue < 300 ? [x, 0, c] : [c, 0, x];
+            return vec3.create(srgbToLinear(r + m), srgbToLinear(g + m), srgbToLinear(b + m));
+        },
+    };
 }
