@@ -1102,3 +1102,141 @@ export class StaticBody3DNode extends PhysicsBody3DNode {
 }
 markScriptClass(StaticBody3DNode, 'StaticBody3D');
 setGodotBase(StaticBody3DNode, 'StaticBody3D');
+export class RigidBody3DNode extends PhysicsBody3DNode {
+    private readonly $touching = new Set<EngineEntity>();
+    private $gravityScaleFallback = 1;
+    private $virtualVelocity = new Vector3();
+    private $virtualAngular = new Vector3();
+    protected $contact(phase: 'begin' | 'end' | 'enter' | 'exit', other: unknown, contact: unknown): void {
+        if (isEngineEntity(other)) {
+            if (phase === 'begin' || phase === 'enter')
+                this.$touching.add(other);
+            else
+                this.$touching.delete(other);
+        }
+        super.$contact(phase, other, contact);
+    }
+    get linear_velocity(): Vector3 {
+        const body = this.$body();
+        return body ? fromEngineVec3(body.linearVelocity) : this.$virtualVelocity;
+    }
+    set linear_velocity(value: unknown) {
+        const body = this.$body();
+        const vector = toVector3(value);
+        if (body) {
+            body.linearVelocity = new Float32Array([vector.x, vector.y, vector.z]);
+            body.wake();
+        }
+        else
+            this.$virtualVelocity = vector;
+    }
+    get angular_velocity(): Vector3 {
+        const body = this.$body();
+        return body ? fromEngineVec3(body.angularVelocity) : this.$virtualAngular;
+    }
+    set angular_velocity(value: unknown) {
+        const body = this.$body();
+        const vector = toVector3(value);
+        if (body) {
+            body.angularVelocity = new Float32Array([vector.x, vector.y, vector.z]);
+            body.wake();
+        }
+        else
+            this.$virtualAngular = vector;
+    }
+    get gravity_scale(): number {
+        return this.$body()?.gravityScale ?? this.$gravityScaleFallback;
+    }
+    set gravity_scale(value: unknown) {
+        const body = this.$body();
+        if (body)
+            body.gravityScale = Number(value);
+        else
+            this.$gravityScaleFallback = Number(value);
+    }
+    get mass(): number {
+        return this.$body()?.mass ?? Number((this.$entity?.rigidBody as {
+            mass?: number;
+        } | null)?.mass ?? 1);
+    }
+    set mass(value: unknown) {
+        const settings = this.$entity?.rigidBody as {
+            mass?: number;
+        } | null | undefined;
+        if (settings)
+            settings.mass = Number(value);
+    }
+    get sleeping(): boolean {
+        const body = this.$body() as (BodyApi & {
+            isSleeping?: boolean;
+        }) | null;
+        return body?.isSleeping ?? false;
+    }
+    set sleeping(value: unknown) {
+        const body = this.$body() as (BodyApi & {
+            sleep?: () => void;
+        }) | null;
+        if (!body)
+            return;
+        if (value)
+            body.sleep?.();
+        else
+            body.wake();
+    }
+    private $requireBody(where: string): BodyApi {
+        const body = this.$body();
+        if (!body)
+            fail(`${where}: "${this.name}" não tem corpo físico; adicione o componente Corpo Rígido ao ator.`);
+        return body;
+    }
+    apply_impulse(impulse: unknown, position: unknown = Vector3.ZERO): void {
+        const body = this.$requireBody('apply_impulse');
+        const offset = toVector3(position);
+        if (offset.length_squared() > 0)
+            body.applyImpulse(toVector3(impulse), vadd(this.global_position, offset));
+        else
+            body.applyImpulse(toVector3(impulse));
+    }
+    apply_central_impulse(impulse: unknown): void {
+        this.$requireBody('apply_central_impulse').applyImpulse(toVector3(impulse));
+    }
+    apply_force(force: unknown, position: unknown = Vector3.ZERO): void {
+        const body = this.$requireBody('apply_force');
+        const offset = toVector3(position);
+        if (offset.length_squared() > 0)
+            body.applyForce(toVector3(force), vadd(this.global_position, offset));
+        else
+            body.applyForce(toVector3(force));
+    }
+    apply_central_force(force: unknown): void {
+        this.$requireBody('apply_central_force').applyForce(toVector3(force));
+    }
+    apply_torque(torque: unknown): void {
+        this.$requireBody('apply_torque').applyTorque(toVector3(torque));
+    }
+    apply_torque_impulse(impulse: unknown): void {
+        this.$requireBody('apply_torque_impulse').applyAngularImpulse(toVector3(impulse));
+    }
+    set_axis_velocity(axisVelocity: unknown): void {
+        const target = toVector3(axisVelocity);
+        const axis = target.normalized();
+        const current = this.linear_velocity;
+        this.linear_velocity = vadd(vsub(current, vscale(axis, current.dot(axis))), target);
+    }
+    get_colliding_bodies(): NodeBase[] {
+        return Array.from(this.$touching, (entity) => wrapEntity(entity, this.$context));
+    }
+    get_contact_count(): number {
+        return this.$touching.size;
+    }
+}
+markScriptClass(RigidBody3DNode, 'RigidBody3D');
+setGodotBase(RigidBody3DNode, 'RigidBody3D');
+interface CharacterApi {
+    readonly isGrounded: boolean;
+    readonly velocity: Float32Array;
+    readonly groundNormal: Float32Array;
+    move(x: number, z: number): void;
+    jump(): void;
+    stop(): void;
+}
