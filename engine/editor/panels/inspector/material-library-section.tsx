@@ -6,7 +6,7 @@ import { FieldInput } from '@/engine/ui/field-input';
 import { IconButton } from '@/engine/ui/icon-button';
 import { PropertyRow } from '@/engine/ui/property-row';
 import type { Entity } from '@/engine/core/scene/entity';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { MaterialPickerMenu } from '@/engine/editor/materials/material-picker';
 import { openMaterialEditor } from '@/engine/editor/materials/material-editor-requests';
 import { materialCaption, MaterialSwatch } from '@/engine/editor/materials/material-swatch';
@@ -17,18 +17,18 @@ const ALPHA_LABEL = { opaque: 'Opaco', mask: 'Recorte', blend: 'Mistura' } as co
 export function MaterialPickerButton({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const applied = session.materials.forMaterial(entity.material);
-    return (<MaterialPickerMenu appliedId={applied?.id ?? null} onPick={(document) => applyLibraryMaterial(session, entity, document)} trigger={<IconButton label="Aplicar material da biblioteca" size="sm" className="size-5 [&_svg]:size-3"/>}>
+    return (<MaterialPickerMenu appliedId={applied?.id ?? null} onPick={(document) => applyLibraryMaterial(session, entity, document)} trigger={<IconButton label="Aplicar material da biblioteca" size="xs"/>}>
       <Library />
     </MaterialPickerMenu>);
 }
 export function OwnMaterialRow({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     return (<div className="flex flex-col gap-1 px-2 pb-1">
-      <p className="text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="text-3xs leading-relaxed text-pretty text-muted-foreground">
         Material próprio deste ator: os ajustes abaixo valem só para ele. Salve na biblioteca para reutilizá-lo em outros atores e no terreno.
       </p>
       <ActionRow>
@@ -43,7 +43,7 @@ type LibraryMaterialSectionProps = {
     document: MaterialDocument;
 };
 export function LibraryMaterialSection({ entity, document }: LibraryMaterialSectionProps) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { material, physics } = document;
     const users = countMaterialUsers(session, document);
     const presetId = matchPhysicalPreset(physics);
@@ -55,7 +55,7 @@ export function LibraryMaterialSection({ entity, document }: LibraryMaterialSect
         <MaterialSwatch document={document} className="size-9"/>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-2xs font-medium text-foreground">{document.name}</span>
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
+          <span className="truncate font-mono text-3xs text-muted-foreground">
             {materialCaption(document)} · {users === 1 ? 'só este ator' : `${users} atores`}
           </span>
         </span>
@@ -69,7 +69,7 @@ export function LibraryMaterialSection({ entity, document }: LibraryMaterialSect
         <FieldInput readOnly value={body ? `${presetLabel} · ${formatMass(massForMaterial(physics, body, entity.transform.scale))}` : `${presetLabel} · ${formatDensity(physics.density)}`} title={body ? 'Massa que o material dá ao colisor deste ator' : 'Densidade do material; a massa é calculada quando o ator ganha um corpo rígido'} aria-label="Resumo da física do material"/>
       </PropertyRow>
 
-      <p className="px-2 pt-0.5 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pt-0.5 text-3xs leading-relaxed text-pretty text-muted-foreground">
         Editar o material altera todos os atores que o usam. Para ajustar só este ator, torne-o único.
       </p>
       <ActionRow>
