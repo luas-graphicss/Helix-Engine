@@ -111,6 +111,7 @@ export class AnimationEditor {
     boneFilter = '';
     onlyAnimated = false;
     clipboard: KeyClipboard | null = null;
+    openCount = 0;
     private readonly pending = new Map<Entity, TransformSnapshot>();
     private ikDrag: IkDrag | null = null;
     private keyDrag: KeyDrag | null = null;
@@ -204,6 +205,7 @@ export class AnimationEditor {
             this.compile(performer);
         if (!wasActive)
             this.session.transformInterceptors.add(this.interceptor);
+        this.openCount++;
         this.session.log.info(LOG_SOURCE, `${document.name} aberta no editor de animação sobre ${rigDisplayName(owner)}.`);
         this.notify();
         this.notifyTime();
@@ -344,6 +346,7 @@ export class AnimationEditor {
             this.time = 0;
         this.playing = true;
         this.discardPending();
+        this.notify();
         this.notifyTime();
     }
     pause(): void {
@@ -352,6 +355,7 @@ export class AnimationEditor {
         this.playing = false;
         if (this.snapToFrames)
             this.time = this.snapTime(this.time);
+        this.notify();
         this.notifyTime();
     }
     togglePlay(): void {
@@ -361,8 +365,11 @@ export class AnimationEditor {
             this.play();
     }
     stop(): void {
+        const wasPlaying = this.playing;
         this.playing = false;
         this.time = 0;
+        if (wasPlaying)
+            this.notify();
         this.notifyTime();
     }
     setSpeed(speed: number): void {
@@ -861,6 +868,7 @@ export class AnimationEditor {
         }
         if (this.playing) {
             let next = this.time + dt * this.speed;
+            let reachedEnd = false;
             if (this.document.loop) {
                 next = next % this.duration;
                 if (next < 0)
@@ -869,8 +877,11 @@ export class AnimationEditor {
             else if (next >= this.duration) {
                 next = this.duration;
                 this.playing = false;
+                reachedEnd = true;
             }
             this.time = next;
+            if (reachedEnd)
+                this.notify();
             this.notifyTime();
         }
         const dragged = this.session.gizmo.active !== null ? this.session.selectedEntity : null;
