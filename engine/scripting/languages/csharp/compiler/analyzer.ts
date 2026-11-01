@@ -1086,4 +1086,245 @@ class Analyzer {
             this.warn(method.nameSpan, `"${method.name}" só é chamado pela engine em classes de ator (: ActorScript); em "${cls.name}" é um método comum.`);
         }
     }
+    private analyzeConstructor(ctor: ConstructorMember, cls: ClassInfo): void {
+        const isStatic = ctor.modifiers.includes('static');
+        const info = cls.ctors.find((entry) => entry.decl === ctor);
+        const params = info?.params ?? ctor.parameters.map((parameter) => this.paramInfo(parameter, cls));
+        const fn: FunctionContext = { cls, isStatic, returnType: STATIC_TYPES.void, usesAwait: false, usesYield: false, catchDepth: 0 };
+        const scope = new Scope(null, fn);
+        for (const parameter of params)
+            this.declareParam(scope, parameter);
+        if (ctor.initializer) {
+            for (const argument of ctor.initializer.arguments)
+                this.expression(argument.expression, scope, null);
+            if (ctor.initializer.kind === 'base' && !cls.base && !cls.baseRuntime)
+                this.error(ctor.initializer.span, `"${cls.name}" não tem classe base para base(…) chamar.`);
+        }
+        this.functionBody(ctor.body, ctor.expressionBody, params, fn, scope, true);
+        if (fn.usesAwait)
+            this.error(ctor.span, 'Construtores não podem usar await; mova o trabalho assíncrono para OnStart ou um método async.');
+    }
+    private declareParam(scope: Scope, parameter: ParamInfo): void {
+        const byRef = parameter.modifier === 'ref' || parameter.modifier === 'out';
+        scope.declare(parameter.name, parameter.type, byRef);
+    }
+    private functionBody(body: Block | null, expressionBody: Expression | null, params: readonly ParamInfo[], fn: FunctionContext, scope: Scope = new Scope(null, fn), paramsDeclared = false): void {
+        if (!paramsDeclared)
+            for (const parameter of params)
+                this.declareParam(scope, parameter);
+        for (const parameter of params) {
+            if (parameter.decl.defaultValue)
+                this.expression(parameter.decl.defaultValue, scope, parameter.type);
+        }
+        if (body)
+            this.block(body, scope);
+        else if (expressionBody)
+            this.expression(expressionBody, scope, fn.returnType && fn.returnType.kind !== 'void' ? fn.returnType : null);
+    }
+    private block(block: Block, parent: Scope): void {
+        const scope = new Scope(parent, parent.fn);
+        this.statements(block.statements, scope);
+    }
+    private statements(statements: readonly Statement[], scope: Scope): void {
+        for (const statement of statements) {
+            if (statement.kind !== 'localFunction')
+                continue;
+            const method = statement.method;
+            const returnType = this.typeFromRef(method.returnType, scope.fn.cls);
+            const params = method.parameters.map((parameter) => this.paramInfo(parameter, scope.fn.cls));
+            const isAsync = method.modifiers.includes('async');
+            const type: StaticType = { kind: 'delegate', params: params.map((parameter) => parameter.type), returns: isAsync && returnType.kind !== 'task' ? { kind: 'task', result: returnType.kind === 'void' ? null : returnType } : returnType };
+            method.jsName = localJsName(method.name);
+            scope.declare(method.name, type);
+        }
+        for (const statement of statements)
+            this.statement(statement, scope);
+    }
+    private statement(statement: Statement, scope: Scope): void {
+        switch (statement.kind) {
+            case 'block':
+                this.block(statement, scope);
+                return;
+            case 'empty':
+            case 'break':
+            case 'continue':
+                return;
+            case 'local':
+                this.localDeclaration(statement, scope);
+                return;
+            case 'localFunction': {
+                const method = statement.method;
+                const local = scope.lookup(method.name);
+                const declared = local?.type.kind === 'delegate' ? local.type : null;
+                const params = method.parameters.map((parameter) => this.paramInfo(parameter, scope.fn.cls));
+                const returnType = declared?.returns ?? this.typeFromRef(method.returnType, scope.fn.cls);
+                const fn: FunctionContext = { cls: scope.fn.cls, isStatic: scope.fn.isStatic, returnType: bodyReturnType(returnType, method.modifiers.includes('async')), usesAwait: false, usesYield: false, catchDepth: 0 };
+                this.functionBody(method.body, method.expressionBody, params, fn, new Scope(scope, fn));
+                method.isIterator = fn.usesYield;
+                method.isAsync = method.modifiers.includes('async') || fn.usesAwait;
+                return;
+            }
+            case 'expression':
+                this.expression(statement.expression, scope, null);
+                return;
+            case 'if':
+                this.condition(statement.condition, scope);
+                this.statement(statement.then, new Scope(scope, scope.fn));
+                if (statement.else)
+                    this.statement(statement.else, new Scope(scope, scope.fn));
+                return;
+            case 'while': {
+                const inner = new Scope(scope, scope.fn);
+                this.condition(statement.condition, inner);
+                this.statement(statement.body, inner);
+                return;
+            }
+            case 'do': {
+                const inner = new Scope(scope, scope.fn);
+                this.statement(statement.body, inner);
+                this.condition(statement.condition, inner);
+                return;
+            }
+            case 'for': {
+                const inner = new Scope(scope, scope.fn);
+                if (statement.declaration)
+                    this.localDeclaration(statement.declaration, inner);
+                for (const initializer of statement.initializers)
+                    this.expression(initializer, inner, null);
+                if (statement.condition)
+                    this.condition(statement.condition, inner);
+                for (const update of statement.updates)
+                    this.expression(update, inner, null);
+                this.statement(statement.body, inner);
+                return;
+            }
+            case 'foreach': {
+                const iterableType = this.expression(statement.iterable, scope, null);
+                const inner = new Scope(scope, scope.fn);
+                const element = elementTypeOf(iterableType);
+                statement.directIterable = isDirectlyIterable(iterableType);
+                if (statement.isAwait)
+                    scope.fn.usesAwait = true;
+                if (statement.name) {
+                    const declared = statement.type && statement.type.name !== 'var' ? this.typeFromRef(statement.type, scope.fn.cls) : (element ?? STATIC_TYPES.dynamic);
+                    statement.jsName = inner.declare(statement.name, declared).jsName;
+                }
+                if (statement.deconstruction) {
+                    const parts = element?.kind === 'tuple' ? element.elements.map((entry) => entry.type) : element?.kind === 'class' && element.name === 'KeyValuePair' && iterableType.kind === 'collection' ? [iterableType.args[0] ?? STATIC_TYPES.dynamic, iterableType.args[1] ?? STATIC_TYPES.dynamic] : [];
+                    statement.deconstructionJsNames = statement.deconstruction.map((name, index) => (name === '_' ? `$_${index}` : inner.declare(name, parts[index] ?? STATIC_TYPES.dynamic).jsName));
+                }
+                this.statement(statement.body, inner);
+                return;
+            }
+            case 'switch': {
+                const valueType = this.expression(statement.value, scope, null);
+                for (const section of statement.sections) {
+                    const inner = new Scope(scope, scope.fn);
+                    for (const label of section.labels) {
+                        if (label.kind !== 'case')
+                            continue;
+                        this.pattern(label.pattern, valueType, inner);
+                        if (label.guard)
+                            this.condition(label.guard, inner);
+                    }
+                    this.statements(section.statements, inner);
+                }
+                return;
+            }
+            case 'return': {
+                const expected = scope.fn.returnType;
+                if (statement.expression) {
+                    const type = this.expression(statement.expression, scope, expected && expected.kind !== 'void' ? expected : null);
+                    if (expected?.kind === 'void' && !scope.fn.usesYield)
+                        this.warn(statement.span, 'return com valor num método void; o valor é ignorado.');
+                    void type;
+                }
+                return;
+            }
+            case 'throw':
+                if (statement.expression)
+                    this.expression(statement.expression, scope, null);
+                else if (scope.fn.catchDepth === 0)
+                    this.error(statement.span, '"throw;" sem valor só vale dentro de um catch.');
+                return;
+            case 'try': {
+                this.block(statement.block, scope);
+                for (const clause of statement.catches)
+                    this.catchClause(clause, scope);
+                if (statement.finallyBlock)
+                    this.block(statement.finallyBlock, scope);
+                return;
+            }
+            case 'using': {
+                const inner = statement.body ? new Scope(scope, scope.fn) : scope;
+                if (statement.declaration)
+                    this.localDeclaration(statement.declaration, inner);
+                if (statement.expression)
+                    this.expression(statement.expression, inner, null);
+                if (statement.body)
+                    this.statement(statement.body, inner);
+                return;
+            }
+            case 'lock':
+                this.expression(statement.expression, scope, null);
+                this.statement(statement.body, new Scope(scope, scope.fn));
+                return;
+            case 'yield':
+                scope.fn.usesYield = true;
+                if (statement.expression)
+                    this.expression(statement.expression, scope, null);
+                return;
+        }
+    }
+    private catchClause(clause: CatchClause, scope: Scope): void {
+        const inner = new Scope(scope, scope.fn);
+        if (clause.type) {
+            const test = this.typeTestOf(clause.type, scope.fn.cls);
+            clause.typeTest = test.kind === 'runtime' || test.kind === 'script' ? test : null;
+            if (test.kind === 'primitive' || test.kind === 'array')
+                this.error(clause.type.span, `catch precisa de um tipo de exceção, não "${clause.type.name}".`);
+        }
+        else
+            clause.typeTest = null;
+        if (clause.name) {
+            const type: StaticType = clause.type ? this.typeFromRef(clause.type, scope.fn.cls) : { kind: 'class', name: 'Exception', script: null, runtime: true };
+            clause.jsName = inner.declare(clause.name, type.kind === 'dynamic' ? { kind: 'class', name: 'Exception', script: null, runtime: true } : type).jsName;
+        }
+        if (clause.filter)
+            this.condition(clause.filter, inner);
+        scope.fn.catchDepth++;
+        this.block(clause.block, inner);
+        scope.fn.catchDepth--;
+    }
+    private localDeclaration(declaration: Statement & {
+        kind: 'local';
+    }, scope: Scope): void {
+        if (declaration.deconstruction) {
+            const type = this.expression(declaration.deconstruction.initializer, scope, null);
+            const parts = type.kind === 'tuple' ? type.elements.map((entry) => entry.type) : [];
+            declaration.deconstruction.jsNames = declaration.deconstruction.names.map((name, index) => (name === '_' ? `$_${index}` : scope.declare(name, parts[index] ?? STATIC_TYPES.dynamic).jsName));
+            return;
+        }
+        const isVar = declaration.type.name === 'var' && declaration.type.typeArguments.length === 0 && declaration.type.arrayRank === 0;
+        const declared = isVar ? null : this.typeFromRef(declaration.type, scope.fn.cls);
+        for (const declarator of declaration.declarators) {
+            let type = declared ?? STATIC_TYPES.dynamic;
+            if (declarator.initializer) {
+                const inferred = this.expression(declarator.initializer, scope, declared);
+                if (isVar)
+                    type = inferred.kind === 'null' || inferred.kind === 'void' ? STATIC_TYPES.dynamic : inferred;
+            }
+            else if (isVar)
+                this.error(declarator.span, `"var ${declarator.name}" precisa de um valor inicial para o tipo ser inferido.`);
+            if (scope.lookupInFunction(declarator.name))
+                this.error(declarator.span, `A variável "${declarator.name}" já foi declarada neste escopo.`);
+            declarator.staticType = type;
+            declarator.jsName = scope.declare(declarator.name, type).jsName;
+        }
+    }
+    private condition(expression: Expression, scope: Scope): void {
+        const type = this.expression(expression, scope, STATIC_TYPES.bool);
+        if (isNumericType(type) || type.kind === 'string' || type.kind === 'char')
+            this.error(expression.span, `A condição precisa ser bool, mas é ${describeType(type)}.`);
+    }
 }
