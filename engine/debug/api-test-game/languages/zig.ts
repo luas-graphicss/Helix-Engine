@@ -561,5 +561,285 @@ fn cameraMudou(args: []const Value) Value {
     return Value.none;
 }
 
+fn camera() Value {
+    const c = api("camera");
+    defer c.deinit();
+    checar("camera.fov", numero(c, "fov") > 0 and numero(c, "aspect") > 0);
+    checar("camera.near/far", numero(c, "near") > 0 and numero(c, "far") > numero(c, "near"));
+    const viewport = c.get("viewport");
+    defer viewport.deinit();
+    checar("viewport", numero(viewport, "width") > 0);
+    const na_tela = c.invoke("worldToScreen", .{V.init(0, 0, 0)});
+    defer na_tela.deinit();
+    checar("worldToScreen", na_tela.isNone() or na_tela.get("x").isNumber());
+    const raio = c.invoke("screenToRay", .{ numero(viewport, "width") / 2, numero(viewport, "height") / 2 });
+    defer raio.deinit();
+    checar("screenToRay", raio.isNone() or aprox(comprimento(raio.get("direction")), 1, 0.01));
+    checar("viewMatrix", c.get("viewMatrix").len() == 16);
+    const jogador = c.get("player");
+    defer jogador.deinit();
+    descartar(jogador.invoke("set", .{.{ .distance = 7, .pitch = 18 }}));
+    checar("player.set", numero(jogador.get("settings"), "distance") == 7);
+    checar("distanceTo", c.invoke("distanceTo", .{V.init(0, 0, 0)}).number() >= 0);
+    checar("camera.position", !c.get("position").isNone() and !c.get("forward").isNone());
+    assinar(c.invoke("onMainChanged", .{&cameraMudou}));
+    return Value.none;
+}
+
+fn pos() Value {
+    const p = api("post");
+    defer p.deinit();
+    checar("post.toneMappers", p.invoke("toneMappers", .{}).len() > 0);
+    descartar(p.invoke("set", .{.{
+        .bloom = .{ .enabled = true, .intensity = 0.5, .threshold = 1, .softKnee = 0.5, .radius = 0.6 },
+        .vignette = .{ .enabled = true, .intensity = 0.35, .smoothness = 0.5, .roundness = 1 },
+    }}));
+    checar("post.set", verdadeiro(p.path("bloom.enabled")) and verdadeiro(p.path("vignette.enabled")));
+    p.set("exposure", 1.05);
+    checar("post.exposure", aprox(numero(p, "exposure"), 1.05, 1e-3));
+    p.set("toneMapper", "agx");
+    checar("post.toneMapper", textoIgual(p.get("toneMapper"), "agx"));
+    checar("post.presets", p.invoke("presets", .{}).len() > 0);
+    const custom = p.get("custom");
+    defer custom.deinit();
+    const novo = custom.invoke("add", .{.{ .fragment = "DebugPost", .name = "DebugPost", .uniforms = .{ .tint = V.init(0.15, 0.05, 0.3), .strength = 0.6 } }});
+    checar("post.custom.add", !novo.isNone() and !custom.invoke("get", .{"DebugPost"}).isNone());
+    const uniforms = novo.get("uniforms");
+    defer uniforms.deinit();
+    descartar(uniforms.invoke("set", .{ "strength", 0.8 }));
+    checar("efeito.uniforms.list", uniforms.invoke("list", .{}).len() >= 2);
+    efeito = novo;
+    return Value.none;
+}
+
+fn contarRender(args: []const Value) Value {
+    _ = args;
+    renders += 1;
+    return Value.none;
+}
+
+fn render() Value {
+    const r = api("render");
+    defer r.deinit();
+    checar("render.passNames", r.invoke("passNames", .{}).len() > 0);
+    checar("render.stats", r.path("stats.drawCalls").isNumber());
+    checar("render.frame", r.path("frame.width").isNumber());
+    assinar(r.invoke("onAfterFrame", .{&contarRender}));
+    r.set("showGrid", false);
+    checar("render.showGrid", falso(r.get("showGrid")));
+    checar("render.pixelRatio", numero(r, "pixelRatio") > 0);
+    return Value.none;
+}
+
+                                                                                          
+
+fn aoColidir(args: []const Value) Value {
+    colisoes += 1;
+    if (colisoes > 3) return Value.none;
+    const e = arg(args, 0);
+    var a_buf: [64]u8 = undefined;
+    var b_buf: [64]u8 = undefined;
+    const a = e.get("a");
+    defer a.deinit();
+    const b = e.get("b");
+    defer b.deinit();
+    const contato = e.get("contact");
+    defer contato.deinit();
+    info("Colisão: {s} × {s} (impulso {d:.2})", .{ nomeDe(a, &a_buf), nomeDe(b, &b_buf), numero(contato, "impulse") });
+    return Value.none;
+}
+
+fn foraDoMundo(args: []const Value) Value {
+    var nome_buf: [64]u8 = undefined;
+    aviso("{s} caiu do mundo", .{nomeDe(arg(args, 0), &nome_buf)});
+    return Value.none;
+}
+
+fn fisica() Value {
+    const ph = api("physics");
+    defer ph.deinit();
+    const s = api("scene");
+    defer s.deinit();
+    checar("physics.enabled", verdadeiro(ph.get("enabled")));
+    checar("physics.gravity", numero(ph.get("gravity"), "y") < 0);
+    checar("physics.settings", numero(ph.get("settings"), "fixedTimestep") > 0);
+    for (1..6) |i| {
+        const indice: f64 = @floatFromInt(i - 1);
+        var nome_buf: [16]u8 = undefined;
+        const nome = std.fmt.bufPrint(&nome_buf, "Caixa{d}", .{i}) catch "Caixa";
+        const caixa = s.invoke("spawnPrimitive", .{ "box", .{
+            .name = nome,
+            .position = V.init(-2 + indice * 1.1, 3 + indice * 1.2, 3),
+            .rigidBody = .{ .@"type" = "dynamic", .collider = "box", .mass = 2, .restitution = 0.3 },
+            .tags = .{"caixa"},
+        } });
+        defer caixa.deinit();
+        exec("material.setColor", .{ caixa, helix.call("math.color.hsl", .{ 30 + (indice + 1) * 12, 0.7, 0.5 }) });
+    }
+    const caixas = s.invoke("byTag", .{"caixa"});
+    defer caixas.deinit();
+    const primeira = caixas.at(0);
+    defer primeira.deinit();
+    checar("caixas dinâmicas", caixas.len() == 5 and ph.invoke("hasBody", .{primeira}).boolean());
+    const corpo = ph.invoke("bodyOf", .{primeira});
+    defer corpo.deinit();
+    checar("bodyOf", verdadeiro(corpo.get("isDynamic")) and numero(corpo, "mass") > 0);
+    descartar(corpo.invoke("applyImpulse", .{V.init(0, 2, 0)}));
+    descartar(corpo.invoke("applyTorque", .{V.init(0, 1, 0)}));
+    descartar(corpo.invoke("setMaterial", .{.{ .friction = 0.8 }}));
+    descartar(corpo.invoke("wake", .{}));
+    checar("body.linearVelocity", !corpo.get("linearVelocity").isNone());
+    checar("bodies()", ph.invoke("bodies", .{}).len() >= 6);
+    const hit = ph.invoke("raycast", .{ V.init(0, 5, 0), V.init(0, -1, 0), 20 });
+    defer hit.deinit();
+    checar("physics.raycast", !hit.isNone() and !hit.get("entity").isNone());
+    checar("raycastAll", ph.invoke("raycastAll", .{ V.init(0, 5, 0), V.init(0, -1, 0), 20 }).len() >= 1);
+    checar("overlapSphere", ph.invoke("overlapSphere", .{ V.init(0, 3, 3), 4 }).isArray());
+    checar("massProperties", numero(ph.invoke("massProperties", .{primeira}), "mass") > 0);
+    checar("colliderVolume", ph.invoke("colliderVolume", .{primeira}).number() > 0);
+    const formas = ph.get("shapes");
+    defer formas.deinit();
+    checar("shapes.sphere volume", aprox(formas.invoke("volume", .{formas.invoke("sphere", .{1})}).number(), 4.18879, 0.01));
+    assinar(ph.invoke("onCollisionBegin", .{&aoColidir}));
+    assinar(ph.invoke("onOutOfBounds", .{&foraDoMundo}));
+    const gatilho = s.invoke("spawn", .{ "group", .{ .name = "Gatilho", .position = V.init(0, 1, 3), .trigger = .{ .shape = "box", .size = V.init(3, 2, 3) } } });
+    defer gatilho.deinit();
+    checar("trigger spawn", !gatilho.isNone() and s.invoke("isAttached", .{gatilho}).boolean());
+    checar("physics.stats", ph.path("stats.bodies").isNumber());
+    return Value.none;
+}
+
+fn aoPular(args: []const Value) Value {
+    var nome_buf: [64]u8 = undefined;
+    const entidade = arg(args, 0).get("entity");
+    defer entidade.deinit();
+    info("{s} pulou", .{nomeDe(entidade, &nome_buf)});
+    return Value.none;
+}
+
+fn aoPossuir(args: []const Value) Value {
+    var nome_buf: [64]u8 = undefined;
+    info("Possuindo {s}", .{nomeDe(arg(args, 0), &nome_buf)});
+    return Value.none;
+}
+
+fn personagem() Value {
+    const ch = api("character");
+    defer ch.deinit();
+    const pl = api("player");
+    defer pl.deinit();
+    const novo = ch.invoke("spawn", .{.{ .name = "Heroi", .position = V.init(0, 1.2, 8), .character = .{ .walkSpeed = 4, .runSpeed = 7, .jumpHeight = 1.4 } }});
+    checar("character.spawn", !novo.get("character").isNone() and ch.invoke("has", .{novo}).boolean());
+    const c = ch.invoke("of", .{novo});
+    defer c.deinit();
+    checar("character.of", c.get("isGrounded").isBool());
+    checar("settingsOf", numero(ch.invoke("settingsOf", .{novo}), "walkSpeed") == 4);
+    descartar(pl.invoke("possess", .{novo}));
+    checar("player.possess", pl.get("possessed").equals(novo) and verdadeiro(pl.get("isPossessing")));
+    assinar(ch.invoke("onJumped", .{&aoPular}));
+    assinar(pl.invoke("onPossessed", .{&aoPossuir}));
+    checar("character.all", ch.invoke("all", .{}).len() >= 1);
+    checar("player.spawnPoint", !pl.get("spawnPoint").isNone());
+    checar("character.velocity", !c.get("velocity").isNone() and !c.get("position").isNone());
+    heroi = novo;
+    return Value.none;
+}
+
+fn terreno() Value {
+    const te = api("terrain");
+    defer te.deinit();
+    checar("terrain.presets", te.invoke("presets", .{}).len() > 0);
+    const colinas = te.invoke("spawn", .{.{ .name = "Colinas", .size = 48, .resolution = 65, .preset = "hills", .seed = 7, .position = V.init(0, -6, -70) }});
+    defer colinas.deinit();
+    checar("terrain.spawn", !colinas.get("terrain").isNone() and te.invoke("all", .{}).len() >= 1);
+    checar("terrain.of", numero(te.invoke("of", .{colinas}), "resolution") == 65);
+    checar("heightAt", te.invoke("heightAt", .{ V.init(0, 0, -70), colinas }).isNumber());
+    checar("contains", te.invoke("contains", .{ V.init(0, 0, -70), colinas }).boolean() and !te.invoke("contains", .{ V.init(500, 0, 0), colinas }).boolean());
+    descartar(te.invoke("sculpt", .{ colinas, "raise", V.init(5, 0, -70), .{ .radius = 6, .strength = 1 }, 1 }));
+    descartar(te.invoke("markDirty", .{colinas}));
+    const grama = te.get("grass");
+    defer grama.deinit();
+    descartar(grama.invoke("set", .{ colinas, .{ .enabled = true, .density = 0.5 } }));
+    checar("grass.set", verdadeiro(grama.invoke("settingsOf", .{colinas}).get("enabled")));
+    const agua = te.get("water");
+    defer agua.deinit();
+    descartar(agua.invoke("set", .{ colinas, .{ .enabled = true, .level = -2 } }));
+    checar("water.set", verdadeiro(agua.invoke("settingsOf", .{colinas}).get("enabled")));
+    checar("terrain.raycast", !te.invoke("raycast", .{ V.init(0, 50, -70), V.init(0, -1, 0), colinas }).isNone());
+    return Value.none;
+}
+
+                                                                                          
+
+fn soltarCaixa() void {
+    const caixa = helix.call("scene.spawnPrimitive", .{ "box", .{
+        .name = "CaixaSolta",
+        .position = V.init(helix.call("math.random.range", .{ -3, 3 }).number(), 6, helix.call("math.random.range", .{ 0, 4 }).number()),
+        .rigidBody = .{ .@"type" = "dynamic", .collider = "box", .mass = 1 },
+        .tags = .{"caixa"},
+    } });
+    defer caixa.deinit();
+    exec("material.setColor", .{ caixa, helix.call("math.random.color", .{}) });
+    pontos += 1;
+    exec("gui.bind", .{ "pontos", pontos });
+    const nome = caixa.get("name");
+    defer nome.deinit();
+    exec("events.emit", .{ "debug.caixa", .{ .nome = nome } });
+}
+
+fn acaoCaixa(args: []const Value) Value {
+    _ = args;
+    soltarCaixa();
+    return Value.none;
+}
+
+fn acaoReiniciar(args: []const Value) Value {
+    _ = args;
+    exec("play.restart", .{});
+    return Value.none;
+}
+
+fn telaMostrada(args: []const Value) Value {
+    const g = api("gui");
+    defer g.deinit();
+    tela = arg(args, 0).clone();
+    checar("gui.show/isShown", !tela.isNone() and g.invoke("isShown", .{tela}).boolean());
+    checar("gui.kinds", contem(g.invoke("kinds", .{}), "button"));
+    return Value.none;
+}
+
+fn escala(scale: f64, offset: f64) Value {
+    return Value.from(.{ .scale = scale, .offset = offset });
+}
+
+fn interfaceGrafica() Value {
+    const g = api("gui");
+    defer g.deinit();
+    descartar(g.invoke("css", .{"DebugEstilo"}));
+    const hud = g.invoke("html", .{ "DebugHud", .{ .id = "debug-hud" } });
+    defer hud.deinit();
+    checar("gui.html", !hud.isNone() and !g.invoke("element", .{"#debug-hud"}).isNone());
+    const icone = g.invoke("svg", .{ "DebugIcone", .{ .id = "debug-icone" } });
+    defer icone.deinit();
+    checar("gui.svg", !icone.isNone());
+    const slot = g.invoke("element", .{"[data-slot=icone]"});
+    defer slot.deinit();
+    if (!slot.isNone() and !icone.isNone()) descartar(slot.invoke("appendChild", .{icone}));
+    checar("gui.bind", g.invoke("bind", .{ "linguagem", LINGUAGEM }).number() >= 1);
+    descartar(g.invoke("bind", .{ "titulo", "Helix · Debug" }));
+    assinar(g.invoke("onAction", .{ "caixa", &acaoCaixa }));
+    assinar(g.invoke("onAction", .{ "reiniciar", &acaoReiniciar }));
+    checar("gui.elements", g.invoke("elements", .{"[data-bind]"}).len() >= 5);
+    checar("gui.size", numero(g.get("size"), "width") > 0);
+    const declarativa = g.invoke("create", .{ "DebugTela", .{ .referenceSize = .{ .x = 1280, .y = 720 } } });
+    defer declarativa.deinit();
+    const painel = g.invoke("add", .{ declarativa, "frame", .{
+        .name = "Painel",
+        .rect = .{
+            .position = .{ .x = escala(1, -236), .y = escala(0, 16) },
+            .size = .{ .x = escala(0, 220), .y = escala(0, 48) },
+        },
+    } });
+    defer painel.deinit();
 `;
 }
