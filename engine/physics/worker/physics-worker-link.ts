@@ -515,4 +515,26 @@ export class PhysicsWorkerLink implements PhysicsRemote {
                 this.manifolds.delete(key);
         this.world.replaceManifolds(list);
     }
+    private resetPerAdvanceStats(): void {
+        const { stats } = this.world;
+        stats.stepsLastAdvance = 0;
+        stats.catchUpSteps = 0;
+        stats.simulatedSeconds = 0;
+        stats.advanceMs = 0;
+        stats.droppedSeconds = 0;
+    }
+    private watchdog(): void {
+        const now = performance.now();
+        if (!this.ready && now - this.createdAt > READY_TIMEOUT_MS)
+            this.fail('o worker de física não ficou pronto a tempo.');
+        else if (this.inFlight && now - this.sentAt > STALL_MS)
+            this.fail('o worker de física parou de responder.');
+    }
+    private fail(message: string): void {
+        if (this.failed)
+            return;
+        this.failed = true;
+        this.channel.close();
+        this.world.detachRemote(message);
+    }
 }
