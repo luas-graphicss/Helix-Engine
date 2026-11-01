@@ -4,6 +4,7 @@ import { withDefines, type ShaderDefines } from '@/engine/renderer/gl/shader-sou
 import { InstanceBuffer } from '@/engine/renderer/gl/instance-buffer';
 import { TERRAIN_VERTEX_SHADER, TERRAIN_FRAGMENT_SHADER } from '@/engine/renderer/shaders/terrain.glsl';
 import { DEPTH_ONLY_FRAGMENT_SHADER } from '@/engine/renderer/shaders/depth-prepass.glsl';
+import { TERRAIN_SURFACE_PREPASS_FRAGMENT_SHADER } from '@/engine/renderer/reflections/shaders/surface-buffer.glsl';
 import { bindSceneLightingUniforms, type SceneLightingInput } from '@/engine/renderer/lighting/scene-lighting-uniforms';
 import type { TerrainGpuCache } from '@/engine/renderer/terrain/terrain-gpu-cache';
 import type { TerrainMaterialCache } from '@/engine/renderer/terrain/terrain-material-cache';
@@ -47,6 +48,7 @@ export class TerrainPass {
     readonly stats: TerrainPassStats;
     private readonly program: ShaderProgram;
     private readonly depthProgram: ShaderProgram;
+    private readonly surfaceProgram: ShaderProgram;
     readonly selector = new TerrainTileSelector();
     private readonly instances: InstanceBuffer;
     private readonly material: TerrainMaterialUniforms;
@@ -55,6 +57,7 @@ export class TerrainPass {
     constructor(private readonly gl: GL, private readonly patch: TerrainPatchGeometry, private readonly resources: TerrainGpuCache, private readonly cache: TerrainMaterialCache, defines: ShaderDefines = {}) {
         this.program = new ShaderProgram(gl, TERRAIN_VERTEX_SHADER, withDefines(TERRAIN_FRAGMENT_SHADER, defines));
         this.depthProgram = new ShaderProgram(gl, TERRAIN_VERTEX_SHADER, DEPTH_ONLY_FRAGMENT_SHADER);
+        this.surfaceProgram = new ShaderProgram(gl, TERRAIN_VERTEX_SHADER, TERRAIN_SURFACE_PREPASS_FRAGMENT_SHADER);
         this.instances = new InstanceBuffer(gl, TERRAIN_TILE_INSTANCE_LAYOUT);
         this.material = new TerrainMaterialUniforms(gl);
         this.stats = { drawCalls: 0, triangles: 0, tiles: 0, drawn: 0, perLevel: this.selector.stats.perLevel };
@@ -84,33 +87,38 @@ export class TerrainPass {
         this.stats.tiles = selector.stats.tiles;
         this.stats.drawn = selector.stats.drawn;
     }
-    renderDepth(input: TerrainPassInput): void {
+    renderDepth(input: TerrainPassInput, surface = false): void {
         if (this.preparedCount === 0)
             return;
-        const { gl, depthProgram, patch } = this;
-        depthProgram.use();
-        gl.uniformMatrix4fv(depthProgram.uniform('u_viewProjection'), false, input.camera.viewProjectionMatrix);
-        gl.uniform1i(depthProgram.uniform('u_heightMap'), TERRAIN_HEIGHT_TEXTURE_UNIT);
-        gl.colorMask(false, false, false, false);
+        const { gl, patch } = this;
+        const program = surface ? this.surfaceProgram : this.depthProgram;
+        program.use();
+        gl.uniformMatrix4fv(program.uniform('u_viewProjection'), false, input.camera.viewProjectionMatrix);
+        gl.uniform1i(program.uniform('u_heightMap'), TERRAIN_HEIGHT_TEXTURE_UNIT);
+        if (!surface)
+            gl.colorMask(false, false, false, false);
         patch.bind();
         for (let i = 0; i < this.preparedCount; i++) {
             const slot = this.prepared[i];
             const gpu = this.resources.resolve(slot.terrain);
-            gl.uniformMatrix4fv(depthProgram.uniform('u_model'), false, slot.entity.worldMatrix);
-            bindTerrainGeometryUniforms(gl, depthProgram, slot.terrain);
+            gl.uniformMatrix4fv(program.uniform('u_model'), false, slot.entity.worldMatrix);
+            if (surface)
+                gl.uniformMatrix3fv(program.uniform('u_normalMatrix'), false, slot.normalMatrix);
+            bindTerrainGeometryUniforms(gl, program, slot.terrain);
             gl.activeTexture(gl.TEXTURE0 + TERRAIN_HEIGHT_TEXTURE_UNIT);
             gl.bindTexture(gl.TEXTURE_2D, gpu.heights.texture);
             this.drawBatches(slot, false);
         }
         patch.unbind();
-        gl.colorMask(true, true, true, true);
+        if (!surface)
+            gl.colorMask(true, true, true, true);
     }
     render(input: TerrainPassInput): void {
         if (this.preparedCount === 0)
             return;
         const { gl, program, patch, material } = this;
         program.use();
-        bindSceneLightingUniforms(gl, program, input);
+        bindSceneLightingUniforms(gl, program, input, 'mask');
         material.bindSamplers(program);
         gl.uniform1i(program.uniform('u_cacheAlbedo'), TERRAIN_CACHE_ALBEDO_TEXTURE_UNIT);
         gl.uniform1i(program.uniform('u_cacheNormal'), TERRAIN_CACHE_NORMAL_TEXTURE_UNIT);
@@ -211,6 +219,7 @@ export class TerrainPass {
     dispose(): void {
         this.program.dispose();
         this.depthProgram.dispose();
+        this.surfaceProgram.dispose();
         this.instances.dispose();
     }
 }
