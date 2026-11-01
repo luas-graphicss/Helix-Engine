@@ -1229,4 +1229,82 @@ export class Parser {
                 throw this.failure(`"${token.value}" não pode começar uma expressão.`, token);
         }
     }
+    private parseOperatorPrimary(token: Token): Expression {
+        switch (token.value) {
+            case '(': {
+                this.next();
+                const inner = this.parseExpression();
+                const end = this.expectOperator(')');
+                return { ...inner, span: span(token, end) };
+            }
+            case '[': {
+                this.next();
+                const elements: Expression[] = [];
+                while (!this.checkOperator(']')) {
+                    elements.push(this.parseExpression());
+                    if (!this.matchOperator(','))
+                        break;
+                }
+                const end = this.expectOperator(']');
+                return { kind: 'array', span: span(token, end), elements };
+            }
+            case '{': {
+                this.next();
+                const entries: DictionaryEntry[] = [];
+                while (!this.checkOperator('}')) {
+                    if (this.check('identifier') && this.checkOperator('=', 1)) {
+                        const key = this.next();
+                        this.next();
+                        const value = this.parseExpression();
+                        entries.push({ key: { kind: 'string', span: key, value: key.value, flavor: 'string' }, value });
+                    }
+                    else {
+                        const key = this.parseExpression();
+                        this.expectOperator(':', '":" entre a chave e o valor');
+                        const value = this.parseExpression();
+                        entries.push({ key, value });
+                    }
+                    if (!this.matchOperator(','))
+                        break;
+                }
+                const end = this.expectOperator('}');
+                return { kind: 'dictionary', span: span(token, end), entries };
+            }
+            case '-':
+            case '+':
+            case '~':
+            case '!':
+                return this.parseUnary();
+            default:
+                throw this.failure(`"${token.value}" não pode começar uma expressão.`, token);
+        }
+    }
+    private parseLambda(): Expression {
+        const start = this.expect('keyword', 'func', '"func"');
+        const name = this.check('identifier') ? this.next() : null;
+        this.expectOperator('(', '"(" com os parâmetros da lambda');
+        const params = this.parseParameters(')');
+        this.expectOperator(')');
+        let returnType: TypeRef | null = null;
+        if (this.matchOperator('->'))
+            returnType = this.parseType('o tipo de retorno', true);
+        this.expectOperator(':', '":" antes do corpo da lambda');
+        const raw = this.peekRaw();
+        let body: Block;
+        if (raw.kind === 'newline' && (raw.depth ?? 0) !== this.previousDepth()) {
+            this.significant.push(raw.depth ?? 0);
+            try {
+                body = this.parseBlock();
+            }
+            finally {
+                this.significant.pop();
+            }
+        }
+        else
+            body = this.parseBlock(true);
+        return { kind: 'lambda', span: span(start, body.span), name: name?.value ?? null, params, returnType, body };
+    }
+}
+export function parse(source: string): ParseResult {
+    return new Parser(source).parse();
 }
