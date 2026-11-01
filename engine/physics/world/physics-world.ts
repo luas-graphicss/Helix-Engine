@@ -55,39 +55,145 @@ export class PhysicsWorld {
     private readonly pairVisitor = (a: RigidBody, b: RigidBody) => this.collidePair(a, b);
     private readonly preStepHooks = new Set<PreStepHook>();
     private nextBodyId = 1;
+    private nextJointId = 1;
     private accumulator = 0;
-    constructor(readonly settings: PhysicsSettings, private readonly events: PhysicsWorldEvents = {}) { }
+    private stepDt = 1 / 60;
+    constructor(readonly settings: PhysicsSettings, readonly events: PhysicsWorldEvents = {}) {
+        this.stepDt = this.fixedTimestep;
+        this.ground = new RigidBody(0, {
+            type: 'static',
+            shape: createSphereShape(0.01),
+            position: vec3.create(),
+            orientation: quat.create(),
+            mass: 0,
+            friction: 0,
+            restitution: 0,
+            linearDamping: 0,
+            angularDamping: 0,
+            gravityScale: 0,
+            canSleep: true,
+        });
+    }
+    get backend(): PhysicsBackend {
+        return this.stats.backend;
+    }
+    get remoteLink(): PhysicsRemote | null {
+        return this.remote;
+    }
+    attachRemote(remote: PhysicsRemote): void {
+        this.remote?.dispose();
+        this.remote = remote;
+        this.stats.backend = remote.backend;
+        this.accumulator = 0;
+    }
+    detachRemote(reason?: string): void {
+        const remote = this.remote;
+        if (!remote)
+            return;
+        this.remote = null;
+        remote.dispose();
+        this.stats.backend = 'local';
+        this.accumulator = 0;
+        this.stepManifolds.length = 0;
+        for (const body of this.bodies) {
+            body.storePreviousPose();
+            this.updateBodyAabb(body);
+        }
+        for (const joint of this.joints)
+            joint.resetImpulses();
+        if (reason)
+            this.events.onBackendFallback?.(reason);
+    }
     get fixedTimestep(): number {
         const requested = this.settings.fixedTimestep;
         return clamp(Number.isFinite(requested) ? requested : 1 / 60, MIN_FIXED_TIMESTEP, MAX_FIXED_TIMESTEP);
     }
+    get manifolds(): readonly Manifold[] {
+        return this.stepManifolds;
+    }
     get interpolation(): number {
+        if (this.remote)
+            return this.remote.interpolation;
         return clamp(this.accumulator / this.fixedTimestep, 0, 1);
     }
-    createBody(options: RigidBodyOptions): RigidBody {
-        const body = new RigidBody(this.nextBodyId++, options);
+    createBody(options: RigidBodyOptions, id?: number): RigidBody {
+        const assigned = id ?? this.nextBodyId;
+        if (assigned >= this.nextBodyId)
+            this.nextBodyId = assigned + 1;
+        const body = new RigidBody(assigned, options);
         this.bodies.push(body);
         this.broadphase.add(body);
         this.updateBodyAabb(body);
         this.wakeOverlapping(body.aabb, body);
+        this.remote?.bodyCreated(body);
         return body;
     }
     removeBody(body: RigidBody): void {
         const index = this.bodies.indexOf(body);
         if (index === -1)
             return;
+        if (body.jointCount > 0) {
+            for (const joint of this.joints.slice()) {
+                if (joint.bodyA === body || joint.bodyB === body)
+                    this.removeJoint(joint);
+            }
+        }
         this.bodies.splice(index, 1);
         this.broadphase.remove(body);
         this.contactCache.removeBody(body);
         this.wakeOverlapping(body.aabb, body);
+        this.remote?.bodyRemoved(body);
+    }
+    createJoint(definition: JointDefinition, bodyA: RigidBody, bodyB: RigidBody | null, id?: number): Joint {
+        const assigned = id ?? this.nextJointId;
+        if (assigned >= this.nextJointId)
+            this.nextJointId = assigned + 1;
+        const other = bodyB ?? this.ground;
+        const joint = instantiateJoint(assigned, bodyA, other, cloneJointDefinition(definition));
+        this.joints.push(joint);
+        bodyA.jointCount++;
+        other.jointCount++;
+        joint.wakeBodies();
+        this.remote?.jointCreated(joint);
+        return joint;
+    }
+    removeJoint(joint: Joint): void {
+        const index = this.joints.indexOf(joint);
+        if (index === -1)
+            return;
+        this.joints.splice(index, 1);
+        joint.bodyA.jointCount--;
+        joint.bodyB.jointCount--;
+        joint.wakeBodies();
+        this.remote?.jointRemoved(joint);
+    }
+    drainBrokenJoints(): Joint[] {
+        return this.brokenJoints.splice(0);
+    }
+    reportJointBreak(joint: Joint): void {
+        if (!joint.broken)
+            joint.break();
+        this.brokenJoints.push(joint);
+        this.events.onJointBreak?.(joint);
     }
     clear(): void {
+        for (const body of this.bodies)
+            body.jointCount = 0;
+        this.ground.jointCount = 0;
         this.bodies.length = 0;
+        this.joints.length = 0;
+        this.linkedJoints.length = 0;
+        this.activeJoints.length = 0;
+        this.brokenJoints.length = 0;
+        this.excludedPairs.clear();
         this.broadphase.clear();
         this.contactCache.clear();
         this.preStepHooks.clear();
         this.forceFields.clear();
+        this.layers.reset();
         this.accumulator = 0;
+        this.stepManifolds.length = 0;
+        this.remote?.cleared();
     }
     addPreStepHook(hook: PreStepHook): () => void {
         this.preStepHooks.add(hook);
@@ -95,11 +201,52 @@ export class PhysicsWorld {
             this.preStepHooks.delete(hook);
         };
     }
-    addForceField(field: ForceField): () => void {
+    addForceField(field: ForceField, options: {
+        remote?: boolean;
+    } = {}): () => void {
         this.forceFields.add(field);
+        if (options.remote)
+            this.remoteFields.add(field);
         return () => {
             this.forceFields.delete(field);
+            this.remoteFields.delete(field);
         };
+    }
+    runPreStepHooks(h: number): void {
+        for (const hook of this.preStepHooks)
+            hook(h);
+    }
+    applyLocalForceFields(h: number): void {
+        let hasLocal = false;
+        for (const field of this.forceFields) {
+            if (!this.remoteFields.has(field)) {
+                hasLocal = true;
+                break;
+            }
+        }
+        if (!hasLocal)
+            return;
+        const awake = this.awakeBodies;
+        awake.length = 0;
+        for (const body of this.bodies)
+            if (body.isSimulated)
+                awake.push(body);
+        for (const field of this.forceFields) {
+            if (this.remoteFields.has(field))
+                continue;
+            field.wakeAffected(this.bodies, this.time);
+            field.beginStep?.(this.time);
+            field.apply(awake, h, this.time);
+        }
+    }
+    replaceManifolds(manifolds: readonly Manifold[]): void {
+        const list = this.stepManifolds;
+        list.length = 0;
+        for (const manifold of manifolds)
+            list.push(manifold);
+    }
+    refreshAabb(body: RigidBody): void {
+        this.updateBodyAabb(body);
     }
     queryAabb(box: Aabb, except: RigidBody | null, visit: BodyVisitor): void {
         for (const body of this.bodies) {
@@ -115,31 +262,69 @@ export class PhysicsWorld {
         body.teleport(position, orientation);
         this.updateBodyAabb(body);
         this.wakeOverlapping(body.aabb, body);
+        this.remote?.teleported(body);
     }
     advance(deltaSeconds: number): number {
-        if (!(deltaSeconds > 0))
+        if (this.remote)
+            return this.remote.advance(Number.isFinite(deltaSeconds) ? deltaSeconds : 0);
+        const { stats } = this;
+        if (!(deltaSeconds > 0)) {
+            stats.stepsLastAdvance = 0;
+            stats.catchUpSteps = 0;
+            stats.simulatedSeconds = 0;
+            stats.advanceMs = 0;
+            stats.droppedSeconds = 0;
             return 0;
+        }
         const dt = this.fixedTimestep;
-        this.accumulator += Math.min(deltaSeconds, MAX_STEPS_PER_ADVANCE * dt);
+        const backlog = MAX_BACKLOG_STEPS * dt;
+        const admitted = Math.min(deltaSeconds, Math.max(0, backlog - this.accumulator));
+        const dropped = deltaSeconds - admitted;
+        this.accumulator += admitted;
+        const started = performance.now();
         let steps = 0;
+        let catchUp = 0;
+        let simulated = 0;
         while (this.accumulator >= dt && steps < MAX_STEPS_PER_ADVANCE) {
-            this.step();
+            if (steps > 0 && performance.now() - started + stats.stepMsAverage > this.stepBudgetMs)
+                break;
+            this.step(dt);
             this.accumulator -= dt;
             steps++;
+            simulated += dt;
         }
-        if (this.accumulator >= dt)
-            this.accumulator = 0;
-        this.stats.stepsLastAdvance = steps;
+        if (this.accumulator >= dt) {
+            const wide = Math.min(this.accumulator, Math.max(dt, MAX_CATCH_UP_TIMESTEP));
+            this.step(wide, this.catchUpSubsteps(wide));
+            this.accumulator -= wide;
+            steps++;
+            catchUp++;
+            simulated += wide;
+        }
+        stats.advanceMs = performance.now() - started;
+        stats.droppedSeconds = dropped;
+        stats.stepsLastAdvance = steps;
+        stats.catchUpSteps = catchUp;
+        stats.simulatedSeconds = simulated;
         return steps;
+    }
+    private catchUpSubsteps(wide: number): number {
+        const substeps = clamp(Math.floor(this.settings.substeps) || 1, 1, MAX_SUBSTEPS);
+        return clamp(Math.round((substeps * wide) / this.fixedTimestep), substeps, MAX_SUBSTEPS);
     }
     discardAccumulatedTime(): void {
         this.accumulator = 0;
+        this.remote?.discardAccumulatedTime();
     }
-    step(): void {
+    step(dt: number = this.fixedTimestep, substepsOverride?: number): void {
+        if (this.remote) {
+            this.remote.stepOnce();
+            return;
+        }
         const started = performance.now();
         const { settings } = this;
-        const dt = this.fixedTimestep;
-        const substeps = clamp(Math.floor(settings.substeps) || 1, 1, MAX_SUBSTEPS);
+        this.stepDt = dt;
+        const substeps = substepsOverride ?? clamp(Math.floor(settings.substeps) || 1, 1, MAX_SUBSTEPS);
         const solverIterations = clamp(Math.floor(settings.solverIterations) || 1, 1, MAX_ITERATIONS);
         const relaxIterations = clamp(Math.floor(settings.relaxIterations) || 0, 0, MAX_ITERATIONS);
         const h = dt / substeps;
@@ -154,17 +339,21 @@ export class PhysicsWorld {
             if (body.isSimulated || body.isKinematic)
                 this.updateBodyAabb(body);
         }
+        this.collectLinkedJoints();
         this.contactCache.beginStep();
         this.broadphase.findPairs(this.pairVisitor);
         this.contactCache.endStep();
         const manifolds = this.stepManifolds;
+        const excluded = this.excludedPairs;
         manifolds.length = 0;
         this.contactCache.forEach((manifold) => {
             if (manifold.pointCount === 0 || manifold.bodyA.outOfBounds || manifold.bodyB.outOfBounds)
                 return;
+            if (excluded.size > 0 && excluded.has(pairKey(manifold.bodyA, manifold.bodyB)))
+                return;
             manifolds.push(manifold);
         });
-        wakeTouchingBodies(manifolds);
+        wakeTouchingBodies(manifolds, this.linkedJoints);
         for (const field of this.forceFields)
             field.wakeAffected(this.bodies, this.time);
         const awake = this.awakeBodies;
@@ -195,6 +384,14 @@ export class PhysicsWorld {
         context.linearSlop = Math.max(settings.linearSlop, 0);
         context.maxPushVelocity = Math.max(settings.contactPushMaxVelocity, 0);
         context.invH = invH;
+        const joints = this.activeJoints;
+        const jointContext = this.jointContext;
+        computeSoftness(jointContext.softness, Math.min(Math.max(settings.jointHertz, 0), 0.25 * invH), Math.max(settings.jointDampingRatio, 0), h);
+        jointContext.h = h;
+        jointContext.invH = invH;
+        jointContext.maxBiasVelocity = Math.max(settings.jointPushMaxVelocity, 0);
+        jointContext.warmStarting = settings.warmStarting;
+        prepareJoints(this.linkedJoints, joints, jointContext);
         prepareContacts(manifolds, context);
         for (const field of this.forceFields)
             field.beginStep?.(this.time);
@@ -202,37 +399,67 @@ export class PhysicsWorld {
             for (const field of this.forceFields)
                 field.apply(awake, h, this.time + i * h);
             integrateVelocities(awake, settings, h, invH);
-            if (settings.warmStarting)
+            if (settings.warmStarting) {
+                warmStartJoints(joints, jointContext);
                 warmStartContacts(manifolds);
-            for (let j = 0; j < solverIterations; j++)
+            }
+            for (let j = 0; j < solverIterations; j++) {
+                solveJoints(joints, jointContext, true);
                 solveContacts(manifolds, context, true);
+            }
             integratePositions(awake, h);
-            for (let j = 0; j < relaxIterations; j++)
+            for (let j = 0; j < relaxIterations; j++) {
+                solveJoints(joints, jointContext, false);
                 solveContacts(manifolds, context, false);
+            }
         }
         applyRestitution(manifolds, Math.max(settings.restitutionThreshold, 0));
         for (const body of awake)
             this.finalizeBody(body, dt);
-        this.islands.apply(awake, manifolds, settings.timeToSleep, dt);
+        const brokenBefore = this.brokenJoints.length;
+        finalizeJoints(joints, jointContext, this.brokenJoints);
+        for (let i = brokenBefore; i < this.brokenJoints.length; i++)
+            this.events.onJointBreak?.(this.brokenJoints[i]);
+        this.islands.apply(awake, manifolds, joints, settings.timeToSleep, dt);
         this.time += dt;
         this.stats.bodies = this.bodies.length;
         this.stats.awake = awake.length;
         this.stats.manifolds = activeCount;
         this.stats.contactPoints = contactPoints;
-        this.stats.stepMs = performance.now() - started;
+        this.stats.joints = joints.length;
+        const stepMs = performance.now() - started;
+        this.stats.stepMs = stepMs;
+        this.stats.stepMsAverage = this.stats.stepMsAverage === 0 ? stepMs : this.stats.stepMsAverage + (stepMs - this.stats.stepMsAverage) * STEP_EMA_ALPHA;
+    }
+    private collectLinkedJoints(): void {
+        const linked = this.linkedJoints;
+        const excluded = this.excludedPairs;
+        linked.length = 0;
+        excluded.clear();
+        for (const joint of this.joints) {
+            if (!joint.definition.enabled || joint.broken)
+                continue;
+            linked.push(joint);
+            if (!joint.definition.collideConnected && joint.bodyB !== this.ground)
+                excluded.add(pairKey(joint.bodyA, joint.bodyB));
+        }
     }
     private collidePair(a: RigidBody, b: RigidBody): void {
         if (a.outOfBounds || b.outOfBounds)
             return;
+        if (!this.layers.pairCollides(a.layer, a.collisionMask, b.layer, b.collisionMask))
+            return;
+        if (this.excludedPairs.size > 0 && this.excludedPairs.has(pairKey(a, b)))
+            return;
         const first = a.id < b.id ? a : b;
         const second = first === a ? b : a;
-        const margin = this.settings.speculativeDistance + (first.motionSpeed + second.motionSpeed) * this.fixedTimestep;
+        const margin = this.settings.speculativeDistance + (first.motionSpeed + second.motionSpeed) * this.stepDt;
         if (!collideBodies(first, second, margin, this.settings.linearSlop, this.contactResult))
             return;
         this.contactCache.acquire(first, second).update(this.contactResult);
     }
     private updateBodyAabb(body: RigidBody): void {
-        const margin = this.settings.speculativeDistance + body.motionSpeed * this.fixedTimestep;
+        const margin = this.settings.speculativeDistance + body.motionSpeed * this.stepDt;
         computeShapeAabb(body.aabb, body.shape, body.position, body.rotation, margin);
     }
     private wakeOverlapping(box: Aabb, except: RigidBody): void {
@@ -245,6 +472,7 @@ export class PhysicsWorld {
     }
     private finalizeBody(body: RigidBody, dt: number): void {
         body.resetStepDeltas();
+        body.clearForces();
         if (!body.isStateFinite()) {
             body.recoverFromInstability();
             this.events.onUnstable?.(body);
