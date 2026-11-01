@@ -1,22 +1,48 @@
 'use client';
-import type { DragEvent, MouseEvent } from 'react';
-import { Bone, Box, Camera, ChevronDown, ChevronRight, Earth, Eye, EyeOff, Folder, Lock, LockOpen, Mountain, PersonStanding, Sun } from 'lucide-react';
+import { memo, type DragEvent, type MouseEvent } from 'react';
+import { Bone, Box, Camera, ChevronDown, ChevronRight, Earth, Eye, EyeOff, FileCode2, Film, Folder, LayoutTemplate, Lock, LockOpen, Mountain, PersonStanding, Radio, Sparkles, Sun, TriangleAlert, Video, Volume2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { GUI_SURFACE_CONTENT_LABEL, type GuiSurfaceContentKind } from '@/engine/gui/world/gui-surface-settings';
 import { IconButton } from '@/engine/ui/icon-button';
 import { cn } from '@/lib/utils';
 import type { Entity, EntityKind } from '@/engine/core/scene/entity';
+import { LOCAL_LIGHT_LABEL, isLocalLight } from '@/engine/core/scene/light';
 import { canBeCsgBrush } from '@/engine/geometry/csg/csg-roles';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useSessionSelector, useSessionTopic } from '@/engine/editor/session/editor-session-context';
+import type { SessionTopic } from '@/engine/editor/session/session-topics';
 import { reparentEntities, setEntityLocked, setEntityVisibility } from '@/engine/editor/operations/entity-operations';
 import { convertToBrushes } from '@/engine/editor/operations/csg-operations';
+import { openScriptActor, scriptAssetOf } from '@/engine/editor/operations/script-operations';
+import { LanguageTag } from '@/engine/editor/code/ui/language-tag';
+import { lightIcon } from '@/engine/editor/lights/light-icons';
 import { CSG_OPERATION_BADGE } from '@/engine/editor/panels/inspector/csg/csg-icons';
+import { useEngineSetting } from '@/engine/settings/engine-settings-store';
 import { useHierarchy } from './hierarchy-context';
 import { RenameInput } from './rename-input';
+import { indentGuideImage, rowLayout } from './tree-indent';
 import { insertionIndex, visibleChildren, zoneFromPointer } from './tree-model';
-const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain, character: PersonStanding };
-const KIND_LABEL: Record<EntityKind, string> = { group: 'Pasta', mesh: 'Malha', light: 'Luz', camera: 'Câmera', terrain: 'Terreno', character: 'Personagem' };
-const INDENT = 14;
-const BASE_PADDING = 6;
+const SELECTION_TOPICS: readonly SessionTopic[] = ['selection'];
+const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain, character: PersonStanding, sound: Volume2, gui: LayoutTemplate, vfx: Sparkles, script: FileCode2 };
+const KIND_LABEL: Record<EntityKind, string> = { group: 'Pasta', mesh: 'Malha', light: 'Luz', camera: 'Câmera', terrain: 'Terreno', character: 'Personagem', sound: 'Som', gui: 'Interface', vfx: 'Efeito', script: 'Script' };
+const GUI_CONTENT_ICON: Record<GuiSurfaceContentKind, LucideIcon> = { screen: LayoutTemplate, video: Film, view: Video };
+function entityIcon(entity: Entity): LucideIcon {
+    if (entity.kind === 'light')
+        return lightIcon(entity.light);
+    if (entity.kind === 'sound' && entity.audioZone && !entity.audioSource)
+        return Radio;
+    if (entity.kind === 'gui' && entity.guiSurface)
+        return GUI_CONTENT_ICON[entity.guiSurface.content.kind];
+    return KIND_ICON[entity.kind];
+}
+function entityKindLabel(entity: Entity): string {
+    if (isLocalLight(entity.light))
+        return LOCAL_LIGHT_LABEL[entity.light.type];
+    if (entity.kind === 'sound')
+        return entity.audioSource ? 'Fonte de som' : 'Zona acústica';
+    if (entity.kind === 'gui' && entity.guiSurface)
+        return GUI_SURFACE_CONTENT_LABEL[entity.guiSurface.content.kind];
+    return KIND_LABEL[entity.kind];
+}
 function CsgBadge({ entity }: {
     entity: Entity;
 }) {
@@ -45,6 +71,62 @@ function RigBadge({ entity }: {
       RIG
     </span>);
 }
+function AudioBadge({ entity }: {
+    entity: Entity;
+}) {
+    if (entity.kind === 'sound' || (!entity.audioSource && !entity.audioZone))
+        return null;
+    const parts = [entity.audioSource && 'fonte de som', entity.audioZone && 'zona acústica'].filter(Boolean).join(' e ');
+    const title = `Carrega ${parts}`;
+    return (<span className="flex shrink-0 items-center gap-0.5 rounded-xs border border-warning/50 px-1 font-mono text-[9px] leading-[14px] tracking-wider text-warning" aria-label={title} title={title}>
+      {entity.audioSource ? <Volume2 className="size-2.5" aria-hidden/> : <Radio className="size-2.5" aria-hidden/>}
+      SOM
+    </span>);
+}
+function GuiBadge({ entity }: {
+    entity: Entity;
+}) {
+    if (entity.kind === 'gui' || !entity.guiSurface)
+        return null;
+    const title = `Carrega uma interface (${GUI_SURFACE_CONTENT_LABEL[entity.guiSurface.content.kind].toLowerCase()})`;
+    const Icon = GUI_CONTENT_ICON[entity.guiSurface.content.kind];
+    return (<span className="flex shrink-0 items-center gap-0.5 rounded-xs border border-primary/50 px-1 font-mono text-[9px] leading-[14px] tracking-wider text-primary" aria-label={title} title={title}>
+      <Icon className="size-2.5" aria-hidden/>
+      UI
+    </span>);
+}
+function ScriptBadge({ entity }: {
+    entity: Entity;
+}) {
+    const session = useSessionTopic('assets');
+    if (entity.kind !== 'script' || !entity.script)
+        return null;
+    const asset = scriptAssetOf(session, entity);
+    const language = asset?.details.kind === 'script' ? asset.details.language : null;
+    if (!language) {
+        return (<span className="flex shrink-0 items-center gap-0.5 rounded-xs border border-warning/50 px-1 font-mono text-[9px] leading-[14px] tracking-wider text-warning" aria-label="Sem script da biblioteca" title="Este ator ainda não aponta para um script da biblioteca">
+        <TriangleAlert className="size-2.5" aria-hidden/>
+        VAZIO
+      </span>);
+    }
+    return (<span className={cn('flex shrink-0 items-center', !entity.script.enabled && 'opacity-40')} title={entity.script.enabled ? undefined : 'Script desativado: não roda'}>
+      <LanguageTag language={language}/>
+    </span>);
+}
+function ScriptCarrierBadge({ entity }: {
+    entity: Entity;
+}) {
+    if (entity.kind === 'script')
+        return null;
+    const count = entity.children.reduce((total, child) => total + (child.kind === 'script' ? 1 : 0), 0);
+    if (count === 0)
+        return null;
+    const title = count === 1 ? 'Controlado por um script' : `Controlado por ${count} scripts`;
+    return (<span className="flex shrink-0 items-center gap-0.5 rounded-xs border border-axis-z/50 px-1 font-mono text-[9px] leading-[14px] tracking-wider text-axis-z" aria-label={title} title={title}>
+      <FileCode2 className="size-2.5" aria-hidden/>
+      {count === 1 ? 'SCRIPT' : `${count} SCRIPTS`}
+    </span>);
+}
 function isJointOf(entity: Entity): Entity | null {
     for (let ancestor = entity.parent; ancestor; ancestor = ancestor.parent) {
         if (ancestor.rig)
@@ -52,24 +134,28 @@ function isJointOf(entity: Entity): Entity | null {
     }
     return null;
 }
-export function TreeRow({ entity, depth }: {
+type SelectionState = 'none' | 'selected' | 'primary';
+export const TreeRow = memo(function TreeRow({ entity, depth }: {
     entity: Entity;
     depth: number;
 }) {
-    const session = useEditorState();
+    const session = useSessionTopic('scene');
     const hierarchy = useHierarchy();
     const isRoot = entity.parent === null;
     const filtering = hierarchy.query.length > 0;
     const children = visibleChildren(entity, hierarchy.query);
     const hasChildren = children.length > 0;
     const expanded = filtering || hierarchy.isExpanded(entity);
-    const isPrimary = entity.id === session.selectedId;
-    const isSelected = !isRoot && session.isSelected(entity);
+    const selection = useSessionSelector<SelectionState>((current) => (entity.id === current.selectedId ? 'primary' : !isRoot && current.isSelected(entity) ? 'selected' : 'none'), { topics: SELECTION_TOPICS });
+    const isPrimary = selection === 'primary';
+    const isSelected = selection !== 'none';
     const isDragged = hierarchy.dragged.includes(entity);
     const dropZone = hierarchy.dropTarget?.entityId === entity.id ? hierarchy.dropTarget.zone : null;
     const jointOwner = isRoot ? null : isJointOf(entity);
-    const Icon = isRoot ? Earth : jointOwner && entity.kind === 'group' ? Bone : KIND_ICON[entity.kind];
-    const kindLabel = isRoot ? 'Mundo' : entity.csgBrush ? 'Pincel' : jointOwner && entity.kind === 'group' ? 'Osso' : KIND_LABEL[entity.kind];
+    const Icon = isRoot ? Earth : jointOwner && entity.kind === 'group' ? Bone : entityIcon(entity);
+    const kindLabel = isRoot ? 'Mundo' : entity.csgBrush ? 'Pincel' : jointOwner && entity.kind === 'group' ? 'Osso' : entityKindLabel(entity);
+    const kindLabels = useEngineSetting('editor.hierarchy.kindLabels');
+    const layout = rowLayout(hierarchy.indent, depth);
     const { dragged } = hierarchy;
     const canAcceptDrop = dragged.length > 0 && !dragged.some((moved) => moved.contains(entity));
     const onClick = (event: MouseEvent<HTMLDivElement>) => {
@@ -79,8 +165,8 @@ export function TreeRow({ entity, depth }: {
             return;
         }
         if (event.shiftKey) {
-            const { rows } = hierarchy;
-            const anchor = rows.findIndex((row) => row.id === (hierarchy.anchorId ?? session.selectedId));
+            const rows = hierarchy.rowsOf();
+            const anchor = rows.findIndex((row) => row.id === (hierarchy.anchorIdOf() ?? session.selectedId));
             const index = rows.indexOf(entity);
             if (anchor !== -1 && index !== -1) {
                 const [start, end] = anchor <= index ? [anchor, index] : [index, anchor];
@@ -148,14 +234,18 @@ export function TreeRow({ entity, depth }: {
             if (isRoot)
                 return;
             session.select(entity);
-            session.focusEntity(entity);
+            if (entity.kind === 'script')
+                void openScriptActor(session, entity);
+            else
+                session.focusEntity(entity);
         }} onContextMenu={onContextMenu} onDragStart={onDragStart} onDragEnd={() => {
             hierarchy.setDragged([]);
             hierarchy.setDropTarget(null);
         }} onDragOver={onDragOver} onDragLeave={(event) => {
             if (!event.currentTarget.contains(event.relatedTarget as Node | null) && dropZone)
                 hierarchy.setDropTarget(null);
-        }} onDrop={onDrop} className={cn('group flex h-6 cursor-default items-center gap-1 pr-1 text-2xs select-none', isPrimary ? 'bg-primary/25 text-foreground' : isSelected ? 'bg-primary/12 text-foreground' : 'text-foreground/90 hover:bg-highlight', !entity.visible && 'opacity-50', isDragged && 'opacity-40', dropZone === 'inside' && 'bg-primary/10 ring-1 ring-primary/60 ring-inset', dropZone === 'before' && 'shadow-[inset_0_2px_0_0_var(--primary)]', dropZone === 'after' && 'shadow-[inset_0_-2px_0_0_var(--primary)]')} style={{ paddingLeft: BASE_PADDING + depth * INDENT }}>
+        }} onDrop={onDrop} className={cn('group relative flex h-control cursor-default items-center gap-1 pr-1 text-2xs select-none [contain-intrinsic-block-size:var(--spacing-control)] [content-visibility:auto]', isPrimary ? 'bg-primary/25 text-foreground' : isSelected ? 'bg-primary/12 text-foreground' : 'text-foreground/90 hover:bg-highlight', !entity.visible && 'opacity-50', isDragged && 'opacity-40', dropZone === 'inside' && 'bg-primary/10 ring-1 ring-primary/60 ring-inset', dropZone === 'before' && 'shadow-[inset_0_2px_0_0_var(--primary)]', dropZone === 'after' && 'shadow-[inset_0_-2px_0_0_var(--primary)]')} style={{ paddingLeft: layout.paddingLeft }}>
+        {layout.guideWidth > 0 && (<span aria-hidden className="pointer-events-none absolute inset-y-0" style={{ left: layout.guideLeft, width: layout.guideWidth, backgroundImage: indentGuideImage(hierarchy.indent.step) }}/>)}
         <button type="button" tabIndex={-1} onClick={(event) => {
             event.stopPropagation();
             hierarchy.toggleExpanded(entity);
@@ -164,20 +254,24 @@ export function TreeRow({ entity, depth }: {
         </button>
         <Icon className={cn('size-3.5 shrink-0', entity.locked ? 'text-muted-foreground/60' : 'text-muted-foreground')} aria-hidden/>
         {hierarchy.renamingId === entity.id ? (<RenameInput entity={entity} onDone={() => hierarchy.setRenamingId(null)}/>) : (<span className={cn('truncate', entity.locked && 'text-muted-foreground')}>{entity.name}</span>)}
+        <ScriptBadge entity={entity}/>
         <CsgBadge entity={entity}/>
         <RigBadge entity={entity}/>
-        <span className="ml-auto truncate text-[10px] text-muted-foreground/70">{kindLabel}</span>
+        <GuiBadge entity={entity}/>
+        <AudioBadge entity={entity}/>
+        <ScriptCarrierBadge entity={entity}/>
+        <span className={cn('ml-auto truncate text-3xs text-muted-foreground/70', (layout.compact || !kindLabels) && 'sr-only')}>{kindLabel}</span>
         {!isRoot && (<>
-            <IconButton label={entity.locked ? 'Desbloquear' : 'Bloquear (não selecionável no viewport)'} size="sm" onClick={(event) => {
+            <IconButton label={entity.locked ? 'Desbloquear' : 'Bloquear (não selecionável no viewport)'} size="xs" onClick={(event) => {
                 event.stopPropagation();
                 setEntityLocked(session, entity, !entity.locked);
-            }} className={cn('size-5 [&_svg]:size-3', !entity.locked && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}>
+            }} className={cn(!entity.locked && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}>
               {entity.locked ? <Lock /> : <LockOpen />}
             </IconButton>
-            <IconButton label={entity.visible ? 'Ocultar' : 'Mostrar'} size="sm" onClick={(event) => {
+            <IconButton label={entity.visible ? 'Ocultar' : 'Mostrar'} size="xs" onClick={(event) => {
                 event.stopPropagation();
                 setEntityVisibility(session, entity, !entity.visible);
-            }} className={cn('size-5 [&_svg]:size-3', entity.visible && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}>
+            }} className={cn(entity.visible && 'opacity-0 group-hover:opacity-100 focus-visible:opacity-100')}>
               {entity.visible ? <Eye /> : <EyeOff />}
             </IconButton>
           </>)}
@@ -186,4 +280,4 @@ export function TreeRow({ entity, depth }: {
           {children.map((child) => (<TreeRow key={child.id} entity={child} depth={depth + 1}/>))}
         </div>)}
     </>);
-}
+});
