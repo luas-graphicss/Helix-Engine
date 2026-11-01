@@ -1,4 +1,5 @@
 import type { GL } from './context';
+import type { ColorFormat } from './color-render-target';
 export interface PixelRect {
     x: number;
     y: number;
@@ -9,13 +10,22 @@ export class SceneColorCapture {
     private texture: WebGLTexture | null = null;
     private width = 0;
     private height = 0;
-    constructor(private readonly gl: GL) { }
+    constructor(private readonly gl: GL, private readonly format: ColorFormat) { }
     capture(width: number, height: number, rect: PixelRect): WebGLTexture {
         const { gl } = this;
         const texture = this.texture ?? this.create();
         gl.bindTexture(gl.TEXTURE_2D, texture);
         if (width !== this.width || height !== this.height) {
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB8, width, height, 0, gl.RGB, gl.UNSIGNED_BYTE, null);
+            switch (this.format) {
+                case 'rgba16f':
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, width, height, 0, gl.RGBA, gl.HALF_FLOAT, null);
+                    break;
+                case 'rg11b10f':
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R11F_G11F_B10F, width, height, 0, gl.RGB, gl.UNSIGNED_INT_10F_11F_11F_REV, null);
+                    break;
+                default:
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            }
             this.width = width;
             this.height = height;
         }
