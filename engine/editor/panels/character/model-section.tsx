@@ -6,17 +6,17 @@ import { PropertyRow } from '@/engine/ui/property-row';
 import { FieldInput } from '@/engine/ui/field-input';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
 import { IMPORT_ACCEPT } from '@/engine/assets/import/import-registry';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
-import { importCharacterModelFiles, setPlayerModel } from '@/engine/editor/operations/player-operations';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
+import { importCharacterModelFiles, playerCharacterSettings, setPlayerModel } from '@/engine/editor/operations/player-operations';
 import { CharacterModelSelect, useCharacterModels } from './character-model-select';
 import { Hint } from './panel-text';
 export function ModelSection({ disabled }: {
     disabled: boolean;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const models = useCharacterModels();
     const inputRef = useRef<HTMLInputElement>(null);
-    const { character } = session.scene.player;
+    const character = playerCharacterSettings(session);
     const asset = models.find((model) => model.id === character.model) ?? null;
     const mannequinLoading = models.length === 0;
     return (<CollapsibleSection title="Modelo">
@@ -48,9 +48,8 @@ export function ModelSection({ disabled }: {
           <PropertyRow label="Triângulos">
             <FieldInput readOnly value={asset.triangles.toLocaleString('pt-BR')} aria-label="Triângulos do modelo"/>
           </PropertyRow>
-          {!asset.template && <Hint>Modelo estático: acompanha a cápsula e gira com ela, mas não anima. Para animar, importe um glTF/GLB com esqueleto.</Hint>}
-          {asset.template && !asset.clips && <Hint>Sem clipes no arquivo: o modelo fica na pose de repouso enquanto se move. O retarget dos ciclos do manequim chega com o sistema de animação.</Hint>}
-        </>) : (<Hint>{mannequinLoading ? 'Carregando o manequim…' : 'Este modelo não está carregado nesta sessão; o jogador veste o manequim até você reimportá-lo.'}</Hint>)}
-      <Hint>Um glTF/GLB com esqueleto e ciclos nomeados (idle, walk, run, crouch) entra animado; a escala é ajustada à altura da cápsula automaticamente.</Hint>
+          {!asset.template && <Hint>Modelo estático, sem esqueleto.</Hint>}
+          {asset.template && !asset.clips && <Hint>Sem clipes de animação no arquivo.</Hint>}
+        </>) : (<Hint>{mannequinLoading ? 'Carregando o manequim…' : 'Modelo não carregado; usando o manequim.'}</Hint>)}
     </CollapsibleSection>);
 }
