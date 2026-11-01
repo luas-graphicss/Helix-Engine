@@ -54,8 +54,8 @@ export class ClusterCullPass {
         gl.bindTexture(gl.TEXTURE_2D, previous.texture);
         gl.uniform1i(program.uniform('u_previousFlags'), 3);
         gl.activeTexture(gl.TEXTURE4);
-        gl.bindTexture(gl.TEXTURE_2D, input.pool.clusterBounds.texture);
-        gl.uniform1i(program.uniform('u_clusterBounds'), 4);
+        gl.bindTexture(gl.TEXTURE_2D, input.pool.clusters.texture);
+        gl.uniform1i(program.uniform('u_clusters'), 4);
         gl.uniformMatrix4fv(program.uniform('u_viewProjection'), false, input.viewProjection);
         gl.uniform1i(program.uniform('u_entryCount'), list.count);
         gl.uniform1i(program.uniform('u_useHistory'), input.useHistory ? 1 : 0);
