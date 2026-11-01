@@ -24,7 +24,7 @@ uniform vec3 u_color;
 uniform float u_alpha;
 uniform vec3 u_cameraPosition;
 uniform vec3 u_origin;
- 
+                                                                                   
 uniform float u_dimBack;
 
 in vec3 v_worldPosition;
