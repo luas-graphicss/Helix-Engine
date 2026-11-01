@@ -1,4 +1,5 @@
 import type { GL } from './context';
+import { framebufferStatus } from './framebuffer-status';
 export class DepthArrayRenderTarget {
     readonly texture: WebGLTexture;
     private readonly framebuffers: WebGLFramebuffer[] = [];
@@ -27,7 +28,7 @@ export class DepthArrayRenderTarget {
             gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, texture, 0, layer);
             gl.drawBuffers([gl.NONE]);
             gl.readBuffer(gl.NONE);
-            const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+            const status = framebufferStatus(gl, 'depth-array');
             if (status !== gl.FRAMEBUFFER_COMPLETE) {
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
                 this.dispose();
@@ -46,6 +47,14 @@ export class DepthArrayRenderTarget {
         gl.bindFramebuffer(gl.READ_FRAMEBUFFER, source.framebuffers[sourceLayer]);
         gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.framebuffers[layer]);
         gl.blitFramebuffer(0, 0, size, size, 0, 0, size, size, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffers[layer]);
+        gl.viewport(0, 0, size, size);
+    }
+    copyLayerRegionFrom(source: DepthArrayRenderTarget, sourceLayer: number, layer: number, x: number, y: number, width: number, height: number): void {
+        const { gl, size } = this;
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, source.framebuffers[sourceLayer]);
+        gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, this.framebuffers[layer]);
+        gl.blitFramebuffer(x, y, x + width, y + height, x, y, x + width, y + height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.framebuffers[layer]);
         gl.viewport(0, 0, size, size);
     }
