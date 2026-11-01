@@ -7,7 +7,7 @@ import { FieldInput } from '@/engine/ui/field-input';
 import { SegmentedControl } from '@/engine/ui/segmented-control';
 import type { Entity } from '@/engine/core/scene/entity';
 import { brushesOf } from '@/engine/geometry/csg/csg-roles';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { MAX_BRUSH_REPEAT, mirrorBrush, moveBrush, repeatBrush } from '@/engine/editor/operations/csg-operations';
 import { AXIS_LABEL, brushExtentAlong, type Axis } from '@/engine/editor/csg/brush-placement';
 import { formatNumber, parseNumber } from '../number-fields';
@@ -23,15 +23,15 @@ function OrderRow({ brush, target }: {
     brush: Entity;
     target: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const brushes = brushesOf(target);
     const index = brushes.indexOf(brush);
     return (<PropertyRow label="Ordem">
       <FieldInput readOnly value={`${index + 1} de ${brushes.length}`} aria-label="Posição na ordem das operações"/>
-      <IconButton label="Aplicar antes" size="sm" className="size-5 [&_svg]:size-3" disabled={index <= 0} onClick={() => moveBrush(session, brush, -1)}>
+      <IconButton label="Aplicar antes" size="xs" disabled={index <= 0} onClick={() => moveBrush(session, brush, -1)}>
         <ChevronUp />
       </IconButton>
-      <IconButton label="Aplicar depois" size="sm" className="size-5 [&_svg]:size-3" disabled={index >= brushes.length - 1} onClick={() => moveBrush(session, brush, 1)}>
+      <IconButton label="Aplicar depois" size="xs" disabled={index >= brushes.length - 1} onClick={() => moveBrush(session, brush, 1)}>
         <ChevronDown />
       </IconButton>
     </PropertyRow>);
@@ -39,10 +39,10 @@ function OrderRow({ brush, target }: {
 function MirrorRow({ brush }: {
     brush: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     return (<PropertyRow label="Espelhar">
       <div className="flex flex-1 items-center gap-1">
-        {AXIS_OPTIONS.map(({ value, label }) => (<button key={label} type="button" title={`Cópia espelhada pelo plano do alvo perpendicular a ${label}`} onClick={() => mirrorBrush(session, brush, value)} className="flex h-6 flex-1 items-center justify-center gap-1 rounded-sm border border-border font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary/60 hover:bg-highlight hover:text-foreground">
+        {AXIS_OPTIONS.map(({ value, label }) => (<button key={label} type="button" title={`Cópia espelhada pelo plano do alvo perpendicular a ${label}`} onClick={() => mirrorBrush(session, brush, value)} className="flex h-control flex-1 items-center justify-center gap-1 rounded-sm border border-border font-mono text-3xs text-muted-foreground transition-colors hover:border-primary/60 hover:bg-highlight hover:text-foreground">
             <FlipHorizontal2 className="size-3" aria-hidden/>
             {label}
           </button>))}
@@ -52,7 +52,7 @@ function MirrorRow({ brush }: {
 function RepeatRows({ brush }: {
     brush: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const [count, setCount] = useState(2);
     const [axis, setAxis] = useState<Axis>(0);
     const [spacing, setSpacing] = useState<number | null>(null);
@@ -71,7 +71,7 @@ function RepeatRows({ brush }: {
             const value = parseNumber(event.currentTarget.value);
             setSpacing(Number.isFinite(value) && value > 0 ? value : null);
         }} onKeyDown={(event) => event.key === 'Enter' && event.currentTarget.blur()}/>
-        <IconButton label={`Criar ${count} cópias em ${AXIS_LABEL[axis]}`} size="sm" className="size-5 [&_svg]:size-3" onClick={() => repeatBrush(session, brush, { count, axis, spacing: effectiveSpacing })}>
+        <IconButton label={`Criar ${count} cópias em ${AXIS_LABEL[axis]}`} size="xs" onClick={() => repeatBrush(session, brush, { count, axis, spacing: effectiveSpacing })}>
           <CopyPlus />
         </IconButton>
       </PropertyRow>
