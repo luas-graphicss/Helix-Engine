@@ -823,4 +823,272 @@ export class ScriptRuntime implements RuntimeHost {
         const binding = this.shaders.bind(asset, 'surface', uniforms, 'helix.material.fromShader');
         return this.shaders.materialFor(binding, createMaterial({ name: binding.bundle.name }));
     }
+    private createLoader(): ModuleLoader {
+        return new ModuleLoader({
+            stacks: this.stacks,
+            scheduler: this.scheduler,
+            helixModule: this.helixRoot,
+            createConsole: (module) => this.createConsole(module),
+            compiledOf: (assetId) => this.compiled.get(assetId) ?? null,
+            resolve: (specifier) => this.compiler.resolveScript(specifier),
+            currentOwner: () => this.current,
+            moduleNames: () => Array.from(this.compiled.values()).filter((script) => isImportableKind(script.kind)).map((script) => script.name),
+            foreignGame: (language) => this.foreign.get(language),
+            debugHook: (module) => this.scriptDebugger.hookFor(module),
+        });
+    }
+    private debuggerHost(): DebuggerHost {
+        const runtime = this;
+        return {
+            get session() {
+                return runtime.session;
+            },
+            get stacks() {
+                return runtime.stacks;
+            },
+            get time() {
+                return runtime.time;
+            },
+            get mode() {
+                return runtime.mode;
+            },
+            get running() {
+                return runtime.running;
+            },
+            get current() {
+                return runtime.current;
+            },
+            compiledOf: (assetId) => this.compiled.get(assetId) ?? null,
+            foreignLocation: () => this.foreign.callerLocation(),
+            helixOf: (instance) => instance?.helix ?? this.helixRoot,
+            log: (level, message, extras = {}) => this.log(level, message, extras),
+        };
+    }
+    private foreignServices(): ForeignGameServices {
+        return {
+            helix: () => this.helixRoot,
+            compiledScripts: () => this.compiled.values(),
+            compiledById: (assetId) => this.compiled.get(assetId) ?? null,
+            resolveScript: (specifier) => this.compiler.resolveScript(specifier),
+            loadExports: (target) => this.loader.load(target).exports,
+            console: (level, message, location) => {
+                const source = this.current?.name ?? (location?.assetId ? this.compiled.get(location.assetId)?.name : undefined) ?? LOG_SOURCE;
+                this.session.log[level](source, message, { location: toLogLocation(location) ?? undefined });
+            },
+            currentOwner: () => this.current,
+            invoke: (owner, label, fn) => this.invoke(owner, label, fn),
+            report: (level, message) => this.say(level, message),
+        };
+    }
+    private createConsole(module: LoadedModule): Console {
+        return createScriptConsole((level, message, options = {}) => {
+            const location = options.location === undefined ? this.callerLocation() : options.location;
+            const details = options.trace ? this.stacks.format(this.stacks.map(new Error().stack)) || options.details : options.details;
+            this.session.log[level](this.current?.name ?? module.compiled.name, message, { details: details || undefined, location: location ?? undefined });
+        });
+    }
+    private resetServices(): void {
+        this.bus = new EventBus(this);
+        this.scheduler = new Scheduler(this);
+        this.input = new InputState(this.bus);
+        this.web = new WebUiHost(this.webAssets());
+        this.helixRoot = {};
+        this.loader = this.createLoader();
+        Object.assign(this.time, createTimeState());
+        Object.assign(this.switches, createSwitches());
+        Object.assign(this.frameHooks, createFrameHooks());
+        this.actorSyncRequested = false;
+        this.current = null;
+        this.scriptDebugger.reset();
+    }
+    private webAssets() {
+        return {
+            url: async (nameOrId: string) => {
+                const asset = this.findAsset(nameOrId);
+                if (!asset)
+                    return null;
+                const cached = this.objectUrls.get(asset.id);
+                if (cached)
+                    return cached;
+                const file = await this.session.library.primaryFile(asset);
+                const url = URL.createObjectURL(file);
+                this.objectUrls.set(asset.id, url);
+                return url;
+            },
+            text: async (nameOrId: string) => {
+                const asset = this.findAsset(nameOrId);
+                if (!asset)
+                    return null;
+                const compiled = this.compiled.get(asset.id);
+                if (compiled)
+                    return compiled.source;
+                const file = await this.session.library.primaryFile(asset);
+                return file.text();
+            },
+            warn: (message: string) => this.say('warn', message),
+        };
+    }
+    private findAsset(nameOrId: string): LibraryAsset | null {
+        const { library } = this.session;
+        const byId = library.get(nameOrId);
+        if (byId)
+            return byId;
+        const lower = nameOrId.toLowerCase();
+        return library.all.find((asset) => asset.name.toLowerCase() === lower) ?? null;
+    }
+    private createInstance(compiled: CompiledScript, actor: Entity | null, self: Entity | null, role: 'entry' | 'actor'): ScriptInstance | null {
+        let module: LoadedModule;
+        let resolver: HooksResolver | undefined;
+        try {
+            if (compiled.kind === 'foreign') {
+                const game = this.foreign.get(compiled.language);
+                if (!game)
+                    throw new HelixError(`o runtime ${scriptLanguage(compiled.language).label} não iniciou nesta execução.`);
+                module = this.loader.attach(compiled);
+                resolver = (_exports, inject) => hooksFromFunctions(game.instantiate(compiled, inject));
+            }
+            else {
+                module = this.loader.load(compiled);
+            }
+        }
+        catch (cause) {
+            this.reportError(null, `carregar ${scriptFileName(compiled.name, compiled.language)}`, cause);
+            return null;
+        }
+        let instance: ScriptInstance;
+        try {
+            instance = new ScriptInstance(module, actor, self, role, (created) => createHelixFor(this, this.helixRoot, created), resolver);
+        }
+        catch (cause) {
+            this.reportError(module.owner, 'construtor', cause);
+            return null;
+        }
+        if (instance.hooks.shape === 'empty' && role === 'actor')
+            this.warnOnce(`${compiled.assetId}:empty`, `${instance.file} não exporta hooks (onStart, onUpdate…): ${actor?.name ?? compiled.name} roda só o código do nível do módulo.`);
+        this.instances.push(instance);
+        if (actor)
+            this.byActor.set(actor, instance);
+        this.scriptDebugger.trackInstance(instance);
+        return instance;
+    }
+    private removeInstance(instance: ScriptInstance, options: {
+        destroy: boolean;
+    }): void {
+        if (instance.destroyed)
+            return;
+        if (instance.wasActive) {
+            instance.wasActive = false;
+            this.callHook(instance, 'onDisable');
+        }
+        if (options.destroy)
+            this.callHook(instance, 'onDestroy');
+        instance.dispose();
+        this.scheduler.dropOwner(instance)();
+        const index = this.instances.indexOf(instance);
+        if (index !== -1)
+            this.instances.splice(index, 1);
+        if (instance.actor && this.byActor.get(instance.actor) === instance)
+            this.byActor.delete(instance.actor);
+        this.scriptDebugger.untrackInstance(instance);
+    }
+    private callHook(instance: ScriptInstance, name: HookName, args: unknown[] = []): void {
+        const hook = instance.hook(name);
+        if (!hook || instance.destroyed || instance.faulted)
+            return;
+        this.scriptDebugger.beforeHook(instance, name);
+        this.invoke(instance, name, () => hook(...args));
+        if (!this.lastInvokeFailed && FRAME_HOOKS.has(name))
+            instance.consecutiveFailures = 0;
+    }
+    private load(instance: ScriptInstance): void {
+        if (instance.loaded || instance.destroyed)
+            return;
+        instance.loaded = true;
+        this.callHook(instance, 'onLoad');
+    }
+    private updateActivation(): void {
+        for (const instance of this.instances.slice()) {
+            if (instance.destroyed)
+                continue;
+            const active = instance.active;
+            if (active === instance.wasActive)
+                continue;
+            instance.wasActive = active;
+            if (active) {
+                if (!instance.started) {
+                    this.load(instance);
+                    if (instance.faulted)
+                        continue;
+                    instance.started = true;
+                    this.callHook(instance, 'onStart');
+                    if (instance.faulted)
+                        continue;
+                }
+                this.callHook(instance, 'onEnable');
+            }
+            else if (!instance.faulted) {
+                this.callHook(instance, 'onDisable');
+            }
+        }
+    }
+    private syncActorsIfNeeded(): void {
+        if (this.mode !== 'play')
+            return;
+        const periodic = this.time.frame % ACTOR_SYNC_INTERVAL === 0;
+        if (this.actorSyncRequested || periodic) {
+            this.actorSyncRequested = false;
+            this.syncActors();
+            this.sortInstances();
+            return;
+        }
+        if (this.pendingActors.size > 0) {
+            for (const actor of Array.from(this.pendingActors)) {
+                const settings = actor.script;
+                if (!settings?.enabled || !settings.assetId)
+                    continue;
+                this.pendingActors.delete(actor);
+                this.createActorInstance(actor, settings.assetId);
+            }
+            this.sortInstances();
+        }
+    }
+    private syncActors(): void {
+        const { scene } = this.session;
+        const seen = new Map<Entity, {
+            assetId: string;
+            enabled: boolean;
+            index: number;
+        }>();
+        const entities = scene.entities;
+        for (let position = 0; position < entities.length; position++) {
+            const settings = entities[position].script;
+            if (!settings?.assetId)
+                continue;
+            seen.set(entities[position], { assetId: settings.assetId, enabled: settings.enabled, index: position + 1 });
+        }
+        for (const instance of this.instances.slice()) {
+            if (instance.role !== 'actor' || !instance.actor)
+                continue;
+            const found = seen.get(instance.actor);
+            if (!found || found.assetId !== instance.assetId)
+                this.removeInstance(instance, { destroy: true });
+            else
+                instance.hierarchyIndex = found.index;
+        }
+        for (const actor of Array.from(this.pendingActors))
+            if (!seen.has(actor))
+                this.pendingActors.delete(actor);
+        for (const [actor, found] of seen) {
+            if (this.byActor.has(actor))
+                continue;
+            if (!found.enabled) {
+                this.pendingActors.add(actor);
+                continue;
+            }
+            this.pendingActors.delete(actor);
+            const instance = this.createActorInstance(actor, found.assetId);
+            if (instance)
+                instance.hierarchyIndex = found.index;
+        }
+    }
 }
