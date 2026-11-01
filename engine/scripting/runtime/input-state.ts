@@ -268,4 +268,135 @@ export class InputState {
                 return true;
         return false;
     }
+    axis2d(config: {
+        up: string;
+        down: string;
+        left: string;
+        right: string;
+        stick?: number | boolean;
+    }): {
+        x: number;
+        y: number;
+    } {
+        let x = (this.isDown(config.right) ? 1 : 0) - (this.isDown(config.left) ? 1 : 0);
+        let y = (this.isDown(config.up) ? 1 : 0) - (this.isDown(config.down) ? 1 : 0);
+        if (config.stick !== undefined && config.stick !== false) {
+            const pad = typeof config.stick === 'number' ? config.stick : 0;
+            const gx = this.axis(pad, 0);
+            const gy = -this.axis(pad, 1);
+            if (Math.abs(gx) > 0.15)
+                x += gx;
+            if (Math.abs(gy) > 0.15)
+                y += gy;
+        }
+        const length = Math.hypot(x, y);
+        if (length > 1) {
+            x /= length;
+            y /= length;
+        }
+        return { x, y };
+    }
+    private keyPayload(event: KeyboardEvent): KeyEventPayload {
+        return { code: event.code, key: event.key, repeat: event.repeat, shift: event.shiftKey, ctrl: event.ctrlKey, alt: event.altKey, meta: event.metaKey };
+    }
+    private readonly onKeyDown = (event: KeyboardEvent): void => {
+        this.textEntryFocused = isTextEntry(realEventTarget(event));
+        if (!this.gameHasKeyboard)
+            return;
+        const logical = normalizeKeyName(event.key);
+        if (!event.repeat) {
+            this.pressed.add(event.code);
+            this.pressed.add(logical);
+        }
+        this.down.add(event.code);
+        this.keysDownLogical.add(logical);
+        this.bus.emit('input.keyDown', this.keyPayload(event));
+        if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing)
+            this.bus.emit('input.text', { text: event.key });
+    };
+    private readonly onKeyUp = (event: KeyboardEvent): void => {
+        const logical = normalizeKeyName(event.key);
+        if (this.down.delete(event.code)) {
+            this.released.add(event.code);
+            this.released.add(logical);
+        }
+        this.keysDownLogical.delete(logical);
+        this.textEntryFocused = isTextEntry(realEventTarget(event));
+        this.bus.emit('input.keyUp', this.keyPayload(event));
+    };
+    private readonly releaseAll = (): void => {
+        for (const code of this.down)
+            this.released.add(code);
+        this.down.clear();
+        this.keysDownLogical.clear();
+        this.pointer.buttons = 0;
+        this.touches.length = 0;
+    };
+    private updatePointer(event: PointerEvent): void {
+        const canvas = this.canvas;
+        if (!canvas)
+            return;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        if (this.pointerLocked) {
+            this.pointer.dx += event.movementX;
+            this.pointer.dy += event.movementY;
+        }
+        else {
+            this.pointer.dx += x - this.pointer.x;
+            this.pointer.dy += y - this.pointer.y;
+            this.pointer.x = x;
+            this.pointer.y = y;
+        }
+        this.pointer.u = rect.width > 0 ? x / rect.width : 0;
+        this.pointer.v = rect.height > 0 ? y / rect.height : 0;
+        this.pointer.buttons = event.buttons;
+    }
+    private pointerPayload(event: PointerEvent): PointerEventPayload {
+        return { x: this.pointer.x, y: this.pointer.y, button: event.button, buttons: event.buttons, pointerType: event.pointerType };
+    }
+    private touchOf(event: PointerEvent): TouchState | null {
+        if (event.pointerType !== 'touch')
+            return null;
+        return this.touches.find((touch) => touch.id === event.pointerId) ?? null;
+    }
+    private readonly onPointerMove = (event: PointerEvent): void => {
+        this.updatePointer(event);
+        const touch = this.touchOf(event);
+        if (touch) {
+            touch.dx += this.pointer.x - touch.x;
+            touch.dy += this.pointer.y - touch.y;
+            touch.x = this.pointer.x;
+            touch.y = this.pointer.y;
+        }
+        this.bus.emit('input.pointerMove', this.pointerPayload(event));
+    };
+    private readonly onPointerDown = (event: PointerEvent): void => {
+        this.updatePointer(event);
+        if (event.pointerType === 'touch' && !this.touchOf(event))
+            this.touches.push({ id: event.pointerId, x: this.pointer.x, y: this.pointer.y, dx: 0, dy: 0 });
+        this.pressed.add(`Mouse${event.button}`);
+        this.down.add(`Mouse${event.button}`);
+        this.bus.emit('input.pointerDown', this.pointerPayload(event));
+    };
+    private readonly onPointerUp = (event: PointerEvent): void => {
+        this.updatePointer(event);
+        const index = this.touches.findIndex((touch) => touch.id === event.pointerId);
+        if (index !== -1)
+            this.touches.splice(index, 1);
+        if (this.down.delete(`Mouse${event.button}`))
+            this.released.add(`Mouse${event.button}`);
+        this.bus.emit('input.pointerUp', this.pointerPayload(event));
+    };
+    private readonly onPointerEnter = (): void => {
+        this.pointer.inside = true;
+    };
+    private readonly onPointerLeave = (): void => {
+        this.pointer.inside = false;
+    };
+    private readonly onWheel = (event: WheelEvent): void => {
+        this.pointer.wheel += event.deltaY;
+        this.bus.emit('input.wheel', { deltaX: event.deltaX, deltaY: event.deltaY });
+    };
 }
