@@ -290,5 +290,285 @@ class Game:
             if kind == "await":
                 return Pending(value.get("promise"))
             if kind == "cb":
+                return self.callbacks.get(int(value["id"]))
+            return value
+        if kind_of is list:
+            if depth > MAX_DEPTH:
+                return value
+            return [self._walk(item, depth + 1) for item in value]
+        return value
+
+    def pack(self, value):
+        return _jsobj(self._pack(value, 0))
+
+    def _pack(self, value, depth):
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        if isinstance(value, Ref):
+            return {KIND: value._id}
+        if isinstance(value, Fn):
+            return {KIND: "fn", "id": value._id}
+        if isinstance(value, Pending):
+            return None
+        if depth > MAX_DEPTH:
+            return str(value)
+        if isinstance(value, dict):
+            return {str(key): self._pack(item, depth + 1) for key, item in value.items() if item is not None}
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [self._pack(item, depth + 1) for item in value]
+        if callable(value):
+            return {KIND: "cb", "id": self.register_callback(value)}
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return list(bytes(value))
+        fields = getattr(value, "__dict__", None)
+        if isinstance(fields, dict):
+            return {key: self._pack(item, depth + 1) for key, item in fields.items() if not key.startswith("_") and item is not None}
+        return str(value)
+
+    def register_callback(self, fn):
+        id = self.callback_ids.get(fn)
+        if id is None:
+            self.next_callback += 1
+            id = self.next_callback
+            self.callbacks[id] = fn
+            self.callback_ids[fn] = id
+            self.arities[id] = _max_positional(fn)
+        return id
+
+                                                                                         
+
+    def get(self, id, key):
+        return self.materialize(self.host.get(id, key))
+
+    def set(self, id, key, value):
+        result = self.host.set(id, key, self.pack(value))
+        if result is not None:
+            self.materialize(result)
+
+    def call(self, id, args):
+        return self.materialize(self.host.call(id, *[self.pack(arg) for arg in args]))
+
+    def keys(self, id):
+        keys = self.host.keys(id)
+        return keys.to_py() if isinstance(keys, JsProxy) else list(keys)
+
+                                                                                        
+
+    def _make_builtins(self):
+        safe = dict(vars(builtins))
+        for name in BLOCKED_BUILTINS:
+            safe.pop(name, None)
+        safe["__import__"] = self._import
+        safe["print"] = self._print
+        safe["HelixError"] = HelixError
+        return safe
+
+    def _env(self, file, key, helix, script):
+        self.files.add(file)
+        return {
+            "__name__": file.rsplit(".", 1)[0],
+            "__file__": file,
+            "__builtins__": self.builtins,
+            "__helix_key__": key,
+            "helix": helix,
+            "script": script,
+            "print": self._print,
+        }
+
+    def _print(self, *args, sep=" ", end="\n", file=None, flush=False):
+        text = sep.join(str(arg) for arg in args)
+        if end != "\n":
+            text = (text + end).rstrip("\n")
+        level = "warn" if file is not None and file is sys.stderr else "info"
+        location = self._frame_location(sys._getframe(1))
+        self.host.console(level, text, location[0] if location else None, location[1] if location else None)
+
+    def _frame_location(self, frame):
+        while frame is not None:
+            name = frame.f_code.co_filename
+            if name in self.files:
+                return (name, frame.f_lineno, frame.f_code.co_name)
+            frame = frame.f_back
+        return None
+
+    def where(self):
+        location = self._frame_location(sys._getframe(1))
+        return _jsobj(list(location)) if location else None
+
+    def _code(self, key):
+        artifact = self.materialize(self.host.code(key))
+        if isinstance(artifact, JsProxy):
+            artifact = artifact.to_bytes()
+        return marshal.loads(bytes(artifact))
+
+                                                                                          
+
+    def _import(self, name, globals=None, locals=None, fromlist=(), level=0):
+        top = name.partition(".")[0]
+        if level == 0:
+            if top == "helix":
+                                                                                                      
+                return self.root_helix
+            if top in BLOCKED_MODULES:
+                raise ImportError("o módulo %s não está disponível para scripts da engine." % top)
+            from_key = globals.get("__helix_key__") if isinstance(globals, dict) else None
+            resolved = self.materialize(self.host.resolve(from_key, name))
+            if isinstance(resolved, dict) and resolved.get(KIND) == "module":
+                return self.require_module(resolved["key"], resolved["file"])
+            missing = resolved.get("message") if isinstance(resolved, dict) and resolved.get(KIND) == "missing" else None
+            if missing is None and resolved is not None:
+                return self._foreign_module(name, resolved)
+            try:
+                return _real_import(name, globals, locals, fromlist, level)
+            except ModuleNotFoundError as exc:
+                if missing and exc.name == top:
+                    raise ImportError(missing) from None
+                raise
+        return _real_import(name, globals, locals, fromlist, level)
+
+    def _foreign_module(self, name, exports):
+        """Exportações de um script JS/TS ou Lua: um dict vira módulo com atributos; um objeto vivo é importado como está."""
+        if not isinstance(exports, dict):
+            return exports
+        module = types.ModuleType(name)
+        for key, value in exports.items():
+            if isinstance(key, str) and key.isidentifier():
+                setattr(module, key, value)
+        module.default = exports
+        return module
+
+    def require_module(self, key, file):
+        module = self.modules.get(key)
+        if module is not None:
+            return module
+        for index, (loading_key, loading_file) in enumerate(self.loading):
+            if loading_key == key:
+                chain = [entry[1] for entry in self.loading[index:]] + [file]
+                raise ImportError("Importação circular: " + " → ".join(chain) + ". Quebre o ciclo movendo o que os dois usam para um terceiro módulo.")
+        code = self._code(key)
+        module = types.ModuleType(file.rsplit(".", 1)[0])
+        module.__dict__.update(self._env(file, key, self.root_helix, None))
+        self.loading.append((key, file))
+        try:
+            exec(code, module.__dict__)
+        finally:
+            self.loading.pop()
+        self.modules[key] = module
+        return module
+
+    def _exports(self, module):
+        return {key: value for key, value in vars(module).items() if not key.startswith("_") and key not in ("helix", "script", "print") and not isinstance(value, types.ModuleType)}
+
+                                                                                           
+
+    def _failure(self, exc):
+        frames = []
+        for frame in traceback.extract_tb(exc.__traceback__):
+            if frame.filename in self.files:
+                frames.append([frame.filename, frame.lineno or 0, frame.name])
+        name = exc.engine_name if isinstance(exc, HelixError) else type(exc).__name__
+        return {KIND: "err", "message": str(exc) or name, "name": name, "frames": frames}
+
+    def _error(self, exc):
+        return _jsobj(["error", self._failure(exc)])
+
+                                                                                                
+
+    def set_root(self, helix_value):
+        self.root_helix = self.materialize(helix_value)
+
+    def instantiate(self, key, file, helix_value, script_value):
+        try:
+            helix = self.materialize(helix_value)
+            script = self.materialize(script_value)
+            env = self._env(file, key, helix, script)
+            exec(self._code(key), env)
+            hooks = self._module_hooks(env) or self._class_hooks(env, file, helix, script)
+            return _jsobj(["done", {hook: self.register_callback(fn) for hook, fn in hooks.items()}])
+        except BaseException as exc:
+            return self._error(exc)
+
+    def _module_hooks(self, env):
+        """Hooks como funções do nível do módulo (on_start, on_update…)."""
+        hooks = {}
+        for hook, aliases in HOOKS:
+            for alias in aliases:
+                fn = env.get(alias)
+                if callable(fn) and not isinstance(fn, type):
+                    hooks[hook] = fn
+                    break
+        return hooks
+
+    def _class_hooks(self, env, file, helix, script):
+        """
+        Hooks como métodos de uma classe do arquivo (o equivalente ao "export default class"
+        do JS): a classe com o nome do arquivo, ou a única que define hooks. Uma instância
+        por ator, com actor, entity, helix e script preenchidos antes de qualquer hook.
+        """
+        module_name = env["__name__"]
+        candidates = [value for value in env.values() if isinstance(value, type) and value.__module__ == module_name and _hook_methods(value)]
+        if not candidates:
+            return {}
+        wanted = _identifier(module_name).lower()
+        named = [cls for cls in candidates if cls.__name__.lower() == wanted]
+        if len(named) == 1:
+            cls = named[0]
+        elif len(candidates) == 1:
+            cls = candidates[0]
+        else:
+            raise TypeError("%s define várias classes com hooks (%s); nomeie uma como o arquivo ou deixe só uma." % (file, ", ".join(cls.__name__ for cls in candidates)))
+        instance = cls()
+        entity = helix.self
+        for name, value in (("actor", entity), ("entity", entity), ("helix", helix), ("script", script)):
+            if getattr(instance, name, None) is None:
+                try:
+                    setattr(instance, name, value)
+                except AttributeError:
+                    pass
+        return {hook: getattr(instance, alias) for hook, alias in _hook_methods(cls).items()}
+
+    def load_module(self, key, file):
+        try:
+            module = self.require_module(key, file)
+            return _jsobj(["done", self._pack(self._exports(module), 0)])
+        except BaseException as exc:
+            return self._error(exc)
+
+    def unload_module(self, key):
+        self.modules.pop(key, None)
+
+    def invoke(self, id, *args):
+        fn = self.callbacks.get(id)
+        if fn is None:
+            return _jsobj(["error", {KIND: "err", "message": "callback desconhecido (%r)" % (id,), "name": "Error", "frames": []}])
+        materialized = [self.materialize(arg) for arg in args]
+        limit = self.arities.get(id)
+        if limit is not None and len(materialized) > limit:
+            del materialized[limit:]
+        try:
+            result = fn(*materialized)
+        except BaseException as exc:
+            return self._error(exc)
+        if inspect.iscoroutine(result):
+            return self._drive(None, result, True, None)
+        if inspect.isawaitable(result):
+            return self._drive(None, _as_coroutine(result), True, None)
+        return _jsobj(["done", self._pack(result, 0)])
+
+                                                                                                         
+    def _drive(self, token, coro, ok, value):
+        try:
+            yielded = coro.send(value) if ok else coro.throw(HelixError(str(value)))
+        except StopIteration as stop:
+            self._forget(token)
+            return _jsobj(["done", self._pack(stop.value, 0)])
+        except BaseException as exc:
+            self._forget(token)
+            return self._error(exc)
+        if isinstance(yielded, Pending):
+            if token is None:
+                self.next_token += 1
+                token = self.next_token
+            self.pending[token] = coro
 `;
 }
