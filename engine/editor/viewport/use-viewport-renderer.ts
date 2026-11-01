@@ -1,12 +1,42 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Renderer } from '@/engine/renderer/renderer';
-import { WebGLUnsupportedError } from '@/engine/renderer/gl/context';
+import { WebGLContextLostError, WebGLUnsupportedError } from '@/engine/renderer/gl/context';
 import type { GizmoRenderRequest } from '@/engine/renderer/passes/gizmo-pass';
+import type { LightHelperRequest } from '@/engine/renderer/passes/light-helper-pass';
+import type { SoundHelperRequest } from '@/engine/renderer/passes/sound-helper-pass';
+import type { VfxHelperRequest } from '@/engine/renderer/passes/vfx-helper-pass';
 import * as mat4 from '@/engine/core/math/mat4';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
+import { EDITOR_QUALITY_LADDER, FrameGovernor, FULL_QUALITY, QUALITY_LADDER, type QualityStep } from '@/engine/renderer/quality/frame-governor';
+import { FrameClock } from '@/engine/core/time/frame-clock';
+import { engineSettings } from '@/engine/settings/engine-settings-store';
+import { resolveEditorLite, resolveFrameInterval, resolveMaxPixelRatio, resolveQualityLadder } from './viewport-preferences';
 const STATS_INTERVAL_MS = 500;
 const MAX_DELTA_SECONDS = 0.1;
+const SETTLE_FRAMES = 2;
+const UI_BUSY_FRAME_MS = 1000 / 30;
+const DEFAULT_FRAME_BUDGET_MS = 1000 / 60;
+const PHYSICS_BUDGET_SHARE = 0.5;
+const INPUT_WAKE_MS = 120;
+const IDLE_REFRESH_MS = 2000;
+const FRAME_LIMIT_TOLERANCE_MS = 1.5;
+const GOVERNOR_IDLE_RESET_MS = 3000;
+const MAX_CONSECUTIVE_FRAME_FAILURES = 5;
+function isTextEntryTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement))
+        return false;
+    if (target.isContentEditable)
+        return true;
+    const tag = target.tagName;
+    if (tag === 'TEXTAREA' || tag === 'SELECT')
+        return true;
+    if (tag === 'INPUT') {
+        const type = (target as HTMLInputElement).type;
+        return type !== 'checkbox' && type !== 'radio' && type !== 'button' && type !== 'range';
+    }
+    return false;
+}
 function resolveGizmoRequest(session: EditorSession, request: GizmoRenderRequest): GizmoRenderRequest | null {
     const mode = session.gizmoMode;
     if (!mode)
@@ -17,24 +47,81 @@ function resolveGizmoRequest(session: EditorSession, request: GizmoRenderRequest
     request.mode = mode;
     request.worldMatrix = entity.worldMatrix;
     request.localAxes = session.gizmoUsesLocalAxes;
+    request.scale = engineSettings.get('editor.gizmo.size');
     request.hovered = session.gizmo.hovered;
     request.active = session.gizmo.active;
     return request;
 }
+function resolveLightHelpers(session: EditorSession, request: LightHelperRequest, selection: ReadonlySet<number> | null): LightHelperRequest | null {
+    const mode = session.render.lightHelpers;
+    if (mode === 'off' || session.playtest.state === 'playing')
+        return null;
+    request.mode = mode;
+    request.selection = selection;
+    return request;
+}
+function resolveSoundHelpers(session: EditorSession, request: SoundHelperRequest, selection: ReadonlySet<number> | null, elapsedSeconds: number): SoundHelperRequest | null {
+    const mode = session.render.soundHelpers;
+    if (mode === 'off' || session.playtest.state === 'playing')
+        return null;
+    request.mode = mode;
+    request.selection = selection;
+    request.activeZoneId = session.audio.world.activeZone?.entity.id ?? null;
+    request.elapsedSeconds = elapsedSeconds;
+    return request;
+}
+function resolveVfxHelpers(session: EditorSession, request: VfxHelperRequest, selection: ReadonlySet<number> | null, elapsedSeconds: number): VfxHelperRequest | null {
+    const mode = session.render.vfxHelpers;
+    if (mode === 'off' || session.playtest.state === 'playing')
+        return null;
+    request.mode = mode;
+    request.selection = selection;
+    request.elapsedSeconds = elapsedSeconds;
+    return request;
+}
+function sessionSignature(session: EditorSession): string {
+    const brush = session.terrain.brushOverlay;
+    return [
+        session.getSceneVersion(),
+        session.gizmo.hovered ?? '',
+        session.gizmo.active ?? '',
+        session.showGrid ? 1 : 0,
+        session.shadowsEnabled ? 1 : 0,
+        session.playtest.state,
+        session.render.lightHelpers,
+        session.render.soloLightId ?? '',
+        session.render.soundHelpers,
+        session.render.vfxHelpers,
+        session.vfx.getVersion(),
+        session.audio.world.getVersion(),
+        session.render.postCompare.enabled ? session.render.postCompare.split : '',
+        session.render.profileGpu ? 1 : 0,
+        brush ? `${brush.entityId}:${brush.x}:${brush.z}` : '',
+        session.animation.overlayRequest() ? 1 : 0,
+    ].join('|');
+}
+function describeFrameError(cause: unknown): string {
+    return cause instanceof Error ? cause.message : 'Falha ao renderizar o frame.';
+}
 export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement | null>, session: EditorSession) {
     const [error, setError] = useState<string | null>(null);
+    const [generation, setGeneration] = useState(0);
     const rendererRef = useRef<Renderer | null>(null);
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas)
             return;
+        setError(null);
         let renderer: Renderer;
         try {
-            renderer = new Renderer(canvas);
+            const profile = engineSettings.get('render.profile');
+            renderer = new Renderer(canvas, { tier: profile === 'auto' ? undefined : profile });
+            renderer.maxPixelRatio = resolveMaxPixelRatio(renderer.profile);
         }
         catch (cause) {
             setError(cause instanceof WebGLUnsupportedError ? cause.message : 'Falha ao inicializar o renderizador.');
-            console.error('[v0] Falha ao criar renderer:', cause);
+            console.error('[Helix] Falha ao criar o renderizador:', cause);
+            session.markViewportReady();
             return;
         }
         rendererRef.current = renderer;
