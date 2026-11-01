@@ -246,3 +246,47 @@ function manifestFallback(name: string): ApiMember | null {
     ];
     return { name, kind: 'namespace', signature: `helix.${name}`, detail: '', doc: `Seção ${namespace.section} da API`, children };
 }
+function buildIndex(): HelixApiIndex {
+    const reader = new DeclarationReader(HELIX_DECLARATIONS);
+    const fromDeclarations = reader.members('Helix');
+    const root: ApiMember[] = [...fromDeclarations];
+    for (const namespace of API_MANIFEST) {
+        const existing = root.find((member) => member.name === namespace.name);
+        if (existing && existing.children && existing.children.length > 0)
+            continue;
+        const fallback = manifestFallback(namespace.name);
+        if (!fallback)
+            continue;
+        if (existing)
+            root.splice(root.indexOf(existing), 1, { ...fallback, doc: existing.doc || fallback.doc });
+        else
+            root.push(fallback);
+    }
+    const find = (path: readonly string[]): ApiMember | null => {
+        let members: readonly ApiMember[] = root;
+        let found: ApiMember | null = null;
+        for (const segment of path) {
+            found = members.find((member) => member.name === segment) ?? null;
+            if (!found)
+                return null;
+            members = found.children ?? [];
+        }
+        return found;
+    };
+    return {
+        root,
+        find,
+        membersAt: (path) => {
+            if (path.length === 0)
+                return root;
+            const member = find(path);
+            return member?.children ?? null;
+        },
+    };
+}
+let cached: HelixApiIndex | null = null;
+export function helixApiIndex(): HelixApiIndex {
+    if (!cached)
+        cached = buildIndex();
+    return cached;
+}
