@@ -15,6 +15,10 @@ export const VT_MAX_IN_FLIGHT = 48;
 export function vtSourceLevels(sizeLog2: number): number {
     return Math.max(0, Math.min(VT_LEVELS, sizeLog2 - VT_PROXY_SIZE_LOG2));
 }
+export function vtPageLevel(uvPerTexel: number, sourceSize: number): number {
+    const lod = Math.log2(Math.max(uvPerTexel * sourceSize, 1e-12));
+    return Math.max(Math.floor(lod + 0.5), 0);
+}
 export function vtPageKey(sourceId: number, level: number, px: number, py: number): number {
     return ((sourceId * 4 + level) * VT_PAGES_PER_SIDE + py) * VT_PAGES_PER_SIDE + px;
 }
