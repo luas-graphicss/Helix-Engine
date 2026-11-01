@@ -227,3 +227,140 @@ export function buildFireballProjectile(): VfxDocument {
     });
     return createVfxDocument({ name: 'Bola de fogo', duration: 1, prewarm: 0.6, emitters: [core, trail, sparks] });
 }
+export function buildFireworks(): VfxDocument {
+    const APEX: readonly [
+        number,
+        number,
+        number
+    ] = [0, 4.2, 0];
+    const TWINKLE: ReadonlyArray<[
+        number,
+        number
+    ]> = [[0, 1], [0.6, 1], [0.72, 0.25], [0.82, 1], [1, 0]];
+    const launch = emitter(0, {
+        name: 'Subida',
+        maxParticles: 120,
+        duration: 0.5,
+        spawn: createSpawn({ rate: scalarConstant(160) }),
+        shape: createShape({ kind: 'cone', radius: 0.02, angle: 2, thickness: 1 }),
+        initial: createInitial({ lifetime: scalarRandom(0.5, 0.7), speed: scalarRandom(7.5, 8.5), size: scalarRandom(0.03, 0.05), rotation: scalarConstant(0), color: colorConstant([1, 0.85, 0.6], 1) }),
+        modules: [module('gravity', { scale: 0.5 }), module('sizeOverLife', { curve: linearCurve(1, 0) }), module('colorOverLife', { gradient: gradient([[0, WHITE], [1, [1, 0.6, 0.3]]], [[0, 1], [1, 0]]) })],
+        renderer: createRenderer({ mode: 'stretched', stretch: 0.06, blend: 'additive', texture: { kind: 'builtin', id: 'soft' }, intensity: 6 }),
+    });
+    const burst = emitter(3, {
+        name: 'Explosão',
+        maxParticles: 400,
+        spawn: burstSpawn(240, 320, 0, 0.6),
+        shape: createShape({ kind: 'sphere', radius: 0.1, thickness: 1, offset: APEX }),
+        initial: createInitial({
+            lifetime: scalarRandom(1.1, 1.8),
+            speed: scalarRandom(4.5, 7),
+            size: scalarRandom(0.035, 0.06),
+            rotation: scalarConstant(0),
+            color: colorRandom([1, 0.4, 0.6], [0.4, 0.6, 1]),
+        }),
+        modules: [
+            module('gravity', { scale: 0.45 }),
+            module('drag', { coefficient: 1.3, curve: constantCurve(1) }),
+            module('sizeOverLife', { curve: createCurve([{ t: 0, v: 1 }, { t: 0.7, v: 0.8 }, { t: 1, v: 0 }]) }),
+            module('colorOverLife', { gradient: gradient([[0, WHITE], [0.3, WHITE]], TWINKLE) }),
+            module('noise', { strength: 0.3, frequency: 1, scrollSpeed: 0.5, octaves: 1, curve: linearCurve(0, 1) }),
+        ],
+        renderer: createRenderer({ mode: 'stretched', stretch: 0.05, stretchMinimum: 1.2, blend: 'additive', texture: { kind: 'builtin', id: 'soft' }, intensity: 7 }),
+    });
+    const glitter = emitter(6, {
+        name: 'Purpurina',
+        maxParticles: 160,
+        spawn: burstSpawn(120, 0, 0, 0.65),
+        shape: createShape({ kind: 'sphere', radius: 0.1, thickness: 1, offset: APEX }),
+        initial: createInitial({ lifetime: scalarRandom(1.6, 2.4), speed: scalarRandom(2.5, 4), size: scalarRandom(0.02, 0.035), rotation: scalarRandom(0, 360), color: colorConstant([1, 0.95, 0.8], 1) }),
+        modules: [module('gravity', { scale: 0.3 }), module('drag', { coefficient: 1, curve: constantCurve(1) }), module('colorOverLife', { gradient: gradient([[0, WHITE]], [[0, 1], [0.4, 1], [0.5, 0.1], [0.6, 1], [0.75, 0.1], [0.85, 1], [1, 0]]) })],
+        renderer: createRenderer({ blend: 'additive', texture: { kind: 'builtin', id: 'spark' }, intensity: 8 }),
+    });
+    const flash = emitter(1, {
+        name: 'Clarão',
+        maxParticles: 2,
+        spawn: burstSpawn(1, 0, 0, 0.6),
+        shape: createShape({ kind: 'point', offset: APEX }),
+        initial: createInitial({ lifetime: scalarConstant(0.25), speed: scalarConstant(0), size: scalarConstant(3.5), rotation: scalarRandom(0, 360), color: colorConstant([1, 0.9, 0.85], 1) }),
+        modules: [module('sizeOverLife', { curve: linearCurve(0.5, 1.6) }), module('colorOverLife', { gradient: fadeInOutGradient(WHITE, 1, 0.05, 0.3) })],
+        renderer: createRenderer({ blend: 'additive', texture: { kind: 'builtin', id: 'star' }, intensity: 6 }),
+    });
+    return createVfxDocument({ name: 'Fogos de artifício', duration: 2.4, cullRadius: 10, emitters: [launch, flash, burst, glitter] });
+}
+export function buildLava(): VfxDocument {
+    const embers = emberSparks(0, 'Brasas', {
+        spawn: createSpawn({ rate: scalarConstant(18) }),
+        shape: createShape({ kind: 'circle', radius: 0.8, thickness: 1 }),
+        initial: createInitial({ lifetime: scalarRandom(1, 2), speed: scalarRandom(1.2, 2.6), size: scalarRandom(0.03, 0.06), rotation: scalarConstant(0), color: colorRandom([1, 0.6, 0.15], [1, 0.3, 0.05]) }),
+        modules: [
+            module('gravity', { scale: 0.9 }),
+            module('drag', { coefficient: 0.5, curve: constantCurve(1) }),
+            module('collision', { planeHeight: 0, bounce: 0.2, friction: 0.6, lifetimeLoss: 0.5, killOnCollide: false }),
+            module('colorOverLife', { gradient: gradient([[0, WHITE], [0.4, [1, 0.5, 0.15]], [1, [0.4, 0.05, 0]]], [[0, 1], [0.8, 1], [1, 0]]) }),
+        ],
+    });
+    const bubbles = emitter(7, {
+        name: 'Bolhas estourando',
+        maxParticles: 12,
+        spawn: createSpawn({ rate: scalarConstant(6) }),
+        shape: createShape({ kind: 'circle', radius: 0.8, thickness: 1, offset: [0, 0.02, 0] }),
+        initial: createInitial({ lifetime: scalarRandom(0.5, 0.8), speed: scalarConstant(0), size: scalarRandom(0.15, 0.3), rotation: scalarRandom(0, 360), color: colorConstant([1, 0.45, 0.1], 1) }),
+        modules: [module('sizeOverLife', { curve: linearCurve(0.4, 1.4) }), module('colorOverLife', { gradient: fadeInOutGradient(WHITE, 0.9, 0.1, 0.5) })],
+        renderer: createRenderer({ mode: 'horizontal', blend: 'additive', texture: { kind: 'builtin', id: 'ring' }, intensity: 3, softness: 0.3 }),
+    });
+    const heat = emitter(1, {
+        name: 'Calor',
+        maxParticles: 24,
+        spawn: createSpawn({ rate: scalarConstant(10) }),
+        shape: createShape({ kind: 'circle', radius: 0.7, thickness: 1, offset: [0, 0.05, 0] }),
+        initial: createInitial({ lifetime: scalarRandom(1.2, 2), speed: scalarRandom(0.3, 0.5), size: scalarRandom(0.5, 0.8), rotation: scalarRandom(0, 360), color: colorConstant([1, 0.35, 0.08], 1) }),
+        modules: [module('sizeOverLife', { curve: linearCurve(0.6, 1.6) }), module('colorOverLife', { gradient: fadeInOutGradient(WHITE, 0.35, 0.2, 0.5) }), module('noise', { strength: 0.3, frequency: 0.8, scrollSpeed: 0.4, octaves: 1, curve: constantCurve(1) })],
+        renderer: createRenderer({ blend: 'additive', texture: { kind: 'builtin', id: 'smoke' }, intensity: 2, softness: 0.6 }),
+    });
+    const smoke = emitter(2, {
+        name: 'Fumaça escura',
+        maxParticles: 24,
+        spawn: createSpawn({ rate: scalarConstant(5) }),
+        shape: createShape({ kind: 'circle', radius: 0.6, thickness: 1, offset: [0, 0.3, 0] }),
+        initial: createInitial({ lifetime: scalarRandom(2.5, 4), speed: scalarRandom(0.4, 0.7), size: scalarRandom(0.6, 1), rotation: scalarRandom(0, 360), angularVelocity: scalarRandom(-12, 12), color: colorConstant([0.2, 0.18, 0.17], 1) }),
+        modules: [module('sizeOverLife', { curve: linearCurve(0.6, 2) }), module('colorOverLife', { gradient: fadeInOutGradient(WHITE, 0.45, 0.15, 0.45) }), module('noise', { strength: 0.3, frequency: 0.6, scrollSpeed: 0.3, octaves: 1, curve: constantCurve(1) })],
+        renderer: createRenderer({ blend: 'alpha', texture: { kind: 'builtin', id: 'smoke' }, lighting: 'lit', softness: 1, sort: 'distance' }),
+    });
+    return createVfxDocument({ name: 'Lava', duration: 3, prewarm: 2, emitters: [embers, bubbles, heat, smoke] });
+}
+export function buildChimneySmoke(): VfxDocument {
+    const smoke = emitter(5, {
+        name: 'Fumaça',
+        maxParticles: 100,
+        spawn: createSpawn({ rate: scalarConstant(14) }),
+        shape: createShape({ kind: 'cone', radius: 0.12, angle: 6, thickness: 1 }),
+        initial: createInitial({
+            lifetime: scalarRandom(4, 6),
+            speed: scalarRandom(1.2, 1.8),
+            size: scalarRandom(0.35, 0.5),
+            rotation: scalarRandom(0, 360),
+            angularVelocity: scalarRandom(-12, 12),
+            color: colorRandom([0.75, 0.75, 0.76], [0.55, 0.55, 0.58]),
+        }),
+        modules: [
+            module('sizeOverLife', { curve: linearCurve(0.5, 3.2) }),
+            module('colorOverLife', { gradient: fadeInOutGradient(WHITE, 0.55, 0.08, 0.4) }),
+            module('velocityOverLife', { speedCurve: linearCurve(1, 0.3), linear: [0, 0, 0], space: 'local' }),
+            module('force', { force: [0.9, 0, 0.2], randomize: 0.3, space: 'world' }),
+            module('noise', { strength: 0.4, frequency: 0.4, scrollSpeed: 0.25, octaves: 2, curve: constantCurve(1) }),
+            module('drag', { coefficient: 0.2, curve: constantCurve(1) }),
+        ],
+        renderer: createRenderer({ blend: 'alpha', texture: { kind: 'builtin', id: 'smoke' }, lighting: 'lit', softness: 1.2, sort: 'distance' }),
+    });
+    const soot = emitter(7, {
+        name: 'Fuligem',
+        maxParticles: 16,
+        spawn: createSpawn({ rate: scalarConstant(3) }),
+        shape: createShape({ kind: 'cone', radius: 0.1, angle: 8, thickness: 1 }),
+        initial: createInitial({ lifetime: scalarRandom(2, 3.5), speed: scalarRandom(1, 1.5), size: scalarRandom(0.02, 0.04), rotation: scalarRandom(0, 360), angularVelocity: scalarRandom(-180, 180), color: colorConstant([0.12, 0.11, 0.11], 1) }),
+        modules: [module('gravity', { scale: 0.15 }), module('noise', { strength: 0.5, frequency: 0.6, scrollSpeed: 0.3, octaves: 1, curve: constantCurve(1) }), module('force', { force: [0.9, 0, 0.2], randomize: 0.3, space: 'world' }), module('colorOverLife', { gradient: fadeInOutGradient(WHITE, 1, 0.05, 0.8) })],
+        renderer: createRenderer({ blend: 'alpha', texture: { kind: 'builtin', id: 'square' }, lighting: 'lit' }),
+    });
+    return createVfxDocument({ name: 'Fumaça de chaminé', duration: 5, prewarm: 5, cullRadius: 10, emitters: [smoke, soot] });
+}
