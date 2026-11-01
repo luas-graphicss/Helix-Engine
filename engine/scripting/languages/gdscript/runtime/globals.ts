@@ -272,3 +272,280 @@ function clampNumber(value: number, min: number, max: number): number {
 function snapNumber(value: number, step: number): number {
     return step !== 0 ? Math.floor(value / step + 0.5) * step : value;
 }
+export const RANDOM: Record<string, Fn> = {
+    randi: () => nextUint32(),
+    randf: () => randomFloat(),
+    randf_range: (from, to) => num(from, 'randf_range') + randomFloat() * (num(to, 'randf_range') - num(from, 'randf_range')),
+    randi_range: (from, to) => {
+        const low = int(from, 'randi_range');
+        const high = int(to, 'randi_range');
+        const min = Math.min(low, high);
+        const max = Math.max(low, high);
+        return min + (nextUint32() % (max - min + 1));
+    },
+    randfn: (mean = 0, deviation = 1) => {
+        const u = randomFloat() || 1e-12;
+        const v = randomFloat();
+        return num(mean, 'randfn') + num(deviation, 'randfn') * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    },
+    randomize: () => {
+        reseed((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
+        return null;
+    },
+    seed: (value) => {
+        reseed(int(value, 'seed'));
+        return null;
+    },
+    rand_from_seed: (value) => {
+        const saved = [stateA, stateB, stateC, stateD];
+        reseed(int(value, 'rand_from_seed'));
+        const result = nextUint32();
+        const nextSeed = nextUint32();
+        [stateA, stateB, stateC, stateD] = saved;
+        return [result, nextSeed];
+    },
+};
+export const UTIL: Record<string, Fn> = {
+    str: (...values) => values.map((value) => str(value)).join(''),
+    len: (value) => lengthOf(value),
+    typeof: (value) => typeOf(value),
+    type_string: (code) => typeString(code),
+    type_convert: (value, type) => {
+        switch (type) {
+            case TYPE_CONSTANTS.TYPE_INT:
+                return toInt(value);
+            case TYPE_CONSTANTS.TYPE_FLOAT:
+                return toFloat(value);
+            case TYPE_CONSTANTS.TYPE_STRING:
+                return str(value);
+            case TYPE_CONSTANTS.TYPE_BOOL:
+                return truthy(value);
+            default:
+                return value;
+        }
+    },
+    var_to_str: (value) => varToStr(value),
+    str_to_var: (text) => {
+        if (typeof text !== 'string')
+            fail(`str_to_var(): esperava uma String, recebeu ${describeTypeOf(text)}.`);
+        return parseVariant(text);
+    },
+    var_to_bytes: (value) => Array.from(new TextEncoder().encode(varToStr(value))),
+    bytes_to_var: (bytes) => parseVariant(new TextDecoder().decode(Uint8Array.from(bytes as number[]))),
+    hash: (value) => {
+        const text = str(value);
+        let hash = 5381;
+        for (let index = 0; index < text.length; index++)
+            hash = ((hash << 5) + hash + text.charCodeAt(index)) >>> 0;
+        return hash;
+    },
+    is_instance_valid: (value) => value !== null && value !== undefined && !(isScriptInstance(value) && (value as {
+        __gdFreed?: boolean;
+    }).__gdFreed === true),
+    is_instance_of: (value, type) => (typeof type === 'function' ? value instanceof type : typeOf(value) === type),
+    is_same: (a, b) => a === b || (typeof a === 'number' && typeof b === 'number' && Number.isNaN(a) && Number.isNaN(b)),
+    weakref: (value) => ({ get_ref: () => value }),
+    instance_from_id: () => fail('instance_from_id() não existe aqui: guarde a referência ao objeto (ou use helix.scene.byId para atores).'),
+    range: (...args) => {
+        let start = 0;
+        let stop: number;
+        let step = 1;
+        if (args.length === 1)
+            stop = int(args[0], 'range');
+        else if (args.length === 2) {
+            start = int(args[0], 'range');
+            stop = int(args[1], 'range');
+        }
+        else if (args.length === 3) {
+            start = int(args[0], 'range');
+            stop = int(args[1], 'range');
+            step = int(args[2], 'range');
+            if (step === 0)
+                fail('range(): o passo não pode ser 0.');
+        }
+        else
+            fail(`range(): esperava 1 a 3 argumentos, recebeu ${args.length}.`);
+        const result: number[] = [];
+        if (step > 0)
+            for (let value = start; value < stop; value += step)
+                result.push(value);
+        else
+            for (let value = start; value > stop; value += step)
+                result.push(value);
+        return result;
+    },
+    int: (value) => toInt(value),
+    float: (value) => toFloat(value),
+    bool: (value) => truthy(value),
+    String: (value = '') => str(value),
+    StringName: (value = '') => str(value),
+    NodePath: (value = '') => str(value),
+    Array: (value = null) => (value === null ? [] : Array.isArray(value) ? value.slice() : Array.from(iterable(value))),
+    Dictionary: (value = null) => new Dictionary(value ?? undefined),
+    PackedByteArray: (value = null) => (value === null ? [] : Array.from(value as Iterable<number>, (item) => toInt(item) & 255)),
+    PackedInt32Array: (value = null) => (value === null ? [] : Array.from(value as Iterable<number>, (item) => toInt(item) | 0)),
+    PackedInt64Array: (value = null) => (value === null ? [] : Array.from(value as Iterable<number>, (item) => toInt(item))),
+    PackedFloat32Array: (value = null) => (value === null ? [] : Array.from(value as Iterable<number>, (item) => Math.fround(toFloat(item)))),
+    PackedFloat64Array: (value = null) => (value === null ? [] : Array.from(value as Iterable<number>, (item) => toFloat(item))),
+    PackedStringArray: (value = null) => (value === null ? [] : Array.from(value as Iterable<unknown>, (item) => str(item))),
+    PackedVector2Array: (value = null) => (value === null ? [] : Array.from(value as Iterable<unknown>, (item) => new Vector2(item))),
+    PackedVector3Array: (value = null) => (value === null ? [] : Array.from(value as Iterable<unknown>, (item) => new Vector3(item))),
+    PackedVector4Array: (value = null) => (value === null ? [] : Array.from(value as Iterable<unknown>, (item) => new Vector4(item))),
+    PackedColorArray: (value = null) => (value === null ? [] : Array.from(value as Iterable<unknown>, (item) => new Color(item))),
+    Callable: (object = null, method = null) => {
+        if (object === null)
+            return () => null;
+        if (typeof method !== 'string')
+            fail('Callable(objeto, "metodo"): o segundo argumento é o nome do método.');
+        const target = object as Record<string, unknown>;
+        const fn = target[method];
+        if (typeof fn !== 'function')
+            fail(`Callable(): o método "${method}" não existe em ${describeTypeOf(object)}.`);
+        return (...args: unknown[]) => (fn as Fn).apply(object, args);
+    },
+    get_stack: () => [],
+    print_stack: () => null,
+    print_debug: () => null,
+    error_string: (code) => `Erro ${str(code)}`,
+    load: () => fail('load() precisa do contexto do script; o compilador o substitui por require/helix.assets.'),
+    preload: () => fail('preload() precisa do contexto do script; o compilador o substitui por require/helix.assets.'),
+};
+function iterable(value: unknown): Iterable<unknown> {
+    if (typeof value === 'string')
+        return Array.from(value);
+    if (value instanceof Dictionary)
+        return value.keys();
+    if (value !== null && typeof value === 'object' && Symbol.iterator in (value as object))
+        return value as Iterable<unknown>;
+    return fail(`Array(): não é possível converter ${describeTypeOf(value)} em lista.`);
+}
+function parseVariant(text: string): unknown {
+    const trimmed = text.trim();
+    const vector = /^(Vector2|Vector3|Vector4|Color|Quaternion)\s*\(([^)]*)\)$/.exec(trimmed);
+    if (vector) {
+        const parts = vector[2].split(',').map((part) => parseFloat(part.trim()));
+        switch (vector[1]) {
+            case 'Vector2':
+                return new Vector2(parts[0], parts[1]);
+            case 'Vector3':
+                return new Vector3(parts[0], parts[1], parts[2]);
+            case 'Vector4':
+                return new Vector4(parts[0], parts[1], parts[2], parts[3]);
+            case 'Color':
+                return new Color(parts[0], parts[1], parts[2], parts[3] ?? 1);
+            default:
+                return parts;
+        }
+    }
+    try {
+        return fromJson(JSON.parse(trimmed));
+    }
+    catch {
+        return null;
+    }
+}
+export function fromJson(value: unknown): unknown {
+    if (Array.isArray(value))
+        return value.map((item) => fromJson(item));
+    if (value !== null && typeof value === 'object') {
+        const dictionary = new Dictionary();
+        for (const [key, entry] of Object.entries(value as Record<string, unknown>))
+            dictionary.set(key, fromJson(entry));
+        return dictionary;
+    }
+    return value;
+}
+export function toJson(value: unknown): unknown {
+    if (value === undefined)
+        return null;
+    if (Array.isArray(value))
+        return value.map((item) => toJson(item));
+    if (value instanceof Dictionary) {
+        const object: Record<string, unknown> = {};
+        for (const [key, entry] of value)
+            object[str(key)] = toJson(entry);
+        return object;
+    }
+    if (isVecLike(value) || value instanceof Color)
+        return str(value);
+    if (ArrayBuffer.isView(value))
+        return Array.from(value as unknown as ArrayLike<number>);
+    if (value !== null && typeof value === 'object' && !isScriptInstance(value)) {
+        const proto = Object.getPrototypeOf(value);
+        if (proto === Object.prototype || proto === null) {
+            const object: Record<string, unknown> = {};
+            for (const [key, entry] of Object.entries(value as Record<string, unknown>))
+                object[key] = toJson(entry);
+            return object;
+        }
+    }
+    if (typeof value === 'function' || isScriptInstance(value))
+        return str(value);
+    return value;
+}
+export const JSON_CLASS = {
+    stringify: (value: unknown, indent: unknown = '', sortKeys: unknown = true, fullPrecision: unknown = false): string => {
+        void fullPrecision;
+        const plain = toJson(value);
+        const sorted = truthy(sortKeys) ? sortKeysDeep(plain) : plain;
+        return JSON.stringify(sorted, null, typeof indent === 'string' ? indent : '') ?? 'null';
+    },
+    parse_string: (text: unknown): unknown => {
+        if (typeof text !== 'string')
+            fail(`JSON.parse_string(): esperava uma String, recebeu ${describeTypeOf(text)}.`);
+        try {
+            return fromJson(JSON.parse(text));
+        }
+        catch {
+            return null;
+        }
+    },
+    from_native: (value: unknown) => toJson(value),
+    to_native: (value: unknown) => fromJson(value),
+};
+function sortKeysDeep(value: unknown): unknown {
+    if (Array.isArray(value))
+        return value.map((item) => sortKeysDeep(item));
+    if (value !== null && typeof value === 'object') {
+        const object = value as Record<string, unknown>;
+        const sorted: Record<string, unknown> = {};
+        for (const key of Object.keys(object).sort())
+            sorted[key] = sortKeysDeep(object[key]);
+        return sorted;
+    }
+    return value;
+}
+export const CONSTANTS: Record<string, unknown> = {
+    PI: Math.PI,
+    TAU: Math.PI * 2,
+    INF: Infinity,
+    NAN: NaN,
+    ...TYPE_CONSTANTS,
+    OK: 0,
+    FAILED: 1,
+    ERR_UNAVAILABLE: 2,
+    ERR_UNCONFIGURED: 3,
+    ERR_INVALID_PARAMETER: 31,
+    ERR_DOES_NOT_EXIST: 25,
+    CONNECT_DEFERRED: 1,
+    CONNECT_PERSIST: 2,
+    CONNECT_ONE_SHOT: 4,
+    CONNECT_REFERENCE_COUNTED: 8,
+    MOUSE_BUTTON_NONE: 0,
+    MOUSE_BUTTON_LEFT: 1,
+    MOUSE_BUTTON_RIGHT: 2,
+    MOUSE_BUTTON_MIDDLE: 3,
+    MOUSE_BUTTON_WHEEL_UP: 4,
+    MOUSE_BUTTON_WHEEL_DOWN: 5,
+    PROPERTY_HINT_NONE: 0,
+    PROPERTY_HINT_RANGE: 1,
+    PROPERTY_HINT_ENUM: 2,
+    SIDE_LEFT: 0,
+    SIDE_TOP: 1,
+    SIDE_RIGHT: 2,
+    SIDE_BOTTOM: 3,
+    HORIZONTAL: 0,
+    VERTICAL: 1,
+    CLOCKWISE: 0,
+    COUNTERCLOCKWISE: 1,
+};
