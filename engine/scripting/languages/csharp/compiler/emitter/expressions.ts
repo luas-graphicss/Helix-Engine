@@ -254,3 +254,266 @@ function refArgument(ctx: EmitContext, target: Expression): string {
     const value = ctx.nextTemp('v');
     return target$.wrap(`$.ref(() => ${target$.read}, (${value}) => ${target$.write(value)})`);
 }
+function call(ctx: EmitContext, e: CallExpression): string {
+    const mark = ctx.mark(e.span);
+    const { target } = e;
+    const args = () => argumentList(ctx, e.arguments, e.argumentOrder, e.spreadLast);
+    if (target.kind === 'member') {
+        const receiver = target.target;
+        const receiverType = receiver.staticType;
+        if (target.name === 'ToString' && e.arguments.length === 0 && receiverType?.kind === 'enum')
+            return `${mark}$.enumStr(${typeOperand(ctx, receiverType)}, ${expression(ctx, receiver)})`;
+        const resolution = target.resolution;
+        const optional = target.nullConditional ? ', true' : '';
+        if (resolution?.kind === 'member')
+            return `${mark}${ctx.typeReference(resolution.owner, resolution.ownerIsSibling)}.${resolution.jsName}(${args()})`;
+        if (resolution?.kind === 'direct') {
+            if (receiver.kind === 'base')
+                return `${mark}super.${resolution.jsName}(${args()})`;
+            if (receiverType?.kind === 'collection' && !isCollectionMethod(receiverType.name, resolution.jsName)) {
+                return `${mark}$.call(${expression(ctx, receiver)}, ${q(resolution.jsName)}, [${args()}]${optional})`;
+            }
+            return `${mark}${expression(ctx, receiver)}${target.nullConditional ? '?.' : '.'}${resolution.jsName}(${args()})`;
+        }
+        return `${mark}$.call(${expression(ctx, receiver)}, ${q(target.name)}, [${args()}]${optional})`;
+    }
+    if (target.kind === 'identifier') {
+        const resolution = target.resolution;
+        if (resolution?.kind === 'member') {
+            const callee = resolution.isStatic ? `${ctx.typeReference(resolution.owner, resolution.ownerIsSibling)}.${resolution.jsName}` : `this.${resolution.jsName}`;
+            return resolution.memberKind === 'method' ? `${mark}${callee}(${args()})` : `${mark}$.invoke(${callee}, [${args()}])`;
+        }
+        if (resolution?.kind === 'local') {
+            const callee = resolution.byRef ? `${resolution.jsName}.v` : resolution.jsName;
+            return target.staticType?.kind === 'delegate' ? `${mark}${callee}(${args()})` : `${mark}$.invoke(${callee}, [${args()}])`;
+        }
+        return `${mark}$.invoke(${identifier(ctx, target)}, [${args()}])`;
+    }
+    const callee = expression(ctx, target);
+    return target.staticType?.kind === 'delegate' ? `${mark}(${callee})(${args()})` : `${mark}$.invoke(${callee}, [${args()}])`;
+}
+function construction(ctx: EmitContext, e: NewExpression): string {
+    const mark = ctx.mark(e.span);
+    const construction$ = e.construction;
+    if (construction$?.kind === 'options' && e.initializer)
+        return `${mark}${optionsValue(ctx, e.initializer)}`;
+    const args = argumentList(ctx, e.arguments);
+    let created: string;
+    switch (construction$?.kind) {
+        case 'script':
+            created = `new ${ctx.typeReference(construction$.name, construction$.sibling)}().${construction$.ctorJsName}(${args})`;
+            break;
+        case 'runtime':
+            created = RUNTIME_FACTORIES.has(construction$.name) ? `$.${construction$.name}(${args})` : `new $.${construction$.name}(${args})`;
+            break;
+        default:
+            created = `$.construct(${q(construction$?.kind === 'dynamic' ? construction$.name : (e.type?.name ?? '?'))}, [${args}])`;
+    }
+    if (!e.initializer)
+        return `${mark}${created}`;
+    const items = e.initializer.kind === 'collection' ? e.initializer.elements : null;
+    if (construction$?.kind === 'runtime' && ITEM_COLLECTIONS.has(construction$.name) && items && e.arguments.length === 0 && items.every((item) => !Array.isArray(item))) {
+        return `${mark}new $.${construction$.name}([${items.map((item) => expression(ctx, item as Expression)).join(', ')}])`;
+    }
+    const target = ctx.nextTemp('o');
+    const lines = initializerLines(ctx, target, e.initializer, e.staticType);
+    return `${mark}((${target}) => {\n${indent([...lines, `return ${target};`]).join('\n')}\n})(${created})`;
+}
+function initializerLines(ctx: EmitContext, target: string, initializer: Initializer, type: StaticType | undefined): string[] {
+    if (initializer.kind === 'collection') {
+        return initializer.elements.map((element) => {
+            const items = (Array.isArray(element) ? (element as readonly Expression[]) : [element as Expression]).map((item) => expression(ctx, item)).join(', ');
+            return type?.kind === 'collection' ? `${target}.Add(${items});` : `$.call(${target}, "Add", [${items}]);`;
+        });
+    }
+    const cls = ctx.classOfType(type);
+    const lines: string[] = [];
+    for (const entry of initializer.entries) {
+        if (entry.kind === 'index') {
+            lines.push(`$.setAt(${target}, [${entry.arguments.map((argument) => expression(ctx, argument.expression)).join(', ')}], ${expression(ctx, entry.value)});`);
+            continue;
+        }
+        const member$ = cls ? findMember(cls, entry.name) : null;
+        if (isInitializer(entry.value)) {
+            const nested = ctx.nextTemp('o');
+            const read = member$ ? `${target}.${member$.jsName}` : `$.get(${target}, ${q(entry.name)})`;
+            lines.push('{', ...indent([`const ${nested} = ${read};`, ...initializerLines(ctx, nested, entry.value, member$?.type)]), '}');
+            continue;
+        }
+        const value = expression(ctx, entry.value);
+        lines.push(member$ ? `${target}.${member$.jsName} = ${value};` : `$.set(${target}, ${q(entry.name)}, ${value});`);
+    }
+    return lines;
+}
+function optionsValue(ctx: EmitContext, value: Expression | Initializer): string {
+    if (!isInitializer(value))
+        return expression(ctx, value);
+    if (value.kind === 'collection') {
+        return `[${value.elements.map((element) => (Array.isArray(element) ? `[${(element as readonly Expression[]).map((item) => expression(ctx, item)).join(', ')}]` : expression(ctx, element as Expression))).join(', ')}]`;
+    }
+    const entries = value.entries.map((entry) => {
+        if (entry.kind === 'index')
+            return `[${expression(ctx, entry.arguments[0].expression)}]: ${expression(ctx, entry.value)}`;
+        return `${lowerFirst(entry.name)}: ${optionsValue(ctx, entry.value)}`;
+    });
+    return `({ ${entries.join(', ')} })`;
+}
+function array(ctx: EmitContext, e: Expression & {
+    kind: 'array';
+}): string {
+    if (e.elements)
+        return `[${e.elements.map((item) => expression(ctx, item)).join(', ')}]`;
+    let element = e.staticType;
+    for (let level = 0; level < e.sizes.length && element?.kind === 'array'; level++)
+        element = element.element;
+    return `$.newArray([${e.sizes.map((size) => expression(ctx, size)).join(', ')}], ${defaultValue(ctx, element)})`;
+}
+function lambda(ctx: EmitContext, e: LambdaExpression): string {
+    const head = `${ctx.mark(e.span)}${e.isAsync || e.needsAsync ? 'async ' : ''}(${parameterList(ctx, e.parameters)}) => `;
+    if (e.body.kind === 'block')
+        return `${head}{\n${indent(blockLines(ctx, e.body)).join('\n')}\n}`;
+    const hoists = unique(expressionHoists(e.body).map((hoist) => hoist.jsName));
+    const body = expression(ctx, e.body);
+    if (hoists.length === 0)
+        return `${head}(${body})`;
+    return `${head}{\n${indent([`let ${hoists.join(', ')};`, `return ${body};`]).join('\n')}\n}`;
+}
+function operand(ctx: EmitContext, e: Expression): Operand {
+    return { text: expression(ctx, e), type: e.staticType };
+}
+function numericText(value: Operand): string {
+    return value.type?.kind === 'char' ? `$.charCode(${value.text})` : value.text;
+}
+function stringPart(ctx: EmitContext, value: Operand): string {
+    return value.type?.kind === 'enum' ? `$.enumStr(${typeOperand(ctx, value.type)}, ${value.text})` : value.text;
+}
+function arithmetic(ctx: EmitContext, operator: string, runtime: string, left: Operand, right: Operand): string {
+    if (isNumeric(left.type) && isNumeric(right.type))
+        return `(${numericText(left)} ${operator} ${numericText(right)})`;
+    return `$.${runtime}(${left.text}, ${right.text})`;
+}
+export function binaryText(ctx: EmitContext, operator: BinaryOperator, left: Operand, right: Operand): string {
+    switch (operator) {
+        case '+':
+            if (left.type?.kind === 'string' || right.type?.kind === 'string') {
+                const other = left.type?.kind === 'string' ? right : left;
+                if (concatenatesNatively(other.type))
+                    return `(${left.text} + ${right.text})`;
+                return `$.concat(${stringPart(ctx, left)}, ${stringPart(ctx, right)})`;
+            }
+            if (left.type?.kind === 'delegate' || right.type?.kind === 'delegate')
+                return `$.combine(${left.text}, ${right.text})`;
+            return arithmetic(ctx, '+', 'add', left, right);
+        case '-':
+            if (left.type?.kind === 'delegate' || right.type?.kind === 'delegate')
+                return `$.remove(${left.text}, ${right.text})`;
+            return arithmetic(ctx, '-', 'sub', left, right);
+        case '*':
+            return arithmetic(ctx, '*', 'mul', left, right);
+        case '/':
+            if (isIntegral(left.type) && isIntegral(right.type))
+                return `$.idiv(${numericText(left)}, ${numericText(right)})`;
+            return arithmetic(ctx, '/', 'div', left, right);
+        case '%':
+            if (isIntegral(left.type) && isIntegral(right.type))
+                return `$.irem(${numericText(left)}, ${numericText(right)})`;
+            return arithmetic(ctx, '%', 'rem', left, right);
+        case '==':
+        case '!=': {
+            const negated = operator === '!=';
+            if (left.type?.kind === 'null' || right.type?.kind === 'null')
+                return `(${left.text} ${negated ? '!=' : '=='} ${right.text})`;
+            if (isPrimitiveComparable(left.type) && isPrimitiveComparable(right.type))
+                return `(${left.text} ${negated ? '!==' : '==='} ${right.text})`;
+            return `$.${negated ? 'neq' : 'eq'}(${left.text}, ${right.text})`;
+        }
+        case '<':
+        case '>':
+        case '<=':
+        case '>=':
+            if (isNumeric(left.type) && isNumeric(right.type))
+                return `(${numericText(left)} ${operator} ${numericText(right)})`;
+            return `$.${COMPARISON[operator]}(${left.text}, ${right.text})`;
+        case '&':
+        case '|':
+        case '^':
+            if (left.type?.kind === 'bool' && right.type?.kind === 'bool')
+                return `!!(${left.text} ${operator} ${right.text})`;
+            return `(${numericText(left)} ${operator} ${numericText(right)})`;
+        case '<<':
+        case '>>':
+            return `(${numericText(left)} ${operator} ${numericText(right)})`;
+        case '&&':
+        case '||':
+            return `(${left.text} ${operator} ${right.text})`;
+        case '??':
+            return `(${left.text} ?? ${right.text})`;
+    }
+}
+function binary(ctx: EmitContext, e: Expression & {
+    kind: 'binary';
+}): string {
+    if (e.operator === '&&' || e.operator === '||')
+        return `(${truthy(ctx, e.left)} ${e.operator} ${truthy(ctx, e.right)})`;
+    return binaryText(ctx, e.operator, operand(ctx, e.left), operand(ctx, e.right));
+}
+function unary(ctx: EmitContext, e: Expression & {
+    kind: 'unary';
+}, discard: boolean): string {
+    switch (e.operator) {
+        case '!':
+            return `!${truthy(ctx, e.operand)}`;
+        case '-': {
+            const value = operand(ctx, e.operand);
+            return isNumeric(value.type) ? `(-${numericText(value)})` : `$.neg(${value.text})`;
+        }
+        case '+': {
+            const value = operand(ctx, e.operand);
+            return isNumeric(value.type) ? `(+${numericText(value)})` : value.text;
+        }
+        case '~':
+            return `(~${numericText(operand(ctx, e.operand))})`;
+        case '++':
+        case '--':
+            return increment(ctx, e, discard);
+    }
+}
+function increment(ctx: EmitContext, e: Expression & {
+    kind: 'unary';
+}, discard: boolean): string {
+    const target = lvalue(ctx, e.operand);
+    const type = e.operand.staticType;
+    const prefix = e.prefix || discard;
+    if (target.simple && isNumeric(type) && type?.kind !== 'char')
+        return target.wrap(prefix ? `${e.operator}${target.read}` : `${target.read}${e.operator}`);
+    const step: BinaryOperator = e.operator === '++' ? '+' : '-';
+    const one: Operand = { text: '1', type: STATIC_TYPES.int };
+    const updated = (current: string) => {
+        const sum = binaryText(ctx, step, { text: current, type }, one);
+        return type?.kind === 'char' ? `$.toChar(${sum})` : sum;
+    };
+    if (prefix)
+        return target.wrap(target.write(updated(target.read)));
+    const previous = ctx.nextTemp('o');
+    return target.wrap(`((${previous}) => (${target.write(updated(previous))}, ${previous}))(${target.read})`);
+}
+function plainTarget(read: string): LValue {
+    return { simple: true, read, write: (value) => `${read} = ${value}`, wrap: (body) => body };
+}
+function withTemps(ctx: EmitContext, parts: readonly Expression[], build: (texts: string[]) => LValue): LValue {
+    const texts = parts.map((part) => expression(ctx, part));
+    const params: string[] = [];
+    const args: string[] = [];
+    const names = parts.map((part, index) => {
+        if (isSimpleReference(part))
+            return texts[index];
+        const temp = ctx.nextTemp('t');
+        params.push(temp);
+        args.push(texts[index]);
+        return temp;
+    });
+    const target = build(names);
+    if (params.length === 0)
+        return target;
+    return { ...target, wrap: (body) => `((${params.join(', ')}) => ${body})(${args.join(', ')})` };
+}
