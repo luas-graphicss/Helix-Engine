@@ -532,3 +532,120 @@ export async function compileProject(session: EditorSession): Promise<void> {
         session.log.error(LOG_SOURCE, `O compilador não pôde ser carregado: ${describeError(cause)}`);
     }
 }
+export function runCommand(session: EditorSession, text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed)
+        return;
+    const { code } = session;
+    const language = languageForNewScript(session);
+    code.recordCommand(trimmed, language);
+    if (trimmed === 'clear' || trimmed === 'cls') {
+        session.log.clear();
+        return;
+    }
+    if (trimmed === 'help' || trimmed === '?') {
+        session.log.info(COMMAND_SOURCE, 'Comandos da engine: clear (limpa o console), scripts (lista os scripts), lang (linguagem base). Código na linguagem base roda quando o interpretador chegar.');
+        return;
+    }
+    if (trimmed === 'scripts') {
+        const scripts = session.library.byKind('script');
+        session.log.info(COMMAND_SOURCE, scripts.length === 0 ? 'Nenhum script na biblioteca.' : scripts.map((asset) => `${asset.name} (${asset.details.kind === 'script' ? scriptLanguage(asset.details.language).tag : '?'})`).join(' · '));
+        return;
+    }
+    if (trimmed === 'lang') {
+        session.log.info(COMMAND_SOURCE, language ? `Linguagem base: ${scriptLanguage(language).label}${mixLanguagesEnabled() ? ' (mesclagem de linguagens ligada)' : ''}.` : 'Sem linguagem base definida.');
+        return;
+    }
+    session.log.info(COMMAND_SOURCE, `> ${trimmed}`);
+    session.log.warn(COMMAND_SOURCE, language ? `A barra de comando ainda não executa ${scriptLanguage(language).label} avulso; o comando ficou no histórico. Para rodar código agora, use Executar num script.` : 'Defina a linguagem base do jogo para a barra de comando saber em que linguagem interpretar.');
+}
+export function codeTabUrl(projectId: string, assetId: string | null = null): string {
+    const base = `/editor/${encodeURIComponent(projectId)}/code`;
+    return assetId ? `${base}?script=${encodeURIComponent(assetId)}` : base;
+}
+export function openCodeInBrowserTab(session: EditorSession, assetId: string | null = null): void {
+    if (typeof window === 'undefined')
+        return;
+    const name = `helix-code-${session.project.id}`;
+    const existing = window.open('', name);
+    if (!existing) {
+        session.log.warn(LOG_SOURCE, 'O navegador bloqueou a nova aba; permita pop-ups para este site ou use a janela flutuante.');
+        return;
+    }
+    let blank = true;
+    try {
+        blank = existing.location.href === 'about:blank';
+    }
+    catch {
+        blank = false;
+    }
+    if (blank)
+        existing.location.href = codeTabUrl(session.project.id, assetId);
+    else if (assetId)
+        scriptSync.announceOpen(session, assetId);
+    existing.focus();
+}
+type ScriptSyncMessage = {
+    type: 'script-saved';
+    assetId: string;
+} | {
+    type: 'open-script';
+    assetId: string;
+};
+class ScriptSyncChannel {
+    private channel: BroadcastChannel | null = null;
+    private channelProject: string | null = null;
+    private readonly savedHandlers = new Set<(assetId: string) => void>();
+    private readonly openHandlers = new Set<(assetId: string) => void>();
+    private ensure(projectId: string): BroadcastChannel | null {
+        if (typeof BroadcastChannel === 'undefined')
+            return null;
+        if (this.channel && this.channelProject === projectId)
+            return this.channel;
+        this.channel?.close();
+        this.channel = new BroadcastChannel(`helix-scripts-${projectId}`);
+        this.channelProject = projectId;
+        this.channel.onmessage = (event: MessageEvent<Partial<ScriptSyncMessage>>) => {
+            const { data } = event;
+            if (!data || typeof data.assetId !== 'string')
+                return;
+            const handlers = data.type === 'script-saved' ? this.savedHandlers : data.type === 'open-script' ? this.openHandlers : null;
+            if (handlers)
+                for (const handler of handlers)
+                    handler(data.assetId);
+        };
+        return this.channel;
+    }
+    announce(session: EditorSession, assetId: string): void {
+        this.ensure(session.project.id)?.postMessage({ type: 'script-saved', assetId } satisfies ScriptSyncMessage);
+    }
+    announceOpen(session: EditorSession, assetId: string): void {
+        this.ensure(session.project.id)?.postMessage({ type: 'open-script', assetId } satisfies ScriptSyncMessage);
+    }
+    listen(session: EditorSession, handler: (assetId: string) => void): () => void {
+        this.ensure(session.project.id);
+        this.savedHandlers.add(handler);
+        return () => this.savedHandlers.delete(handler);
+    }
+    listenOpen(session: EditorSession, handler: (assetId: string) => void): () => void {
+        this.ensure(session.project.id);
+        this.openHandlers.add(handler);
+        return () => this.openHandlers.delete(handler);
+    }
+}
+export const scriptSync = new ScriptSyncChannel();
+export async function refreshScriptFromStorage(session: EditorSession, assetId: string): Promise<void> {
+    const { library, code } = session;
+    const refreshed = await library.reload(assetId);
+    if (!refreshed)
+        return;
+    forgetScriptDocument(assetId);
+    if (code.tab(assetId)) {
+        try {
+            code.syncSaved(assetId, await loadScriptAsset(session, refreshed));
+        }
+        catch (cause) {
+            session.log.warn(LOG_SOURCE, `${refreshed.name} mudou noutra aba, mas não pôde ser relido: ${describeError(cause)}`);
+        }
+    }
+}
