@@ -1129,5 +1129,26 @@ namespace {
         if ($game === null) {
             throw new \Helix\EngineError('helix_require() só está disponível enquanto o jogo roda.');
         }
+        $caller = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 1)[0]['file'] ?? null;
+        return $game->requireScript($name, is_string($caller) ? $caller : null);
+    }
+
+    $__helixHost = vrzno_env('${PHP_HOST_NAME}');
+    $__helixGame = new \Helix\Game($__helixHost);
+    $__helixHost->register('setRoot', $__helixGame->setRoot(...));
+    $__helixHost->register('instantiate', $__helixGame->instantiate(...));
+    $__helixHost->register('loadModule', $__helixGame->loadModule(...));
+    $__helixHost->register('unloadModule', $__helixGame->unloadModule(...));
+    $__helixHost->register('invoke', $__helixGame->invokeCallback(...));
+    $__helixHost->register('resume', $__helixGame->resume(...));
+    $__helixHost->register('drop', $__helixGame->drop(...));
+    $__helixHost->register('where', $__helixGame->where(...));
+    $__helixHost->register('dispose', $__helixGame->dispose(...));
+    $__helixHost->register('recover', $__helixGame->recover(...));
+    $__helixHost->register('lint', \Helix\Linter::lint(...));
+    $__helixHost->register('version', static fn (): string => PHP_VERSION);
+    $__helixGame->attach();
+    unset($__helixHost, $__helixGame);
+}
 `;
 }
