@@ -7,7 +7,7 @@ import { PropertyRow } from '@/engine/ui/property-row';
 import { FieldInput } from '@/engine/ui/field-input';
 import { IconButton } from '@/engine/ui/icon-button';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { flattenTerrain, regenerateTerrain } from '@/engine/editor/operations/terrain-operations';
 import { TERRAIN_PRESETS } from '@/engine/terrain/generation/terrain-generator';
 import type { TerrainTarget } from '../terrain-panel';
@@ -17,7 +17,7 @@ const MAX_SEED = 1000000;
 export function GenerationSection({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const editor = session.terrain;
     const params = editor.generation;
     const preset = TERRAIN_PRESETS.find((candidate) => candidate.value === params.preset);
@@ -50,6 +50,6 @@ export function GenerationSection({ target }: {
           Aplainar
         </ActionButton>
       </ActionRow>
-      {preset && <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">{preset.description} Gerar substitui o relevo atual e repinta as camadas automáticas.</p>}
+      {preset && <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">{preset.description} Gerar substitui o relevo atual e repinta as camadas automáticas.</p>}
     </CollapsibleSection>);
 }
