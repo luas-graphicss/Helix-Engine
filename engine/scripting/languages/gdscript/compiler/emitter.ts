@@ -259,4 +259,284 @@ class Emitter {
                 return null;
         }
     }
+    private accessorLines(member: VariableMember): string[] {
+        const accessors = member.accessors!;
+        const field = `${member.name}$`;
+        const lines: string[] = [];
+        const previousFn = this.fn;
+        this.fn = { name: null, isStatic: false, accessorOf: member.name };
+        try {
+            const getter = accessors.getter;
+            if (!getter) {
+                lines.push(`get ${member.name}() {`, `${INDENT}return this.${field};`, '}');
+            }
+            else if (getter.kind === 'named') {
+                lines.push(`get ${member.name}() {`, `${INDENT}return this.${getter.name}();`, '}');
+            }
+            else {
+                lines.push(`${this.mark(getter.span)}get ${member.name}() {`, ...indent(this.blockLines(getter.body)), '}');
+            }
+            const setter = accessors.setter;
+            if (!setter) {
+                lines.push(`set ${member.name}($value) {`, `${INDENT}this.${field} = $value;`, '}');
+            }
+            else if (setter.kind === 'named') {
+                lines.push(`set ${member.name}($value) {`, `${INDENT}this.${setter.name}($value);`, '}');
+            }
+            else {
+                const param = jsIdentifier(setter.param);
+                lines.push(`${this.mark(setter.span)}set ${member.name}(${param}) {`, ...indent(this.blockLines(setter.body)), '}');
+            }
+            return lines;
+        }
+        finally {
+            this.fn = previousFn;
+        }
+    }
+    private functionLines(member: FunctionMember): string[] {
+        const previousFn = this.fn;
+        this.fn = { name: member.name, isStatic: member.isStatic, accessorOf: member.accessorOf ?? null };
+        try {
+            const head = `${this.mark(member.span)}${member.isStatic ? 'static ' : ''}${member.isAsync ? 'async ' : ''}${member.name}(${this.parameterList(member.params)}) {`;
+            const body: string[] = this.parameterChecks(member.params, `${member.name}()`);
+            if (member.name === '_init' && !member.isStatic && !callsSuper(member.body))
+                body.push('super._init();');
+            body.push(...this.blockLines(member.body));
+            return [head, ...indent(body), '}'];
+        }
+        finally {
+            this.fn = previousFn;
+        }
+    }
+    private parameterList(params: readonly Parameter[]): string {
+        return params.map((param) => (param.defaultValue ? `${param.jsName ?? jsIdentifier(param.name)} = ${this.expression(param.defaultValue)}` : (param.jsName ?? jsIdentifier(param.name)))).join(', ');
+    }
+    private parameterChecks(params: readonly Parameter[], where: string): string[] {
+        const lines: string[] = [];
+        for (const param of params) {
+            if (!param.type)
+                continue;
+            const runtime = this.runtimeType(param.type);
+            if (!runtime)
+                continue;
+            const name = param.jsName ?? jsIdentifier(param.name);
+            lines.push(`${name} = $.check(${name}, ${runtime}, ${q(`o parâmetro "${param.name}" de ${where}`)});`);
+        }
+        return lines;
+    }
+    private staticInitLines(inits: readonly StaticInit[]): string[] {
+        const lines: string[] = [];
+        const emittedEnums = new Set<EnumMember>();
+        const previousCls = this.cls;
+        const previousFn = this.fn;
+        this.fn = STATIC_SCOPE;
+        try {
+            for (const { owner, member } of inits) {
+                this.cls = owner;
+                const decl = member.decl;
+                if (!decl)
+                    continue;
+                const target = `${owner.jsName}.${member.name}`;
+                if (decl.kind === 'constant') {
+                    lines.push(`${this.mark(decl.span)}${target} = ${this.typedValue(decl.value, decl.type, `a constante "${member.name}"`)};`);
+                }
+                else if (decl.kind === 'enum') {
+                    if (decl.name) {
+                        const entries = Array.from(member.enumValues ?? [], ([name, value]) => `${q(name)}: ${value}`);
+                        lines.push(`${this.mark(decl.span)}${target} = $.enum({ ${entries.join(', ')} });`);
+                    }
+                    else if (!emittedEnums.has(decl)) {
+                        emittedEnums.add(decl);
+                        for (const value of decl.values) {
+                            const valueMember = owner.members.get(value.name);
+                            const number = typeof valueMember?.constValue === 'number' ? valueMember.constValue : 0;
+                            lines.push(`${this.mark(value.span)}${owner.jsName}.${value.name} = ${number};`);
+                        }
+                    }
+                }
+                else if (decl.kind === 'variable') {
+                    lines.push(`${this.mark(decl.span)}${target} = ${this.initialValue(decl.value, decl.staticType ?? 'Variant', decl.type, `a variável "${member.name}"`)};`);
+                }
+            }
+            return lines;
+        }
+        finally {
+            this.cls = previousCls;
+            this.fn = previousFn;
+        }
+    }
+    private blockLines(block: Block): string[] {
+        const lines: string[] = [];
+        for (const statement of block.statements)
+            lines.push(...this.statementLines(statement));
+        return lines;
+    }
+    private statementLines(statement: Statement): string[] {
+        const at = this.mark(statement.span);
+        switch (statement.kind) {
+            case 'expression': {
+                const e = statement.expression;
+                const text = this.expression(e);
+                if (e.kind === 'call' && this.mayReturnPromise(e))
+                    return [`${at}$.detach(${text});`];
+                return [`${at}${text};`];
+            }
+            case 'assignment':
+                return this.assignmentLines(statement, at);
+            case 'variable': {
+                const name = statement.jsName ?? jsIdentifier(statement.name);
+                const value = this.initialValue(statement.value, statement.staticType ?? 'Variant', statement.type, `a variável "${statement.name}"`);
+                return [`${at}let ${name} = ${value};`];
+            }
+            case 'constant': {
+                const name = statement.jsName ?? jsIdentifier(statement.name);
+                return [`${at}const ${name} = ${this.typedValue(statement.value, statement.type, `a constante "${statement.name}"`)};`];
+            }
+            case 'if': {
+                const lines = [`${at}if (${this.condition(statement.condition)}) {`, ...indent(this.blockLines(statement.then))];
+                let otherwise = statement.otherwise;
+                while (otherwise) {
+                    const only = otherwise.statements.length === 1 ? otherwise.statements[0] : null;
+                    if (only && only.kind === 'if') {
+                        lines.push(`} else ${this.mark(only.span)}if (${this.condition(only.condition)}) {`, ...indent(this.blockLines(only.then)));
+                        otherwise = only.otherwise;
+                        continue;
+                    }
+                    lines.push('} else {', ...indent(this.blockLines(otherwise)));
+                    break;
+                }
+                lines.push('}');
+                return lines;
+            }
+            case 'while':
+                return [`${at}while (${this.condition(statement.condition)}) {`, ...indent(this.blockLines(statement.body)), '}'];
+            case 'for': {
+                const name = statement.jsName ?? jsIdentifier(statement.variable);
+                const iterableType = statement.iterable.type ?? 'Variant';
+                const iterable = this.expression(statement.iterable);
+                const head = isNumeric(iterableType)
+                    ? `for (let ${name} = 0, $end = Math.ceil(${iterable}); ${name} < $end; ${name}++) {`
+                    : `for (let ${name} of $.iter(${iterable}, ${q(this.describe(statement.iterable))})) {`;
+                return [`${at}${head}`, ...indent(this.blockLines(statement.body)), '}'];
+            }
+            case 'match':
+                return this.matchLines(statement, at);
+            case 'return':
+                return [statement.value ? `${at}return ${this.copied(statement.value)};` : `${at}return;`];
+            case 'break':
+                return [`${at}break;`];
+            case 'continue':
+                return [`${at}continue;`];
+            case 'pass':
+                return [];
+            case 'breakpoint':
+                return [`${at}debugger;`];
+            case 'assert':
+                return [`${at}$.assert(${this.expression(statement.condition)}${statement.message ? `, ${this.expression(statement.message)}` : ''});`];
+        }
+    }
+    private mayReturnPromise(e: CallExpression): boolean {
+        const callee = e.callee;
+        if (callee.kind === 'identifier') {
+            const resolution = callee.resolved;
+            if (resolution?.kind === 'member' && resolution.memberKind === 'func')
+                return this.isAsyncMember(this.cls, callee.name);
+            if (resolution?.kind === 'local' || resolution?.kind === 'helix')
+                return true;
+            return false;
+        }
+        if (callee.kind === 'member') {
+            const resolution = callee.memberResolution;
+            if (resolution?.kind === 'member' && resolution.memberKind === 'func') {
+                const owner = this.classByJsName(resolution.owner);
+                return owner ? this.isAsyncMember(owner, callee.name) : true;
+            }
+            if (resolution)
+                return false;
+            const objectType = callee.object.type ?? 'Variant';
+            return objectType === 'Variant' || objectType === 'Object' || objectType === 'Node' || objectType.startsWith('@class:') || isGodotNodeClass(objectType);
+        }
+        return callee.kind !== 'super' && (e.type ?? 'Variant') === 'Variant';
+    }
+    private isAsyncMember(cls: ClassInfo, name: string): boolean {
+        for (let current: ClassInfo | null = cls; current; current = current.parent) {
+            const member = current.members.get(name);
+            if (member)
+                return member.func?.isAsync ?? false;
+        }
+        return false;
+    }
+    private classByJsName(jsName: string): ClassInfo | null {
+        for (const cls of this.input.program.classes)
+            if (cls.jsName === jsName)
+                return cls;
+        return null;
+    }
+    private condition(e: Expression): string {
+        return this.truthy(e);
+    }
+    private truthy(e: Expression): string {
+        const text = this.expression(e);
+        return e.type === 'bool' ? text : `$.truthy(${text})`;
+    }
+    private assignmentLines(statement: AssignmentStatement, at: string): string[] {
+        const target = statement.target;
+        const operator = statement.operator;
+        const compound = operator === '=' ? null : (operator.slice(0, -1) as BinaryExpression['operator']);
+        if (target.kind === 'identifier') {
+            const place = this.identifierPlace(target);
+            const value = compound ? this.combined(compound, place, target.type ?? 'Variant', statement.value) : this.copied(statement.value);
+            return [`${at}${place} = ${value};`];
+        }
+        if (target.kind === 'member') {
+            const value = (current: string): string => (compound ? this.combined(compound, current, target.type ?? 'Variant', statement.value) : this.copied(statement.value));
+            const object = target.object;
+            const objectType = object.type ?? 'Variant';
+            const where = q(this.describe(object));
+            const chain = VALUE_TYPES.has(objectType) || objectType === 'Variant' ? this.chainOf(object) : null;
+            if (chain) {
+                const current = `$.get($.get(${chain.root}, ${q(chain.inner)}, ${where}), ${q(target.name)}, ${where})`;
+                return [`${at}$.setChain(${chain.root}, ${q(chain.inner)}, ${q(target.name)}, ${value(current)}, ${where});`];
+            }
+            const direct = this.memberPlace(target);
+            if (direct)
+                return [`${at}${direct} = ${value(direct)};`];
+            const objectText = this.expression(object);
+            if (compound) {
+                const temp = this.nextTemp('o');
+                return [`${at}{ const ${temp} = ${objectText}; $.set(${temp}, ${q(target.name)}, ${value(`$.get(${temp}, ${q(target.name)}, ${where})`)}, ${where}); }`];
+            }
+            return [`${at}$.set(${objectText}, ${q(target.name)}, ${this.copied(statement.value)}, ${where});`];
+        }
+        if (target.kind === 'index') {
+            const where = q(this.describe(target.object));
+            if (!compound)
+                return [`${at}$.setIndex(${this.expression(target.object)}, ${this.expression(target.index)}, ${this.copied(statement.value)}, ${where});`];
+            const object = this.nextTemp('o');
+            const key = this.nextTemp('k');
+            const current = `$.index(${object}, ${key}, ${where})`;
+            return [`${at}{ const ${object} = ${this.expression(target.object)}, ${key} = ${this.expression(target.index)}; $.setIndex(${object}, ${key}, ${this.combined(compound, current, target.type ?? 'Variant', statement.value)}, ${where}); }`];
+        }
+        return [`${at}${this.expression(target)} = ${this.expression(statement.value)};`];
+    }
+    private combined(operator: BinaryExpression['operator'], current: string, currentType: StaticType, value: Expression): string {
+        return this.binaryText(operator, current, currentType, this.expression(value), value.type ?? 'Variant');
+    }
+    private identifierPlace(e: IdentifierExpression): string {
+        const resolution = e.resolved;
+        if (!resolution)
+            return jsIdentifier(e.name);
+        switch (resolution.kind) {
+            case 'local':
+                return resolution.jsName;
+            case 'member':
+                return this.memberPlaceOf(resolution, 'this');
+            case 'base':
+                return `this.${resolution.name}`;
+            case 'helix':
+                return 'helix';
+            default:
+                return jsIdentifier(e.name);
+        }
+    }
 }
