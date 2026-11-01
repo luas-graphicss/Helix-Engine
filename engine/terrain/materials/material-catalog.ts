@@ -34,3 +34,22 @@ export function catalogMapUrls(entry: CatalogMaterial): {
         ormh: `${entry.folder}/ormh.webp`,
     };
 }
+export interface HiresMapSource {
+    readonly url: string;
+    readonly size: number;
+}
+export type HiresMapKind = 'albedo' | 'normal';
+export type HiresMapSources = Readonly<Record<HiresMapKind, HiresMapSource | null>>;
+export const NO_HIRES_SOURCES: HiresMapSources = { albedo: null, normal: null };
+export const CATALOG_HIRES_SIZE = 8192;
+const POLY_HAVEN_FILES = 'https://dl.polyhaven.org/file/ph-assets/Textures/jpg/8k';
+export function catalogHiresSources(entry: CatalogMaterial): HiresMapSources {
+    const match = /^https:\/\/polyhaven\.com\/a\/([a-z0-9_]+)$/i.exec(entry.credit.url);
+    if (!match)
+        return NO_HIRES_SOURCES;
+    const slug = match[1];
+    return {
+        albedo: { url: `${POLY_HAVEN_FILES}/${slug}/${slug}_diff_8k.jpg`, size: CATALOG_HIRES_SIZE },
+        normal: { url: `${POLY_HAVEN_FILES}/${slug}/${slug}_nor_gl_8k.jpg`, size: CATALOG_HIRES_SIZE },
+    };
+}
