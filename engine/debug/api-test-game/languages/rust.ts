@@ -561,5 +561,285 @@ fn fisica() -> Value {
     assinar(ph.invoke("onOutOfBounds", (Value::function(|args| aviso!("{} caiu do mundo", nome_de(&arg(args, 0)))),)));
     let gatilho = s.invoke("spawn", ("group", obj! { "name" => "Gatilho", "position" => v3(0.0, 1.0, 3.0), "trigger" => obj! { "shape" => "box", "size" => v3(3.0, 2.0, 3.0) } }));
     checar("trigger spawn", !gatilho.is_none() && s.invoke("isAttached", (&gatilho,)).boolean());
+    checar("physics.stats", ph.path("stats.bodies").is_number());
+    Value::undefined()
+}
+
+fn personagem() -> Value {
+    let ch = api("character");
+    let pl = api("player");
+    let novo = ch.invoke("spawn", (obj! { "name" => "Heroi", "position" => v3(0.0, 1.2, 8.0), "character" => obj! { "walkSpeed" => 4, "runSpeed" => 7, "jumpHeight" => 1.4 } },));
+    checar("character.spawn", !novo.get("character").is_none() && ch.invoke("has", (&novo,)).boolean());
+    let c = ch.invoke("of", (&novo,));
+    checar("character.of", c.get("isGrounded").is_bool());
+    checar("settingsOf", numero(&ch.invoke("settingsOf", (&novo,)), "walkSpeed") == 4.0);
+    pl.invoke("possess", (&novo,));
+    checar("player.possess", pl.get("possessed").equals(&novo) && verdadeiro(&pl.get("isPossessing")));
+    assinar(ch.invoke("onJumped", (Value::function(|args| info!("{} pulou", nome_de(&arg(args, 0).get("entity")))),)));
+    assinar(pl.invoke("onPossessed", (Value::function(|args| info!("Possuindo {}", nome_de(&arg(args, 0)))),)));
+    checar("character.all", ch.invoke("all", ()).len() >= 1);
+    checar("player.spawnPoint", !pl.get("spawnPoint").is_none());
+    checar("character.velocity", !c.get("velocity").is_none() && !c.get("position").is_none());
+    guardar(|estado| &estado.heroi, novo);
+    Value::undefined()
+}
+
+fn terreno() -> Value {
+    let te = api("terrain");
+    checar("terrain.presets", te.invoke("presets", ()).len() > 0);
+    let colinas = te.invoke("spawn", (obj! { "name" => "Colinas", "size" => 48, "resolution" => 65, "preset" => "hills", "seed" => 7, "position" => v3(0.0, -6.0, -70.0) },));
+    checar("terrain.spawn", !colinas.get("terrain").is_none() && te.invoke("all", ()).len() >= 1);
+    checar("terrain.of", numero(&te.invoke("of", (&colinas,)), "resolution") == 65.0);
+    checar("heightAt", te.invoke("heightAt", (v3(0.0, 0.0, -70.0), &colinas)).is_number());
+    checar("contains", te.invoke("contains", (v3(0.0, 0.0, -70.0), &colinas)).boolean() && !te.invoke("contains", (v3(500.0, 0.0, 0.0), &colinas)).boolean());
+    te.invoke("sculpt", (&colinas, "raise", v3(5.0, 0.0, -70.0), obj! { "radius" => 6, "strength" => 1 }, 1));
+    te.invoke("markDirty", (&colinas,));
+    let grama = te.get("grass");
+    grama.invoke("set", (&colinas, obj! { "enabled" => true, "density" => 0.5 }));
+    checar("grass.set", verdadeiro(&grama.invoke("settingsOf", (&colinas,)).get("enabled")));
+    let agua = te.get("water");
+    agua.invoke("set", (&colinas, obj! { "enabled" => true, "level" => -2 }));
+    checar("water.set", verdadeiro(&agua.invoke("settingsOf", (&colinas,)).get("enabled")));
+    checar("terrain.raycast", !te.invoke("raycast", (v3(0.0, 50.0, -70.0), v3(0.0, -1.0, 0.0), &colinas)).is_none());
+    Value::undefined()
+}
+
+                                                                                          
+
+fn soltar_caixa() {
+    let random = api("math.random");
+    let caixa = api("scene").invoke("spawnPrimitive", ("box", obj! {
+        "name" => "CaixaSolta",
+        "position" => v3(random.invoke("range", (-3, 3)).number(), 6.0, random.invoke("range", (0, 4)).number()),
+        "rigidBody" => obj! { "type" => "dynamic", "collider" => "box", "mass" => 1 },
+        "tags" => Value::list(["caixa"]),
+    }));
+    api("material").invoke("setColor", (&caixa, random.invoke("color", ())));
+    contar(|estado| &estado.pontos);
+    api("gui").invoke("bind", ("pontos", lido(|estado| &estado.pontos)));
+    api("events").invoke("emit", ("debug.caixa", obj! { "nome" => caixa.get("name") }));
+}
+
+fn interface_grafica() -> Value {
+    let g = api("gui");
+    g.invoke("css", ("DebugEstilo",));
+    let hud = g.invoke("html", ("DebugHud", obj! { "id" => "debug-hud" }));
+    checar("gui.html", !hud.is_none() && !g.invoke("element", ("#debug-hud",)).is_none());
+    let icone = g.invoke("svg", ("DebugIcone", obj! { "id" => "debug-icone" }));
+    checar("gui.svg", !icone.is_none());
+    let slot = g.invoke("element", ("[data-slot=icone]",));
+    if !slot.is_none() && !icone.is_none() {
+        slot.invoke("appendChild", (&icone,));
+    }
+    checar("gui.bind", g.invoke("bind", ("linguagem", LINGUAGEM)).number() >= 1.0);
+    g.invoke("bind", ("titulo", "Helix · Debug"));
+    assinar(g.invoke("onAction", ("caixa", Value::function(|_| soltar_caixa()))));
+    assinar(g.invoke("onAction", ("reiniciar", Value::function(|_| { api("play").invoke("restart", ()); }))));
+    checar("gui.elements", g.invoke("elements", ("[data-bind]",)).len() >= 5);
+    checar("gui.size", numero(&g.get("size"), "width") > 0.0);
+    let escala = |scale: f64, offset: f64| obj! { "scale" => scale, "offset" => offset };
+    let declarativa = g.invoke("create", ("DebugTela", obj! { "referenceSize" => obj! { "x" => 1280, "y" => 720 } }));
+    let painel = g.invoke("add", (&declarativa, "frame", obj! {
+        "name" => "Painel",
+        "rect" => obj! {
+            "position" => obj! { "x" => escala(1.0, -236.0), "y" => escala(0.0, 16.0) },
+            "size" => obj! { "x" => escala(0.0, 220.0), "y" => escala(0.0, 48.0) },
+        },
+    }));
+    g.invoke("add", (&declarativa, "text", obj! { "name" => "Rotulo", "text" => "Tela declarativa OK" }, painel.path("node.id")));
+    checar("gui.add/find", texto_igual(&g.invoke("find", (&declarativa, "Rotulo")).get("kind"), "text"));
+    g.invoke("setText", (&declarativa, "Rotulo", format!("Tela declarativa OK · {LINGUAGEM}")));
+                                                                                       
+    g.invoke("show", (&declarativa, "debug-tela")).invoke("then", (Value::function(|args| {
+        let g = api("gui");
+        let tela = arg(args, 0);
+        checar("gui.show/isShown", !tela.is_none() && g.invoke("isShown", (&tela,)).boolean());
+        checar("gui.kinds", contem(&g.invoke("kinds", ()), "button"));
+        guardar(|estado| &estado.tela, tela);
+    }),))
+}
+
+fn audio() -> Value {
+    let a = api("audio");
+    let s = api("scene");
+    checar("audio.supported", a.get("supported").is_bool());
+    let mixer = a.get("mixer");
+    mixer.invoke("setVolumeDb", ("sfx", -3));
+    checar("mixer.setVolumeDb", numero(&mixer.invoke("bus", ("sfx",)), "volumeDb") == -3.0);
+    checar("audio.clips", a.invoke("clips", ()).is_array());
+    let fonte = s.invoke("spawn", ("sound", obj! { "name" => "FonteSonora", "position" => v3(3.0, 1.0, 3.0), "audioSource" => obj! { "trigger" => "manual", "spatial" => true } }));
+    checar("spawn sound", !fonte.get("audioSource").is_none());
+    let fontes = a.get("sources");
+    fontes.invoke("set", (&fonte, obj! { "volumeDb" => -4 }));
+    checar("sources.set", numero(&fonte.get("audioSource"), "volumeDb") == -4.0);
+    checar("sources.isPlaying", falso(&fontes.invoke("isPlaying", (&fonte,))));
+    Value::undefined()
+}
+
+fn vfx() -> Value {
+    let v = api("vfx");
+    let ids = v.get("templates").invoke("ids", ());
+    checar("vfx.templates", ids.len() > 0);
+    checar("vfx.moduleKinds", v.invoke("moduleKinds", ()).len() > 0);
+    let mut doc = v.invoke("fromTemplate", (ids.at(0), "DebugFaiscas"));
+    doc = v.invoke("addEmitter", (&doc, obj! { "name" => "Extra", "maxParticles" => 50 }));
+    doc = v.invoke("set", (&doc, obj! { "loop" => true }));
+    checar("vfx.fromTemplate/addEmitter", doc.get("emitters").len() >= 2 && verdadeiro(&doc.get("loop")));
+    v.invoke("save", (&doc, "DebugFaiscas")).invoke("then", (Value::function(|args| {
+        let v = api("vfx");
+        let ativo = arg(args, 0);
+        checar("vfx.save", !ativo.is_none() && texto_igual(&ativo.get("kind"), "vfx"));
+        let ator = v.invoke("emitAt", (&ativo, v3(0.0, 1.5, -8.0), obj! { "destroyWhenFinished" => false }));
+        checar("vfx.emitAt", verdadeiro(&v.invoke("has", (&ator,))));
+        v.invoke("burst", (&ator, 20));
+        checar("vfx.stats", v.invoke("stats", ()).get("effects").is_number());
+    }),))
+}
+
+                                                                                         
+
+fn ao_teclar(e: &Value) {
+    if e.get("repeat").boolean() {
+        return;
+    }
+    match e.get("code").to_string().as_str() {
+        "KeyR" => {
+            api("play").invoke("restart", ());
+        }
+        "KeyB" => soltar_caixa(),
+        "KeyE" => {
+            api("events").invoke("emit", ("debug.ping", obj! { "origem" => "teclado", "quadro" => api("time").get("frame") }));
+        }
+        "KeyF" => {
+            api("camera").invoke("shake", (0.4, 0.6));
+        }
+        "KeyG" => {
+            let efeito = lembrado(|estado| &estado.efeito);
+            if !efeito.is_undefined() {
+                let ligado = !efeito.get("enabled").boolean();
+                efeito.set("enabled", ligado);
+                info!("Efeito DebugPost {}", if ligado { "ligado" } else { "desligado" });
+            }
+        }
+        "KeyT" => {
+            let tm = api("time");
+            tm.set("scale", if numero(&tm, "scale") == 1.0 { 0.3 } else { 1.0 });
+            info!("time.scale = {}", numero(&tm, "scale"));
+        }
+        "KeyH" => {
+            let tela = lembrado(|estado| &estado.tela);
+            if !tela.is_undefined() {
+                let g = api("gui");
+                if g.invoke("isShown", (&tela,)).boolean() {
+                    g.invoke("hide", (&tela,));
+                } else {
+                    g.invoke("show", (&tela, "debug-tela"));
+                }
+            }
+        }
+        "KeyL" => {
+            let nomes: Vec<String> = api("light").invoke("all", (obj! { "local" => true },)).iter().map(|luz| nome_de(&luz.get("entity"))).collect();
+            info!("Luzes locais: {}", nomes.join(", "));
+        }
+        _ => {}
+    }
+}
+
+fn clique_na_cena(x: f64, y: f64) {
+    let c = api("camera");
+    let alvo = c.invoke("pick", (x, y));
+    let ponto = c.invoke("pickPoint", (x, y));
+    if !alvo.is_none() {
+        info!("Clique em {}", nome_de(&alvo));
+    }
+    if !ponto.is_none() {
+        api("debug").invoke("sphere", (&ponto, 0.3, "#ff006e", 2));
+    }
+}
+
+fn entrada() -> Value {
+    let input = api("input");
+    let acoes = input.get("actions");
+    acoes.invoke("define", ("pular", Value::list(["Space", "Gamepad:0"])));
+    acoes.invoke("define", ("soltar", Value::list(["KeyB"])));
+    checar("actions.define/bindings", acoes.invoke("bindings", ("pular",)).len() >= 1);
+    checar("action()", texto_igual(&input.invoke("action", ("pular",)).get("name"), "pular") && acoes.invoke("down", ("pular",)).is_bool());
+    checar("isDown", falso(&input.invoke("isDown", ("KeyW",))));
+    checar("pointer", input.path("pointer.x").is_number());
+    checar("gamepads", input.invoke("gamepads", ()).is_array());
+    checar("axis2d", input.invoke("axis2d", (obj! { "up" => "KeyW", "down" => "KeyS", "left" => "KeyA", "right" => "KeyD" },)).get("x").is_number());
+    checar("keysDown", input.invoke("keysDown", ()).is_object() || input.invoke("keysDown", ()).is_array());
+    assinar(input.invoke("onKeyDown", (Value::function(|args| ao_teclar(&arg(args, 0))),)));
+    assinar(input.invoke("onPointerDown", (Value::function(|args| {
+        let e = arg(args, 0);
+        if numero(&e, "button") == 0.0 {
+            clique_na_cena(numero(&e, "x"), numero(&e, "y"));
+        }
+    }),)));
+    assinar(input.invoke("onGamepadButtonDown", (Value::function(|args| {
+        let e = arg(args, 0);
+        info!("Gamepad {} botão {}", numero(&e, "pad"), numero(&e, "button"));
+    }),)));
+    Value::undefined()
+}
+
+fn eventos() -> Value {
+    let ev = api("events");
+    let play = api("play");
+                                                                             
+    let recebido = Rc::new(RefCell::new(Value::undefined()));
+    let guardar_ping = recebido.clone();
+    let desligar = ev.invoke("on", ("debug.ping", Value::function(move |args| *guardar_ping.borrow_mut() = arg(args, 0))));
+    checar("events.emit conta ouvintes", ev.invoke("emit", ("debug.ping", obj! { "origem" => "teste" })).number() == 1.0);
+    let payload = recebido.borrow().clone();
+    checar("events.on recebe", !payload.is_undefined() && texto_igual(&payload.get("origem"), "teste"));
+    checar("listenerCount", ev.invoke("listenerCount", ("debug.ping",)).number() == 1.0);
+    desligar.call(());
+    checar("unsubscribe", ev.invoke("listenerCount", ("debug.ping",)).number() == 0.0);
+    let uma_vez = Rc::new(Cell::new(0u32));
+    let contar_uma_vez = uma_vez.clone();
+    ev.invoke("once", ("debug.once", Value::function(move |_| contar_uma_vez.set(contar_uma_vez.get() + 1))));
+    ev.invoke("emit", ("debug.once",));
+    ev.invoke("emit", ("debug.once",));
+    checar("events.once", uma_vez.get() == 1);
+    assinar(ev.invoke("on", ("debug.ping", Value::function(|args| info!("ping de {}", arg(args, 0).get("origem"))))));
+    assinar(ev.invoke("on", ("debug.caixa", Value::function(|args| depurar!("caixa {}", arg(args, 0).get("nome"))))));
+    let torus = lembrado(|estado| &estado.torus);
+    let do_ator = Rc::new(Cell::new(0u32));
+    let contar_toque = do_ator.clone();
+    assinar(ev.invoke("onEntity", (&torus, "toque", Value::function(move |_| contar_toque.set(contar_toque.get() + 1)))));
+    ev.invoke("emitEntity", (&torus, "toque"));
+    checar("onEntity/emitEntity", do_ator.get() == 1);
+    assinar(play.invoke("onStopped", (Value::function(|_| info!("play.onStopped disparou")),)));
+    assinar(play.invoke("onPaused", (Value::function(|_| info!("pausado")),)));
+    assinar(play.invoke("onResumed", (Value::function(|_| info!("retomado")),)));
+    Value::undefined()
+}
+
+                                                                                 
+fn tempo() -> Value {
+    let tm = api("time");
+    checar("time.now", numero(&tm, "now") >= 0.0 && numero(&tm, "frame") >= 0.0);
+    checar("time.delta", numero(&tm, "delta") >= 0.0 && numero(&tm, "fixedDelta") > 0.0);
+    let inicio = numero(&tm, "now");
+    tm.invoke("wait", (0.1,)).invoke("then", (Value::function(move |_| tempo_passo1(inicio)),))
+}
+
+fn tempo_passo1(inicio: f64) -> Value {
+    let tm = api("time");
+    let decorrido = numero(&tm, "now") - inicio;
+    checarf("time.wait", decorrido >= 0.09, &format!("{decorrido:.3}"));
+    let quadro = numero(&tm, "frame") as i64;
+    tm.invoke("waitFrames", (2,)).invoke("then", (Value::function(move |_| tempo_passo2(quadro)),))
+}
+
+fn tempo_passo2(quadro_antes: i64) -> Value {
+    let tm = api("time");
+    let quadro = numero(&tm, "frame") as i64;
+    checarf("time.waitFrames", quadro >= quadro_antes + 2, &format!("{}", quadro - quadro_antes));
+    assinar(tm.invoke("every", (2, Value::function(|_| { api("gui").invoke("bind", ("atores", api("scene").invoke("count", ()))); }))));
+    let disparou = Rc::new(Cell::new(false));
+    let marcar = disparou.clone();
+    tm.invoke("delay", (0.2, Value::function(move |_| marcar.set(true))));
 `;
 }
