@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { cn } from '@/lib/utils';
 import { ANIMATION_PATHS, type AnimationPath, type AnimationTrack } from '@/engine/core/animation/animation-document';
 import { keyIndexAt, trackAt, type KeyRef } from '@/engine/core/animation/track-editing';
@@ -7,7 +7,9 @@ import { sampleTrack } from '@/engine/core/animation/track-sampling';
 import { CANVAS_FONT, prepareCanvas, readCanvasTheme, type CanvasTheme } from '@/engine/editor/animation/ui/canvas-theme';
 import { drawPlayhead, drawRuler, drawTimeGrid, hitTestEvent, niceStep } from '@/engine/editor/animation/ui/timeline-draw';
 import { COMPONENT_LABELS, DRAG_THRESHOLD_PX, KEY_HIT_RADIUS, PATH_LABELS, RULER_HEIGHT, displayFromSample, formatDisplayValue, formatFrame, keyDisplayValue, rawValueFromDisplay, timeToX, xToTime, } from '@/engine/editor/animation/ui/timeline-model';
-import { useAnimationEditor, useAnimationTime, useElementSize } from '@/engine/editor/animation/ui/use-animation-editor';
+import { useAnimationEditor } from '@/engine/editor/animation/ui/use-animation-editor';
+import { useCanvasLayer } from '@/engine/ui/use-canvas-layer';
+import { useElementSize } from '@/engine/ui/use-element-size';
 type CurveCanvasProps = {
     selectedEvent: number;
     onSelectEvent: (index: number) => void;
@@ -54,9 +56,9 @@ function availablePaths(document: {
 }
 export function CurveCanvas({ selectedEvent, onSelectEvent }: CurveCanvasProps) {
     const editor = useAnimationEditor();
-    const time = useAnimationTime();
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
+    const overlayRef = useRef<HTMLCanvasElement>(null);
     const size = useElementSize(containerRef);
     const dragRef = useRef<Drag | null>(null);
     const hoverRef = useRef<CurveKeyHit | null>(null);
@@ -218,12 +220,17 @@ export function CurveCanvas({ selectedEvent, onSelectEvent }: CurveCanvasProps) 
             ctx.fillText(joint ? `${joint} ainda não tem faixas: pose o osso para gravar a primeira chave.` : 'Selecione um osso para ver as curvas dele.', width / 2, RULER_HEIGHT + (height - RULER_HEIGHT) / 2);
         }
         drawRuler(ctx, theme, { width, duration, frameRate, events: document.events, selectedEvent, hoveredEvent: -1 });
-        drawPlayhead(ctx, theme, timeToX(editor.time, duration, width), height, formatFrame(editor.time, frameRate));
-    }, [editor, track, size, visible, joint, selectedEvent, time]);
+    }, [editor, track, size, visible, joint, selectedEvent]);
     const version = editor.getVersion();
     useLayoutEffect(() => {
         draw();
     }, [draw, version]);
+    const playheadSubscribes = useMemo(() => [editor.subscribeTime, editor.subscribe], [editor]);
+    useCanvasLayer(overlayRef, size, playheadSubscribes, (ctx, theme, width, height) => {
+        if (!editor.document)
+            return;
+        drawPlayhead(ctx, theme, timeToX(editor.time, editor.duration, width), height, formatFrame(editor.time, editor.frameRate));
+    });
     const localPoint = (event: ReactPointerEvent): {
         x: number;
         y: number;
@@ -316,8 +323,10 @@ export function CurveCanvas({ selectedEvent, onSelectEvent }: CurveCanvasProps) 
         draw();
     };
     return (<div className="flex h-full w-full flex-col">
-      <div className="flex h-7 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface px-2 text-2xs [scrollbar-width:none]">
-        <span className="shrink-0 truncate font-medium text-foreground">{joint ?? 'Nenhum osso'}</span>
+      <div className="flex min-h-7 shrink-0 flex-wrap items-center gap-x-1 gap-y-0.5 border-b border-border bg-surface px-2 py-0.5 text-2xs">
+        <span className="max-w-full shrink-0 truncate font-medium text-foreground" title={joint ?? undefined}>
+          {joint ?? 'Nenhum osso'}
+        </span>
         {paths.length > 0 && <span className="shrink-0 text-muted-foreground/60">·</span>}
         <div role="radiogroup" aria-label="Faixa exibida" className="flex shrink-0 items-center gap-0.5">
           {paths.map((candidate) => (<button key={candidate} type="button" role="radio" aria-checked={candidate === path} onClick={() => setPreferredPath(candidate)} className={cn('h-5 rounded-sm px-1.5 transition-colors', candidate === path ? 'bg-primary/20 font-medium text-primary' : 'text-muted-foreground hover:bg-highlight hover:text-foreground')}>
@@ -332,6 +341,7 @@ export function CurveCanvas({ selectedEvent, onSelectEvent }: CurveCanvasProps) 
       </div>
       <div ref={containerRef} className="relative min-h-0 flex-1 overflow-hidden">
         <canvas ref={canvasRef} role="img" aria-label="Curvas de animação do osso selecionado" className="block h-full w-full touch-none" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} onPointerLeave={onPointerLeave}/>
+        <canvas ref={overlayRef} aria-hidden className="pointer-events-none absolute inset-0 block h-full w-full"/>
       </div>
     </div>);
 }
