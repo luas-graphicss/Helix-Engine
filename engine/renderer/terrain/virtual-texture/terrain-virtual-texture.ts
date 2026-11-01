@@ -249,4 +249,255 @@ export class TerrainVirtualTexture {
         this.frame++;
         this.uploadArrived();
     }
+    endFrame(): void {
+        const { stats } = this;
+        if (!this.caches || !this.streamer)
+            return;
+        this.dispatch();
+        stats.sources = this.sources.size;
+        stats.ready = 0;
+        stats.errors = 0;
+        stats.downloadLoaded = 0;
+        stats.downloadTotal = 0;
+        stats.tilingDone = 0;
+        stats.tilingTotal = 0;
+        stats.virtualTexels = 0;
+        for (const source of this.sources.values()) {
+            if (source.state === 'ready') {
+                stats.ready++;
+                stats.virtualTexels += source.size * source.size;
+            }
+            else if (source.state === 'error')
+                stats.errors++;
+            else {
+                stats.downloadLoaded += source.downloadLoaded;
+                stats.downloadTotal += source.downloadTotal;
+                stats.tilingDone += source.tilingDone;
+                stats.tilingTotal += source.tilingTotal;
+            }
+        }
+        stats.resident = this.caches.albedo.resident.size + this.caches.normal.resident.size;
+        stats.pending = this.pending.size;
+        stats.inFlight = this.inFlight;
+    }
+    bindSamplers(program: ShaderProgram): void {
+        if (!this.enabled)
+            return;
+        const { gl } = this;
+        gl.uniform1i(program.uniform('u_vtPages'), TERRAIN_VT_PAGES_TEXTURE_UNIT);
+        gl.uniform1i(program.uniform('u_vtCacheAlbedo'), TERRAIN_VT_ALBEDO_TEXTURE_UNIT);
+        gl.uniform1i(program.uniform('u_vtCacheNormal'), TERRAIN_VT_NORMAL_TEXTURE_UNIT);
+    }
+    bind(program: ShaderProgram, terrain: Terrain): void {
+        if (!this.caches || !this.pageTable)
+            return;
+        const { gl, layerInfo } = this;
+        let signature = '';
+        for (let i = 0; i < MAX_TERRAIN_LAYERS; i++) {
+            const layer = terrain.layers[i];
+            for (let k = 0; k < KINDS.length; k++) {
+                const source = layer ? this.readySource(layer.material.hires[KINDS[k]]) : null;
+                layerInfo[i * 4 + k] = source ? source.sizeLog2 : 0;
+                signature += source ? `${source.id},` : '-,';
+            }
+            layerInfo[i * 4 + 2] = 0;
+            layerInfo[i * 4 + 3] = 0;
+        }
+        if (this.pageTableDirty || signature !== this.boundSignature) {
+            this.rebuildPageTable(terrain);
+            this.boundSignature = signature;
+            this.pageTableDirty = false;
+        }
+        gl.uniform4fv(program.uniform('u_vtLayer[0]'), layerInfo);
+        gl.activeTexture(gl.TEXTURE0 + TERRAIN_VT_PAGES_TEXTURE_UNIT);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.pageTable);
+        gl.activeTexture(gl.TEXTURE0 + TERRAIN_VT_ALBEDO_TEXTURE_UNIT);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.caches.albedo.texture);
+        gl.activeTexture(gl.TEXTURE0 + TERRAIN_VT_NORMAL_TEXTURE_UNIT);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.caches.normal.texture);
+    }
+    unbind(): void {
+        if (!this.enabled)
+            return;
+        const { gl } = this;
+        for (const unit of [TERRAIN_VT_PAGES_TEXTURE_UNIT, TERRAIN_VT_ALBEDO_TEXTURE_UNIT, TERRAIN_VT_NORMAL_TEXTURE_UNIT]) {
+            gl.activeTexture(gl.TEXTURE0 + unit);
+            gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+        }
+    }
+    dispose(): void {
+        this.disposed = true;
+        this.streamer?.dispose();
+        this.caches?.albedo.dispose();
+        this.caches?.normal.dispose();
+        if (this.pageTable)
+            this.gl.deleteTexture(this.pageTable);
+        for (const page of this.arrived)
+            page.bitmap.close();
+        this.arrived.length = 0;
+        this.pending.clear();
+        this.sources.clear();
+        this.sourcesById.clear();
+    }
+    private readySource(hires: HiresMapSource | null): VirtualSource | null {
+        if (!hires)
+            return null;
+        const source = this.sources.get(hires.url);
+        return source && source.state === 'ready' ? source : null;
+    }
+    private sourceOf(hires: HiresMapSource, kind: HiresMapKind): VirtualSource {
+        let source = this.sources.get(hires.url);
+        if (source)
+            return source;
+        source = new VirtualSource(this.nextSourceId++, kind, hires.url);
+        source.size = hires.size;
+        source.sizeLog2 = Math.round(Math.log2(hires.size));
+        source.levels = vtSourceLevels(source.sizeLog2);
+        this.sources.set(hires.url, source);
+        this.sourcesById.set(source.id, source);
+        const id = source.id;
+        this.streamer?.open(id, hires.url, hires.url, hires.size, (event) => this.onSourceEvent(id, event));
+        return source;
+    }
+    private onSourceEvent(id: number, event: VtSourceEvent): void {
+        const source = this.sourcesById.get(id);
+        if (!source || this.disposed)
+            return;
+        switch (event.type) {
+            case 'progress':
+                if (event.phase === 'download') {
+                    source.downloadLoaded = event.loaded;
+                    source.downloadTotal = event.total;
+                }
+                else {
+                    source.tilingDone = event.loaded;
+                    source.tilingTotal = event.total;
+                }
+                break;
+            case 'ready':
+                source.size = event.size;
+                source.sizeLog2 = Math.round(Math.log2(event.size));
+                source.levels = event.levels;
+                source.state = 'ready';
+                this.pageTableDirty = true;
+                break;
+            case 'error':
+                source.state = 'error';
+                console.warn(`[terreno] Textura virtual indisponível para ${source.url}: ${event.message}`);
+                break;
+        }
+    }
+    private requestRect(source: VirtualSource, u0: number, v0: number, u1: number, v1: number, uvPerTexel: number): boolean {
+        const lod = Math.log2(Math.max(uvPerTexel * source.size, 1e-12));
+        const level = Math.max(Math.floor(lod + 0.5), 0);
+        if (level >= source.levels)
+            return true;
+        const pages = VT_PAGES_PER_SIDE >> source.virtualLevel(level);
+        const a0 = Math.floor(u0 * pages);
+        const a1 = Math.floor(u1 * pages);
+        const b0 = Math.floor(v0 * pages);
+        const b1 = Math.floor(v1 * pages);
+        const spanX = Math.min(a1 - a0 + 1, pages);
+        const spanY = Math.min(b1 - b0 + 1, pages);
+        let complete = true;
+        for (let j = 0; j < spanY; j++) {
+            const py = (((b0 + j) % pages) + pages) % pages;
+            for (let i = 0; i < spanX; i++) {
+                const px = (((a0 + i) % pages) + pages) % pages;
+                if (!this.requestPage(source, level, px, py))
+                    complete = false;
+            }
+        }
+        return complete;
+    }
+    private requestPage(source: VirtualSource, level: number, px: number, py: number): boolean {
+        const caches = this.caches as Record<HiresMapKind, PhysicalCache>;
+        const key = vtPageKey(source.id, level, px, py);
+        const cache = caches[source.kind];
+        const slot = cache.resident.get(key);
+        if (slot !== undefined) {
+            cache.slotTouched[slot] = this.frame;
+            return true;
+        }
+        const pending = this.pending.get(key);
+        if (pending)
+            pending.touched = this.frame;
+        else
+            this.pending.set(key, { key, source, level, px, py, touched: this.frame, inFlight: false });
+        return false;
+    }
+    private dispatch(): void {
+        const streamer = this.streamer as VtTileStreamer;
+        const queue = this.dispatchQueue;
+        queue.length = 0;
+        for (const page of this.pending.values()) {
+            if (page.inFlight)
+                continue;
+            if (this.frame - page.touched > STALE_REQUEST_FRAMES) {
+                this.pending.delete(page.key);
+                continue;
+            }
+            queue.push(page);
+        }
+        if (queue.length === 0 || this.inFlight >= VT_MAX_IN_FLIGHT)
+            return;
+        queue.sort((a, b) => b.level - a.level || b.touched - a.touched);
+        for (const page of queue) {
+            if (this.inFlight >= VT_MAX_IN_FLIGHT)
+                break;
+            page.inFlight = true;
+            this.inFlight++;
+            const sent = streamer.request(page.source.id, page.level, page.px, page.py, (bitmap) => this.onTile(page, bitmap));
+            if (!sent) {
+                page.inFlight = false;
+                this.inFlight--;
+                this.pending.delete(page.key);
+            }
+        }
+    }
+    private onTile(page: PendingPage, bitmap: ImageBitmap | null): void {
+        this.inFlight--;
+        if (this.disposed) {
+            bitmap?.close();
+            return;
+        }
+        if (!bitmap) {
+            this.pending.delete(page.key);
+            return;
+        }
+        this.arrived.push({ pending: page, bitmap });
+    }
+    private uploadArrived(): void {
+        const caches = this.caches as Record<HiresMapKind, PhysicalCache>;
+        const { gl, arrived } = this;
+        if (arrived.length === 0)
+            return;
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+        let bound: PhysicalCache | null = null;
+        const count = Math.min(arrived.length, VT_UPLOADS_PER_FRAME);
+        for (let i = 0; i < count; i++) {
+            const { pending, bitmap } = arrived[i];
+            this.pending.delete(pending.key);
+            const cache = caches[pending.source.kind];
+            if (!cache.resident.has(pending.key)) {
+                const slot = cache.allocate(this.frame);
+                if (slot >= 0) {
+                    if (bound !== cache) {
+                        gl.bindTexture(gl.TEXTURE_2D_ARRAY, cache.texture);
+                        bound = cache;
+                    }
+                    cache.upload(slot, pending.key, this.frame, bitmap);
+                    this.stats.uploads++;
+                    this.residencyVersion++;
+                    this.pageTableDirty = true;
+                }
+            }
+            bitmap.close();
+        }
+        arrived.splice(0, count);
+        if (bound)
+            gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+    }
 }
