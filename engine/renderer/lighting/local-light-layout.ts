@@ -1,0 +1,14 @@
+export const LIGHT_DATA_WIDTH = 256;
+export const LIGHT_DATA_WIDTH_SHIFT = 8;
+export const MAX_LOCAL_LIGHTS = 96;
+export const LIGHT_TEXELS = 8;
+export const LIGHT_FLOATS = LIGHT_TEXELS * 4;
+export const MAX_SHADOW_SLOTS = 32;
+export const SHADOW_SLOT_TEXELS = 8;
+export const SHADOW_SLOT_FLOATS = SHADOW_SLOT_TEXELS * 4;
+export const SHADOW_SLOTS_OFFSET = MAX_LOCAL_LIGHTS * LIGHT_TEXELS;
+export const TILES_OFFSET = SHADOW_SLOTS_OFFSET + MAX_SHADOW_SLOTS * SHADOW_SLOT_TEXELS;
+export const LIGHT_TILE_SIZE = 64;
+export const TILE_BITS_PER_CHANNEL = 24;
+export const LIGHT_TYPE_CODE = { point: 0, spot: 1, rect: 2, disc: 3, tube: 4 } as const;
+export const CUBE_FACES = ['+right', '-right', '+up', '-up', '+forward', '-forward'] as const;
