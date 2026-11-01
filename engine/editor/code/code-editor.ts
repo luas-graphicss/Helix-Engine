@@ -277,4 +277,284 @@ export class CodeEditor {
         this.activeId = assetId;
         this.notify();
     }
+    cycle(direction: 1 | -1): void {
+        if (this.tabs.length < 2 || !this.activeId)
+            return;
+        const index = this.tabs.findIndex((tab) => tab.assetId === this.activeId);
+        const next = (index + direction + this.tabs.length) % this.tabs.length;
+        this.setActive(this.tabs[next].assetId);
+    }
+    move(assetId: string, index: number): void {
+        const from = this.tabs.findIndex((tab) => tab.assetId === assetId);
+        if (from === -1)
+            return;
+        const tabs = [...this.tabs];
+        const [tab] = tabs.splice(from, 1);
+        tabs.splice(Math.max(0, Math.min(index, tabs.length)), 0, tab);
+        this.tabs = tabs;
+        this.notify();
+    }
+    updateSource(assetId: string, source: string, cursor?: CodeCursor): void {
+        const tab = this.tab(assetId);
+        if (!tab || tab.document.source === source)
+            return;
+        this.replaceTab(assetId, { ...tab, document: { ...tab.document, source }, cursor: cursor ?? tab.cursor, preview: false });
+        this.notify();
+    }
+    updateDocument(assetId: string, patch: Partial<Pick<ScriptDocument, 'runContext' | 'entry' | 'language'>>): void {
+        const tab = this.tab(assetId);
+        if (!tab)
+            return;
+        const document = { ...tab.document, ...patch };
+        if (metaKey(document) === metaKey(tab.document))
+            return;
+        this.replaceTab(assetId, { ...tab, document, preview: false });
+        this.notify();
+    }
+    updateCursor(assetId: string, cursor: CodeCursor, scrollTop?: number): void {
+        const tab = this.tab(assetId);
+        if (!tab)
+            return;
+        const same = tab.cursor.line === cursor.line && tab.cursor.column === cursor.column && tab.cursor.selectionLength === cursor.selectionLength && (scrollTop === undefined || tab.scrollTop === scrollTop);
+        if (same)
+            return;
+        this.replaceTab(assetId, { ...tab, cursor, scrollTop: scrollTop ?? tab.scrollTop });
+        this.notify();
+    }
+    markSaved(assetId: string, document: ScriptDocument = this.tab(assetId)?.document ?? createEmpty()): void {
+        const tab = this.tab(assetId);
+        if (!tab)
+            return;
+        this.replaceTab(assetId, { ...tab, document, savedSource: document.source, savedMeta: metaKey(document), preview: false });
+        this.notify();
+    }
+    syncName(assetId: string, name: string): void {
+        const tab = this.tab(assetId);
+        if (!tab || tab.document.name === name)
+            return;
+        this.replaceTab(assetId, { ...tab, document: { ...tab.document, name } });
+        this.notify();
+    }
+    syncSaved(assetId: string, document: ScriptDocument): void {
+        const tab = this.tab(assetId);
+        if (!tab || this.isDirty(tab))
+            return;
+        this.replaceTab(assetId, { ...tab, document, savedSource: document.source, savedMeta: metaKey(document) });
+        this.notify();
+    }
+    revert(assetId: string): void {
+        const tab = this.tab(assetId);
+        if (!tab || !this.isDirty(tab))
+            return;
+        this.replaceTab(assetId, { ...tab, document: { ...tab.document, source: tab.savedSource } });
+        this.notify();
+    }
+    consumeReveal(assetId: string): number | null {
+        if (!this.pendingReveal || this.pendingReveal.assetId !== assetId)
+            return null;
+        const { line } = this.pendingReveal;
+        this.pendingReveal = null;
+        return line;
+    }
+    setPresentation(presentation: CodePresentation): void {
+        if (this.presentation === presentation)
+            return;
+        this.presentation = presentation;
+        if (presentation === 'window')
+            this.windowOpen = true;
+        this.notify();
+    }
+    openWindow(): void {
+        if (this.windowOpen && this.presentation === 'window')
+            return;
+        this.presentation = 'window';
+        this.windowOpen = true;
+        this.notify();
+    }
+    closeWindow(): void {
+        if (!this.windowOpen)
+            return;
+        this.windowOpen = false;
+        this.notify();
+    }
+    toggleWindowMaximized(): void {
+        this.windowMaximized = !this.windowMaximized;
+        this.notify();
+    }
+    setWindowRect(rect: CodeWindowRect): void {
+        this.windowRect = {
+            x: Math.round(rect.x),
+            y: Math.round(rect.y),
+            width: Math.max(CODE_WINDOW_MIN_WIDTH, Math.round(rect.width)),
+            height: Math.max(CODE_WINDOW_MIN_HEIGHT, Math.round(rect.height)),
+        };
+        this.notify();
+    }
+    setOptions(options: CodeViewOptions): void {
+        const current = this.options;
+        if ((Object.keys(options) as (keyof CodeViewOptions)[]).every((key) => current[key] === options[key]))
+            return;
+        this.options = options;
+        this.notify();
+    }
+    openFind(options: {
+        replace?: boolean;
+        query?: string;
+    } = {}): void {
+        this.gotoLineOpen = false;
+        this.find = { ...this.find, open: true, replace: options.replace ?? this.find.replace, query: options.query ?? this.find.query };
+        this.notify();
+    }
+    closeFind(): void {
+        if (!this.find.open)
+            return;
+        this.find = { ...this.find, open: false, current: -1 };
+        this.notify();
+    }
+    updateFind(patch: Partial<Omit<CodeFindState, 'open'>>): void {
+        this.find = { ...this.find, ...patch };
+        this.notify();
+    }
+    reportFindMatches(total: number, current: number): void {
+        if (this.find.total === total && this.find.current === current)
+            return;
+        this.find = { ...this.find, total, current };
+        this.notify();
+    }
+    openGotoLine(): void {
+        if (this.gotoLineOpen)
+            return;
+        this.gotoLineOpen = true;
+        this.notify();
+    }
+    closeGotoLine(): void {
+        if (!this.gotoLineOpen)
+            return;
+        this.gotoLineOpen = false;
+        this.notify();
+    }
+    showDebugPanel(panel: DebugPanelId): void {
+        if (this.debugDock.open && this.debugDock.panel === panel)
+            return;
+        this.debugDock = { ...this.debugDock, open: true, panel };
+        this.notify();
+    }
+    selectDebugPanel(panel: DebugPanelId): void {
+        if (this.debugDock.open && this.debugDock.panel === panel)
+            this.setDebugDockOpen(false);
+        else
+            this.showDebugPanel(panel);
+    }
+    setDebugDockOpen(open: boolean): void {
+        if (this.debugDock.open === open)
+            return;
+        this.debugDock = { ...this.debugDock, open };
+        this.notify();
+    }
+    toggleDebugDock(): void {
+        this.setDebugDockOpen(!this.debugDock.open);
+    }
+    setDebugDockHeight(height: number): void {
+        const clamped = Math.round(Math.max(DEBUG_DOCK_MIN_HEIGHT, Math.min(DEBUG_DOCK_MAX_HEIGHT, height)));
+        if (clamped === this.debugDock.height)
+            return;
+        this.debugDock = { ...this.debugDock, height: clamped };
+        this.notify();
+    }
+    attachView(view: CodeViewHandle): void {
+        this.view = view;
+        this.notify();
+    }
+    detachView(view: CodeViewHandle): void {
+        if (this.view !== view)
+            return;
+        this.view = null;
+        this.notify();
+    }
+    setCommandBarVisible(visible: boolean): void {
+        if (this.commandBarVisible === visible)
+            return;
+        this.commandBarVisible = visible;
+        this.notify();
+    }
+    toggleCommandBar(): void {
+        this.setCommandBarVisible(!this.commandBarVisible);
+    }
+    setCommandDraft(text: string): void {
+        if (this.commandDraft === text)
+            return;
+        this.commandDraft = text;
+        this.notify();
+    }
+    recordCommand(text: string, language: ScriptLanguageId | null): CodeCommandEntry {
+        const entry: CodeCommandEntry = { id: this.nextCommandId++, language, text, at: Date.now() };
+        const last = this.commandHistory.at(-1);
+        const history = last && last.text === text ? [...this.commandHistory.slice(0, -1), entry] : [...this.commandHistory, entry];
+        this.commandHistory = history.slice(-MAX_COMMAND_HISTORY);
+        this.commandDraft = '';
+        this.notify();
+        return entry;
+    }
+    clearCommandHistory(): void {
+        if (this.commandHistory.length === 0)
+            return;
+        this.commandHistory = [];
+        this.notify();
+    }
+    setDiagnostics(diagnostics: readonly CodeDiagnostic[]): void {
+        this.diagnostics = diagnostics;
+        this.notify();
+    }
+    setLiveDiagnostics(assetId: string, diagnostics: readonly CodeDiagnostic[], verifier: CodeVerifierState): void {
+        const live = new Map(this.liveDiagnostics);
+        live.set(assetId, diagnostics);
+        this.liveDiagnostics = live;
+        this.setVerifier(assetId, verifier);
+    }
+    setVerifier(assetId: string, verifier: CodeVerifierState): void {
+        const verifiers = new Map(this.verifiers);
+        verifiers.set(assetId, verifier);
+        this.verifiers = verifiers;
+        this.notify();
+    }
+    verifierFor(assetId: string): CodeVerifierState {
+        return this.verifiers.get(assetId) ?? IDLE_VERIFIER;
+    }
+    diagnosticsFor(assetId: string): readonly CodeDiagnostic[] {
+        const live = this.liveDiagnostics.get(assetId);
+        if (live)
+            return live;
+        return this.diagnostics.filter((diagnostic) => diagnostic.assetId === assetId);
+    }
+    count(severity: CodeDiagnosticSeverity): number {
+        let total = 0;
+        const seen = new Set<string>();
+        for (const [assetId, diagnostics] of this.liveDiagnostics) {
+            seen.add(assetId);
+            for (const diagnostic of diagnostics)
+                if (diagnostic.severity === severity)
+                    total++;
+        }
+        for (const diagnostic of this.diagnostics)
+            if (!seen.has(diagnostic.assetId) && diagnostic.severity === severity)
+                total++;
+        return total;
+    }
+    setCompileState(state: CodeCompileState, message: string): void {
+        this.compileState = state;
+        this.compileMessage = message;
+        this.notify();
+    }
+    get openLines(): number {
+        return this.tabs.reduce((total, tab) => total + countScriptLines(tab.document.source), 0);
+    }
+    get owner(): EditorSession {
+        return this.session;
+    }
+    private replaceTab(assetId: string, next: CodeTab): void {
+        this.tabs = this.tabs.map((tab) => (tab.assetId === assetId ? next : tab));
+    }
+}
+function createEmpty(): ScriptDocument {
+    return { version: 1, name: 'Script', language: 'luau', source: '', runContext: 'shared', entry: false, createdAt: Date.now() };
 }
