@@ -21,4 +21,12 @@ export class FloatSnapshot {
         this.values[index] = value;
         return true;
     }
+    matches(offset: number, source: ArrayLike<number>): boolean {
+        const { values } = this;
+        for (let i = 0; i < source.length; i++) {
+            if (values[offset + i] !== source[i])
+                return false;
+        }
+        return true;
+    }
 }
