@@ -205,4 +205,241 @@ export class LocalShadowPass {
         this.stats.facesPerFrame = faces;
     }
     maxShadowedLights = Number.POSITIVE_INFINITY;
+    render(input: LocalShadowPassInput): void {
+        const { gl, stats, owners, jobs } = this;
+        this.frame++;
+        this.resetStats();
+        jobs.length = 0;
+        const wanting = input.lights.lights.filter((light) => light.shadowFaces > 0);
+        if (wanting.length === 0) {
+            this.expireCache();
+            return;
+        }
+        wanting.sort((a, b) => this.allocationScore(b) - this.allocationScore(a));
+        owners.fill(-1);
+        const shadowedLimit = Math.max(0, Math.floor(this.maxShadowedLights));
+        for (let index = 0; index < wanting.length; index++) {
+            const light = wanting[index];
+            const id = light.entity.id;
+            if (index >= shadowedLimit) {
+                light.shadowSlot = -1;
+                stats.lightsDeferred++;
+                stats.status.set(id, 'deferred');
+                continue;
+            }
+            let entry = this.cache.get(id);
+            let base = entry && entry.faces === light.shadowFaces && this.layersFree(entry.base, entry.faces, id) ? entry.base : -1;
+            if (base < 0)
+                base = this.findFreeRun(light.shadowFaces);
+            if (base < 0) {
+                light.shadowSlot = -1;
+                stats.lightsDeferred++;
+                stats.status.set(id, 'deferred');
+                continue;
+            }
+            for (let i = 0; i < light.shadowFaces; i++)
+                owners[base + i] = id;
+            light.shadowSlot = base;
+            stats.lightsShadowed++;
+            stats.facesUsed += light.shadowFaces;
+            if (!entry || entry.base !== base || entry.faces !== light.shadowFaces) {
+                if (entry)
+                    this.releaseEntry(entry);
+                entry = this.createEntry(base, light.shadowFaces);
+                this.cache.set(id, entry);
+            }
+            entry.frame = this.frame;
+            this.planFaces(light, entry, input.casters);
+        }
+        if (jobs.length > 0) {
+            jobs.sort(compareJobs);
+            const atlas = this.ensureAtlas();
+            gl.activeTexture(gl.TEXTURE0 + LOCAL_LIGHT_SHADOW_TEXTURE_UNIT);
+            gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+            gl.disable(gl.CULL_FACE);
+            gl.enable(gl.POLYGON_OFFSET_FILL);
+            let executed = 0;
+            let current: CollectedLocalLight | null = null;
+            for (const job of jobs) {
+                if (!job.mandatory && executed >= this.facesPerFrame) {
+                    stats.facesPostponed++;
+                    continue;
+                }
+                if (job.light !== current) {
+                    current = job.light;
+                    this.collectInRange(current, input.casters);
+                    this.lightParams(current);
+                }
+                this.executeJob(job, atlas, input);
+                executed++;
+                stats.facesRendered++;
+            }
+            gl.disable(gl.POLYGON_OFFSET_FILL);
+            gl.polygonOffset(0, 0);
+            gl.enable(gl.CULL_FACE);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+        for (const light of wanting) {
+            if (light.shadowSlot < 0)
+                continue;
+            const entry = this.cache.get(light.entity.id);
+            if (!entry)
+                continue;
+            let rendered = false;
+            for (let face = 0; face < entry.faces; face++) {
+                const state = entry.states[face];
+                input.lights.shadowSlotFloats(entry.base + face).set(state.slot);
+                if (state.frame === this.frame)
+                    rendered = true;
+            }
+            stats.status.set(light.entity.id, rendered ? 'rendered' : 'cached');
+        }
+        this.expireCache();
+    }
+    skip(lights: LocalLightSet): void {
+        this.resetStats();
+        for (const light of lights.lights)
+            light.shadowSlot = -1;
+    }
+    private allocationScore(light: CollectedLocalLight): number {
+        return this.cache.has(light.entity.id) ? light.importance * 1.5 : light.importance;
+    }
+    private layersFree(base: number, faces: number, id: number): boolean {
+        for (let i = 0; i < faces; i++) {
+            const owner = this.owners[base + i];
+            if (owner !== -1 && owner !== id)
+                return false;
+        }
+        return true;
+    }
+    private findFreeRun(faces: number): number {
+        const { owners, layers } = this;
+        let run = 0;
+        for (let i = 0; i < layers; i++) {
+            run = owners[i] === -1 ? run + 1 : 0;
+            if (run === faces)
+                return i - faces + 1;
+        }
+        return -1;
+    }
+    private ensureAtlas(): DepthArrayRenderTarget {
+        if (!this.atlas) {
+            this.atlas = new DepthArrayRenderTarget(this.gl, this.size, this.layers);
+            this.binding.texture = this.atlas.texture;
+            this.binding.size = this.size;
+        }
+        return this.atlas;
+    }
+    private ensureStaticAtlas(): DepthArrayRenderTarget {
+        if (!this.staticAtlas) {
+            this.staticAtlas = new DepthArrayRenderTarget(this.gl, this.size, this.staticLayers);
+            this.staticOwners.length = this.staticLayers;
+            this.staticOwners.fill(null);
+        }
+        return this.staticAtlas;
+    }
+    private createEntry(base: number, faces: number): CacheEntry {
+        const states: FaceState[] = [];
+        for (let face = 0; face < faces; face++) {
+            states.push({
+                drawn: false,
+                staticSignature: 0,
+                dynamicSignature: 0,
+                finalHasDynamics: false,
+                staticLayer: -1,
+                staticFrame: 0,
+                dynamicRect: new Int32Array(4),
+                dynamicRectValid: false,
+                frame: 0,
+                slot: new Float32Array(SLOT_FLOATS),
+            });
+        }
+        return { base, faces, frame: this.frame, states };
+    }
+    private releaseEntry(entry: CacheEntry): void {
+        for (const state of entry.states)
+            this.releaseStaticLayer(state);
+    }
+    private releaseStaticLayer(state: FaceState): void {
+        if (state.staticLayer < 0)
+            return;
+        this.staticOwners[state.staticLayer] = null;
+        state.staticLayer = -1;
+    }
+    private acquireStaticLayer(state: FaceState): boolean {
+        const pool = this.ensureStaticAtlas();
+        const owners = this.staticOwners;
+        let chosen = -1;
+        let oldest = this.frame;
+        for (let i = 0; i < pool.layers; i++) {
+            const owner = owners[i];
+            if (!owner) {
+                chosen = i;
+                break;
+            }
+            if (owner.staticFrame < oldest) {
+                oldest = owner.staticFrame;
+                chosen = i;
+            }
+        }
+        if (chosen < 0)
+            return false;
+        const evicted = owners[chosen];
+        if (evicted)
+            evicted.staticLayer = -1;
+        owners[chosen] = state;
+        state.staticLayer = chosen;
+        state.staticFrame = this.frame;
+        return true;
+    }
+    private collectInRange(light: CollectedLocalLight, casters: readonly ShadowCasterCandidate[]): void {
+        const { inRangeStatic, inRangeDynamic } = this;
+        inRangeStatic.length = 0;
+        inRangeDynamic.length = 0;
+        const center = light.boundsCenter;
+        const reach = light.boundsRadius;
+        for (const caster of casters) {
+            vec3.subtract(toCaster, caster.bounds.center, center);
+            const limit = reach + caster.bounds.radius;
+            if (vec3.dot(toCaster, toCaster) > limit * limit)
+                continue;
+            if (this.motion.isDynamic(caster, this.frame))
+                inRangeDynamic.push(caster);
+            else
+                inRangeStatic.push(caster);
+        }
+    }
+    private lightParams(light: CollectedLocalLight): void {
+        this.near = Math.min(Math.max(light.range * 0.01, 0.02), 0.5);
+        this.far = light.boundsRadius * 2 + 1;
+        this.fov = light.faceMode === 0 ? Math.min(light.outerAngle * 2 + SPOT_FOV_MARGIN, MAX_SPOT_FOV) : CUBE_FACE_FOV;
+        this.texelScale = (2 * Math.tan(this.fov / 2)) / this.size;
+    }
+    private lightHash(light: CollectedLocalLight): number {
+        let hash = 0x811c9dc5 | 0;
+        for (let i = 0; i < 3; i++) {
+            hash = hashFloat(hash, light.position[i]);
+            hash = hashFloat(hash, light.right[i]);
+            hash = hashFloat(hash, light.forward[i]);
+        }
+        hash = hashFloat(hash, light.range);
+        hash = hashFloat(hash, light.outerAngle);
+        hash = hashFloat(hash, light.shadowFaces);
+        hash = hashFloat(hash, light.light.shadow.bias);
+        return hash;
+    }
+    private faceViewProjection(light: CollectedLocalLight, face: number): void {
+        if (light.faceMode === 0) {
+            vec3.copy(direction, light.forward);
+            vec3.copy(upAxis, light.up);
+        }
+        else {
+            faceBasis(light, face, direction, upAxis);
+        }
+        vec3.add(target, light.position, direction);
+        mat4.lookAt(view, light.position, target, upAxis);
+        mat4.perspective(projection, this.fov, 1, this.near, this.far);
+        mat4.multiply(viewProjection, projection, view);
+        mat4.multiply(shadowMatrix, BIAS_MATRIX, viewProjection);
+    }
 }
