@@ -1476,4 +1476,145 @@ const PHYSICS_API = `
     }
     readonly shapes: {
       box(halfX: number, halfY: number, halfZ: number): unknown
+      sphere(radius: number): unknown
+      capsule(radius: number, halfHeight: number): unknown
+      mesh(mesh: MeshData | Entity, scale?: Vec3Like): unknown | null
+      volume(shape: unknown): number
+      aabb(shape: unknown, position: Vec3Like, orientation?: QuatLike): Aabb
+    }
+    waterAt(point: Vec3Like): { height: number; normal: Vec3; velocity: Vec3 } | null
+       
+                                                                                            
+                                                                                            
+                                                                                            
+       
+    readonly layers: {
+                                                                                                                                                        
+      define(layers: readonly string[]): string[]
+                                                                              
+      setCollision(a: string, b: string, enabled: boolean): void
+      collides(a: string, b: string): boolean
+      list(): string[]
+                                                                       
+      of(entity: Entity): string
+      readonly default: string
+    }
+    backend: unknown
+    onOutOfBounds(handler: (entity: Entity) => void): Unsubscribe
+    onUnstable(handler: (entity: Entity) => void): Unsubscribe
+    onCollisionBegin(handler: (event: { a: Entity; b: Entity; contact: Contact }) => void): Unsubscribe
+    onCollisionEnd(handler: (event: { a: Entity; b: Entity }) => void): Unsubscribe
+       
+                                                                                                   
+                                                                                                      
+                                                                                                                          
+       
+    readonly joints: {
+      readonly types: JointType[]
+      create(type: JointType, a: Entity | RigidBodyHandle, b: Entity | RigidBodyHandle | null, options?: JointOptions): JointHandle
+                                                                         
+      ball(a: Entity | RigidBodyHandle, b: Entity | RigidBodyHandle | null, options?: JointOptions): JointHandle
+                                                                       
+      hinge(a: Entity | RigidBodyHandle, b: Entity | RigidBodyHandle | null, options?: JointOptions): JointHandle
+                                                                                            
+      slider(a: Entity | RigidBodyHandle, b: Entity | RigidBodyHandle | null, options?: JointOptions): JointHandle
+                                                           
+      fixed(a: Entity | RigidBodyHandle, b: Entity | RigidBodyHandle | null, options?: JointOptions): JointHandle
+                                                                                                             
+      distance(a: Entity | RigidBodyHandle, b: Entity | RigidBodyHandle | null, options?: JointOptions): JointHandle
+                                                                                                                
+      coneTwist(a: Entity | RigidBodyHandle, b: Entity | RigidBodyHandle | null, options?: JointOptions): JointHandle
+                                                                                                                                                
+      wheel(chassis: Entity | RigidBodyHandle, wheel: Entity | RigidBodyHandle, options?: JointOptions): JointHandle
+      remove(joint: JointHandle): void
+      all(): JointHandle[]
+                                                    
+      of(target: Entity | RigidBodyHandle): JointHandle[]
+      readonly count: number
+                                                                                         
+      onBreak(handler: (event: { joint: JointHandle; a: Entity | null; b: Entity | null }) => void): Unsubscribe
+    }
+       
+                                                                                                      
+                                                                                                                                        
+       
+    readonly forces: {
+      everywhere(): FieldRegion
+                                                                                                                  
+      sphere(center: Vec3Like, radius: number, falloff?: number): FieldRegion
+      box(center: Vec3Like, halfExtents: Vec3Like, falloff?: number): FieldRegion
+                                                                   
+      directional(options: { direction: Vec3Like; strength: number; mode?: FieldMode; region?: FieldRegionLike; enabled?: boolean }): DirectionalFieldHandle
+                                                                        
+      radial(options: { center: Vec3Like; strength: number; radius?: number; falloff?: 'none' | 'linear' | 'inverse-square'; mode?: FieldMode; region?: FieldRegionLike; enabled?: boolean }): RadialFieldHandle
+                                                                                                                                
+      vortex(options: { center: Vec3Like; axis?: Vec3Like; strength: number; inwardStrength?: number; liftStrength?: number; radius?: number; falloff?: 'none' | 'linear'; mode?: FieldMode; region?: FieldRegionLike; enabled?: boolean }): VortexFieldHandle
+                                                                                                         
+      drag(options?: { linear?: number; quadratic?: number; angular?: number; region?: FieldRegionLike; enabled?: boolean }): DragFieldHandle
+                                                                                                                           
+      explode(center: Vec3Like, radius: number, strength: number, options?: ExplosionOptions): number
+      remove(field: ForceFieldHandle): void
+    }
+    readonly settings: PhysicsSettings
+    set(patch: Partial<PhysicsSettings>): void
+    readonly gravity: Vec3
+    quality: 'low' | 'medium' | 'high' | null
+    resetSettings(): void
+  }
+
+  export interface CharacterIntent { x: number; z: number; run: boolean; jump: boolean; crouch: boolean; lookX: number; lookY: number }
+  export interface CharacterHandle {
+    readonly entity: Entity
+    readonly settings: CharacterSettings
+    readonly isGrounded: boolean
+    readonly isCrouching: boolean
+    readonly horizontalSpeed: number
+    readonly velocity: Vec3
+    readonly position: Vec3
+    readonly groundNormal: Vec3
+    readonly height: number
+    readonly yaw: number
+    readonly rigidBody: RigidBodyHandle | null
+    readonly intent: CharacterIntent
+    readonly hasRig: boolean
+    readonly isPossessed: boolean
+    move(x: number, z: number): void
+    moveRelative(forward: number, right: number): void
+    look(dx: number, dy: number): void
+    jump(): void
+    run(value: boolean): void
+    crouch(value: boolean): void
+    stop(): void
+    teleport(position: Vec3Like, yaw?: number): void
+    setIntent(partial: Partial<CharacterIntent>): void
+  }
+  export interface CharacterApi {
+    of(entity: Entity): CharacterHandle
+    has(entity: Entity): boolean
+    all(): CharacterHandle[]
+                                                                         
+    inputSource: 'engine' | 'script'
+    readonly inputFrame: { x: number; z: number; run: boolean; jump: boolean; crouchToggles: number; lookX: number; lookY: number; wheel: number } | null
+    settingsOf(entity: Entity): CharacterSettings | null
+    spawn(options?: SpawnOptions & { character?: Partial<CharacterSettings> }): Entity
+    findPossessable(): Entity | null
+    controllerClass: unknown
+    onLanded(handler: (event: { entity: Entity; speed: number }) => void): Unsubscribe
+    onJumped(handler: (event: { entity: Entity }) => void): Unsubscribe
+  }
+  export interface PlayerApi {
+    readonly settings: PlayerSettings
+    set(patch: Partial<Omit<PlayerSettings, 'character' | 'camera'>> & { character?: Partial<CharacterSettings>; camera?: Partial<PlayerCameraSettings> }): void
+    enabled: boolean
+    readonly possessed: Entity | null
+    readonly isPossessing: boolean
+    possess(entity: Entity): void
+    unpossess(): void
+                                                                                        
+    cameraControl: 'engine' | 'script'
+    readonly pointerLocked: boolean
+    readonly transientCharacter: Entity | null
+    readonly spawnPoint: Vec3
+    onPossessed(handler: (entity: Entity | null) => void): Unsubscribe
+  }
 `;
