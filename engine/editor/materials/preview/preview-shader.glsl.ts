@@ -38,7 +38,7 @@ uniform float u_emissiveIntensity;
 uniform float u_normalScale;
 uniform float u_occlusionStrength;
 uniform float u_alphaCutoff;
-
+                                           
 uniform float u_alphaMode;
 uniform int u_textureMask;
 uniform sampler2D u_baseColorMap;
@@ -78,7 +78,7 @@ vec3 perturbNormal(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2, float norma
   return normalize(T * (mapN.x * scale) + B * (mapN.y * scale) + N * mapN.z);
 }
 
-
+                                                                                                      
 vec3 environmentColor(vec3 R, float roughness) {
   vec3 gradient = mix(u_groundColor, u_skyColor, smoothstep(-0.35, 0.65, R.y));
   float window = pow(max(dot(R, u_lightDirections[0]), 0.0), mix(48.0, 2.0, roughness));
