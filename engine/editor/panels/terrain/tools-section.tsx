@@ -8,7 +8,7 @@ import { SegmentedControl } from '@/engine/ui/segmented-control';
 import { PropertyRow } from '@/engine/ui/property-row';
 import { FieldInput } from '@/engine/ui/field-input';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { TERRAIN_TOOLS, type TerrainToolId, type TerrainToolSettings } from '@/engine/editor/terrain/terrain-editor';
 import { fillGrass, terrainSupportsGrass } from '@/engine/editor/operations/terrain-operations';
 import { BRUSH_FALLOFFS, MAX_BRUSH_RADIUS, MIN_BRUSH_RADIUS } from '@/engine/terrain/sculpt/brush';
@@ -36,12 +36,12 @@ const FLATTEN_MODES: ReadonlyArray<{
 function Hint({ children }: {
     children: React.ReactNode;
 }) {
-    return <p className="px-2 py-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">{children}</p>;
+    return <p className="px-2 py-1 text-3xs leading-relaxed text-pretty text-muted-foreground">{children}</p>;
 }
 function ActiveToolSettings({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const editor = session.terrain;
     const { settings } = editor;
     switch (editor.tool) {
@@ -53,7 +53,6 @@ function ActiveToolSettings({ target }: {
           {settings.flattenMode === 'fixed' && (<PropertyRow label="Altura fixa">
               <ScalarField label="Altura fixa" value={settings.flattenHeight} suffix=" m" onCommit={(flattenHeight) => editor.updateSettings({ flattenHeight })}/>
             </PropertyRow>)}
-          <Hint>Com o cursor sobre o terreno, a tecla C copia a altura tocada para a altura fixa.</Hint>
         </>);
         case 'noise':
             return <SliderField label="Escala" value={settings.noiseScale} min={2} max={80} scale="log" format={meters} onChange={(noiseScale) => editor.updateSettings({ noiseScale })}/>;
@@ -88,7 +87,7 @@ function ActiveToolSettings({ target }: {
 export function ToolsSection({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const editor = session.terrain;
     const active = TERRAIN_TOOLS.find((tool) => tool.id === editor.tool) ?? TERRAIN_TOOLS[0];
     return (<CollapsibleSection title="Ferramentas">
@@ -99,16 +98,15 @@ export function ToolsSection({ target }: {
             return (<button key={tool.id} type="button" role="radio" aria-checked={selected} title={`${tool.description} Tecla ${tool.key}.`} onClick={() => {
                     editor.setTool(tool.id);
                     session.setTool('terrain');
-                }} className={cn('relative flex h-12 flex-col items-center justify-center gap-1 rounded-sm border text-[10px] transition-colors', 'focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-primary', selected
+                }} className={cn('relative flex h-12 flex-col items-center justify-center gap-1 rounded-sm border text-3xs transition-colors', 'focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-primary', selected
                     ? 'border-primary/60 bg-primary/15 text-primary'
                     : 'border-border bg-surface-sunken text-muted-foreground hover:border-border-strong hover:bg-highlight hover:text-foreground')}>
               <Icon className="size-4" aria-hidden/>
-              <span>{tool.label}</span>
+              <span className="max-w-full truncate px-1">{tool.label}</span>
               <kbd className="absolute top-0.5 right-1 font-mono text-[9px] text-muted-foreground/70">{tool.key}</kbd>
             </button>);
         })}
       </div>
-      <Hint>{active.description}</Hint>
 
       <SliderField label="Raio" value={editor.brush.radius} min={MIN_BRUSH_RADIUS} max={MAX_BRUSH_RADIUS} scale="log" format={meters} onChange={(radius) => editor.updateBrush({ radius })}/>
       <SliderField label="Intensidade" value={editor.brush.strength} min={0.01} max={1} format={percent} onChange={(strength) => editor.updateBrush({ strength })}/>
