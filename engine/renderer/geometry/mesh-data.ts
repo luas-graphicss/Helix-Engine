@@ -4,6 +4,7 @@ export interface MeshData {
     readonly normals: Float32Array;
     readonly uvs: Float32Array;
     readonly indices: Uint16Array | Uint32Array;
+    readonly tangents?: Float32Array;
     readonly skinning?: MeshSkinning;
 }
 export interface MeshSkinning {
