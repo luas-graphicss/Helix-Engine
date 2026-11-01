@@ -1,6 +1,5 @@
 import { ATMOSPHERE_CHUNK, SKY_LIGHTING_TEXEL } from './atmosphere.glsl';
-import { COLOR_CHUNK } from '../chunks/color.glsl';
-import { HDR_ENCODING_CHUNK, HDR_RANGE_LIGHTING, HDR_RANGE_SKY } from '../chunks/hdr-encoding.glsl';
+import { HDR_ENCODING_CHUNK, HDR_RANGE_LIGHTING, HDR_RANGE_SCENE, HDR_RANGE_SKY } from '../chunks/hdr-encoding.glsl';
 import { NOISE_CHUNK } from '../chunks/noise.glsl';
 export const SKY_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
@@ -23,11 +22,17 @@ uniform float u_starsIntensity;
 uniform float u_pixelAngle;
 uniform float u_time;
 uniform float u_exposure;
+                                                                                  
+uniform float u_sunDisk;
+                                                                                                                                                         
+uniform sampler2D u_cloudLayer;
+uniform vec4 u_cloudLayerRegion;
+                                                                                                                        
+uniform float u_cloudLayerEnabled;
 
 ${ATMOSPHERE_CHUNK}
 ${HDR_ENCODING_CHUNK}
 ${NOISE_CHUNK}
-${COLOR_CHUNK}
 
 const float SUN_DISK_RADIANCE = 25.0;
 const float MOON_DISK_BOOST = 5.0;
@@ -62,14 +67,14 @@ vec3 sunDisk(vec3 dir, vec3 sunTransmittance) {
   float edge = u_pixelAngle * sin(u_sunAngularRadius) + 1e-7;
   float disk = smoothstep(cosRadius - edge, cosRadius + edge, cosAngle);
 
-
+                                                                                  
   float r = clamp(acos(min(cosAngle, 1.0)) / u_sunAngularRadius, 0.0, 1.0);
   float mu = sqrt(max(1.0 - r * r, 0.0));
   vec3 limb = 1.0 - vec3(0.45, 0.6, 0.78) * (1.0 - mu);
 
   float forward = max(cosAngle, 0.0);
   float glare = pow(forward, 1500.0) * 0.08 + pow(forward, 120.0) * 0.012;
-  return u_sunIrradiance * sunTransmittance * (disk * limb * SUN_DISK_RADIANCE + glare);
+  return u_sunIrradiance * sunTransmittance * (disk * limb * SUN_DISK_RADIANCE * u_sunDisk + glare);
 }
 
 vec3 moonDisk(vec3 dir, vec3 moonTransmittance) {
@@ -86,7 +91,7 @@ vec3 moonDisk(vec3 dir, vec3 moonTransmittance) {
   float disk = 1.0 - smoothstep(1.0 - edge, 1.0 + edge, r2);
   if (disk <= 0.0) return vec3(0.0);
 
-
+                                                                                              
   vec3 normal = right * o.x + up * o.y - u_moonDirection * sqrt(max(1.0 - r2, 0.0));
   float lit = max(dot(normal, u_sunDirection), 0.0);
   float mare = valueNoise3(normal * 2.5 + 7.0) * 0.6 + valueNoise3(normal * 6.0 + 3.0) * 0.4;
@@ -124,6 +129,29 @@ vec3 stars(vec3 worldDir) {
   return (tint * magnitude * profile * present * twinkle + milkyWay) * u_starsIntensity;
 }
 
+   
+                                                                          
+                                                                              
+                                                                                 
+                                                                                 
+                                                                           
+   
+vec3 cloudLayer(vec3 dir, vec3 sky) {
+  float t = (u_cloudLayerRegion.w - v_nearPoint.y) / max(dir.y, 0.02);
+  if (t <= 0.0) return sky;
+  vec2 hit = v_nearPoint.xz + dir.xz * t;
+  vec2 uv = (hit - u_cloudLayerRegion.xy) * u_cloudLayerRegion.z + 0.5;
+                                                                                                    
+  vec2 border = abs(uv - 0.5) * 2.0;
+  float inside = 1.0 - smoothstep(0.75, 1.0, max(border.x, border.y));
+  float cover = (1.0 - texture(u_cloudLayer, uv).r) * inside * smoothstep(0.0, 0.08, dir.y);
+  if (cover <= 0.002) return sky;
+  vec3 sunTransmittance = decodeHdr(texelFetch(u_skyLightingLut, ivec2(${SKY_LIGHTING_TEXEL.sunTransmittance}, 0), 0), ${HDR_RANGE_LIGHTING}.0).rgb;
+                                                                                                                    
+  vec3 lit = u_sunIrradiance * sunTransmittance * (0.28 * mix(1.0, 0.35, cover)) + sky * 0.6;
+  return mix(sky, lit, cover);
+}
+
 void main() {
   vec3 dir = normalize(v_farPoint - v_nearPoint);
   vec4 skyTexel = decodeHdr(texture(u_skyViewLut, skyViewUv(dir)), ${HDR_RANGE_SKY}.0);
@@ -134,8 +162,8 @@ void main() {
     vec3 sunTransmittance = decodeHdr(texelFetch(u_skyLightingLut, ivec2(${SKY_LIGHTING_TEXEL.sunTransmittance}, 0), 0), ${HDR_RANGE_LIGHTING}.0).rgb;
     vec3 moonTransmittance = decodeHdr(texelFetch(u_skyLightingLut, ivec2(${SKY_LIGHTING_TEXEL.moonTransmittance}, 0), 0), ${HDR_RANGE_LIGHTING}.0).rgb;
     radiance += sunDisk(dir, sunTransmittance) + moonDisk(dir, moonTransmittance);
-
-
+                                                                                                 
+                                                                 
     if (u_starsIntensity > 0.0005 && u_sunDirection.y < 0.05) {
       radiance += (stars(dir) + AIRGLOW * (1.0 + 2.0 * (1.0 - max(dir.y, 0.0)))) * spaceTransmittance;
     }
@@ -144,10 +172,10 @@ void main() {
   if (u_cloudsEnabled > 0.5) {
     vec4 clouds = decodeHdr(texture(u_clouds, gl_FragCoord.xy * u_inverseResolution), ${HDR_RANGE_SKY}.0);
     radiance = clouds.rgb + radiance * clouds.a;
+  } else if (u_cloudLayerEnabled > 0.5 && dir.y > 0.0) {
+    radiance = cloudLayer(dir, radiance);
   }
 
-  vec3 color = linearToSrgb(tonemapAces(radiance * u_exposure));
-  color += (interleavedGradientNoise(gl_FragCoord.xy) - 0.5) / 255.0;
-  fragColor = vec4(color, 1.0);
+  fragColor = encodeHdr(radiance * u_exposure, 1.0, ${HDR_RANGE_SCENE}.0);
 }
 `;
