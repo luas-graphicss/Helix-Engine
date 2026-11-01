@@ -46,7 +46,7 @@ void main() {
   vec3 throughput = vec3(1.0);
   float previousT = 0.0;
 
-   
+                                                                                                 
   for (int i = 1; i <= STEPS; i++) {
     float x = float(i) / float(STEPS);
     float t = tMax * x * x;
