@@ -281,5 +281,285 @@ class DebugJogo extends Script {
 			material: mat.create({baseColor: "#e63946", roughness: 0.4, metallic: 0.2}),
 			position: v3(4, 0.5, 2)
 		});
+		checar("spawn malha CSG", ator.mesh != null);
+		checar("csg.operations", contem(csg.operations(), "union"));
+		var tri:Dynamic = me.create({
+			name: "Triangulo",
+			positions: [-1, 0, 0, 1, 0, 0, 0, 1.5, 0],
+			uvs: [0, 0, 1, 0, 0.5, 1],
+			indices: [0, 1, 2]
+		});
+		me.computeNormals(tri);
+		checar("mesh.create + computeBounds", me.computeBounds(tri).max.y >= 1.5);
+		var dupla:Dynamic = me.merge(tri, me.flipWinding(me.clone(tri)));
+		checar("mesh.merge", me.triangleCount(dupla) == 2);
+		s.spawn("mesh", {
+			name: "Triangulo",
+			mesh: dupla,
+			material: mat.create({baseColor: "#06d6a0", doubleSided: true}),
+			position: v3(7, 0, -2)
+		});
+		var grande:Dynamic = me.scale(me.translate(me.clone(caixa), v3(0, 0.5, 0)), 2);
+		checar("mesh.translate/scale", me.computeBounds(grande).max.y > 1.9);
+		var distancia:Dynamic = me.raycast(helix.math.ray.create(v3(0, 5, 0), v3(0, -1, 0)), grande);
+		checar("mesh.raycast", ehNumero(distancia) && distancia > 0);
+		var vertices:Int = me.vertexCount(caixa);
+		checar("positions/indices", me.positions(caixa).length == vertices * 3 && me.indices(caixa).length == 36);
+		checar("primitivas extras", me.triangleCount(me.torusKnot()) > 0 && me.triangleCount(me.capsule()) > 0);
+		return null;
+	}
+
+	                                                                                              
+
+	function materiais():Dynamic {
+		var mat:Dynamic = helix.material, s:Dynamic = helix.scene, tex:Dynamic = helix.texture;
+		var base:Dynamic = mat.create({name: "DebugBase", baseColor: "#d98c2b", roughness: 0.5, metallic: 0.1});
+		checar("material.create", base.roughness == 0.5);
+		var copia:Dynamic = mat.clone(base);
+		mat.set(copia, {roughness: 1, emissive: "#ffffff", emissiveIntensity: 2});
+		checar("material.clone/set", copia.roughness == 1 && base.roughness == 0.5);
+		var caixa:Dynamic = s.spawnPrimitive("box", {name: "CaixaPintada", position: v3(-7, 0.5, 2)});
+		mat.assign(caixa, base);
+		checar("material.assign/of", mat.of(caixa) != null);
+		mat.own(caixa);
+		mat.setColor(caixa, "#d98c2b");
+		var desenho:Dynamic = tex.canvas(64, 64);
+		desenho.update();
+		mat.setTexture(caixa, "baseColorMap", desenho.texture);
+		checar("texture.canvas + setTexture", mat.hasAnyTexture(mat.of(caixa)) == true && tex.isTexture(desenho.texture) == true);
+		checar("material.slots", mat.slots().length > 0);
+		checar("materials.list", ehLista(helix.materials.list()));
+		var sombreado:Dynamic = mat.fromShader("DebugSuperficie", {glow: v3(1, 0.45, 0.1), speed: 2});
+		checar("material.fromShader", sombreado != null);
+		if (sombreado != null) {
+			var esfera:Dynamic = s.spawnPrimitive("sphere", {name: "EsferaShader", position: v3(0, 1, -3), scale: 1.4});
+			mat.assign(esfera, sombreado);
+			mat.uniforms(esfera).set("speed", 3);
+			checar("material.uniforms.list", mat.uniforms(esfera).list().length >= 1);
+		}
+		return null;
+	}
+
+	function luzes():Dynamic {
+		var l:Dynamic = helix.light;
+		checar("light.types", contem(l.types(), "point") && contem(l.localTypes(), "spot"));
+		var lampada:Dynamic = l.spawn("point", {name: "Lampada", position: v3(0, 3, 0), color: "#ffd166", intensity: 60, range: 14});
+		checar("light.spawn", lampada.light != null && lampada.light.type == "point");
+		l.set(lampada, {intensity: 80});
+		checar("light.set", lampada.light.intensity == 80);
+		l.setTemperature(lampada, 3200);
+		checar("setTemperature", lampada.light.temperature == 3200);
+		var foco:Dynamic = l.spawn("spot", {
+			name: "Holofote", position: v3(4, 4, 0), rotation: v3(-90, 0, 0), intensity: 120, range: 16,
+			innerAngle: 20, outerAngle: 35, color: "#ffffff"
+		});
+		checar("spot", foco.light.type == "spot");
+		var convertido:Dynamic = l.convert(foco, "disc");
+		checar("light.convert", convertido.type == "disc" && foco.light.type == "disc");
+		l.convert(foco, "spot");
+		var presets:Array<Dynamic> = l.presets();
+		checar("light.presets", presets.length > 0);
+		if (presets.length > 0) {
+			var primeiro = presets[0];
+			var preset:Dynamic = l.spawn(primeiro.id, {name: "LuzPreset", position: v3(-4, 2.5, 4)});
+			checar("light.fromPreset", preset.light != null && l.fromPreset(primeiro.id).type == primeiro.type);
+		}
+		checar("light.all", l.all({local: true}).length >= 2);
+		checar("effectiveRange", l.effectiveRange(lampada) > 0);
+		checar("light.isLocal", l.isLocal(lampada) == true);
+		checar("temperatureToColor", l.temperatureToColor(6500) != null);
+		l.setColor(lampada, "#ffffff");
+		checar("light.setColor", eq3(lampada.light.color, 1, 1, 1, 0.01));
+		return null;
+	}
+
+	function ceu():Dynamic {
+		var sky:Dynamic = helix.sky, mundo:Dynamic = helix.world;
+		sky.set({timeOfDay: 10.5, haze: 0.3, clouds: {enabled: true, coverage: 0.45}});
+		checar("sky.set", aprox(sky.timeOfDay, 10.5, 1e-3) && sky.clouds.enabled == true);
+		checar("sky.isDay", sky.isDay == true);
+		checar("sky.sunDirection", sky.sunDirection().y > 0);
+		var hora:String = sky.formatTimeOfDay(10.5);
+		checar("sky.formatTimeOfDay", hora.indexOf(":") >= 0, hora);
+		checar("sky.wrapTimeOfDay", sky.wrapTimeOfDay(25) == 1);
+		checar("sky.presets", sky.presets().length > 0);
+		assinar(sky.onHourChanged(function(hora) info("Hora do céu: " + hora)));
+		sky.cycleSpeed = 0;
+		checar("sky.cycleSpeed", sky.cycleSpeed == 0);
+		checar("world.gravity", mundo.gravity.y < 0);
+		mundo.wind.set({speed: 2, direction: 45});
+		checar("world.wind.set", mundo.wind.speed == 2);
+		return null;
+	}
+
+	function camera():Dynamic {
+		var c:Dynamic = helix.camera;
+		checar("camera.fov", c.fov > 0 && c.aspect > 0);
+		checar("camera.near/far", c.near > 0 && c.far > c.near);
+		var viewport:Dynamic = c.viewport;
+		checar("viewport", viewport.width > 0);
+		var naTela:Dynamic = c.worldToScreen(v3(0, 0, 0));
+		checar("worldToScreen", naTela == null || ehNumero(naTela.x));
+		var raio:Dynamic = c.screenToRay(viewport.width / 2, viewport.height / 2);
+		checar("screenToRay", raio == null || aprox(comprimento(raio.direction), 1, 0.01));
+		checar("viewMatrix", c.viewMatrix.length == 16);
+		var jogador:Dynamic = c.player;
+		jogador.set({distance: 7, pitch: 18});
+		checar("player.set", jogador.settings.distance == 7);
+		checar("distanceTo", c.distanceTo(v3(0, 0, 0)) >= 0);
+		checar("camera.position", c.position != null && c.forward != null);
+		assinar(c.onMainChanged(function(entidade) info(entidade == null ? "Câmera principal: editor/jogador" : "Câmera principal: " + nomeDe(entidade))));
+		return null;
+	}
+
+	function pos():Dynamic {
+		var p:Dynamic = helix.post;
+		checar("post.toneMappers", p.toneMappers().length > 0);
+		p.set({
+			bloom: {enabled: true, intensity: 0.5, threshold: 1, softKnee: 0.5, radius: 0.6},
+			vignette: {enabled: true, intensity: 0.35, smoothness: 0.5, roundness: 1}
+		});
+		checar("post.set", p.bloom.enabled == true && p.vignette.enabled == true);
+		p.exposure = 1.05;
+		checar("post.exposure", aprox(p.exposure, 1.05, 1e-3));
+		p.toneMapper = "agx";
+		checar("post.toneMapper", p.toneMapper == "agx");
+		checar("post.presets", p.presets().length > 0);
+		var custom:Dynamic = p.custom;
+		var novo:Dynamic = custom.add({fragment: "DebugPost", name: "DebugPost", uniforms: {tint: v3(0.15, 0.05, 0.3), strength: 0.6}});
+		efeito = novo;
+		checar("post.custom.add", novo != null && custom.get("DebugPost") != null);
+		novo.uniforms.set("strength", 0.8);
+		checar("efeito.uniforms.list", novo.uniforms.list().length >= 2);
+		return null;
+	}
+
+	function render():Dynamic {
+		var r:Dynamic = helix.render;
+		checar("render.passNames", r.passNames().length > 0);
+		checar("render.stats", ehNumero(r.stats.drawCalls));
+		checar("render.frame", ehNumero(r.frame.width));
+		assinar(r.onAfterFrame(function() renders++));
+		r.showGrid = false;
+		checar("render.showGrid", r.showGrid == false);
+		checar("render.pixelRatio", r.pixelRatio > 0);
+		return null;
+	}
+
+	                                                                                           
+
+	function fisica():Dynamic {
+		var ph:Dynamic = helix.physics, s:Dynamic = helix.scene;
+		checar("physics.enabled", ph.enabled == true);
+		checar("physics.gravity", ph.gravity.y < 0);
+		checar("physics.settings", ph.settings.fixedTimestep > 0);
+		for (i in 1...6) {
+			var indice = i - 1;
+			var caixa:Dynamic = s.spawnPrimitive("box", {
+				name: "Caixa" + i,
+				position: v3(-2 + indice * 1.1, 3 + indice * 1.2, 3),
+				rigidBody: {type: "dynamic", collider: "box", mass: 2, restitution: 0.3},
+				tags: ["caixa"]
+			});
+			helix.material.setColor(caixa, helix.math.color.hsl(30 + i * 12, 0.7, 0.5));
+		}
+		var caixas:Array<Dynamic> = s.byTag("caixa");
+		var primeira = caixas[0];
+		checar("caixas dinâmicas", caixas.length == 5 && ph.hasBody(primeira) == true);
+		var corpo:Dynamic = ph.bodyOf(primeira);
+		checar("bodyOf", corpo.isDynamic == true && corpo.mass > 0);
+		corpo.applyImpulse(v3(0, 2, 0));
+		corpo.applyTorque(v3(0, 1, 0));
+		corpo.setMaterial({friction: 0.8});
+		corpo.wake();
+		checar("body.linearVelocity", corpo.linearVelocity != null);
+		checar("bodies()", ph.bodies().length >= 6);
+		var hit:Dynamic = ph.raycast(v3(0, 5, 0), v3(0, -1, 0), 20);
+		checar("physics.raycast", hit != null && hit.entity != null);
+		checar("raycastAll", ph.raycastAll(v3(0, 5, 0), v3(0, -1, 0), 20).length >= 1);
+		checar("overlapSphere", ehLista(ph.overlapSphere(v3(0, 3, 3), 4)));
+		checar("massProperties", ph.massProperties(primeira).mass > 0);
+		checar("colliderVolume", ph.colliderVolume(primeira) > 0);
+		var formas:Dynamic = ph.shapes;
+		checar("shapes.sphere volume", aprox(formas.volume(formas.sphere(1)), 4.18879, 0.01));
+		assinar(ph.onCollisionBegin(function(e) {
+			colisoes++;
+			if (colisoes > 3) return;
+			info("Colisão: " + nomeDe(e.a) + " × " + nomeDe(e.b) + " (impulso " + arred(e.contact.impulse) + ")");
+		}));
+		assinar(ph.onOutOfBounds(function(entidade) aviso(nomeDe(entidade) + " caiu do mundo")));
+		var gatilho:Dynamic = s.spawn("group", {name: "Gatilho", position: v3(0, 1, 3), trigger: {shape: "box", size: v3(3, 2, 3)}});
+		checar("trigger spawn", gatilho != null && s.isAttached(gatilho) == true);
+		checar("physics.stats", ehNumero(ph.stats.bodies));
+		return null;
+	}
+
+	function personagem():Dynamic {
+		var ch:Dynamic = helix.character, pl:Dynamic = helix.player;
+		var novo:Dynamic = ch.spawn({name: "Heroi", position: v3(0, 1.2, 8), character: {walkSpeed: 4, runSpeed: 7, jumpHeight: 1.4}});
+		heroi = novo;
+		checar("character.spawn", novo.character != null && ch.has(novo) == true);
+		var c:Dynamic = ch.of(novo);
+		checar("character.of", ehBool(c.isGrounded));
+		checar("settingsOf", ch.settingsOf(novo).walkSpeed == 4);
+		pl.possess(novo);
+		checar("player.possess", pl.possessed == novo && pl.isPossessing == true);
+		assinar(ch.onJumped(function(e) info(nomeDe(e.entity) + " pulou")));
+		assinar(pl.onPossessed(function(entidade) info("Possuindo " + nomeDe(entidade))));
+		checar("character.all", ch.all().length >= 1);
+		checar("player.spawnPoint", pl.spawnPoint != null);
+		checar("character.velocity", c.velocity != null && c.position != null);
+		return null;
+	}
+
+	function terreno():Dynamic {
+		var te:Dynamic = helix.terrain;
+		checar("terrain.presets", te.presets().length > 0);
+		var colinas:Dynamic = te.spawn({name: "Colinas", size: 48, resolution: 65, preset: "hills", seed: 7, position: v3(0, -6, -70)});
+		checar("terrain.spawn", colinas.terrain != null && te.all().length >= 1);
+		checar("terrain.of", te.of(colinas).resolution == 65);
+		checar("heightAt", ehNumero(te.heightAt(v3(0, 0, -70), colinas)));
+		checar("contains", te.contains(v3(0, 0, -70), colinas) == true && te.contains(v3(500, 0, 0), colinas) == false);
+		te.sculpt(colinas, "raise", v3(5, 0, -70), {radius: 6, strength: 1}, 1);
+		te.markDirty(colinas);
+		var grama:Dynamic = te.grass;
+		grama.set(colinas, {enabled: true, density: 0.5});
+		checar("grass.set", grama.settingsOf(colinas).enabled == true);
+		var agua:Dynamic = te.water;
+		agua.set(colinas, {enabled: true, level: -2});
+		checar("water.set", agua.settingsOf(colinas).enabled == true);
+		checar("terrain.raycast", te.raycast(v3(0, 50, -70), v3(0, -1, 0), colinas) != null);
+		return null;
+	}
+
+	                                                                                           
+
+	function soltarCaixa():Void {
+		var random:Dynamic = helix.math.random;
+		var caixa:Dynamic = helix.scene.spawnPrimitive("box", {
+			name: "CaixaSolta",
+			position: v3(random.range(-3, 3), 6, random.range(0, 4)),
+			rigidBody: {type: "dynamic", collider: "box", mass: 1},
+			tags: ["caixa"]
+		});
+		helix.material.setColor(caixa, random.color());
+		pontos++;
+		helix.gui.bind("pontos", pontos);
+		helix.events.emit("debug.caixa", {nome: caixa.name});
+	}
+
+	function interfaceGrafica():Dynamic {
+		var g:Dynamic = helix.gui;
+		g.css("DebugEstilo");
+		var hud:Dynamic = g.html("DebugHud", {id: "debug-hud"});
+		checar("gui.html", hud != null && g.element("#debug-hud") != null);
+		var icone:Dynamic = g.svg("DebugIcone", {id: "debug-icone"});
+		checar("gui.svg", icone != null);
+		var slot:Dynamic = g.element("[data-slot=icone]");
+		if (slot != null && icone != null) slot.appendChild(icone);
+		checar("gui.bind", g.bind("linguagem", LINGUAGEM) >= 1);
+		g.bind("titulo", "Helix · Debug");
+		assinar(g.onAction("caixa", function() soltarCaixa()));
+		assinar(g.onAction("reiniciar", function() helix.play.restart()));
 `;
 }
