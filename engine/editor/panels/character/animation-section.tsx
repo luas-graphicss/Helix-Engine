@@ -13,9 +13,9 @@ import type { Entity } from '@/engine/core/scene/entity';
 import { riggedEntities, rigOwnerOf } from '@/engine/editor/animation/animation-editor';
 import { ensureAnimationDocument } from '@/engine/editor/operations/animation-operations';
 import { setCharacterClip } from '@/engine/editor/operations/character-operations';
-import { setPlayerClip } from '@/engine/editor/operations/player-operations';
+import { playerCharacterSettings, setPlayerClip } from '@/engine/editor/operations/player-operations';
 import { useDockLayoutStore } from '@/engine/editor/layout/dock-layout-context';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { useCharacterModels } from './character-model-select';
 import { Hint } from './panel-text';
 const STATE_LABEL: Record<LocomotionStateKey, string> = {
@@ -46,11 +46,11 @@ type AnimationSectionProps = {
     entity?: Entity;
 };
 export function AnimationSection({ entity }: AnimationSectionProps) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const dock = useDockLayoutStore();
     const models = useCharacterModels();
     useSyncExternalStore(subscribeAnimationDocuments, animationDocumentsVersion, animationDocumentsVersion);
-    const settings: CharacterSettings = entity?.character ?? session.scene.player.character;
+    const settings: CharacterSettings = entity?.character ?? playerCharacterSettings(session);
     const asset = models.find((model) => model.id === settings.model) ?? null;
     const animations = session.library.byKind('animation');
     const options = [{ value: MODEL_CLIP, label: asset ? 'Clipe do modelo' : 'Clipe do modelo (ao carregar)' }, ...animations.map((animation) => ({ value: animation.id, label: animation.name }))];
