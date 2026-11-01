@@ -1,18 +1,22 @@
 'use client';
+import { useLayoutEffect, useRef } from 'react';
 import { Bone, ChevronDown, CircleDot, Download, Ellipsis, Flag, Magnet, Pause, Play, Repeat, Rows3, Save, SkipBack, SkipForward, Spline, StepBack, StepForward, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
 import { ANIMATION_EXPORT_FORMATS } from '@/engine/core/animation/animation-io';
 import { availableLimbs, LIMBS } from '@/engine/animation/ik/limb-chains';
 import { FieldInput } from '@/engine/ui/field-input';
 import { IconButton } from '@/engine/ui/icon-button';
 import { ToolbarSeparator } from '@/engine/ui/toolbar-separator';
-import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS, MENU_SHORTCUT_CLASS } from '@/engine/editor/menus/menu-styles';
+import { TOOLBAR_CHIP_CLASS } from '@/engine/ui/surface-styles';
+import { MenuShortcut } from '@/engine/editor/menus/menu-shortcut';
+import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS } from '@/engine/editor/menus/menu-styles';
 import { PLAYBACK_SPEEDS, rigDisplayName } from '@/engine/editor/animation/animation-editor';
 import { formatSeconds } from '@/engine/editor/animation/ui/timeline-model';
 import { useAnimationEditor, useAnimationTime } from '@/engine/editor/animation/ui/use-animation-editor';
 import { exportAnimationDocument, saveAnimationEditorDocument } from '@/engine/editor/operations/animation-operations';
 import { useEditorSession } from '@/engine/editor/session/editor-session-context';
+import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
 const MENU_FIELD_CLASS = 'grid grid-cols-[88px_minmax(0,1fr)_20px] items-center gap-2 text-2xs text-muted-foreground';
 function parseNumber(raw: string): number | null {
     const value = Number.parseFloat(raw.replace(',', '.'));
@@ -42,25 +46,32 @@ function CommitField({ label, value, min, step, onCommit }: {
 function FrameReadout() {
     const editor = useAnimationEditor();
     const time = useAnimationTime();
+    const inputRef = useRef<HTMLInputElement>(null);
     const totalFrames = Math.round(editor.duration * editor.frameRate);
     const frame = Math.round(time * editor.frameRate);
-    return (<div className="flex shrink-0 items-center gap-1 font-mono text-[10px] text-muted-foreground" title="Quadro atual / total · tempo">
-      <FieldInput key={frame} type="number" min={0} max={totalFrames} step={1} defaultValue={frame} aria-label="Quadro atual" className="w-12 flex-none" onBlur={(event) => {
+    useLayoutEffect(() => {
+        const input = inputRef.current;
+        if (input && document.activeElement !== input)
+            input.value = String(frame);
+    }, [frame]);
+    return (<div className="flex shrink-0 items-center gap-1 font-mono text-3xs text-muted-foreground" title="Quadro atual / total · tempo">
+      <FieldInput ref={inputRef} type="number" min={0} max={totalFrames} step={1} defaultValue={frame} aria-label="Quadro atual" className="w-12 flex-none" onBlur={(event) => {
             const parsed = parseNumber(event.currentTarget.value);
             if (parsed !== null)
                 editor.setFrame(Math.round(parsed));
+            else
+                event.currentTarget.value = String(Math.round(editor.time * editor.frameRate));
         }} onKeyDown={(event) => {
             event.stopPropagation();
             if (event.key === 'Enter')
                 event.currentTarget.blur();
         }}/>
       <span>/ {totalFrames}</span>
-      <span className="hidden text-muted-foreground/60 lg:inline">{formatSeconds(time)}</span>
+      <span className="hidden text-muted-foreground/60 @4xl/panel:inline">{formatSeconds(time)}</span>
     </div>);
 }
 function PlayButton() {
     const editor = useAnimationEditor();
-    useAnimationTime();
     return (<IconButton label={editor.playing ? 'Pausar (Espaço)' : 'Reproduzir (Espaço)'} size="sm" active={editor.playing} onClick={() => editor.togglePlay()}>
       {editor.playing ? <Pause /> : <Play />}
     </IconButton>);
@@ -68,12 +79,13 @@ function PlayButton() {
 export function AnimationToolbar() {
     const session = useEditorSession();
     const editor = useAnimationEditor();
+    const hint = useShortcutHint();
     const { document, primary } = editor;
     if (!document)
         return null;
     const limbs = primary ? availableLimbs(primary.rig) : [];
     const activeIk = limbs.filter((limb) => editor.ik[limb]).length;
-    return (<div className="flex h-8 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface px-1.5 [scrollbar-width:none]">
+    return (<div className="flex min-h-panelbar shrink-0 flex-wrap items-center gap-x-1 gap-y-0.5 border-b border-border bg-surface px-1.5 py-0.5">
       <div className="flex min-w-0 shrink-0 items-center gap-1">
         <FieldInput key={document.name} defaultValue={document.name} aria-label="Nome da animação" className="w-36 flex-none" onBlur={(event) => editor.rename(event.currentTarget.value)} onKeyDown={(event) => {
             event.stopPropagation();
@@ -81,7 +93,7 @@ export function AnimationToolbar() {
                 event.currentTarget.blur();
         }}/>
         {editor.dirty && <span className="size-1.5 shrink-0 rounded-full bg-warning" title="Alterações não salvas" aria-label="Alterações não salvas"/>}
-        {primary && (<button type="button" title="Selecionar o ator" onClick={() => session.select(primary.entity.parent?.character ? primary.entity.parent : primary.entity)} className="hidden max-w-28 truncate rounded-sm px-1 text-[10px] text-muted-foreground hover:bg-highlight hover:text-foreground md:inline">
+        {primary && (<button type="button" title="Selecionar o ator" onClick={() => session.select(primary.entity.parent?.character ? primary.entity.parent : primary.entity)} className="hidden max-w-28 truncate rounded-sm px-1 text-3xs text-muted-foreground hover:bg-highlight hover:text-foreground @2xl/panel:inline">
             {rigDisplayName(primary.entity)}
           </button>)}
       </div>
@@ -107,7 +119,7 @@ export function AnimationToolbar() {
       <FrameReadout />
 
       <DropdownMenu>
-        <DropdownMenuTrigger render={<button type="button" aria-label="Velocidade de reprodução" title="Velocidade de reprodução" className="flex h-6 shrink-0 items-center gap-0.5 rounded-sm border border-border-strong px-1.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-highlight hover:text-foreground"/>}>
+        <DropdownMenuTrigger render={<button type="button" aria-label="Velocidade de reprodução" title="Velocidade de reprodução" className={TOOLBAR_CHIP_CLASS}/>}>
           {editor.speed}×
           <ChevronDown className="size-3" aria-hidden/>
         </DropdownMenuTrigger>
@@ -151,7 +163,7 @@ export function AnimationToolbar() {
       </IconButton>
 
       {limbs.length > 0 && (<DropdownMenu>
-          <DropdownMenuTrigger render={<button type="button" aria-label="Membros com IK" title="Membros com IK: arraste mãos e pés no viewport" className={cn('flex h-6 shrink-0 items-center gap-0.5 rounded-sm border border-border-strong px-1.5 font-mono text-[10px] transition-colors hover:bg-highlight hover:text-foreground', activeIk > 0 ? 'text-foreground' : 'text-muted-foreground')}/>}>
+          <DropdownMenuTrigger render={<button type="button" aria-label="Membros com IK" title="Membros com IK: arraste mãos e pés no viewport" className={cn(TOOLBAR_CHIP_CLASS, activeIk > 0 && 'text-foreground')}/>}>
             IK {activeIk}/{limbs.length}
             <ChevronDown className="size-3" aria-hidden/>
           </DropdownMenuTrigger>
@@ -206,7 +218,7 @@ export function AnimationToolbar() {
               <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => editor.keyAllBones()}>
                 <Bone aria-hidden/>
                 Chave em todos os ossos
-                <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Shift+K</DropdownMenuShortcut>
+                <MenuShortcut action="animation.keyAll"/>
               </DropdownMenuItem>
               <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => editor.addEvent('evento')}>
                 <Flag aria-hidden/>
@@ -223,7 +235,7 @@ export function AnimationToolbar() {
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <IconButton label={editor.assetId ? 'Salvar na biblioteca (Ctrl+S)' : 'Guardar na biblioteca (Ctrl+S)'} size="sm" onClick={() => void saveAnimationEditorDocument(session)} className={cn(editor.dirty && 'text-foreground')}>
+        <IconButton label={hint(editor.assetId ? 'Salvar na biblioteca' : 'Guardar na biblioteca', 'animation.save')} size="sm" onClick={() => void saveAnimationEditorDocument(session)} className={cn(editor.dirty && 'text-foreground')}>
           <Save />
         </IconButton>
         <IconButton label="Fechar o editor de animação" size="sm" onClick={() => editor.close()}>
