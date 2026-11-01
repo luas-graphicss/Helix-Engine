@@ -249,3 +249,59 @@ function legacyWasiImports(wasi: WASI): Record<string, (...args: never[]) => unk
         legacy.fd_prestat_get = (() => ERRNO_BADF) as never;
     return legacy;
 }
+function untar(bytes: Uint8Array): Map<string, Inode> {
+    const root = new Map<string, Inode>();
+    const decoder = new TextDecoder();
+    let offset = 0;
+    let longName: string | null = null;
+    const field = (start: number, length: number) => {
+        const end = Math.min(start + length, bytes.length);
+        let stop = start;
+        while (stop < end && bytes[stop] !== 0)
+            stop++;
+        return decoder.decode(bytes.subarray(start, stop));
+    };
+    while (offset + 512 <= bytes.length) {
+        if (bytes[offset] === 0)
+            break;
+        const name = field(offset, 100);
+        const size = parseInt(field(offset + 124, 12).trim() || '0', 8);
+        const type = String.fromCharCode(bytes[offset + 156]);
+        const prefix = field(offset + 345, 155);
+        const dataStart = offset + 512;
+        const dataEnd = dataStart + size;
+        const fullName = longName ?? (prefix ? `${prefix}/${name}` : name);
+        longName = null;
+        if (type === 'L') {
+            longName = decoder.decode(bytes.subarray(dataStart, dataEnd)).replace(/\0+$/, '');
+        }
+        else if (type === '5') {
+            ensureDirectory(root, fullName);
+        }
+        else if (type === '0' || type === '\0' || type === '7') {
+            const parts = fullName.split('/').filter((part) => part.length > 0 && part !== '.');
+            const fileName = parts.pop();
+            if (fileName) {
+                const parent = ensureDirectory(root, parts.join('/'));
+                parent.set(fileName, new File(bytes.slice(dataStart, dataEnd)));
+            }
+        }
+        offset = dataStart + Math.ceil(size / 512) * 512;
+    }
+    return root;
+}
+function ensureDirectory(root: Map<string, Inode>, path: string): Map<string, Inode> {
+    let current = root;
+    for (const part of path.split('/').filter((part) => part.length > 0 && part !== '.')) {
+        const existing = current.get(part);
+        let next: Directory;
+        if (existing instanceof Directory)
+            next = existing;
+        else {
+            next = new Directory([]);
+            current.set(part, next);
+        }
+        current = next.contents;
+    }
+    return current;
+}
