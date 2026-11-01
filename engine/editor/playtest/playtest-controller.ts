@@ -3,6 +3,9 @@ import type { Entity } from '@/engine/core/scene/entity';
 import { uniqueEntityName } from '@/engine/core/scene/entity-utils';
 import { clamp } from '@/engine/core/math/scalar';
 import { PhysicsScene } from '@/engine/physics/scene/physics-scene';
+import { PHYSICS_BACKEND_LABELS } from '@/engine/physics/world/physics-world';
+import { detectPhysicsBackendCapabilities, resolvePhysicsBackend } from '@/engine/physics/worker/physics-capabilities';
+import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { CharacterRuntime } from '@/engine/character/character-runtime';
 import { createCharacterActor, defaultActorName, defaultSpawnPosition, findPossessableCharacter } from '@/engine/character/character-actor';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
@@ -15,6 +18,7 @@ export class PlaytestController {
     timeScale = 1;
     elapsedSeconds = 0;
     physics: PhysicsScene | null = null;
+    physicsBudgetMs = Infinity;
     characters: CharacterRuntime | null = null;
     private readonly snapshots = new Map<Entity, TransformSnapshot>();
     private readonly cameraPosition = vec3.create();
@@ -64,10 +68,16 @@ export class PlaytestController {
         this.state = 'paused';
         const { physics, characters } = this;
         if (physics) {
-            characters?.applyInput();
+            const { scripts } = this.session;
+            const h = physics.world.fixedTimestep;
+            scripts.beforePhysics(h, h);
+            characters?.reconcile();
+            if (scripts.switches.locomotion)
+                characters?.applyInput();
             physics.stepOnce();
-            characters?.present(physics.world.fixedTimestep, 1);
-            this.elapsedSeconds += physics.world.fixedTimestep;
+            characters?.present(h, 1);
+            scripts.afterPhysics(h);
+            this.elapsedSeconds += h;
         }
         this.session.notify();
     }
@@ -82,10 +92,34 @@ export class PlaytestController {
         if (this.state !== 'playing' || !physics)
             return;
         const scaled = deltaSeconds * this.timeScale;
-        characters?.applyInput();
+        const { scripts, frameProfile } = this.session;
+        frameProfile.begin('scripts');
+        scripts.beforePhysics(scaled, deltaSeconds);
+        frameProfile.end('scripts');
+        characters?.reconcile();
+        if (scripts.switches.locomotion)
+            characters?.applyInput();
+        physics.world.stepBudgetMs = this.physicsBudgetMs;
+        frameProfile.begin('physics');
         const steps = physics.update(scaled, elapsedSeconds);
+        frameProfile.end('physics');
         characters?.present(scaled, physics.world.interpolation);
-        this.elapsedSeconds += steps * physics.world.fixedTimestep;
+        frameProfile.begin('scripts');
+        scripts.afterPhysics(scaled);
+        frameProfile.end('scripts');
+        this.elapsedSeconds += physics.world.stats.simulatedSeconds;
+    }
+    syncPlayer(): void {
+        if (!this.isRunning)
+            return;
+        const wanted = this.session.scene.player.enabled;
+        if (wanted === (this.characters !== null))
+            return;
+        if (wanted)
+            this.startCharacters();
+        else
+            this.stopCharacters();
+        this.session.notify();
     }
     private begin(): void {
         const { session } = this;
@@ -94,18 +128,32 @@ export class PlaytestController {
         vec3.copy(this.cameraPosition, session.camera.position);
         vec3.copy(this.cameraTarget, session.camera.target);
         this.elapsedSeconds = 0;
-        this.transientCharacter = this.spawnTransientCharacter();
+        session.audio.world.enterGame();
+        session.guiWorld.reset();
+        session.vfxWorld.reset();
+        session.hud.start();
+        const backend = resolvePhysicsBackend(engineSettings.get('simulation.physics.backend'), detectPhysicsBackendCapabilities());
         const physics = new PhysicsScene(session.scene, {
             onOutOfBounds: (entity) => session.log.warn('Física', `${entity.name} caiu abaixo do limite do mundo e foi desativado.`),
             onUnstable: (entity) => session.log.error('Física', `${entity.name} ficou instável; pose restaurada e corpo adormecido.`),
-        });
+            onBackendFallback: (message) => session.log.warn('Física', `Worker de física indisponível (${message}) A simulação segue nesta thread.`),
+            onRemoteFrame: () => session.notify(),
+        }, { backend });
         physics.reconcile();
         this.physics = physics;
-        session.log.info('Física', `Simulação iniciada com ${physics.world.bodies.length} corpos.`);
+        session.log.info('Física', `Simulação iniciada com ${physics.world.bodies.length} corpos · ${PHYSICS_BACKEND_LABELS[physics.world.backend]}.`);
+        this.startCharacters();
+        void session.scripts.start('play');
+    }
+    private startCharacters(): void {
+        const { session, physics } = this;
+        if (!physics)
+            return;
         if (!session.scene.player.enabled) {
             session.log.info('Personagem', 'Personagem do jogador desligado: nenhum personagem é criado ou possuído; os atores de personagem da cena ficam inertes.');
             return;
         }
+        this.transientCharacter = this.spawnTransientCharacter();
         const characters = new CharacterRuntime(session.scene, physics, {
             canvas: session.viewportCanvas,
             camera: session.camera,
@@ -117,11 +165,21 @@ export class PlaytestController {
             session.log.info('Personagem', `${possessed.entity.name} possuído: WASD move, Shift corre, Espaço pula, C agacha; clique no viewport para capturar o mouse.`);
         }
     }
+    private stopCharacters(): void {
+        const restoreCamera = this.isPossessing;
+        this.characters?.dispose();
+        this.characters = null;
+        this.removeTransientCharacter();
+        if (restoreCamera) {
+            vec3.copy(this.session.camera.position, this.cameraPosition);
+            vec3.copy(this.session.camera.target, this.cameraTarget);
+        }
+    }
     private spawnTransientCharacter(): Entity | null {
         const { session } = this;
         const { scene } = session;
         const { player } = scene;
-        if (!player.enabled || !player.spawnIfMissing || findPossessableCharacter(scene))
+        if (!player.spawnIfMissing || findPossessableCharacter(scene))
             return null;
         const entity = createCharacterActor(scene, scene.root, {
             name: uniqueEntityName(scene, defaultActorName(player.character.model)),
@@ -133,19 +191,17 @@ export class PlaytestController {
         return entity;
     }
     private end(): void {
-        const restoreCamera = this.isPossessing;
-        this.characters?.dispose();
-        this.characters = null;
+        this.session.scripts.stop();
+        this.session.audio.world.exitGame();
+        this.session.guiWorld.reset();
+        this.session.vfxWorld.reset();
+        this.session.hud.stop();
+        this.stopCharacters();
         this.physics?.dispose();
         this.physics = null;
         for (const [entity, snapshot] of this.snapshots)
             applyTransformSnapshot(entity, snapshot);
         this.snapshots.clear();
-        this.removeTransientCharacter();
-        if (restoreCamera) {
-            vec3.copy(this.session.camera.position, this.cameraPosition);
-            vec3.copy(this.session.camera.target, this.cameraTarget);
-        }
     }
     private removeTransientCharacter(): void {
         const entity = this.transientCharacter;
