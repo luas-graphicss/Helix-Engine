@@ -477,14 +477,64 @@ impl PartialEq for Value {
     }
 }
 
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        ready();
+        let length = unsafe { ffi::string_bytes(self.0) };
+        let mut buffer = vec![0u8; length];
+        if length > 0 {
+            unsafe { ffi::string_read(self.0, buffer.as_mut_ptr(), length) };
+        }
+        f.write_str(&String::from_utf8_lossy(&buffer))
+    }
+}
 
+impl fmt::Debug for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Value({:?}: {})", self.kind(), self)
+    }
+}
 
                                                    
+pub struct Iter<'a> {
+    value: &'a Value,
+    index: usize,
+    length: usize,
+}
 
+impl Iterator for Iter<'_> {
+    type Item = Value;
+    fn next(&mut self) -> Option<Value> {
+        if self.index >= self.length {
+            return None;
+        }
+        let item = self.value.at(self.index);
+        self.index += 1;
+        Some(item)
+    }
 
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let rest = self.length.saturating_sub(self.index);
+        (rest, Some(rest))
+    }
+}
+
+impl<'a> IntoIterator for &'a Value {
+    type Item = Value;
+    type IntoIter = Iter<'a>;
+    fn into_iter(self) -> Iter<'a> {
+        self.iter()
+    }
+}
 
                                                                                               
 
+impl From<f64> for Value {
+    fn from(n: f64) -> Value {
+        ready();
+        Value::acquire(unsafe { ffi::number(n) })
+    }
+}
 
 macro_rules! numeric_into_value {
     ($($t:ty),*) => {$(
@@ -493,18 +543,92 @@ macro_rules! numeric_into_value {
         }
     )*};
 }
+numeric_into_value!(f32, i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
+impl From<bool> for Value {
+    fn from(b: bool) -> Value {
+        ready();
+        Value::acquire(unsafe { ffi::boolean(b as i32) })
+    }
+}
 
+impl From<&str> for Value {
+    fn from(s: &str) -> Value {
+        ready();
+        Value::acquire(unsafe { ffi::string(s.as_ptr(), s.len()) })
+    }
+}
 
+impl From<String> for Value {
+    fn from(s: String) -> Value {
+        Value::from(s.as_str())
+    }
+}
 
+impl From<&String> for Value {
+    fn from(s: &String) -> Value {
+        Value::from(s.as_str())
+    }
+}
 
+impl From<()> for Value {
+    fn from(_: ()) -> Value {
+        Value(0)
+    }
+}
 
+impl From<&Value> for Value {
+    fn from(v: &Value) -> Value {
+        v.clone()
+    }
+}
 
+impl From<Vec3> for Value {
+    fn from(v: Vec3) -> Value {
+        let object = Value::object();
+        object.set("x", v.x);
+        object.set("y", v.y);
+        object.set("z", v.z);
+        object
+    }
+}
 
+impl<T: Into<Value>> From<Option<T>> for Value {
+    fn from(option: Option<T>) -> Value {
+        match option {
+            Some(value) => value.into(),
+            None => Value::null(),
+        }
+    }
+}
 
+impl<T: Into<Value>> From<Vec<T>> for Value {
+    fn from(items: Vec<T>) -> Value {
+        Value::list(items)
+    }
+}
 
+impl<T: Into<Value> + Clone> From<&[T]> for Value {
+    fn from(items: &[T]) -> Value {
+        Value::list(items.iter().cloned())
+    }
+}
 
+impl<T: Into<Value>, const N: usize> From<[T; N]> for Value {
+    fn from(items: [T; N]) -> Value {
+        Value::list(items)
+    }
+}
 
+impl<V: Into<Value>> From<HashMap<String, V>> for Value {
+    fn from(map: HashMap<String, V>) -> Value {
+        let object = Value::object();
+        for (key, value) in map {
+            object.set(&key, value);
+        }
+        object
+    }
+}
 
                                                                                               
 
@@ -513,6 +637,11 @@ pub trait Args {
     fn with_handles<R>(self, f: impl FnOnce(&[u32]) -> R) -> R;
 }
 
+impl Args for () {
+    fn with_handles<R>(self, f: impl FnOnce(&[u32]) -> R) -> R {
+        f(&[])
+    }
+}
 
 macro_rules! tuple_args {
     ($(($count:literal: $($name:ident $index:tt),+))*) => {$(
@@ -525,9 +654,26 @@ macro_rules! tuple_args {
         }
     )*};
 }
+tuple_args!((1: A 0) (2: A 0, B 1) (3: A 0, B 1, C 2) (4: A 0, B 1, C 2, D 3) (5: A 0, B 1, C 2, D 3, E 4) (6: A 0, B 1, C 2, D 3, E 4, F 5));
 
+impl Args for &[Value] {
+    fn with_handles<R>(self, f: impl FnOnce(&[u32]) -> R) -> R {
+        let handles: Vec<u32> = self.iter().map(|value| value.0).collect();
+        f(&handles)
+    }
+}
 
+impl Args for Vec<Value> {
+    fn with_handles<R>(self, f: impl FnOnce(&[u32]) -> R) -> R {
+        self.as_slice().with_handles(f)
+    }
+}
 
+impl<const N: usize> Args for [Value; N] {
+    fn with_handles<R>(self, f: impl FnOnce(&[u32]) -> R) -> R {
+        self.as_slice().with_handles(f)
+    }
+}
 
 macro_rules! single_args {
     ($($t:ty),*) => {$(
@@ -539,9 +685,11 @@ macro_rules! single_args {
         }
     )*};
 }
+single_args!(Value, &Value, &str, String, &String, f64, f32, i32, i64, u32, u64, usize, bool, Vec3);
 
                                                                                               
 
+type Callback = Box<dyn FnMut(&[Value]) -> Value>;
 
 thread_local! {
     static CALLBACKS: RefCell<HashMap<u32, Option<Callback>>> = RefCell::new(HashMap::new());
@@ -552,34 +700,94 @@ thread_local! {
                                                                                                       
 #[doc(hidden)]
 #[unsafe(no_mangle)]
+pub extern "C" fn __hx_invoke_callback(id: u32, args: u32) -> u32 {
+    let args = Value::from_raw(args).to_vec();
+    let taken = CALLBACKS.with(|table| table.borrow_mut().get_mut(&id).and_then(|slot| slot.take()));
+    let Some(mut callback) = taken else {
+        return 0;
+    };
+    let result = callback(&args);
+    CALLBACKS.with(|table| {
+        if let Some(slot) = table.borrow_mut().get_mut(&id) {
+            if slot.is_none() {
+                *slot = Some(callback);
+            }
+        }
+    });
+    result.into_raw()
+}
 
                                                                                         
 #[doc(hidden)]
 #[unsafe(no_mangle)]
+pub extern "C" fn __hx_drop_callback(id: u32) {
+    CALLBACKS.with(|table| {
+        table.borrow_mut().remove(&id);
+    });
+}
 
                                                                                                  
 
                                                                                          
 #[track_caller]
+pub fn root() -> Value {
+    ready();
+    check(Value::acquire(unsafe { ffi::root() }))
+}
 
                                                                               
 #[track_caller]
+pub fn actor() -> Value {
+    ready();
+    check(Value::acquire(unsafe { ffi::actor() }))
+}
 
                                                                    
 #[track_caller]
+pub fn script() -> Value {
+    ready();
+    check(Value::acquire(unsafe { ffi::script() }))
+}
 
                                                                                                
 #[track_caller]
+pub fn require(name: &str) -> Value {
+    ready();
+    check(Value::acquire(unsafe { ffi::require(name.as_ptr(), name.len()) }))
+}
 
                                            
+pub fn now() -> f64 {
+    ready();
+    unsafe { ffi::now() }
+}
 
+pub fn log(level: Level, message: &str) {
+    ready();
+    unsafe { ffi::log(level as i32, message.as_ptr(), message.len()) }
+}
 
+pub fn debug(message: &str) {
+    log(Level::Debug, message)
+}
 
+pub fn print(message: &str) {
+    log(Level::Info, message)
+}
 
+pub fn warn(message: &str) {
+    log(Level::Warn, message)
+}
 
+pub fn error(message: &str) {
+    log(Level::Error, message)
+}
 
                                                                                     
 #[track_caller]
+pub fn throw(message: &str) -> ! {
+    panic!("{message}")
+}
 
                                                                   
 #[macro_export]
@@ -621,10 +829,47 @@ macro_rules! identity_abi {
         }
     )*};
 }
+identity_abi!((), f64, f32, i32, u32);
 
+impl Abi for bool {
+    type Raw = i32;
+    fn from_raw(raw: i32) -> bool {
+        raw != 0
+    }
+    fn into_raw(self) -> i32 {
+        self as i32
+    }
+}
 
+impl Abi for Value {
+    type Raw = u32;
+    fn from_raw(raw: u32) -> Value {
+        Value::from_raw(raw)
+    }
+    fn into_raw(self) -> u32 {
+        Value::into_raw(self)
+    }
+}
 
+impl Abi for String {
+    type Raw = u32;
+    fn from_raw(raw: u32) -> String {
+        Value::from_raw(raw).to_string()
+    }
+    fn into_raw(self) -> u32 {
+        Value::from(self).into_raw()
+    }
+}
 
+impl Abi for Vec3 {
+    type Raw = u32;
+    fn from_raw(raw: u32) -> Vec3 {
+        Value::from_raw(raw).vec3()
+    }
+    fn into_raw(self) -> u32 {
+        Value::from(self).into_raw()
+    }
+}
 
                                                                                                         
                                                                                                
@@ -667,4 +912,5 @@ macro_rules! __export_one {
 
                                                                     
 pub mod prelude {
+    pub use crate::{actor, debug, error, exports, hooks, now, print, require, root, script, throw, warn, Kind, Level, Value, Vec3};
 }
