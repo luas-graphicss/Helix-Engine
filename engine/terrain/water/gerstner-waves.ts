@@ -36,10 +36,10 @@ export const GERSTNER_WAVES_GLSL = `
 const float GRAVITY = ${glslFloat(WAVE_GRAVITY)};
 const float MIN_WAVELENGTH = ${glslFloat(MIN_WAVELENGTH)};
 const int WAVE_COUNT = ${GERSTNER_WAVES.length};
-
+/** Ângulo relativo, fração do comprimento e fração da amplitude de cada onda. */
 const vec3 WAVES[WAVE_COUNT] = vec3[](
 ${GERSTNER_WAVES.map((wave) => `  vec3(${glslFloat(wave.angle)}, ${glslFloat(wave.lengthScale)}, ${glslFloat(wave.amplitudeScale)})`).join(',\n')}
 );
-
+/** Soma das frações de amplitude: normaliza para a altura total pedida. */
 const float AMPLITUDE_SUM = ${glslFloat(Number(GERSTNER_AMPLITUDE_SUM.toFixed(6)))};
 `;
