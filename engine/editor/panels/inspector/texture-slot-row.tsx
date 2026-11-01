@@ -20,7 +20,7 @@ export function TextureSlotRow({ label, texture, library, onLoadFile, onPick, on
     const pickable = library.filter((candidate) => candidate !== texture);
     return (<PropertyRow label={label}>
       <div className="flex min-w-0 flex-1 items-center gap-1.5">
-        <span className="flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-sm border border-border bg-surface-sunken">
+        <span className="flex size-control shrink-0 items-center justify-center overflow-hidden rounded-sm border border-border bg-surface-sunken">
           {texture ? <TextureThumbnail texture={texture} resolution={48}/> : <span aria-hidden className="size-2 rounded-full bg-border-strong"/>}
         </span>
         <span className="min-w-0 flex-1 truncate font-mono text-2xs text-foreground" title={texture?.sourcePath || undefined}>
@@ -29,13 +29,13 @@ export function TextureSlotRow({ label, texture, library, onLoadFile, onPick, on
               <span className="text-muted-foreground">{texture.width > 0 ? ` · ${texture.width}×${texture.height}` : ' · sem imagem'}</span>
             </>) : (<span className="text-muted-foreground">Nenhuma</span>)}
         </span>
-        <input ref={fileInputRef} type="file" accept={ACCEPTED_IMAGES} className="sr-only" tabIndex={-1} aria-label={`Arquivo de textura para ${label}`} onChange={(event) => {
+        <input ref={fileInputRef} type="file" accept={ACCEPTED_IMAGES} className="hidden" tabIndex={-1} aria-label={`Arquivo de textura para ${label}`} onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = '';
             if (file)
                 onLoadFile(file);
         }}/>
-        <IconButton label={`Carregar textura de ${label}`} size="sm" className="size-5 [&_svg]:size-3" onClick={() => fileInputRef.current?.click()}>
+        <IconButton label={`Carregar textura de ${label}`} size="xs" onClick={() => fileInputRef.current?.click()}>
           <FolderOpen />
         </IconButton>
         {pickable.length > 0 && (<span className="relative flex">
@@ -54,11 +54,11 @@ export function TextureSlotRow({ label, texture, library, onLoadFile, onPick, on
                   {candidate.name} ({candidate.width}×{candidate.height})
                 </option>))}
             </select>
-            <IconButton label={`Escolher textura da biblioteca para ${label}`} size="sm" className="pointer-events-none size-5 [&_svg]:size-3" tabIndex={-1}>
+            <IconButton label={`Escolher textura da biblioteca para ${label}`} size="xs" className="pointer-events-none" tabIndex={-1}>
               <Library />
             </IconButton>
           </span>)}
-        {texture && (<IconButton label={`Remover textura de ${label}`} size="sm" className="size-5 [&_svg]:size-3" onClick={onRemove}>
+        {texture && (<IconButton label={`Remover textura de ${label}`} size="xs" onClick={onRemove}>
             <X />
           </IconButton>)}
       </div>
