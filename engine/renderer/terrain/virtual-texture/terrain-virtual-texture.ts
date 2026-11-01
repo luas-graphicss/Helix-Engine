@@ -500,4 +500,81 @@ export class TerrainVirtualTexture {
         if (bound)
             gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
     }
+    private rebuildPageTable(terrain: Terrain): void {
+        const caches = this.caches as Record<HiresMapKind, PhysicalCache>;
+        const { gl, pageTableMips } = this;
+        for (let slice = 0; slice < VT_PAGE_TABLE_SLICES; slice++) {
+            const kind = KINDS[Math.floor(slice / MAX_TERRAIN_LAYERS)];
+            const layer = terrain.layers[slice % MAX_TERRAIN_LAYERS];
+            const source = layer ? this.readySource(layer.material.hires[kind]) : null;
+            const cache = caches[kind];
+            for (let mip = VT_LEVELS - 1; mip >= 0; mip--) {
+                const pages = VT_PAGES_PER_SIDE >> mip;
+                const data = pageTableMips[mip];
+                const parent = mip + 1 < VT_LEVELS ? pageTableMips[mip + 1] : null;
+                const parentPages = pages >> 1;
+                const base = slice * pages * pages * 4;
+                const parentBase = slice * parentPages * parentPages * 4;
+                const level = source ? mip - (VT_VIRTUAL_SIZE_LOG2 - source.sizeLog2) : -1;
+                const served = source !== null && level >= 0 && level < source.levels;
+                for (let py = 0; py < pages; py++) {
+                    for (let px = 0; px < pages; px++) {
+                        const offset = base + (py * pages + px) * 4;
+                        const slot = served ? cache.resident.get(vtPageKey((source as VirtualSource).id, level, px, py)) : undefined;
+                        if (slot !== undefined) {
+                            const cacheSlice = Math.floor(slot / VT_SLOTS_PER_SLICE);
+                            const within = slot - cacheSlice * VT_SLOTS_PER_SLICE;
+                            data[offset] = within % VT_SLOTS_PER_SIDE;
+                            data[offset + 1] = Math.floor(within / VT_SLOTS_PER_SIDE);
+                            data[offset + 2] = cacheSlice;
+                            data[offset + 3] = mip + 1;
+                        }
+                        else if (parent) {
+                            const parentOffset = parentBase + ((py >> 1) * parentPages + (px >> 1)) * 4;
+                            data[offset] = parent[parentOffset];
+                            data[offset + 1] = parent[parentOffset + 1];
+                            data[offset + 2] = parent[parentOffset + 2];
+                            data[offset + 3] = parent[parentOffset + 3];
+                        }
+                        else {
+                            data[offset] = data[offset + 1] = data[offset + 2] = data[offset + 3] = 0;
+                        }
+                    }
+                }
+            }
+        }
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.pageTable);
+        for (let mip = 0; mip < VT_LEVELS; mip++) {
+            const pages = VT_PAGES_PER_SIDE >> mip;
+            gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, mip, 0, 0, 0, pages, pages, VT_PAGE_TABLE_SLICES, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, pageTableMips[mip]);
+        }
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+    }
+}
+function layerMask(terrain: Terrain, x0: number, z0: number, x1: number, z1: number): number {
+    const { splat, layers } = terrain;
+    const { resolution, planes } = splat;
+    const last = resolution - 1;
+    const scale = last / terrain.size;
+    const tx0 = Math.max(Math.floor((x0 + terrain.halfSize) * scale) - 1, 0);
+    const tx1 = Math.min(Math.ceil((x1 + terrain.halfSize) * scale) + 1, last);
+    const tz0 = Math.max(Math.floor((z0 + terrain.halfSize) * scale) - 1, 0);
+    const tz1 = Math.min(Math.ceil((z1 + terrain.halfSize) * scale) + 1, last);
+    const count = Math.min(layers.length, MAX_TERRAIN_LAYERS);
+    let mask = 0;
+    let any = false;
+    for (let tz = tz0; tz <= tz1; tz++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+            const texel = (tz * resolution + tx) * 4;
+            for (let i = 0; i < count; i++) {
+                if (planes[i >> 2][texel + (i & 3)] >= MIN_WEIGHT_BYTE) {
+                    mask |= 1 << i;
+                    any = true;
+                }
+            }
+        }
+    }
+    return any ? mask : count > 0 ? 1 : 0;
 }
