@@ -267,4 +267,218 @@ const STRING_METHODS: Record<string, Method<string>> = {
     lpad: (s, length, character = ' ') => s.padStart(toInt(length), requireString(character, 'lpad')),
     rpad: (s, length, character = ' ') => s.padEnd(toInt(length), requireString(character, 'rpad')),
     indent: (s, prefix) => s.split('\n').map((line) => (line.length > 0 ? requireString(prefix, 'indent') + line : line)).join('\n'),
+    dedent: (s) => {
+        const lines = s.split('\n');
+        let common: string | null = null;
+        for (const line of lines) {
+            if (line.trim().length === 0)
+                continue;
+            const leading = line.match(/^[ \t]*/)?.[0] ?? '';
+            if (common === null || leading.length < common.length)
+                common = leading;
+        }
+        const width = common?.length ?? 0;
+        return lines.map((line) => (line.startsWith(common ?? '') ? line.slice(width) : line.trimStart())).join('\n');
+    },
+    to_int: (s) => toInt(s),
+    to_float: (s) => toFloat(s),
+    hex_to_int: (s) => parseInt(s.replace(/^0x/i, ''), 16) || 0,
+    bin_to_int: (s) => parseInt(s.replace(/^0b/i, ''), 2) || 0,
+    is_valid_int: (s) => /^[+-]?\d+$/.test(s.trim()),
+    is_valid_float: (s) => /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(s.trim()),
+    is_valid_hex_number: (s, withPrefix = false) => (truthy(withPrefix) ? /^0x[0-9a-fA-F]+$/i.test(s) : /^[0-9a-fA-F]+$/.test(s)),
+    is_valid_identifier: (s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s),
+    is_valid_html_color: (s) => /^#?([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s),
+    is_valid_ip_address: (s) => /^(\d{1,3}\.){3}\d{1,3}$/.test(s) || s.includes(':'),
+    is_valid_filename: (s) => s.length > 0 && !/[:/\\?*"|%<>]/.test(s),
+    is_absolute_path: (s) => s.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(s) || /^\w+:\/\//.test(s),
+    is_relative_path: (s) => !(s.startsWith('/') || /^[a-zA-Z]:[/\\]/.test(s) || /^\w+:\/\//.test(s)),
+    get_file: (s) => s.slice(s.lastIndexOf('/') + 1),
+    get_extension: (s) => {
+        const file = s.slice(s.lastIndexOf('/') + 1);
+        const dot = file.lastIndexOf('.');
+        return dot <= 0 ? '' : file.slice(dot + 1);
+    },
+    get_basename: (s) => {
+        const slash = s.lastIndexOf('/');
+        const dot = s.lastIndexOf('.');
+        return dot > slash ? s.slice(0, dot) : s;
+    },
+    get_base_dir: (s) => {
+        const slash = s.lastIndexOf('/');
+        return slash === -1 ? '' : s.slice(0, slash);
+    },
+    path_join: (s, file) => (s.endsWith('/') ? s + requireString(file, 'path_join') : `${s}/${requireString(file, 'path_join')}`),
+    simplify_path: (s) => {
+        const absolute = s.startsWith('/');
+        const parts: string[] = [];
+        for (const part of s.split('/')) {
+            if (part === '' || part === '.')
+                continue;
+            if (part === '..')
+                parts.pop();
+            else
+                parts.push(part);
+        }
+        return (absolute ? '/' : '') + parts.join('/');
+    },
+    get_slice: (s, delimiter, slice) => {
+        const parts = s.split(requireString(delimiter, 'get_slice', 'o delimitador'));
+        const index = toInt(slice);
+        return index >= 0 && index < parts.length ? parts[index] : '';
+    },
+    get_slice_count: (s, delimiter) => s.split(requireString(delimiter, 'get_slice_count', 'o delimitador')).length,
+    get_slicec: (s, delimiter, slice) => {
+        const parts = s.split(String.fromCodePoint(toInt(delimiter)));
+        const index = toInt(slice);
+        return index >= 0 && index < parts.length ? parts[index] : '';
+    },
+    match: (s, pattern) => wildcardToRegExp(requireString(pattern, 'match', 'o padrão'), false).test(s),
+    matchn: (s, pattern) => wildcardToRegExp(requireString(pattern, 'matchn', 'o padrão'), true).test(s),
+    is_subsequence_of: (s, text) => {
+        const haystack = requireString(text, 'is_subsequence_of');
+        let index = 0;
+        for (const char of haystack)
+            if (index < s.length && s[index] === char)
+                index++;
+        return index === s.length;
+    },
+    is_subsequence_ofn: (s, text) => STRING_METHODS.is_subsequence_of(s.toLowerCase(), requireString(text, 'is_subsequence_ofn').toLowerCase()),
+    casecmp_to: (s, other) => (s < requireString(other, 'casecmp_to') ? -1 : s > (other as string) ? 1 : 0),
+    nocasecmp_to: (s, other) => {
+        const a = s.toLowerCase();
+        const b = requireString(other, 'nocasecmp_to').toLowerCase();
+        return a < b ? -1 : a > b ? 1 : 0;
+    },
+    naturalnocasecmp_to: (s, other) => s.localeCompare(requireString(other, 'naturalnocasecmp_to'), undefined, { numeric: true, sensitivity: 'base' }),
+    similarity: (s, other) => {
+        const text = requireString(other, 'similarity');
+        if (s === text)
+            return 1;
+        if (s.length < 2 || text.length < 2)
+            return 0;
+        const bigrams = (value: string) => {
+            const map = new Map<string, number>();
+            for (let index = 0; index < value.length - 1; index++) {
+                const pair = value.slice(index, index + 2);
+                map.set(pair, (map.get(pair) ?? 0) + 1);
+            }
+            return map;
+        };
+        const left = bigrams(s);
+        const right = bigrams(text);
+        let shared = 0;
+        for (const [pair, count] of left)
+            shared += Math.min(count, right.get(pair) ?? 0);
+        return (2 * shared) / (s.length - 1 + (text.length - 1));
+    },
+    format: (s, values, placeholder = '{_}') => {
+        const template = requireString(placeholder, 'format', 'o marcador');
+        let result = s;
+        if (values instanceof Dictionary) {
+            for (const [key, value] of values)
+                result = result.split(template.replace('_', str(key))).join(str(value));
+            return result;
+        }
+        if (Array.isArray(values)) {
+            values.forEach((value, index) => {
+                if (Array.isArray(value) && value.length === 2)
+                    result = result.split(template.replace('_', str(value[0]))).join(str(value[1]));
+                else {
+                    result = result.split(template.replace('_', String(index))).join(str(value));
+                    const positional = template.replace('_', '');
+                    if (positional.length > 0)
+                        result = result.replace(positional, str(value));
+                }
+            });
+            return result;
+        }
+        return fail(`String.format(): esperava uma lista ou um Dictionary, recebeu ${describeTypeOf(values)}.`);
+    },
+    hash: (s) => {
+        let hash = 5381;
+        for (let index = 0; index < s.length; index++)
+            hash = ((hash << 5) + hash + s.charCodeAt(index)) >>> 0;
+        return hash;
+    },
+    unicode_at: (s, at) => s.codePointAt(toInt(at)) ?? 0,
+    to_ascii_buffer: (s) => Array.from(s, (char) => char.charCodeAt(0) & 255),
+    to_utf8_buffer: (s) => Array.from(new TextEncoder().encode(s)),
+    to_utf16_buffer: (s) => {
+        const bytes: number[] = [];
+        for (let index = 0; index < s.length; index++) {
+            const code = s.charCodeAt(index);
+            bytes.push(code & 255, code >> 8);
+        }
+        return bytes;
+    },
+    c_escape: (s) => s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/\t/g, '\\t').replace(/\r/g, '\\r').replace(/"/g, '\\"').replace(/'/g, "\\'"),
+    c_unescape: (s) => s.replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r').replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, '\\'),
+    json_escape: (s) => JSON.stringify(s).slice(1, -1),
+    xml_escape: (s, escapeQuotes = false) => {
+        let result = s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        if (truthy(escapeQuotes))
+            result = result.replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+        return result;
+    },
+    xml_unescape: (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&'),
+    uri_encode: (s) => encodeURIComponent(s),
+    uri_decode: (s) => decodeURIComponent(s),
+    validate_node_name: (s) => s.replace(/[.:@/"%]/g, ''),
+    validate_filename: (s) => s.replace(/[:/\\?*"|%<>]/g, '_'),
+    md5_text: () => fail('String.md5_text() não está disponível: hashes criptográficos ficam fora do runtime de scripts.'),
+    sha256_text: () => fail('String.sha256_text() não está disponível: hashes criptográficos ficam fora do runtime de scripts.'),
+    num_int64: (_s, value) => String(toInt(value)),
 };
+export const STRING_STATICS: Record<string, Fn> = {
+    num: (value, decimals = -1) => {
+        const number = toFloat(value);
+        const digits = toInt(decimals);
+        return digits < 0 ? str(number) : number.toFixed(digits);
+    },
+    num_int64: (value) => String(toInt(value)),
+    num_uint64: (value) => String(Math.abs(toInt(value))),
+    num_scientific: (value) => toFloat(value).toExponential(),
+    chr: (code) => String.fromCodePoint(toInt(code)),
+    humanize_size: (size) => {
+        const bytes = toInt(size);
+        const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+        let value = bytes;
+        let unit = 0;
+        while (value >= 1024 && unit < units.length - 1) {
+            value /= 1024;
+            unit++;
+        }
+        return unit === 0 ? `${value} B` : `${value.toFixed(2)} ${units[unit]}`;
+    },
+};
+type List = unknown[];
+function normalizeIndex(list: ArrayLike<unknown>, index: unknown, method: string, allowEnd = false): number {
+    const at = requireInt(index, 'Array', method, 'o índice');
+    const resolved = at < 0 ? list.length + at : at;
+    if (resolved < 0 || resolved > list.length || (!allowEnd && resolved === list.length))
+        fail(`Array.${method}(): índice ${at} fora dos limites (tamanho ${list.length}).`);
+    return resolved;
+}
+function deepCopy(value: unknown): unknown {
+    if (Array.isArray(value))
+        return value.map((item) => deepCopy(item));
+    if (value instanceof Dictionary) {
+        const copy = new Dictionary();
+        for (const [key, entry] of value)
+            copy.set(key, deepCopy(entry));
+        return copy;
+    }
+    if (isValueType(value))
+        return cloneValueType(value);
+    return value;
+}
+function cloneValueType(value: unknown): unknown {
+    if (value === null || typeof value !== 'object')
+        return value;
+    const ctor = value.constructor as new (source: unknown) => unknown;
+    return new ctor(value);
+}
+function sortValues(a: unknown, b: unknown): number {
+    return compare(a, b, 'sort');
+}
