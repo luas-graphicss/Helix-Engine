@@ -664,4 +664,108 @@ export class LocalShadowPass {
         }
         return true;
     }
+    private renderCasters(list: readonly ShadowCasterCandidate[], texelWorldSize: number, input: LocalShadowPassInput): void {
+        if (list.length === 0)
+            return;
+        const { gl, program, instances, batches, skinned, virtual, byMesh, stats } = this;
+        batches.length = 0;
+        skinned.length = 0;
+        virtual.length = 0;
+        byMesh.clear();
+        instances.begin();
+        let poolIndex = 0;
+        for (const candidate of list) {
+            if (candidate.entity.skin && candidate.mesh.skinning) {
+                skinned.push(candidate);
+                continue;
+            }
+            if (input.virtualGeometry?.claimsCaster(candidate)) {
+                virtual.push(candidate);
+                continue;
+            }
+            const mesh = input.resolveMesh(candidate, SHADOW_LOD_CASCADE);
+            let batch = byMesh.get(mesh);
+            if (!batch) {
+                batch = this.acquireBatch(poolIndex++, mesh);
+                byMesh.set(mesh, batch);
+                batches.push(batch);
+            }
+            batch.items.push(candidate);
+        }
+        for (const batch of batches) {
+            batch.firstInstance = instances.allocate(batch.items.length);
+            for (let i = 0; i < batch.items.length; i++) {
+                instances.data.set(batch.items[i].entity.worldMatrix, (batch.firstInstance + i) * MATRIX_FLOATS);
+            }
+            stats.triangles += (batch.mesh.indices.length / 3) * batch.items.length;
+        }
+        instances.upload();
+        if (batches.length > 0) {
+            program.use();
+            gl.uniformMatrix4fv(program.uniform('u_lightViewProjection'), false, viewProjection);
+            for (const batch of batches) {
+                this.meshes.resolve(batch.mesh).drawInstanced(instances, batch.firstInstance, batch.items.length);
+                stats.drawCalls++;
+            }
+        }
+        if (skinned.length > 0) {
+            const { skinnedProgram, skins } = this;
+            skinnedProgram.use();
+            gl.uniformMatrix4fv(skinnedProgram.uniform('u_lightViewProjection'), false, viewProjection);
+            gl.uniform1i(skinnedProgram.uniform('u_jointMatrices'), JOINT_MATRICES_TEXTURE_UNIT);
+            for (const candidate of skinned) {
+                const { skin } = candidate.entity;
+                if (!skin)
+                    continue;
+                gl.activeTexture(gl.TEXTURE0 + JOINT_MATRICES_TEXTURE_UNIT);
+                gl.bindTexture(gl.TEXTURE_2D, skins.resolve(skin));
+                this.meshes.resolve(candidate.mesh).draw();
+                stats.drawCalls++;
+                stats.triangles += candidate.mesh.indices.length / 3;
+            }
+        }
+        if (input.virtualGeometry && virtual.length > 0) {
+            stats.drawCalls += input.virtualGeometry.renderShadowCascade(viewProjection, texelWorldSize, virtual);
+        }
+    }
+    private acquireBatch(index: number, mesh: MeshData): FaceBatch {
+        let batch = this.batchPool[index];
+        if (!batch) {
+            batch = { mesh, firstInstance: 0, items: [] };
+            this.batchPool[index] = batch;
+        }
+        else {
+            batch.mesh = mesh;
+            batch.firstInstance = 0;
+            batch.items.length = 0;
+        }
+        return batch;
+    }
+    private expireCache(): void {
+        for (const [id, entry] of this.cache) {
+            if (this.frame - entry.frame <= CACHE_TTL_FRAMES)
+                continue;
+            this.releaseEntry(entry);
+            this.cache.delete(id);
+        }
+    }
+    private resetStats(): void {
+        const { stats } = this;
+        stats.facesUsed = 0;
+        stats.facesRendered = 0;
+        stats.facesPostponed = 0;
+        stats.lightsShadowed = 0;
+        stats.lightsDeferred = 0;
+        stats.drawCalls = 0;
+        stats.triangles = 0;
+        stats.status.clear();
+    }
+    dispose(): void {
+        this.program.dispose();
+        this.skinnedProgram.dispose();
+        this.instances.dispose();
+        this.placeholder.dispose();
+        this.atlas?.dispose();
+        this.staticAtlas?.dispose();
+    }
 }
