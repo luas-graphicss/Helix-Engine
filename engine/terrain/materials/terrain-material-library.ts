@@ -2,7 +2,7 @@ import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import { createTexture, setTextureImage, type Texture, type TextureImage } from '@/engine/core/scene/texture';
 import { decodeImageFromUri } from '@/engine/assets/image-decoder';
-import { catalogMapUrls, type CatalogMaterial, type MaterialCredit, type TerrainFoliageKind } from './material-catalog';
+import { catalogHiresSources, catalogMapUrls, NO_HIRES_SOURCES, type CatalogMaterial, type MaterialCredit, type TerrainFoliageKind } from './material-catalog';
 import { TERRAIN_MATERIAL_CATALOG } from './material-catalog.generated';
 import { packOrmh, readImagePixels } from './ormh-packer';
 import type { TerrainMaterial, TerrainMaterialCategory } from './terrain-material';
@@ -112,6 +112,7 @@ export class TerrainMaterialLibrary {
             source: 'catalog',
             thumbnailUrl: urls.albedo,
             credit: entry.credit,
+            hires: catalogHiresSources(entry),
             pendingMaps: 0,
         };
         this.materials.set(id, material);
@@ -140,6 +141,7 @@ export class TerrainMaterialLibrary {
             source: 'custom',
             thumbnailUrl: null,
             credit: null,
+            hires: NO_HIRES_SOURCES,
             pendingMaps: 0,
         };
         this.materials.set(id, material);
