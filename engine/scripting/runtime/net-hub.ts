@@ -717,4 +717,268 @@ export class NetHub {
         }
         player.endpoint.send({ t: 'event', name, args });
     }
+    private createFacade(realm: Realm): Record<string, unknown> {
+        const hub = this;
+        const serverSide = realm !== 'client';
+        const clientSide = realm !== 'server';
+        const serverOnly = (name: string) => {
+            if (!serverSide)
+                throw new HelixError(`helix.net.${name} só existe no servidor: um script de cliente não tem autoridade. Peça ao servidor com helix.net.call e deixe um script de servidor decidir.`);
+        };
+        const clientOnly = (name: string) => {
+            if (!clientSide)
+                throw new HelixError(`helix.net.${name} só existe no cliente: o servidor fala com os jogadores por helix.net.send, broadcast e state.`);
+        };
+        const state = {
+            get: (key: unknown, fallback?: unknown) => {
+                const name = requireString(key, 'helix.net.state.get', 'a chave');
+                const value = serverSide ? hub.state.get(name) : hub.mirror.get(name);
+                return value === undefined ? (fallback ?? null) : structuredClone(value);
+            },
+            has: (key: unknown) => (serverSide ? hub.state : hub.mirror).has(requireString(key, 'helix.net.state.has', 'a chave')),
+            set: (key: unknown, value: unknown) => {
+                serverOnly('state.set');
+                const name = requireString(key, 'helix.net.state.set', 'a chave');
+                if (!isJsonValue(value))
+                    throw new HelixArgumentError('helix.net.state.set', `o valor de "${name}" não é serializável em JSON.`);
+                hub.setState(name, value as JsonValue);
+            },
+            remove: (key: unknown) => {
+                serverOnly('state.remove');
+                return hub.removeState(requireString(key, 'helix.net.state.remove', 'a chave'));
+            },
+            keys: () => Array.from((serverSide ? hub.state : hub.mirror).keys()),
+            snapshot: () => {
+                const source = serverSide ? hub.state : hub.mirror;
+                const snapshot: JsonRecord = {};
+                for (const [key, value] of source)
+                    snapshot[key] = structuredClone(value);
+                return snapshot;
+            },
+            onChanged: (key: unknown, handler: unknown) => {
+                const name = requireString(key, 'helix.net.state.onChanged', 'a chave');
+                return hub.addListener(hub.stateWatchers, name, requireFunction(handler, 'helix.net.state.onChanged'));
+            },
+        };
+        return {
+            get isServer() {
+                return serverSide;
+            },
+            get isClient() {
+                return clientSide;
+            },
+            get mode() {
+                return hub.isAuthoritative ? 'authoritative' : 'none';
+            },
+            get connected() {
+                return hub.connected;
+            },
+            get connecting() {
+                return hub.isConnecting;
+            },
+            get transport() {
+                return hub.transport;
+            },
+            get room() {
+                return hub.room;
+            },
+            get tickRate() {
+                return hub.tickRate;
+            },
+            get latency() {
+                return clientSide ? hub.latencyMs : 0;
+            },
+            get localPlayer() {
+                return hub.localInfo ? toNetPlayer(hub.localInfo, hub.localInfo.id, !hub.isAuthoritative) : null;
+            },
+            players: () => (serverSide ? Array.from(hub.players.values(), (player) => toNetPlayer(player.info, hub.localInfo?.id ?? null, !hub.isAuthoritative)) : Array.from(hub.roster.values(), (info) => toNetPlayer(info, hub.localInfo?.id ?? null, !hub.isAuthoritative))),
+            player: (id: unknown) => {
+                if (typeof id !== 'number')
+                    throw new HelixArgumentError('helix.net.player', 'esperava o id numérico do jogador.');
+                return (serverSide ? hub.players.get(id)?.info : hub.roster.get(id)) ? hub.playerFor(id, serverSide ? 'server' : 'client') : null;
+            },
+            rpc: (name: unknown, handler: unknown, options?: unknown) => {
+                const key = requireString(name, 'helix.net.rpc', 'o nome do procedimento');
+                const fn = requireFunction<(...args: unknown[]) => unknown>(handler, 'helix.net.rpc');
+                const perSecond = typeof options === 'object' && options !== null && typeof (options as {
+                    perSecond?: unknown;
+                }).perSecond === 'number' ? (options as {
+                    perSecond: number;
+                }).perSecond : 0;
+                const owner = hub.services.currentOwner();
+                const entry: RpcEntry = { owner, fn, perSecond };
+                const targets: Map<string, RpcEntry>[] = [];
+                if (serverSide)
+                    targets.push(hub.serverRpcs);
+                if (clientSide)
+                    targets.push(hub.clientRpcs);
+                for (const target of targets)
+                    target.set(key, entry);
+                const unsubscribe = () => {
+                    for (const target of targets)
+                        if (target.get(key) === entry)
+                            target.delete(key);
+                };
+                owner?.track(unsubscribe);
+                return unsubscribe;
+            },
+            hasRpc: (name: unknown) => {
+                const key = requireString(name, 'helix.net.hasRpc', 'o nome do procedimento');
+                return serverSide ? hub.serverRpcs.has(key) : hub.clientRpcs.has(key);
+            },
+            rpcs: () => Array.from((serverSide ? hub.serverRpcs : hub.clientRpcs).keys()),
+            call: (first: unknown, ...rest: unknown[]) => {
+                if (typeof first === 'string') {
+                    clientOnly('call(nome)');
+                    return hub.callServer(MEMBER(realm, 'call'), first, requireJsonArgs('helix.net.call', rest));
+                }
+                serverOnly('call(jogador, nome)');
+                const player = hub.requirePlayer(first, 'helix.net.call');
+                const name = requireString(rest[0], 'helix.net.call', 'o nome do procedimento');
+                return hub.callClient(MEMBER(realm, 'call'), player, name, requireJsonArgs('helix.net.call', rest.slice(1)));
+            },
+            emit: (name: unknown, ...args: unknown[]) => {
+                clientOnly('emit');
+                const key = requireString(name, 'helix.net.emit', 'o nome do evento');
+                const payload = requireJsonArgs('helix.net.emit', args);
+                if (!hub.isAuthoritative) {
+                    const player = hub.localInfo ? toNetPlayer(hub.localInfo, hub.localInfo.id, true) : null;
+                    hub.dispatchListeners(hub.serverListeners, key, [player, ...payload], `net.on:${key}`);
+                    return;
+                }
+                if (!hub.clientEndpoint?.open)
+                    throw new HelixError('helix.net.emit: o cliente não está conectado ao servidor.');
+                hub.clientEndpoint.send({ t: 'event', name: key, args: payload });
+            },
+            send: (player: unknown, name: unknown, ...args: unknown[]) => {
+                serverOnly('send');
+                const target = hub.requirePlayer(player, 'helix.net.send');
+                hub.sendEvent(target, requireString(name, 'helix.net.send', 'o nome do evento'), requireJsonArgs('helix.net.send', args));
+            },
+            broadcast: (name: unknown, ...args: unknown[]) => {
+                serverOnly('broadcast');
+                const key = requireString(name, 'helix.net.broadcast', 'o nome do evento');
+                const payload = requireJsonArgs('helix.net.broadcast', args);
+                if (!hub.isAuthoritative) {
+                    hub.dispatchListeners(hub.clientListeners, key, payload, `net.on:${key}`);
+                    return;
+                }
+                for (const player of hub.players.values())
+                    player.endpoint.send({ t: 'event', name: key, args: payload });
+            },
+            on: (name: unknown, handler: unknown) => {
+                const key = requireString(name, 'helix.net.on', 'o nome do evento');
+                const fn = requireFunction<(...args: unknown[]) => unknown>(handler, 'helix.net.on');
+                const offs: Unsubscribe[] = [];
+                if (clientSide)
+                    offs.push(hub.addListener(hub.clientListeners, key, fn));
+                if (serverSide)
+                    offs.push(hub.addListener(hub.serverListeners, key, fn));
+                return () => offs.forEach((off) => off());
+            },
+            state,
+            replicate: (entity: unknown, fields: unknown) => {
+                serverOnly('replicate');
+                const target = requireEntity(entity, 'helix.net.replicate');
+                if (!Array.isArray(fields) || fields.some((field) => typeof field !== 'string'))
+                    throw new HelixArgumentError('helix.net.replicate', 'os campos precisam ser uma lista de strings (caminhos como "transform.position").');
+                let set = hub.replicated.get(target);
+                if (!set) {
+                    set = new Set();
+                    hub.replicated.set(target, set);
+                }
+                for (const field of fields as string[]) {
+                    if (readField(target, field) === undefined)
+                        hub.services.log('warn', `helix.net.replicate: ${target.name} não tem um campo "${field}" serializável; ele será ignorado.`);
+                    set.add(field);
+                }
+                return Array.from(set);
+            },
+            replicatedFields: (entity: unknown) => Array.from(hub.replicated.get(requireEntity(entity, 'helix.net.replicatedFields')) ?? []),
+            onReplicated: (handler: unknown) => {
+                clientOnly('onReplicated');
+                return hub.addListener(new Map([['replicated', hub.replicationWatchers]]), 'replicated', requireFunction(handler, 'helix.net.onReplicated'));
+            },
+            authenticate: (handler: unknown) => {
+                serverOnly('authenticate');
+                const fn = requireFunction<(ticket: unknown, request: {
+                    name: string;
+                    protocol: number;
+                }) => unknown>(handler, 'helix.net.authenticate');
+                const owner = hub.services.currentOwner();
+                hub.gate = { owner, fn };
+                const unsubscribe = () => {
+                    if (hub.gate?.fn === fn)
+                        hub.gate = null;
+                };
+                owner?.track(unsubscribe);
+                return unsubscribe;
+            },
+            kick: (player: unknown, reason?: unknown) => {
+                serverOnly('kick');
+                const target = hub.requirePlayer(player, 'helix.net.kick');
+                const why = typeof reason === 'string' && reason.trim() ? reason.trim() : 'removido pelo servidor';
+                if (!hub.isAuthoritative) {
+                    hub.services.log('warn', `helix.net.kick: sem servidor autoritativo não há quem expulsar; ${target.info.name} continua (${why}).`);
+                    return;
+                }
+                target.endpoint.send({ t: 'kick', reason: why });
+                target.endpoint.close(`removido: ${why}`);
+                hub.removePlayer(target, `removido: ${why}`);
+            },
+            onPlayerJoined: (handler: unknown) => hub.services.onBus('net.playerJoined', (payload) => requireFunction<(payload: unknown) => void>(handler, 'helix.net.onPlayerJoined')(payload), hub.services.currentOwner()),
+            onPlayerLeft: (handler: unknown) => hub.services.onBus('net.playerLeft', (payload) => requireFunction<(payload: unknown) => void>(handler, 'helix.net.onPlayerLeft')(payload), hub.services.currentOwner()),
+            onConnected: (handler: unknown) => hub.services.onBus('net.connected', (payload) => requireFunction<(payload: unknown) => void>(handler, 'helix.net.onConnected')(payload), hub.services.currentOwner()),
+            onDisconnected: (handler: unknown) => hub.services.onBus('net.disconnected', (payload) => requireFunction<(payload: unknown) => void>(handler, 'helix.net.onDisconnected')(payload), hub.services.currentOwner()),
+            onConnecting: (handler: unknown) => hub.services.onBus('net.connecting', (payload) => requireFunction<(payload: unknown) => void>(handler, 'helix.net.onConnecting')(payload), hub.services.currentOwner()),
+            connect: (options?: unknown) => {
+                clientOnly('connect');
+                if (hub.link.kind !== 'websocket')
+                    throw new HelixError(`helix.net.connect: ${hub.link.kind === 'local' ? 'o playtest está ligado ao servidor simulado do editor; para conectar a um servidor hospedado, escolha "Hospedado" em Preferências ▸ Física e simulação ▸ Servidor no playtest' : 'o jogo não tem servidor autoritativo (Código ▸ Servidor do jogo)'}.`);
+                const patch = hub.requireConnectOptions(options);
+                const url = patch.url ?? hub.link.url;
+                const room = patch.room ?? hub.link.room;
+                const ticket = patch.ticket === undefined ? hub.link.ticket : patch.ticket;
+                hub.openRemote(url, room, ticket);
+            },
+            disconnect: (reason?: unknown) => {
+                clientOnly('disconnect');
+                if (hub.link.kind !== 'websocket')
+                    throw new HelixError('helix.net.disconnect: só a ligação com um servidor hospedado pode ser encerrada; a simulada vive com o playtest.');
+                const why = typeof reason === 'string' && reason.trim() ? reason.trim() : 'desconectado pelo jogo';
+                hub.clientEndpoint?.close(why);
+            },
+        };
+    }
+    private requireConnectOptions(value: unknown): ConnectOptions {
+        if (value === undefined || value === null)
+            return {};
+        if (typeof value === 'string')
+            return { url: this.requireServerUrl(value) };
+        if (typeof value !== 'object')
+            throw new HelixArgumentError('helix.net.connect', 'esperava um endereço (string) ou { url, room, ticket }.');
+        const options = value as Record<string, unknown>;
+        const result: {
+            url?: string;
+            room?: string;
+            ticket?: JsonValue | null;
+        } = {};
+        if (options.url !== undefined)
+            result.url = this.requireServerUrl(options.url);
+        if (options.room !== undefined)
+            result.room = normalizeRoomName(requireString(options.room, 'helix.net.connect', 'a sala'));
+        if (options.ticket !== undefined) {
+            if (options.ticket !== null && !isJsonValue(options.ticket))
+                throw new HelixArgumentError('helix.net.connect', 'o bilhete precisa ser serializável em JSON.');
+            result.ticket = options.ticket as JsonValue | null;
+        }
+        return result;
+    }
+    private requireServerUrl(value: unknown): string {
+        const text = requireString(value, 'helix.net.connect', 'o endereço do servidor');
+        const url = normalizeServerUrl(text);
+        if (!url)
+            throw new HelixArgumentError('helix.net.connect', `"${text}" não é um endereço ws:// ou wss:// válido.`);
+        return url;
+    }
 }
