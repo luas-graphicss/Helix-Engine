@@ -1574,4 +1574,273 @@ class Analyzer {
         if (e.kind === 'assignment' as never)
             this.error(e.span, 'Use == para comparar; = é atribuição.');
     }
+    private pattern(pattern: Pattern, valueType: StaticType): void {
+        switch (pattern.kind) {
+            case 'wildcard':
+                return;
+            case 'binding': {
+                const local = this.declareLocal(pattern.name, pattern.span, valueType === 'Variant' ? 'Variant' : valueType, false, false);
+                local.used = true;
+                pattern.jsName = local.jsName;
+                return;
+            }
+            case 'value': {
+                const type = this.expression(pattern.value);
+                if (!this.isConstantExpression(pattern.value))
+                    this.error(pattern.span, 'Um padrão de match precisa ser constante (literal, const, enum…); para capturar o valor use "var nome".');
+                if (type !== 'Variant' && valueType !== 'Variant' && !isMeta(type) && !isMeta(valueType) && type !== 'null' && !this.assignable(type, valueType) && !this.assignable(valueType, type))
+                    this.warn(pattern.span, `Este padrão (${type}) nunca casa com um valor do tipo ${valueType}.`);
+                return;
+            }
+            case 'array':
+                for (const element of pattern.elements)
+                    this.pattern(element, isArrayType(valueType) ? arrayElement(valueType) : 'Variant');
+                return;
+            case 'dictionary':
+                for (const entry of pattern.entries) {
+                    this.expression(entry.key);
+                    if (!this.isConstantExpression(entry.key))
+                        this.error(entry.key.span, 'A chave de um padrão de dicionário precisa ser constante.');
+                    if (entry.value)
+                        this.pattern(entry.value, 'Variant');
+                }
+                return;
+        }
+    }
+    private assignment(statement: AssignmentStatement): void {
+        const valueType = this.expression(statement.value);
+        const target = statement.target;
+        let targetType: StaticType = 'Variant';
+        let what = 'o destino';
+        if (target.kind === 'identifier') {
+            targetType = this.resolveIdentifier(target, statement.operator === '=' ? 'assign' : 'read');
+            what = `"${target.name}"`;
+            const resolution = target.resolved;
+            if (resolution)
+                this.checkAssignTarget(resolution, target.name, target.span, targetType);
+        }
+        else if (target.kind === 'member') {
+            const lookup = this.member(target, 'assign');
+            targetType = lookup?.type ?? 'Variant';
+            what = `"${target.name}"`;
+            if (lookup?.readonly)
+                this.error(target.nameSpan, `"${target.name}" não aceita atribuição (${lookup.what}).`);
+        }
+        else if (target.kind === 'index') {
+            const container = this.expression(target.object);
+            this.expression(target.index);
+            if (STRING_TYPES.has(container))
+                this.error(target.span, 'Strings são imutáveis: não dá para atribuir a um caractere.');
+            targetType = isArrayType(container) ? arrayElement(container) : 'Variant';
+            target.type = targetType;
+            what = 'o elemento';
+        }
+        else {
+            this.error(target.span, 'O lado esquerdo de uma atribuição precisa ser uma variável, um membro ou um índice.');
+            return;
+        }
+        if (statement.operator === '=') {
+            if (valueType === 'void')
+                this.error(statement.value.span, 'Esta chamada não devolve valor (void).');
+            else
+                this.checkAssignable(valueType, targetType, statement.value.span, what);
+            return;
+        }
+        const operator = statement.operator.slice(0, -1) as BinaryOperator;
+        const result = this.binaryResult(operator, targetType, valueType, statement.span);
+        if (result)
+            this.checkAssignable(result, targetType, statement.span, what);
+    }
+    private checkAssignTarget(resolution: Resolution, name: string, span: SourceSpan, _type: StaticType): void {
+        switch (resolution.kind) {
+            case 'local': {
+                const local = this.lookupLocal(name);
+                if (local?.isConst)
+                    this.error(span, `"${name}" é uma constante e não pode receber valor.`);
+                return;
+            }
+            case 'member':
+                if (resolution.memberKind !== 'var')
+                    this.error(span, `"${name}" é ${this.describeMemberKind(resolution.memberKind)} e não pode receber valor.`);
+                return;
+            case 'base': {
+                const base = this.baseMember(name, this.fn!.cls.godotBase);
+                if (base && base.kind !== 'property')
+                    this.error(span, `"${name}" é um ${base.what} e não pode receber valor.`);
+                else if (base?.readonly)
+                    this.error(span, `"${name}" é só de leitura.`);
+                return;
+            }
+            case 'helix':
+                return;
+            default:
+                this.error(span, `"${name}" não pode receber valor.`);
+        }
+    }
+    private expression(e: Expression): StaticType {
+        const type = this.expressionType(e);
+        e.type = type;
+        return type;
+    }
+    private expressionType(e: Expression): StaticType {
+        const fn = this.fn!;
+        switch (e.kind) {
+            case 'literal':
+                return e.literalType;
+            case 'string':
+                return e.flavor === 'string' ? 'String' : e.flavor === 'string_name' ? 'StringName' : 'NodePath';
+            case 'identifier':
+                return this.resolveIdentifier(e, 'read');
+            case 'self':
+                if (fn.isStatic)
+                    this.error(e.span, 'self não existe em contexto static.');
+                return fn.cls.typeName;
+            case 'super':
+                this.error(e.span, 'super só pode ser usado como super() ou super.metodo().');
+                return 'Variant';
+            case 'array': {
+                for (const element of e.elements)
+                    this.expression(element);
+                return 'Array';
+            }
+            case 'dictionary': {
+                for (const entry of e.entries) {
+                    this.expression(entry.key);
+                    this.expression(entry.value);
+                }
+                return 'Dictionary';
+            }
+            case 'member':
+                return this.member(e, 'read')?.type ?? 'Variant';
+            case 'index': {
+                const container = this.expression(e.object);
+                const index = this.expression(e.index);
+                if (isArrayType(container) || STRING_TYPES.has(container) || VECTOR_TYPES.has(container)) {
+                    if (index !== 'Variant' && index !== 'int' && !isMeta(index))
+                        this.error(e.index.span, `O índice de ${container} precisa ser int, não ${index}.`);
+                    if (isArrayType(container))
+                        return arrayElement(container);
+                    if (STRING_TYPES.has(container))
+                        return 'String';
+                    return container.endsWith('i') ? 'int' : 'float';
+                }
+                if (container === 'Color')
+                    return 'float';
+                if (isNumeric(container) || container === 'bool' || container === 'null')
+                    this.error(e.span, `Um valor do tipo ${container} não pode ser indexado.`);
+                return 'Variant';
+            }
+            case 'call':
+                return this.call(e);
+            case 'unary': {
+                const operand = this.expression(e.operand);
+                if (e.operator === 'not')
+                    return 'bool';
+                if (operand === 'Variant' || isMeta(operand))
+                    return e.operator === '~' ? 'int' : 'Variant';
+                if (e.operator === '~') {
+                    if (operand !== 'int')
+                        this.error(e.span, `O operador ~ só se aplica a int, não a ${operand}.`);
+                    return 'int';
+                }
+                if (isNumeric(operand) || VALUE_TYPES.has(operand))
+                    return operand;
+                this.error(e.span, `O operador ${e.operator} não se aplica a ${describeType(operand)}.`);
+                return 'Variant';
+            }
+            case 'binary': {
+                const left = this.expression(e.left);
+                const right = this.expression(e.right);
+                return this.binaryResult(e.operator, left, right, e.span) ?? 'Variant';
+            }
+            case 'ternary': {
+                this.condition(e.condition);
+                const whenTrue = this.expression(e.whenTrue);
+                const whenFalse = this.expression(e.whenFalse);
+                if (whenTrue === whenFalse)
+                    return whenTrue;
+                if (isNumeric(whenTrue) && isNumeric(whenFalse))
+                    return 'float';
+                if (whenTrue === 'null')
+                    return whenFalse;
+                if (whenFalse === 'null')
+                    return whenTrue;
+                return 'Variant';
+            }
+            case 'is': {
+                const value = this.expression(e.value);
+                const target = this.resolveTypeRef(e.target, fn.cls);
+                if (value !== 'Variant' && !isMeta(value) && target !== 'Variant' && value !== 'null' && !this.assignable(value, target) && !this.assignable(target, value)) {
+                    this.warn(e.span, `"is ${typeRefToString(e.target)}" é sempre ${e.negated ? 'verdadeiro' : 'falso'}: o valor é do tipo ${value}.`);
+                }
+                return 'bool';
+            }
+            case 'as': {
+                this.expression(e.value);
+                return this.resolveTypeRef(e.target, fn.cls);
+            }
+            case 'await': {
+                if (fn.isInitializer)
+                    this.error(e.span, 'await só pode aparecer dentro de funções.');
+                fn.hasAwait = true;
+                const value = this.expression(e.value);
+                if (value === 'Signal')
+                    return 'Variant';
+                return value;
+            }
+            case 'lambda':
+                return this.lambda(e);
+            case 'get_node':
+                if (fn.isStatic)
+                    this.error(e.span, '$ (get_node) precisa de um nó: não funciona em contexto static.');
+                if (fn.isInitializer && !(this.currentInitializerIsOnReady()))
+                    this.warn(e.span, 'Inicializar um membro com $ roda antes de o ator entrar na cena; use @onready var para esperar os filhos existirem.');
+                return 'Node';
+            case 'preload': {
+                if (/\.(tscn|scn|res|tres)$/i.test(e.path)) {
+                    this.error(e.span, 'Esta engine não tem cenas .tscn: preload só carrega scripts GDScript do projeto (preload("res://Inimigo.gd")). Para criar atores use helix.scene.');
+                    e.scriptName = null;
+                    return 'Variant';
+                }
+                const target = this.siblingByPath(e.path);
+                if (!target) {
+                    this.error(e.span, `Não encontrei o script "${e.path}" no projeto.${this.suggest(e.path.slice(e.path.lastIndexOf('/') + 1), [...this.siblingsByFile.keys()])}`);
+                    e.scriptName = null;
+                    return 'Variant';
+                }
+                this.useClass(target);
+                e.scriptName = target.scriptName;
+                return `@class:${target.typeName}`;
+            }
+            case 'type_name':
+                return `@type:${e.name}`;
+        }
+    }
+    private currentInitializerIsOnReady(): boolean {
+        return this.onReadyDepth > 0;
+    }
+    private onReadyDepth = 0;
+    private memberResolution(member: MemberInfo): Resolution {
+        return { kind: 'member', name: member.name, isStatic: member.isStatic, memberKind: member.kind, backingField: member.backingField, owner: member.owner.jsName };
+    }
+    private memberValueType(member: MemberInfo): StaticType {
+        switch (member.kind) {
+            case 'func':
+                return 'Callable';
+            case 'signal':
+                return 'Signal';
+            case 'enum':
+                return `@enum:${member.owner.typeName}.${member.name}`;
+            case 'enum_value':
+                return 'int';
+            case 'class':
+                return member.inner ? `@class:${member.inner.typeName}` : 'Variant';
+            default:
+                return member.type;
+        }
+    }
+    private touchStatic(member: MemberInfo): void {
+        if (member.isStatic && (member.kind === 'const' || member.kind === 'enum' || member.kind === 'enum_value' || member.kind === 'var') && this.staticState.get(member) !== 'done')
+            this.ensureStaticInit(member);
+    }
 }
