@@ -246,4 +246,269 @@ class Renderer {
         context.stroke();
         context.restore();
     }
+    private drawContent(node: GuiNode, entry: GuiLayoutEntry, stateStyle: GuiStateStyle | null, box: GuiBox, radii: GuiRadii, scale: number): void {
+        switch (node.kind) {
+            case 'image':
+                if (node.image)
+                    this.drawImage(node, box, radii);
+                break;
+            case 'icon':
+                if (node.icon)
+                    this.drawIcon(node.icon.name, node.icon.color, node.icon.alpha, node.icon.strokeWidth, box, Math.min(box.width, box.height), (box.width - Math.min(box.width, box.height)) / 2, (box.height - Math.min(box.width, box.height)) / 2);
+                break;
+            case 'button':
+                this.drawButton(node, entry, stateStyle, box, scale);
+                break;
+            case 'toggle':
+                this.drawToggle(node, box);
+                break;
+            case 'slider':
+                this.drawSlider(node, box);
+                break;
+            case 'progress':
+                this.drawProgress(node, entry, radii, box, scale);
+                break;
+            case 'input':
+                this.drawInput(node, entry, scale);
+                break;
+            case 'divider':
+                this.drawDivider(node, box);
+                break;
+            case 'text':
+                if (node.text && entry.textLayout && entry.textBox)
+                    this.drawText(node.text, entry.textLayout, entry.textBox, stateStyle?.textColor ?? null, scale);
+                break;
+            case 'video':
+                if (node.control?.kind === 'video')
+                    this.drawVideo(node, node.control, box, radii, scale);
+                break;
+            case 'viewport':
+                if (node.control?.kind === 'viewport')
+                    this.drawViewport(node, node.control, box, radii, scale);
+                break;
+            default:
+                break;
+        }
+    }
+    private drawVideo(node: GuiNode, control: GuiVideoControl, box: GuiBox, radii: GuiRadii, scale: number): void {
+        const { context } = this;
+        const handle = control.assetId && this.options.videos ? this.options.videos.acquire(guiMediaKey(this.options.mediaScope, node.id), control.assetId) : null;
+        const frame = handle?.frame ?? null;
+        const poster = !frame && control.posterAssetId ? this.options.images.get(control.posterAssetId) : null;
+        const source: CanvasImageSource | null = frame ?? poster;
+        context.save();
+        roundedRectPath(context, box.x, box.y, box.width, box.height, radii);
+        context.clip();
+        if (!source) {
+            if (this.options.placeholders || !control.assetId || handle?.failed)
+                this.drawMediaPlaceholder(box, 'video', handle?.failed ?? control.assetId === null);
+            context.restore();
+            return;
+        }
+        const sourceWidth = frame ? frame.videoWidth : (source as GuiImageSource).width;
+        const sourceHeight = frame ? frame.videoHeight : (source as GuiImageSource).height;
+        const target = fitMediaBox(control.fit, sourceWidth, sourceHeight, box);
+        context.globalCompositeOperation = BLEND_OPERATION[control.blend];
+        context.imageSmoothingQuality = 'high';
+        if (control.flipX || control.flipY) {
+            context.save();
+            context.translate(control.flipX ? box.x * 2 + box.width : 0, control.flipY ? box.y * 2 + box.height : 0);
+            context.scale(control.flipX ? -1 : 1, control.flipY ? -1 : 1);
+            context.drawImage(source, target.x, target.y, target.width, target.height);
+            context.restore();
+        }
+        else {
+            context.drawImage(source, target.x, target.y, target.width, target.height);
+        }
+        context.globalCompositeOperation = 'source-over';
+        if (control.tintAlpha > 0) {
+            context.fillStyle = withAlpha(control.tint, control.tintAlpha);
+            context.fillRect(box.x, box.y, box.width, box.height);
+        }
+        if (control.showControls && handle)
+            this.drawVideoControls(handle.playing, handle.duration > 0 ? handle.currentTime / handle.duration : 0, box, scale);
+        context.restore();
+    }
+    private drawVideoControls(playing: boolean, progress: number, box: GuiBox, scale: number): void {
+        const { context } = this;
+        const s = this.layout.offsetScale;
+        const height = Math.min(box.height * 0.22, 36 * s);
+        const y = box.y + box.height - height;
+        const gradient = context.createLinearGradient(0, y, 0, box.y + box.height);
+        gradient.addColorStop(0, 'rgba(0,0,0,0)');
+        gradient.addColorStop(1, 'rgba(0,0,0,0.65)');
+        context.fillStyle = gradient;
+        context.fillRect(box.x, y, box.width, height);
+        const pad = height * 0.3;
+        const glyph = height * 0.42;
+        const cx = box.x + pad + glyph / 2;
+        const cy = y + height / 2;
+        context.fillStyle = 'rgba(255,255,255,0.92)';
+        context.beginPath();
+        if (playing) {
+            const bar = glyph * 0.3;
+            context.rect(cx - glyph / 2, cy - glyph / 2, bar, glyph);
+            context.rect(cx + glyph / 2 - bar, cy - glyph / 2, bar, glyph);
+        }
+        else {
+            context.moveTo(cx - glyph * 0.4, cy - glyph / 2);
+            context.lineTo(cx + glyph * 0.55, cy);
+            context.lineTo(cx - glyph * 0.4, cy + glyph / 2);
+            context.closePath();
+        }
+        context.fill();
+        const trackX = cx + glyph / 2 + pad;
+        const trackWidth = Math.max(0, box.x + box.width - pad - trackX);
+        const thickness = Math.max(1, 2 * s * Math.min(1, scale));
+        context.fillStyle = 'rgba(255,255,255,0.25)';
+        context.fillRect(trackX, cy - thickness / 2, trackWidth, thickness);
+        context.fillStyle = 'rgba(255,255,255,0.95)';
+        context.fillRect(trackX, cy - thickness / 2, trackWidth * Math.max(0, Math.min(1, progress)), thickness);
+    }
+    private drawViewport(node: GuiNode, control: GuiViewportControl, box: GuiBox, radii: GuiRadii, scale: number): void {
+        const { context } = this;
+        const provider = this.options.viewports ?? null;
+        const pixelWidth = Math.max(1, Math.round(box.width * scale));
+        const pixelHeight = Math.max(1, Math.round(box.height * scale));
+        const frame = provider ? provider.frame(guiMediaKey(this.options.mediaScope, node.id), viewportDescription(control, node.id, this.options.state), pixelWidth, pixelHeight, this.options.elapsedSeconds ?? 0) : null;
+        context.save();
+        roundedRectPath(context, box.x, box.y, box.width, box.height, radii);
+        context.clip();
+        if (!frame) {
+            this.drawMediaPlaceholder(box, 'viewport', false);
+            context.restore();
+            return;
+        }
+        context.globalCompositeOperation = BLEND_OPERATION[control.blend];
+        context.imageSmoothingQuality = 'high';
+        context.drawImage(frame, box.x, box.y, box.width, box.height);
+        context.globalCompositeOperation = 'source-over';
+        if (control.tintAlpha > 0) {
+            context.fillStyle = withAlpha(control.tint, control.tintAlpha);
+            context.fillRect(box.x, box.y, box.width, box.height);
+        }
+        context.restore();
+    }
+    private drawMediaPlaceholder(box: GuiBox, kind: 'video' | 'viewport', failed: boolean): void {
+        const { context } = this;
+        context.fillStyle = failed ? 'rgba(255, 92, 108, 0.14)' : 'rgba(0, 0, 0, 0.35)';
+        context.fillRect(box.x, box.y, box.width, box.height);
+        const step = Math.max(12, Math.min(box.width, box.height) / 6);
+        context.strokeStyle = 'rgba(255,255,255,0.06)';
+        context.lineWidth = 1;
+        context.beginPath();
+        for (let x = box.x + step; x < box.x + box.width; x += step) {
+            context.moveTo(x, box.y);
+            context.lineTo(x, box.y + box.height);
+        }
+        for (let y = box.y + step; y < box.y + box.height; y += step) {
+            context.moveTo(box.x, y);
+            context.lineTo(box.x + box.width, y);
+        }
+        context.stroke();
+        const side = Math.min(box.width, box.height) * 0.28;
+        const cx = box.x + box.width / 2;
+        const cy = box.y + box.height / 2;
+        context.strokeStyle = failed ? 'rgba(255, 92, 108, 0.8)' : 'rgba(255,255,255,0.45)';
+        context.fillStyle = context.strokeStyle;
+        context.lineWidth = Math.max(1.5, side * 0.08);
+        context.lineJoin = 'round';
+        context.beginPath();
+        if (kind === 'video') {
+            context.moveTo(cx - side * 0.35, cy - side * 0.5);
+            context.lineTo(cx + side * 0.55, cy);
+            context.lineTo(cx - side * 0.35, cy + side * 0.5);
+            context.closePath();
+            context.fill();
+        }
+        else {
+            context.roundRect(cx - side * 0.6, cy - side * 0.4, side * 0.85, side * 0.8, side * 0.1);
+            context.moveTo(cx + side * 0.25, cy - side * 0.1);
+            context.lineTo(cx + side * 0.6, cy - side * 0.3);
+            context.lineTo(cx + side * 0.6, cy + side * 0.3);
+            context.lineTo(cx + side * 0.25, cy + side * 0.1);
+            context.stroke();
+        }
+    }
+    private drawText(style: GuiTextStyle, textLayout: GuiTextLayout, box: GuiBox, colorOverride: string | null, scale: number, contentOverride: readonly string[] | null = null): void {
+        const { context } = this;
+        const lines = contentOverride ?? textLayout.lines;
+        if (lines.length === 0 || (lines.length === 1 && lines[0] === ''))
+            return;
+        context.font = textLayout.font;
+        if ('letterSpacing' in context)
+            context.letterSpacing = `${style.letterSpacing * this.layout.offsetScale * (textLayout.fontSize / Math.max(1, style.size * this.layout.offsetScale))}px`;
+        context.textBaseline = 'middle';
+        context.textAlign = style.align;
+        const totalHeight = lines.length * textLayout.lineHeight;
+        const startY = style.verticalAlign === 'top' ? box.y : style.verticalAlign === 'bottom' ? box.y + box.height - totalHeight : box.y + (box.height - totalHeight) / 2;
+        const x = style.align === 'left' ? box.x : style.align === 'right' ? box.x + box.width : box.x + box.width / 2;
+        context.save();
+        if (!contentOverride) {
+            context.beginPath();
+            context.rect(box.x - 2, box.y - textLayout.lineHeight, box.width + 4, box.height + textLayout.lineHeight * 2);
+            context.clip();
+        }
+        applyShadow(context, style.shadow, scale);
+        const fill = withAlpha(colorOverride ?? style.color, style.alpha);
+        lines.forEach((line, index) => {
+            const y = startY + (index + 0.5) * textLayout.lineHeight;
+            if (style.outline && style.outline.width > 0) {
+                context.lineJoin = 'round';
+                context.lineWidth = style.outline.width * 2 * this.layout.offsetScale;
+                context.strokeStyle = withAlpha(style.outline.color, style.outline.alpha);
+                context.strokeText(line, x, y);
+            }
+            context.fillStyle = fill;
+            context.fillText(line, x, y);
+        });
+        clearShadow(context);
+        context.restore();
+        if ('letterSpacing' in context)
+            context.letterSpacing = '0px';
+    }
+    private drawIcon(name: string, color: string, alpha: number, strokeWidth: number, box: GuiBox, side: number, offsetX: number, offsetY: number): void {
+        const { context } = this;
+        context.save();
+        context.globalAlpha *= alpha;
+        const drawn = this.options.icons.draw(context, name, box.x + offsetX, box.y + offsetY, side, color, strokeWidth);
+        if (!drawn && this.options.placeholders) {
+            context.setLineDash([4, 4]);
+            context.lineWidth = 1;
+            context.strokeStyle = withAlpha(color, 0.5);
+            context.strokeRect(box.x + offsetX + 2, box.y + offsetY + 2, side - 4, side - 4);
+            context.setLineDash([]);
+        }
+        context.restore();
+    }
+    private drawButton(node: GuiNode, entry: GuiLayoutEntry, stateStyle: GuiStateStyle | null, box: GuiBox, scale: number): void {
+        const control = node.control?.kind === 'button' ? node.control : null;
+        const s = this.layout.offsetScale;
+        if (control?.iconName) {
+            const size = control.iconSize * s;
+            const color = stateStyle?.textColor ?? node.text?.color ?? '#ffffff';
+            let x = box.x + (box.width - size) / 2;
+            let y = box.y + (box.height - size) / 2;
+            if (control.iconPosition !== 'only' && entry.textBox && entry.textLayout) {
+                const gap = control.iconGap * s;
+                const textWidth = Math.min(entry.textLayout.width, entry.textBox.width);
+                if (control.iconPosition === 'left') {
+                    const align = node.text?.align ?? 'center';
+                    const textStart = align === 'left' ? entry.textBox.x : align === 'right' ? entry.textBox.x + entry.textBox.width - textWidth : entry.textBox.x + (entry.textBox.width - textWidth) / 2;
+                    x = textStart - gap - size;
+                }
+                else if (control.iconPosition === 'right') {
+                    const align = node.text?.align ?? 'center';
+                    const textEnd = align === 'left' ? entry.textBox.x + textWidth : align === 'right' ? entry.textBox.x + entry.textBox.width : entry.textBox.x + (entry.textBox.width + textWidth) / 2;
+                    x = textEnd + gap;
+                }
+                else {
+                    y = entry.textBox.y - gap - size;
+                }
+            }
+            this.drawIcon(control.iconName, color, 1, 2, { x, y, width: size, height: size }, size, 0, 0);
+        }
+        if (node.text && entry.textLayout && entry.textBox && control?.iconPosition !== 'only')
+            this.drawText(node.text, entry.textLayout, entry.textBox, stateStyle?.textColor ?? null, scale);
+    }
 }
