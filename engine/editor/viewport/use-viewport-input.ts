@@ -5,10 +5,11 @@ import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { GizmoDrag, type PointerSample } from '@/engine/editor/gizmo/gizmo-drag';
 import { hitTestGizmo } from '@/engine/editor/gizmo/gizmo-hit-test';
 import { computeGizmoFrame, createGizmoFrame, type GizmoHandle, type GizmoMode } from '@/engine/renderer/gizmo/gizmo-frame';
+import { engineSettings } from '@/engine/settings/engine-settings-store';
 import * as vec3 from '@/engine/core/math/vec3';
 import { dragPointOnViewPlane, pickBone, pickEffector } from '@/engine/editor/animation/viewport/bone-picking';
 import { pickEntity } from './pick-entity';
-type DragMode = 'orbit' | 'pan' | 'gizmo' | 'terrain' | 'ik' | null;
+type DragMode = 'orbit' | 'pan' | 'gizmo' | 'terrain' | 'ik' | 'gui' | 'hud' | null;
 interface GizmoHit {
     handle: GizmoHandle;
     mode: GizmoMode;
@@ -33,8 +34,13 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
         let startX = 0;
         let startY = 0;
         let moved = false;
+        let rectCache: DOMRect | null = null;
+        const canvasRect = (): DOMRect => (rectCache ??= canvas.getBoundingClientRect());
+        const invalidateRect = () => {
+            rectCache = null;
+        };
         const samplePointer = (event: PointerEvent): PointerSample => {
-            const rect = canvas.getBoundingClientRect();
+            const rect = canvasRect();
             return {
                 x: event.clientX - rect.left,
                 y: event.clientY - rect.top,
@@ -43,7 +49,12 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 ctrl: event.ctrlKey || event.metaKey,
             };
         };
-        const pickAt = (pointer: PointerSample) => pickEntity(session.scene, session.camera, pointer.x / pointer.width, pointer.y / pointer.height);
+        const pickAt = (pointer: PointerSample) => pickEntity(session.scene, session.camera, pointer.x / pointer.width, pointer.y / pointer.height, {
+            lightHelpers: session.render.lightHelpers,
+            soundHelpers: session.render.soundHelpers,
+            vfxHelpers: session.render.vfxHelpers,
+            selection: session.selectedIds,
+        });
         const gizmoHitAt = (pointer: PointerSample): GizmoHit | null => {
             const gizmoMode = session.gizmoMode;
             if (!gizmoMode)
@@ -51,13 +62,25 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             const entity = session.selectedEntity;
             if (!entity)
                 return null;
-            if (!computeGizmoFrame(frame, entity.worldMatrix, session.camera, session.gizmoUsesLocalAxes))
+            if (!computeGizmoFrame(frame, entity.worldMatrix, session.camera, session.gizmoUsesLocalAxes, engineSettings.get('editor.gizmo.size')))
                 return null;
             const handle = hitTestGizmo(gizmoMode, frame, session.camera, pointer.x, pointer.y, pointer);
             return handle ? { handle, mode: gizmoMode, entity } : null;
         };
         const ikTarget = vec3.create();
         const animating = () => session.animation.active && session.animation.showSkeleton;
+        const updateGuiHover = (pointer: PointerSample): boolean => {
+            if (session.hud.pointerMove(pointer.x, pointer.y)) {
+                session.guiWorld.pointerLeave();
+                canvas.style.cursor = session.hud.cursor ?? '';
+                return true;
+            }
+            if (!session.guiWorld.interactive)
+                return false;
+            const over = session.guiWorld.pointerMove(pointer.x / pointer.width, pointer.y / pointer.height);
+            canvas.style.cursor = over ? (session.guiWorld.cursor ?? '') : '';
+            return over;
+        };
         const updateHover = (pointer: PointerSample) => {
             const hit = gizmoHitAt(pointer);
             session.gizmo.hovered = hit?.handle ?? null;
@@ -110,6 +133,30 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             updateHover(samplePointer(event));
         };
         const onPointerDown = (event: PointerEvent) => {
+            invalidateRect();
+            if (event.button === 0 && session.hud.interactive) {
+                const pointer = samplePointer(event);
+                if (session.hud.pointerDown(pointer.x, pointer.y)) {
+                    mode = 'hud';
+                    canvas.setPointerCapture(event.pointerId);
+                    canvas.focus();
+                    event.preventDefault();
+                    return;
+                }
+            }
+            if (event.button === 0 && session.guiWorld.interactive) {
+                const pointer = samplePointer(event);
+                const locked = session.playtest.pointerLocked;
+                const accepted = locked ? session.guiWorld.pointerDown(0.5, 0.5) : session.guiWorld.pointerDown(pointer.x / pointer.width, pointer.y / pointer.height);
+                if (accepted) {
+                    mode = 'gui';
+                    if (!locked)
+                        canvas.setPointerCapture(event.pointerId);
+                    canvas.focus();
+                    event.preventDefault();
+                    return;
+                }
+            }
             if (session.playtest.isPossessing)
                 return;
             if (session.colorPicker.active) {
@@ -196,8 +243,25 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 updateTerrainHover(samplePointer(event), event.shiftKey);
                 return;
             }
+            if (mode === 'hud') {
+                const pointer = samplePointer(event);
+                session.hud.pointerMove(pointer.x, pointer.y);
+                return;
+            }
+            if (mode === 'gui') {
+                if (!session.playtest.pointerLocked) {
+                    const pointer = samplePointer(event);
+                    session.guiWorld.pointerMove(pointer.x / pointer.width, pointer.y / pointer.height);
+                }
+                return;
+            }
             if (!mode) {
-                if (session.playtest.isPossessing)
+                if (session.playtest.isPossessing) {
+                    if (!session.playtest.pointerLocked)
+                        updateGuiHover(samplePointer(event));
+                    return;
+                }
+                if (updateGuiHover(samplePointer(event)))
                     return;
                 if (session.tool === 'terrain')
                     updateTerrainHover(samplePointer(event), event.shiftKey);
@@ -223,7 +287,26 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
         const onPointerUp = (event: PointerEvent) => {
             if (!mode)
                 return;
-            canvas.releasePointerCapture(event.pointerId);
+            if (canvas.hasPointerCapture(event.pointerId))
+                canvas.releasePointerCapture(event.pointerId);
+            if (mode === 'hud') {
+                mode = null;
+                const pointer = samplePointer(event);
+                session.hud.pointerUp(pointer.x, pointer.y);
+                updateGuiHover(pointer);
+                return;
+            }
+            if (mode === 'gui') {
+                mode = null;
+                const pointer = samplePointer(event);
+                if (session.playtest.pointerLocked)
+                    session.guiWorld.pointerUp(0.5, 0.5);
+                else
+                    session.guiWorld.pointerUp(pointer.x / pointer.width, pointer.y / pointer.height);
+                if (!session.playtest.pointerLocked)
+                    updateGuiHover(pointer);
+                return;
+            }
             if (mode === 'gizmo') {
                 finishGizmoDrag(event, event.type === 'pointercancel');
                 return;
@@ -263,12 +346,20 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             session.colorPicker.leave();
             if (mode)
                 return;
+            session.hud.pointerLeave();
+            if (!session.playtest.pointerLocked)
+                session.guiWorld.pointerLeave();
             session.gizmo.hovered = null;
             session.animation.setHoveredBone(null);
             session.terrain.clearHover();
             canvas.style.cursor = '';
         };
         const onKeyDown = (event: KeyboardEvent) => {
+            if (!event.isComposing && ((session.hud.hasFocusedInput && session.hud.keyDown(event)) || (session.guiWorld.hasFocusedInput && session.guiWorld.keyDown(event)))) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                return;
+            }
             if (event.key === 'Shift' && session.tool === 'terrain')
                 session.terrain.setInvert(true);
             if (event.key === 'Escape' && session.colorPicker.active) {
@@ -303,6 +394,19 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
         };
         const onWheel = (event: WheelEvent) => {
             event.preventDefault();
+            if (session.hud.interactive) {
+                const rect = canvasRect();
+                if (session.hud.wheel(event.clientX - rect.left, event.clientY - rect.top, event.deltaX, event.deltaY))
+                    return;
+            }
+            if (session.guiWorld.interactive) {
+                const rect = canvasRect();
+                const locked = session.playtest.pointerLocked;
+                const u = locked ? 0.5 : (event.clientX - rect.left) / rect.width;
+                const v = locked ? 0.5 : (event.clientY - rect.top) / rect.height;
+                if (session.guiWorld.wheel(u, v, event.deltaX, event.deltaY))
+                    return;
+            }
             if (session.playtest.isPossessing)
                 return;
             session.orbit.zoom(event.deltaY);
@@ -311,25 +415,34 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             event.preventDefault();
             event.stopPropagation();
         };
+        const rectObserver = new ResizeObserver(invalidateRect);
+        rectObserver.observe(canvas);
         canvas.addEventListener('pointerdown', onPointerDown);
         canvas.addEventListener('pointermove', onPointerMove);
         canvas.addEventListener('pointerup', onPointerUp);
         canvas.addEventListener('pointercancel', onPointerUp);
+        canvas.addEventListener('pointerenter', invalidateRect);
         canvas.addEventListener('pointerleave', onPointerLeave);
         canvas.addEventListener('wheel', onWheel, { passive: false });
         canvas.addEventListener('contextmenu', suppressNativeContextMenu);
         window.addEventListener('keydown', onKeyDown, { capture: true });
         window.addEventListener('keyup', onKeyUp, { capture: true });
+        window.addEventListener('resize', invalidateRect);
+        window.addEventListener('scroll', invalidateRect, { capture: true, passive: true });
         return () => {
+            rectObserver.disconnect();
             canvas.removeEventListener('pointerdown', onPointerDown);
             canvas.removeEventListener('pointermove', onPointerMove);
             canvas.removeEventListener('pointerup', onPointerUp);
             canvas.removeEventListener('pointercancel', onPointerUp);
+            canvas.removeEventListener('pointerenter', invalidateRect);
             canvas.removeEventListener('pointerleave', onPointerLeave);
             canvas.removeEventListener('wheel', onWheel);
             canvas.removeEventListener('contextmenu', suppressNativeContextMenu);
             window.removeEventListener('keydown', onKeyDown, { capture: true });
             window.removeEventListener('keyup', onKeyUp, { capture: true });
+            window.removeEventListener('resize', invalidateRect);
+            window.removeEventListener('scroll', invalidateRect, { capture: true });
         };
     }, [canvasRef, session, handlers]);
 }
