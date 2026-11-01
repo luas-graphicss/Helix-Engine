@@ -1060,4 +1060,129 @@ helix::hooks! {
     }
 }
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+use helix::prelude::*;
+use std::cell::{Cell, RefCell};
+
+thread_local! {
+    static ANGULO: Cell<f64> = const { Cell::new(0.0) };
+    static CONTATOS: Cell<u32> = const { Cell::new(0) };
+    static QUADROS: Cell<u32> = const { Cell::new(0) };
+    static DESLIGAR: RefCell<Value> = RefCell::new(Value::undefined());
+}
+
+macro_rules! obj {
+    ($($chave:literal => $valor:expr),* $(,)?) => {{
+        let objeto = Value::object();
+        $( objeto.set($chave, $valor); )*
+        objeto
+    }};
+}
+
+fn registrar(metodo: &str, mensagem: &str) {
+    root().get("log").invoke(metodo, ("Girador", mensagem));
+}
+
+fn nome_de(entidade: &Value) -> String {
+    entidade.get("name").to_string()
+}
+
+fn incrementar(celula: &'static std::thread::LocalKey<Cell<u32>>) -> u32 {
+    celula.with(|valor| {
+        valor.set(valor.get() + 1);
+        valor.get()
+    })
+}
+
+helix::hooks! {
+    fn on_load() {
+        root().get("props").invoke("define", (obj! {
+            "velocidade" => obj! { "type" => "range", "default" => 90, "min" => 0, "max" => 360, "step" => 1, "label" => "Velocidade (°/s)" },
+            "cor" => obj! { "type" => "color", "default" => "#ff8800", "label" => "Cor" },
+            "pulsar" => obj! { "type" => "boolean", "default" => true, "label" => "Pulsar" },
+        },));
+    }
+
+    fn on_start() {
+        let props = root().get("props");
+        let ator = actor();
+        registrar("info", &format!("{} acordou com velocidade {}°/s", nome_de(&ator), props.invoke("get", ("velocidade",))));
+        root().get("material").invoke("setColor", (&ator, props.invoke("get", ("cor",))));
+        let desligar = props.invoke("onChanged", ("cor", Value::function(|args| {
+            root().get("material").invoke("setColor", (actor(), args.first().cloned().unwrap_or_default()));
+        })));
+        DESLIGAR.with(|slot| *slot.borrow_mut() = desligar);
+        let lg = root().get("log");
+        let proprio = root().get("self");
+        lg.invoke("assert", (!proprio.is_none() && proprio.equals(&ator), "helix.self deveria ser o ator deste script"));
+        lg.invoke("assert", (props.invoke("has", ("velocidade",)).boolean() && props.invoke("definitions", ()).len() == 3, "props.define deveria registrar 3 propriedades"));
+    }
+
+    fn on_update(dt: f64) {
+        let props = root().get("props");
+        let tr = root().get("transform");
+        incrementar(&QUADROS);
+        let angulo = ANGULO.with(|angulo| {
+            angulo.set(angulo.get() + props.invoke("get", ("velocidade",)).number() * dt);
+            angulo.get()
+        });
+        tr.invoke("setRotation", (actor(), Vec3::new(0.0, angulo, 0.0)));
+        if props.invoke("get", ("pulsar",)).boolean() {
+            tr.invoke("setScale", (actor(), 1.0 + (root().path("time.now").number() * 3.0).sin() * 0.1));
+        }
+    }
+
+    fn on_collision_begin(outro: Value, contato: Value) {
+        if incrementar(&CONTATOS) > 3 {
+            return;
+        }
+        registrar("info", &format!("{} tocou {} (impulso {:.2})", nome_de(&actor()), nome_de(&outro), contato.get("impulse").number()));
+    }
+
+    fn on_trigger_enter(outro: Value) {
+        registrar("info", &format!("{} entrou no gatilho de {}", nome_de(&outro), nome_de(&actor())));
+    }
+
+    fn on_enable() {
+        registrar("debug", &format!("{} ativo", nome_de(&actor())));
+    }
+
+    fn on_disable() {
+        registrar("debug", &format!("{} inativo", nome_de(&actor())));
+    }
+
+    fn on_stop() {
+        registrar("info", &format!("{}: {} quadros, {} contatos", nome_de(&actor()), QUADROS.with(|q| q.get()), CONTATOS.with(|c| c.get())));
+    }
+
+    fn on_destroy() {
+        let desligar = DESLIGAR.with(|slot| std::mem::take(&mut *slot.borrow_mut()));
+        if desligar.is_function() {
+            desligar.call(());
+        }
+    }
+}
+`;
+    const module = String.raw `                                     
+                                                                                     
+                                                                                                  
+use helix::prelude::*;
+
+helix::exports! {
+    pub fn soma(a: f64, b: f64) -> f64 {
+        a + b
+    }
+
+    pub fn saudacao(quem: String) -> String {
+        format!("Olá, {quem}")
+    }
+
+    pub fn limitar(valor: f64, minimo: f64, maximo: f64) -> f64 {
+        valor.max(minimo).min(maximo)
+    }
+}
+`;
+    return { entry, actor, module };
 }
