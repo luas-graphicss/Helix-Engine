@@ -60,8 +60,11 @@ export class CharacterController {
     readonly intent: CharacterIntent = { move: vec3.create(), run: false, crouch: false, jump: false };
     private body: RigidBody;
     private capsule: CapsuleShape;
-    private readonly standingCapsule: CapsuleShape;
-    private readonly crouchingCapsule: CapsuleShape;
+    private standingCapsule: CapsuleShape;
+    private crouchingCapsule: CapsuleShape;
+    private capsuleHeight: number;
+    private capsuleCrouchHeight: number;
+    private capsuleRadius: number;
     private coyoteTime = 0;
     private jumpBufferTime = 0;
     private queryMargin = 0;
@@ -83,6 +86,9 @@ export class CharacterController {
         vec3.copy(this.position, position);
         vec3.copy(this.previousPosition, position);
         this.yaw = this.previousYaw = yaw;
+        this.capsuleHeight = settings.height;
+        this.capsuleCrouchHeight = settings.crouchHeight;
+        this.capsuleRadius = settings.radius;
         this.standingCapsule = this.makeCapsule(settings.height);
         this.crouchingCapsule = this.makeCapsule(settings.crouchHeight);
         this.capsule = this.standingCapsule;
@@ -114,6 +120,7 @@ export class CharacterController {
         let jumpedNow = false;
         const wasGrounded = this.grounded;
         const g = Math.max(-this.world.settings.gravity[1], MIN_GRAVITY);
+        this.refreshCapsules();
         if (intent.crouch !== this.crouching && (intent.crouch || this.hasHeadroom()))
             this.setCrouching(intent.crouch);
         if (intent.jump) {
@@ -175,6 +182,19 @@ export class CharacterController {
     private makeCapsule(height: number): CapsuleShape {
         const { radius } = this.settings;
         return createCapsuleShape(radius, Math.max(height, 2 * radius + 0.01) / 2 - radius);
+    }
+    private refreshCapsules(): void {
+        const { settings } = this;
+        if (settings.height === this.capsuleHeight && settings.crouchHeight === this.capsuleCrouchHeight && settings.radius === this.capsuleRadius)
+            return;
+        this.capsuleHeight = settings.height;
+        this.capsuleCrouchHeight = settings.crouchHeight;
+        this.capsuleRadius = settings.radius;
+        this.standingCapsule = this.makeCapsule(settings.height);
+        this.crouchingCapsule = this.makeCapsule(settings.crouchHeight);
+        this.capsule = this.crouching ? this.crouchingCapsule : this.standingCapsule;
+        this.world.removeBody(this.body);
+        this.body = this.createBody();
     }
     private capsuleCenter(feet: Vec3, out: Vec3): Vec3 {
         return vec3.set(out, feet[0], feet[1] + this.capsule.halfHeight + this.capsule.radius, feet[2]);
