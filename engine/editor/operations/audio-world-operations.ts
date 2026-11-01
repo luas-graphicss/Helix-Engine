@@ -274,3 +274,64 @@ export function setAudioZoneAmbience(session: EditorSession, entity: Entity, pat
         return ambience.assetId === settings.ambience.assetId && ambience.volumeDb === settings.ambience.volumeDb ? settings : { ...settings, ambience };
     }, patch.assetId !== undefined ? (patch.assetId ? `Cama ambiente de ${entity.name}` : `Zona ${entity.name} sem cama ambiente`) : 'Volume da cama ambiente', mergeKey);
 }
+export function applyAudioZonePreset(session: EditorSession, entity: Entity, presetId: string): void {
+    const preset = findAudioZonePreset(presetId);
+    if (!preset || !entity.audioZone)
+        return;
+    updateAudioZone(session, entity, (settings) => ({ ...settings, ...preset.create() }), `Preset ${preset.label} em ${entity.name}`);
+    session.log.info(LOG_SOURCE, `${entity.name}: acústica "${preset.label}" aplicada.`);
+}
+export function playAudioSource(session: EditorSession, entity: Entity): void {
+    if (!entity.audioSource)
+        return;
+    if (!entity.audioSource.assetId) {
+        session.log.warn(LOG_SOURCE, `${entity.name} não tem áudio para tocar.`);
+        return;
+    }
+    void session.audio.engine.unlock();
+    session.audio.world.play(entity.id);
+}
+export function stopAudioSource(session: EditorSession, entity: Entity): void {
+    session.audio.world.stop(entity.id);
+}
+export function toggleAudioSource(session: EditorSession, entity: Entity): void {
+    const { world } = session.audio;
+    if (world.isLatched(entity.id) || world.isPlaying(entity.id))
+        world.stop(entity.id);
+    else
+        playAudioSource(session, entity);
+}
+export function soloAudioSource(session: EditorSession, entity: Entity | null): void {
+    const { world } = session.audio;
+    world.setSolo(entity && world.soloSourceId !== entity.id ? entity.id : null);
+}
+export function stopAllAudioSources(session: EditorSession): void {
+    session.audio.world.stopAll(0.3);
+}
+export function setAudioAudition(session: EditorSession, on: boolean): void {
+    if (on)
+        void session.audio.engine.unlock();
+    session.audio.world.setAudition(on);
+}
+export async function generateTestSignalAsset(session: EditorSession, kind: TestSignalKind): Promise<LibraryAsset | null> {
+    const info = findTestSignal(kind);
+    const existing = session.library.byKind('audio').find((asset) => asset.name === info.fileName.replace(/\.wav$/i, ''));
+    if (existing)
+        return existing;
+    session.library.setBusy(`Gerando ${info.label}…`);
+    try {
+        const file = new File([encodeWav(renderTestSignal(kind), 16)], info.fileName, { type: 'audio/wav' });
+        const added = await addFilesToLibrary(session, [file]);
+        const asset = added.find(isAudioAsset) ?? null;
+        if (asset)
+            session.log.info(LOG_SOURCE, `${asset.name} gerado: ${info.description}`);
+        return asset;
+    }
+    catch (cause) {
+        session.log.error(LOG_SOURCE, `Não foi possível gerar ${info.label}: ${cause instanceof Error ? cause.message : String(cause)}`);
+        return null;
+    }
+    finally {
+        session.library.setBusy(null);
+    }
+}
