@@ -22,7 +22,7 @@ const MAP_BINDINGS: readonly MapBinding[] = [
     { uniform: 'u_emissiveMap', fallback: 'white' },
 ];
 const FIRST_DATA_UNIT = FIRST_PASS_TEXTURE_UNIT + MAP_BINDINGS.length;
-const DATA_SAMPLERS = ['u_visBuffer', 'u_list', 'u_instances', 'u_clusterInfo', 'u_clusterBounds', 'u_triangles', 'u_vertices'] as const;
+const DATA_SAMPLERS = ['u_visBuffer', 'u_list', 'u_instances', 'u_clusters', 'u_vertices'] as const;
 export interface ResolveInput {
     lighting: SceneLightingInput;
     states: readonly MaterialState[];
@@ -44,17 +44,9 @@ export class MaterialResolvePass {
         if (input.states.length === 0)
             return 0;
         program.use();
-        bindSceneLightingUniforms(gl, program, input.lighting);
+        bindSceneLightingUniforms(gl, program, input.lighting, 'mask');
         const { visibility, pool, rects } = input;
-        const data = [
-            visibility.ids,
-            input.list.texture.texture,
-            input.instances.texture.texture,
-            pool.clusterInfo.texture,
-            pool.clusterBounds.texture,
-            pool.triangles.texture,
-            pool.vertices.texture,
-        ];
+        const data = [visibility.ids, input.list.texture.texture, input.instances.texture.texture, pool.clusters.texture, pool.vertices.texture];
         for (let i = 0; i < data.length; i++) {
             gl.activeTexture(gl.TEXTURE0 + FIRST_DATA_UNIT + i);
             gl.bindTexture(gl.TEXTURE_2D, data[i]);
