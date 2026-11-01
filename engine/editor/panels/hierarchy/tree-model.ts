@@ -16,17 +16,24 @@ export function subtreeMatches(entity: Entity, query: string): boolean {
 export function visibleChildren(entity: Entity, query: string): Entity[] {
     return query.length > 0 ? entity.children.filter((child) => subtreeMatches(child, query)) : entity.children;
 }
-export function flattenTree(root: Entity, query: string, isExpanded: (entity: Entity) => boolean): Entity[] {
+export interface TreeRows {
+    rows: Entity[];
+    maxDepth: number;
+}
+export function flattenTree(root: Entity, query: string, isExpanded: (entity: Entity) => boolean): TreeRows {
     const rows: Entity[] = [];
-    const visit = (entity: Entity) => {
+    let maxDepth = 0;
+    const visit = (entity: Entity, depth: number) => {
         for (const child of visibleChildren(entity, query)) {
             rows.push(child);
+            if (depth > maxDepth)
+                maxDepth = depth;
             if (child.children.length > 0 && (query.length > 0 || isExpanded(child)))
-                visit(child);
+                visit(child, depth + 1);
         }
     };
-    visit(root);
-    return rows;
+    visit(root, 1);
+    return { rows, maxDepth };
 }
 export function zoneFromPointer(event: DragEvent<HTMLElement>): DropZone {
     const rect = event.currentTarget.getBoundingClientRect();
