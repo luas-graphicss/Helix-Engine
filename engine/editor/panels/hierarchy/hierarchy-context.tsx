@@ -1,13 +1,15 @@
 'use client';
 import { createContext, useContext } from 'react';
 import type { Entity } from '@/engine/core/scene/entity';
+import type { TreeIndent } from './tree-indent';
 import type { DropTarget } from './tree-model';
 export interface HierarchyContextValue {
     query: string;
-    rows: readonly Entity[];
+    rowsOf: () => readonly Entity[];
+    indent: TreeIndent;
     renamingId: number | null;
     setRenamingId: (id: number | null) => void;
-    anchorId: number | null;
+    anchorIdOf: () => number | null;
     setAnchorId: (id: number | null) => void;
     dropTarget: DropTarget | null;
     setDropTarget: (target: DropTarget | null) => void;
