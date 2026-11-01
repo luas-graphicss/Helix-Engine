@@ -9,7 +9,11 @@ export interface InputFrame {
     wheel: number;
 }
 const CAPTURED_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'ShiftLeft', 'ShiftRight', 'KeyC']);
-function isTextEntry(target: EventTarget | null): boolean {
+export function realEventTarget(event: Event): EventTarget | null {
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    return path[0] ?? event.target;
+}
+export function isTextEntry(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement))
         return false;
     const tag = target.tagName;
@@ -61,7 +65,7 @@ export class CharacterInput {
         this.wheel = 0;
     }
     private readonly onKeyDown = (event: KeyboardEvent): void => {
-        if (event.ctrlKey || event.metaKey || event.altKey || !CAPTURED_CODES.has(event.code) || isTextEntry(event.target))
+        if (event.ctrlKey || event.metaKey || event.altKey || !CAPTURED_CODES.has(event.code) || isTextEntry(realEventTarget(event)))
             return;
         if (!event.repeat) {
             if (event.code === 'Space')
