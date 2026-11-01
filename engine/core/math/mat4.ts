@@ -1,6 +1,7 @@
 import type { Vec3 } from './vec3';
 import type { Mat3 } from './mat3';
-import { clamp, DEG_TO_RAD, RAD_TO_DEG } from './scalar';
+import { eulerDegreesFromRotation } from './euler';
+import { DEG_TO_RAD } from './scalar';
 const ZERO_VEC3 = new Float32Array(3);
 const ONE_VEC3 = new Float32Array([1, 1, 1]);
 export type Mat4 = Float32Array;
@@ -322,19 +323,5 @@ export function decomposeTranslationRotationScale(outTranslation: Vec3, outRotat
     const m00 = m[0] * isx, m10 = m[1] * isx, m20 = m[2] * isx;
     const m11 = m[5] * isy, m21 = m[6] * isy;
     const m12 = m[9] * isz, m22 = m[10] * isz;
-    const sinY = clamp(-m20, -1, 1);
-    const y = Math.asin(sinY);
-    let x: number;
-    let z: number;
-    if (Math.abs(sinY) < 0.9999999) {
-        x = Math.atan2(m21, m22);
-        z = Math.atan2(m10, m00);
-    }
-    else {
-        x = Math.atan2(-m12, m11);
-        z = 0;
-    }
-    outRotationDegrees[0] = x * RAD_TO_DEG;
-    outRotationDegrees[1] = y * RAD_TO_DEG;
-    outRotationDegrees[2] = z * RAD_TO_DEG;
+    eulerDegreesFromRotation(outRotationDegrees, m00, m10, m20, m11, m21, m12, m22);
 }
