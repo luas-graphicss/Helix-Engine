@@ -331,26 +331,263 @@ export class Renderer {
         this.waterPass.render(visible.terrains, { ...surfaceInput, frustum, elapsedSeconds: options.elapsedSeconds, width: canvas.width, height: canvas.height });
         this.terrainGpu.endFrame();
         this.terrainCache.endFrame();
-        this.meshPass.renderTransparent();
-        drawCalls += this.sky.stats.drawCalls + this.shadowPass.stats.drawCalls + this.terrainPass.stats.drawCalls + this.meshPass.stats.drawCalls;
-        drawCalls += this.grassPass.stats.drawCalls + this.waterPass.stats.drawCalls;
-        if (options.showGrid) {
-            this.gridPass.render(camera);
-            drawCalls++;
+        if (meshesOn)
+            this.meshPass.renderTransparent();
+        scripts?.beforePass('guiSurface');
+        if (guiOn)
+            this.guiSurfacePass.renderTransparent(surfaceInput);
+        if (scripts) {
+            scripts.afterPass('guiSurface');
+            sceneTarget.bind();
         }
-        if (options.skeletons && options.skeletons.rigs.length > 0)
-            drawCalls += this.skeletonPass.render(options.skeletons, camera);
-        if (options.gizmo)
-            drawCalls += this.gizmoPass.render(options.gizmo, camera);
-        drawCalls += this.myriad.renderDebugOverlay(camera, canvas.width, canvas.height);
+        scripts?.beforePass('vfx');
+        if (passOn('vfx')) {
+            this.vfxPass.prepare(options.vfx ?? NO_VFX, camera, frustum);
+            this.vfxPass.render({ ...surfaceInput, frustum, sceneTarget });
+        }
+        else {
+            this.vfxPass.prepare(NO_VFX, camera, frustum);
+        }
+        if (scripts) {
+            scripts.afterPass('vfx');
+            sceneTarget.bind();
+        }
+        this.reflections.captureHistory(sceneTarget, camera);
+        drawCalls += this.sky.stats.drawCalls + this.shadowPass.stats.drawCalls + this.terrainPass.stats.drawCalls + this.meshPass.stats.drawCalls;
+        drawCalls += this.grassPass.stats.drawCalls + this.waterPass.stats.drawCalls + this.vfxPass.stats.drawCalls + this.reflections.stats.drawCalls;
         stageStart = this.endCpuStage('overlay', stageStart);
+        if (warming && this.pauseWarmup('overlay', started))
+            return;
         gpuTimer.begin('post');
-        this.postPass.render(sceneTarget.color, canvas.width, canvas.height);
+        scripts?.beforePass('post');
+        const scenePost = passOn('post') ? scene.postProcessing : { ...scene.postProcessing, enabled: false };
+        const postSettings = options.editorLite || quality.postLite ? editorLitePost(this.litePost, scenePost) : scenePost;
+        this.effectivePost = postSettings;
+        this.postPass.resolve(sceneTarget, {
+            camera,
+            settings: postSettings,
+            elapsedSeconds: options.elapsedSeconds,
+            compareSplit: options.postCompareSplit ?? null,
+        });
+        const customPost = scripts && passOn('post') ? scripts.customPost : NO_CUSTOM_POST;
+        if (customPost.length > 0) {
+            this.customPost.render(customPost, this.postPass.overlayTarget, sceneTarget.depth, this.shaderInputs);
+            drawCalls += this.customPost.stats.drawCalls;
+            this.postPass.bindOverlayTarget();
+        }
+        else {
+            this.customPost.settled = true;
+        }
+        if (scripts) {
+            scripts.frame.hdr = false;
+            scripts.afterPass('post');
+            this.postPass.bindOverlayTarget();
+        }
+        stageStart = this.endCpuStage('post', stageStart);
+        if (warming && this.pauseWarmup('post', started))
+            return;
+        gpuTimer.begin('editor');
+        scripts?.beforePass('overlays');
+        if (passOn('overlays')) {
+            if (options.showGrid) {
+                this.gridPass.render(camera);
+                drawCalls++;
+            }
+            if (guiOn)
+                this.guiSurfacePass.renderOverlay(camera);
+            drawCalls += this.guiSurfacePass.stats.drawCalls;
+            if (options.lightHelpers)
+                drawCalls += this.lightHelperPass.render(scene, camera, options.lightHelpers);
+            if (options.soundHelpers)
+                drawCalls += this.soundHelperPass.render(scene, camera, options.soundHelpers);
+            if (options.vfxHelpers)
+                drawCalls += this.vfxHelperPass.render(scene, camera, options.vfxHelpers);
+            if (options.skeletons && options.skeletons.rigs.length > 0)
+                drawCalls += this.skeletonPass.render(options.skeletons, camera);
+            if (options.gizmo)
+                drawCalls += this.gizmoPass.render(options.gizmo, camera);
+            drawCalls += this.myriad.renderDebugOverlay(camera, width, height);
+        }
+        if (scripts) {
+            drawCalls += this.scriptDebugPass.render(scripts.debugLines, camera);
+            scripts.afterPass('overlays');
+            this.postPass.bindOverlayTarget();
+        }
+        stageStart = this.endCpuStage('editor', stageStart);
+        if (warming && this.pauseWarmup('editor', started))
+            return;
+        gpuTimer.begin('final');
+        const capture = options.capture ?? false;
+        this.postPass.compose(postSettings, width, height, canvas.width, canvas.height, capture);
+        this.frameCaptured = capture;
         drawCalls += this.postPass.stats.drawCalls;
-        this.endCpuStage('post', stageStart);
+        scripts?.after();
+        this.endCpuStage('final', stageStart);
+        if (warming)
+            this.pauseWarmup('final', started);
         gpuTimer.endFrame();
         this.skins.endFrame();
+        this.customPrograms.endFrame();
         this.publishStats(drawCalls, skyFrame.cloudsEnabled, started);
+        const historyStale = this.reflections.stats.screenTraced && this.viewChangedLastFrame;
+        const sceneSettled = !resized && !rescaled && !cameraMoved && !historyStale && this.frameSettled();
+        this.viewChangedLastFrame = resized || rescaled || cameraMoved;
+        this.lastSceneAnimating = !sceneSettled;
+        this.stats.settled = sceneSettled && !this.reflections.capturing;
+        this.stats.transient = resized || rescaled || this.didTransientWork();
+    }
+    private renderProbeFace(scene: Scene, camera: PerspectiveCamera, options: RenderOptions, skyFrame: SkyFrame, passes: ProbePasses): number {
+        const { reflections, probeVisible, lighting } = this;
+        const { probe } = reflections;
+        const size = probe.size;
+        const skyOn = skyFrame.enabled && passes.sky;
+        const faceCamera = probe.beginFace(camera, skyOn ? null : SCENE_CLEAR_HDR, HDR_RANGE_SCENE);
+        if (!faceCamera.invertible) {
+            reflections.endProbeFace();
+            return 0;
+        }
+        probeVisible.collect(scene, faceCamera, size, options.culling, false);
+        const frustum = options.culling.frustumCulling ? probeVisible.frustum : null;
+        const input = {
+            camera: faceCamera,
+            lighting,
+            shadowMask: this.probeShadowMask.binding,
+            shadow: this.shadowPass.binding,
+            sky: this.sky.binding,
+            localLights: this.probeLocalLightsBinding(),
+            reflections: reflections.binding,
+            fogDensity: fogDensityForSky(scene.sky.enabled, scene.sky.haze),
+            selection: null,
+        };
+        const terrainInput = { ...input, brush: null, frustum, pixelScale: probeVisible.pixelScale, lod: options.lod };
+        let drawCalls = 0;
+        if (passes.meshes)
+            this.meshPass.prepare(probeVisible, input, this.meshInstances, this.lod.resolveMesh);
+        if (passes.terrain)
+            this.terrainPass.prepare(probeVisible.terrains, terrainInput);
+        if (passes.meshes)
+            this.meshPass.renderDepth();
+        if (passes.terrain)
+            this.terrainPass.renderDepth(terrainInput);
+        const shadowBinding = this.shadowPass.binding;
+        const skyBinding = this.sky.binding;
+        if (shadowBinding.active || skyBinding.cloudShadow.enabled) {
+            drawCalls += this.probeShadowMask.render({ camera: faceCamera, depth: probe.depth, shadow: shadowBinding, sky: skyBinding, lightDirection: skyFrame.shadowCasterDirection }, size, size);
+            probe.bindFace();
+        }
+        else {
+            this.probeShadowMask.skip();
+        }
+        if (passes.meshes) {
+            this.meshPass.renderOpaque();
+            drawCalls += this.meshPass.stats.drawCalls;
+        }
+        if (passes.terrain) {
+            this.terrainPass.render(terrainInput);
+            drawCalls += this.terrainPass.stats.drawCalls;
+        }
+        if (skyOn)
+            drawCalls += this.sky.renderProbeBackground(faceCamera, size, options.elapsedSeconds);
+        reflections.endProbeFace();
+        return drawCalls;
+    }
+    private probeLocalLightsBinding(): LocalLightsBinding {
+        const data = this.localLights.binding;
+        let binding = this.probeLocalLights;
+        if (!binding) {
+            binding = { data: { ...data, count: 0 }, shadow: this.localShadowPass.binding };
+            this.probeLocalLights = binding;
+        }
+        binding.data.texture = data.texture;
+        return binding;
+    }
+    private didTransientWork(): boolean {
+        if (this.textures.stats.uploads > 0 || this.terrainGpu.stats.uploads > 0)
+            return true;
+        return this.grassPass.stats.pending > 0;
+    }
+    private pauseWarmup(stage: FrameStage, started: number): boolean {
+        const index = stageIndex(stage);
+        if (index < this.warmupStage)
+            return false;
+        if (stage === 'clouds' && this.sky.cloudsCompiling) {
+            this.abandonFrame(stage, started);
+            return true;
+        }
+        this.warmupStage = index + 1;
+        this.stats.warmupStage = this.warmupStage;
+        if (this.warmupStage >= FRAME_STAGES.length)
+            return false;
+        this.gl.finish();
+        if (performance.now() - started < WARMUP_FRAME_BUDGET_MS)
+            return false;
+        this.abandonFrame(stage, started);
+        return true;
+    }
+    private abandonFrame(stage: FrameStage, started: number): void {
+        const { gl, stats } = this;
+        this.gpuTimer.endFrame();
+        this.skins.endFrame();
+        if (stageIndex(stage) < stageIndex('overlay')) {
+            this.terrainGpu.endFrame();
+            this.terrainCache.endFrame();
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        stats.cpuMs = performance.now() - started;
+        stats.settled = false;
+        stats.transient = true;
+    }
+    private frameSettled(): boolean {
+        if (!this.frameComplete)
+            return false;
+        if (this.visible.stats.boundsChanged > 0)
+            return false;
+        if (this.lod.stats.pending > 0)
+            return false;
+        if (this.shadowPass.stats.staticCascadesRendered > 0)
+            return false;
+        if (this.shadowPass.stats.cascadesPending > 0)
+            return false;
+        if (this.localShadowPass.stats.facesRendered > 0)
+            return false;
+        if (this.grassPass.stats.animated)
+            return false;
+        if (this.waterPass.stats.drawCalls > 0)
+            return false;
+        if (this.vfxPass.stats.particles > 0)
+            return false;
+        if (this.localLights.stats.animated > 0)
+            return false;
+        if (!this.sky.settled)
+            return false;
+        if (this.meshPass.stats.animatedShaders > 0 || !this.customPost.settled || this.customPrograms.pending > 0)
+            return false;
+        return this.effectivePost ? this.postPass.settled(this.effectivePost) : false;
+    }
+    get frameComplete(): boolean {
+        if (!this.ready)
+            return false;
+        if (this.textures.stats.uploads > 0 || this.textures.stats.pending > 0)
+            return false;
+        if (this.terrainGpu.stats.uploads > 0 || this.terrainGpu.stats.pending > 0)
+            return false;
+        const myriad = this.myriad.stats;
+        if (myriad.active && (myriad.buildPending > 0 || myriad.building !== '' || myriad.waiting > 0))
+            return false;
+        if (this.localShadowPass.stats.facesPostponed > 0)
+            return false;
+        const terrainCache = this.terrainCache.stats;
+        if (terrainCache.baked > 0 || terrainCache.pending > 0)
+            return false;
+        return this.grassPass.stats.pending === 0;
+    }
+    inputsChanged(camera: PerspectiveCamera): boolean {
+        if (this.canvasSize.resized)
+            return true;
+        const { canvas } = this;
+        camera.aspect = canvas.width / canvas.height;
+        camera.updateMatrices();
+        return !this.cameraSnapshot.matches(0, camera.viewProjectionMatrix);
     }
     private renderWarmup(started: number): void {
         const { gl, canvas, stats } = this;
