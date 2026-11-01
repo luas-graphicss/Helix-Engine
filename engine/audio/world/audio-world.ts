@@ -508,4 +508,279 @@ export class AudioWorld {
             return 'waiting';
         return 'stopped';
     }
+    private start(entity: Entity, runtime: Runtime): void {
+        const asset = runtime.asset;
+        if (!asset)
+            return;
+        const token = Date.now() + Math.random();
+        runtime.loading = token;
+        runtime.status = 'loading';
+        const { engine } = this.host;
+        void engine
+            .load(asset.id, () => this.host.file(asset))
+            .then((buffer) => {
+            if (runtime.loading !== token || this.runtimes.get(runtime.entityId) !== runtime || this.disposed)
+                return;
+            runtime.loading = 0;
+            if (!runtime.should || !runtime.audible || runtime.voice)
+                return;
+            this.spawn(entity, runtime, buffer);
+        })
+            .catch((cause) => {
+            if (runtime.loading !== token)
+                return;
+            runtime.loading = 0;
+            runtime.error = cause instanceof Error ? cause.message : String(cause);
+            runtime.status = 'error';
+            runtime.latched = false;
+            this.host.log('error', `${entity.name}: não foi possível tocar ${asset.name}: ${runtime.error}`);
+            this.notify();
+        });
+    }
+    private spawn(entity: Entity, runtime: Runtime, buffer: AudioBuffer): void {
+        const settings = entity.audioSource;
+        const context = this.host.engine.context;
+        const reverb = this.reverb;
+        if (!settings || !context || !reverb || !runtime.asset)
+            return;
+        const clip = runtime.asset.details.clip;
+        const { engine } = this.host;
+        const voice = new SpatialVoice(context, engine, buffer, clip, settings, engine.busInput(clip.bus), reverb.input, {
+            randomize: true,
+            onEnded: () => this.onEnded(entity, runtime),
+        });
+        runtime.voice = voice;
+        runtime.clipRef = clip;
+        runtime.pending = false;
+        runtime.nextShotAt = 0;
+        runtime.occlusionAt = this.clock;
+        voice.setPose(runtime.position, runtime.forward, true);
+        voice.setLevel(this.levelGain(runtime, settings), true);
+        const derived = deriveSourceClip(clip, settings);
+        const region = clipRegion(derived, buffer.duration);
+        let from = region.start;
+        if (derived.loop && settings.randomStart) {
+            const loop = loopRegion(derived, buffer.duration);
+            from = loop.start + Math.random() * Math.max(0, loop.end - loop.start - 0.01);
+        }
+        voice.voice.play(from);
+        voice.fadeIn(settings.fadeIn);
+        runtime.status = 'playing';
+        this.notify();
+    }
+    private onEnded(entity: Entity, runtime: Runtime): void {
+        if (this.runtimes.get(runtime.entityId) !== runtime)
+            return;
+        if (runtime.voice) {
+            runtime.voice.dispose();
+            runtime.voice = null;
+        }
+        const settings = entity.audioSource;
+        runtime.latched = false;
+        if (settings && (settings.repeatMax > 0 || settings.repeatMin > 0) && runtime.should) {
+            const min = Math.min(settings.repeatMin, settings.repeatMax);
+            const max = Math.max(settings.repeatMin, settings.repeatMax);
+            runtime.nextShotAt = this.clock + min + Math.random() * (max - min);
+            runtime.status = 'waiting';
+        }
+        else if (settings?.trigger === 'auto') {
+            runtime.done = true;
+            runtime.status = 'stopped';
+        }
+        else {
+            runtime.status = settings?.trigger === 'proximity' && runtime.inside ? 'stopped' : 'waiting';
+        }
+        this.notify();
+    }
+    private release(runtime: Runtime, fadeSeconds: number): void {
+        const { voice } = runtime;
+        if (!voice)
+            return;
+        runtime.voice = null;
+        voice.fadeOutAndDispose(fadeSeconds);
+    }
+    private levelGain(runtime: Runtime, settings: AudioSourceSettings): number {
+        let gain = dbToGain(settings.volumeDb);
+        if (settings.spatial)
+            gain *= rangeFadeGain(settings, runtime.distance);
+        if (runtime.occlusion > 0)
+            gain *= dbToGain(settings.occlusion.attenuationDb * runtime.occlusion);
+        return gain;
+    }
+    private updateVoice(entity: Entity, runtime: Runtime, settings: AudioSourceSettings, listenerPosition: Vec3, occlusionBudget: number): number {
+        const voice = runtime.voice as SpatialVoice;
+        const clip = runtime.asset?.details.clip ?? null;
+        if (clip && clip !== runtime.clipRef) {
+            runtime.clipRef = clip;
+            voice.voice.update(deriveSourceClip(clip, settings));
+        }
+        voice.setPose(runtime.position, runtime.forward);
+        if (settings.spatial && settings.occlusion.enabled) {
+            if (occlusionBudget > 0 && this.clock >= runtime.occlusionAt) {
+                runtime.occlusionTarget = occlusionAmount(this.host.scene, listenerPosition, runtime.position, entity);
+                runtime.occlusionAt = this.clock + OCCLUSION_INTERVAL * (0.85 + Math.random() * 0.3);
+                occlusionBudget--;
+            }
+        }
+        else {
+            runtime.occlusionTarget = 0;
+        }
+        voice.setLevel(this.levelGain(runtime, settings));
+        let filterHz = OPEN_FILTER_HZ;
+        if (settings.spatial) {
+            filterHz = Math.min(filterHz, airAbsorptionCutoff(runtime.distance, settings.airAbsorption), this.zoneFilterHz);
+            if (runtime.occlusion > 0)
+                filterHz = Math.min(filterHz, blendCutoff(settings.occlusion.lowpass, runtime.occlusion));
+        }
+        runtime.filterHz = filterHz;
+        voice.setFilter(filterHz);
+        voice.setSend(reverbSendGain(settings, runtime.distance));
+        if (settings.doppler > 0 && settings.spatial && this.listener && runtime.distance > 0.05) {
+            vec3.subtract(toListener, listenerPosition, runtime.position);
+            vec3.scale(toListener, toListener, 1 / runtime.distance);
+            const sourceApproach = vec3.dot(runtime.velocity, toListener);
+            const listenerApproach = -vec3.dot(this.listener.velocity, toListener);
+            const ratio = Math.min(2, Math.max(0.5, (SPEED_OF_SOUND + listenerApproach) / Math.max(1, SPEED_OF_SOUND - sourceApproach)));
+            const cents = Math.min(DOPPLER_MAX_CENTS, Math.max(-DOPPLER_MAX_CENTS, 1200 * Math.log2(ratio) * settings.doppler));
+            voice.setDetune(Math.abs(cents) < 0.5 ? 0 : cents);
+        }
+        else {
+            voice.setDetune(0);
+        }
+        return occlusionBudget;
+    }
+    private updateZones(zones: Entity[], listenerPosition: Vec3, running: boolean): void {
+        let best: ZoneCandidate | null = null;
+        const seen = new Set<number>();
+        const active = this.mode === 'game' || this.audition;
+        for (const entity of zones) {
+            const settings = entity.audioZone as AudioZoneSettings;
+            const weight = zoneWeightAt(settings, entity.worldMatrix, listenerPosition);
+            seen.add(entity.id);
+            this.updateAmbience(entity, settings, active ? weight : 0, running);
+            if (weight <= 0)
+                continue;
+            const volume = zoneWorldVolume(settings, entity.worldMatrix);
+            if (!best || settings.priority > best.settings.priority || (settings.priority === best.settings.priority && volume < best.volume)) {
+                best = { entity, settings, weight, volume };
+            }
+        }
+        for (const [id, ambience] of this.ambiences) {
+            if (seen.has(id))
+                continue;
+            this.releaseAmbience(ambience, AMBIENCE_FADE);
+            this.ambiences.delete(id);
+        }
+        this.activeZone = best ? { entity: best.entity, weight: best.weight } : null;
+        this.reverb?.apply(best?.settings ?? null, best?.weight ?? 0);
+        this.zoneFilterHz = best && best.settings.filter.enabled ? blendCutoff(best.settings.filter.frequency, best.weight) : OPEN_FILTER_HZ;
+    }
+    private updateAmbience(entity: Entity, settings: AudioZoneSettings, weight: number, running: boolean): void {
+        const { ambience } = settings;
+        const existing = this.ambiences.get(entity.id);
+        const wanted = settings.enabled && ambience.assetId !== null && weight > 0 && this.soloSourceId === null;
+        const context = this.host.engine.context;
+        const now = context?.currentTime ?? 0;
+        if (!wanted) {
+            if (!existing)
+                return;
+            if (existing.silentSince === 0)
+                existing.silentSince = this.clock;
+            existing.gain.gain.setTargetAtTime(0, now, 0.1);
+            if (this.clock - existing.silentSince > AMBIENCE_GRACE) {
+                this.releaseAmbience(existing, AMBIENCE_FADE);
+                this.ambiences.delete(entity.id);
+            }
+            return;
+        }
+        const assetId = ambience.assetId as string;
+        if (existing && existing.assetId !== assetId) {
+            this.releaseAmbience(existing, 0.2);
+            this.ambiences.delete(entity.id);
+        }
+        const current = this.ambiences.get(entity.id);
+        if (current) {
+            current.silentSince = 0;
+            current.gain.gain.setTargetAtTime(dbToGain(ambience.volumeDb) * weight, now, 0.1);
+            return;
+        }
+        if (!running || !context || this.ambienceLoading.has(entity.id)) {
+            if (!running)
+                this.hookUnlock();
+            return;
+        }
+        const asset = this.host.asset(assetId);
+        if (!asset)
+            return;
+        this.ambienceLoading.add(entity.id);
+        const { engine } = this.host;
+        void engine
+            .load(asset.id, () => this.host.file(asset))
+            .then((buffer) => {
+            this.ambienceLoading.delete(entity.id);
+            if (this.disposed || this.ambiences.has(entity.id))
+                return;
+            const live = entity.audioZone;
+            if (!live || live.ambience.assetId !== assetId)
+                return;
+            const clip = asset.details.clip;
+            const gain = context.createGain();
+            gain.gain.value = 0;
+            gain.connect(engine.busInput(clip.bus));
+            const voice = new AudioVoice(context, buffer, { ...clip, loop: true }, gain, { randomize: false });
+            engine.adopt(voice);
+            const loop = loopRegion({ ...clip, loop: true }, buffer.duration);
+            voice.play(loop.start + Math.random() * Math.max(0, loop.end - loop.start - 0.01));
+            gain.gain.setTargetAtTime(dbToGain(live.ambience.volumeDb) * weight, context.currentTime, 0.15);
+            this.ambiences.set(entity.id, { voice, gain, assetId, silentSince: 0 });
+            this.notify();
+        })
+            .catch((cause) => {
+            this.ambienceLoading.delete(entity.id);
+            this.host.log('error', `${entity.name}: não foi possível tocar a cama ambiente: ${cause instanceof Error ? cause.message : String(cause)}`);
+        });
+    }
+    private releaseAmbience(ambience: Ambience, fadeSeconds: number): void {
+        const context = this.host.engine.context;
+        if (context)
+            ambience.gain.gain.setTargetAtTime(0, context.currentTime, Math.max(0.01, fadeSeconds / 3));
+        const { engine } = this.host;
+        setTimeout(() => {
+            engine.release(ambience.voice);
+            ambience.gain.disconnect();
+        }, fadeSeconds * 1000 + 50);
+    }
+    private hookUnlock(): void {
+        if (this.unlockHooked || typeof window === 'undefined')
+            return;
+        this.unlockHooked = true;
+        const unlock = () => {
+            window.removeEventListener('pointerdown', unlock, true);
+            window.removeEventListener('keydown', unlock, true);
+            this.unlockHooked = false;
+            void this.host.engine.unlock().then(() => this.notify());
+        };
+        window.addEventListener('pointerdown', unlock, true);
+        window.addEventListener('keydown', unlock, true);
+    }
+    private publish(playing: number): void {
+        let signature = `${this.activeZone?.entity.id ?? ''}|${this.stats.locked ? 1 : 0}|`;
+        for (const runtime of this.runtimes.values())
+            signature += `${runtime.entityId}:${runtime.status}:${runtime.occluded ? 1 : 0}:${runtime.latched ? 1 : 0};`;
+        if (signature !== this.lastSignature) {
+            this.lastSignature = signature;
+            this.lastStatsAt = this.clock;
+            this.notify();
+            return;
+        }
+        if ((playing > 0 || this.activeZone) && this.clock - this.lastStatsAt >= STATS_INTERVAL) {
+            this.lastStatsAt = this.clock;
+            this.notify();
+        }
+    }
+    private notify(): void {
+        this.version++;
+        for (const listener of this.listeners)
+            listener();
+    }
 }
