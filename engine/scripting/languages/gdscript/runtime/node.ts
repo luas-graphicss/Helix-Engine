@@ -275,4 +275,283 @@ export class NodeBase extends GodotObject implements NodeLike, InputTarget {
     get tree_entered(): Signal {
         return this.$builtinSignal('tree_entered');
     }
+    get tree_exiting(): Signal {
+        return this.$builtinSignal('tree_exiting');
+    }
+    get tree_exited(): Signal {
+        return this.$builtinSignal('tree_exited');
+    }
+    get renamed(): Signal {
+        return this.$builtinSignal('renamed');
+    }
+    get visibility_changed(): Signal {
+        return this.$builtinSignal('visibility_changed');
+    }
+    get child_entered_tree(): Signal {
+        return this.$builtinSignal('child_entered_tree');
+    }
+    get child_exiting_tree(): Signal {
+        return this.$builtinSignal('child_exiting_tree');
+    }
+    get body_entered(): Signal {
+        return this.$builtinSignal('body_entered');
+    }
+    get body_exited(): Signal {
+        return this.$builtinSignal('body_exited');
+    }
+    get area_entered(): Signal {
+        return this.$builtinSignal('area_entered');
+    }
+    get area_exited(): Signal {
+        return this.$builtinSignal('area_exited');
+    }
+    get input_event(): Signal {
+        return this.$builtinSignal('input_event');
+    }
+    get entity(): EngineEntity | null {
+        return this.$entity;
+    }
+    get script(): unknown {
+        return this.$script;
+    }
+    protected get $t(): TransformHolder {
+        return this.$entity ? this.$entity.transform : this.$virtualTransform;
+    }
+    protected get $transformApi(): AnyRecord {
+        return this.$helix.transform as AnyRecord;
+    }
+    protected get $sceneApi(): AnyRecord {
+        return this.$helix.scene as AnyRecord;
+    }
+    get name(): string {
+        return this.$entity ? this.$entity.name : this.$virtualName;
+    }
+    set name(value: unknown) {
+        const text = str(value);
+        if (this.$entity)
+            (this.$sceneApi.rename as Fn)(this.$entity, text);
+        else
+            this.$virtualName = text;
+        this.$emit('renamed');
+    }
+    get position(): Vector3 {
+        return fromEngineVec3(this.$t.position);
+    }
+    set position(value: unknown) {
+        writeEngineVec3(this.$t.position, value);
+    }
+    get rotation(): Vector3 {
+        return degreesToRadians(fromEngineVec3(this.$t.rotation));
+    }
+    set rotation(value: unknown) {
+        writeEngineVec3(this.$t.rotation, radiansToDegrees(toVector3(value)));
+    }
+    get rotation_degrees(): Vector3 {
+        return fromEngineVec3(this.$t.rotation);
+    }
+    set rotation_degrees(value: unknown) {
+        writeEngineVec3(this.$t.rotation, value);
+    }
+    get scale(): Vector3 {
+        return fromEngineVec3(this.$t.scale);
+    }
+    set scale(value: unknown) {
+        if (typeof value === 'number')
+            writeEngineVec3(this.$t.scale, new Vector3(value, value, value));
+        else
+            writeEngineVec3(this.$t.scale, value);
+    }
+    get quaternion(): Quaternion {
+        return Quaternion.from_euler(this.rotation);
+    }
+    set quaternion(value: unknown) {
+        if (!(value instanceof Quaternion))
+            fail('quaternion: esperava um Quaternion.');
+        this.rotation = value.get_euler();
+    }
+    get basis(): Basis {
+        return basisFromEulerDegrees(this.$t.rotation).scaled(this.scale);
+    }
+    set basis(value: unknown) {
+        if (!(value instanceof Basis))
+            fail('basis: esperava um Basis.');
+        this.rotation = value.get_euler();
+        this.scale = value.get_scale();
+    }
+    get transform(): Transform3D {
+        return new Transform3D(this.basis, this.position);
+    }
+    set transform(value: unknown) {
+        if (!(value instanceof Transform3D))
+            fail('transform: esperava um Transform3D.');
+        this.basis = value.basis;
+        this.position = value.origin;
+    }
+    get global_position(): Vector3 {
+        if (!this.$entity)
+            return this.position;
+        return fromEngineVec3((this.$transformApi.worldPosition as Fn)(this.$entity) as Float32Array);
+    }
+    set global_position(value: unknown) {
+        if (!this.$entity) {
+            this.position = value;
+            return;
+        }
+        ;
+        (this.$transformApi.setWorldPosition as Fn)(this.$entity, toVector3(value));
+    }
+    get global_rotation(): Vector3 {
+        return degreesToRadians(this.global_rotation_degrees);
+    }
+    set global_rotation(value: unknown) {
+        this.global_rotation_degrees = radiansToDegrees(toVector3(value));
+    }
+    get global_rotation_degrees(): Vector3 {
+        if (!this.$entity)
+            return this.rotation_degrees;
+        return fromEngineVec3((this.$transformApi.worldRotationEuler as Fn)(this.$entity) as Float32Array);
+    }
+    set global_rotation_degrees(value: unknown) {
+        if (!this.$entity) {
+            this.rotation_degrees = value;
+            return;
+        }
+        ;
+        (this.$transformApi.setWorldRotation as Fn)(this.$entity, toVector3(value));
+    }
+    get global_basis(): Basis {
+        return this.global_transform.basis;
+    }
+    set global_basis(value: unknown) {
+        if (!(value instanceof Basis))
+            fail('global_basis: esperava um Basis.');
+        this.global_transform = new Transform3D(value, this.global_position);
+    }
+    get global_transform(): Transform3D {
+        if (!this.$entity)
+            return this.transform;
+        return transformFromMatrix((this.$transformApi.worldMatrix as Fn)(this.$entity) as Float32Array);
+    }
+    set global_transform(value: unknown) {
+        if (!(value instanceof Transform3D))
+            fail('global_transform: esperava um Transform3D.');
+        if (!this.$entity) {
+            this.transform = value;
+            return;
+        }
+        const b = value.basis;
+        const matrix = new Float32Array([b.x.x, b.x.y, b.x.z, 0, b.y.x, b.y.y, b.y.z, 0, b.z.x, b.z.y, b.z.z, 0, value.origin.x, value.origin.y, value.origin.z, 1]);
+        (this.$transformApi.setWorldMatrix as Fn)(this.$entity, matrix);
+    }
+    get visible(): boolean {
+        return this.$entity ? this.$entity.visible : this.$virtualVisible;
+    }
+    set visible(value: unknown) {
+        const visible = Boolean(value);
+        if (this.$entity)
+            (this.$sceneApi.setVisible as Fn)(this.$entity, visible);
+        else
+            this.$virtualVisible = visible;
+        this.$syncVisibility();
+    }
+    private $virtualVisible = true;
+    get owner(): GodotObject | null {
+        return this.$inTree ? this.get_tree().root : null;
+    }
+    set owner(_value: unknown) { }
+    is_visible_in_tree(): boolean {
+        if (!this.visible)
+            return false;
+        for (let current: EngineEntity | null = this.$entity?.parent ?? null; current; current = current.parent)
+            if (!current.visible)
+                return false;
+        return true;
+    }
+    show(): void {
+        this.visible = true;
+    }
+    hide(): void {
+        this.visible = false;
+    }
+    look_at(target: unknown, up: unknown = Vector3.UP, _useModelFront = false): void {
+        const point = target instanceof NodeBase ? target.global_position : toVector3(target);
+        if (this.$entity) {
+            ;
+            (this.$transformApi.lookAt as Fn)(this.$entity, point, toVector3(up));
+            return;
+        }
+        this.basis = Basis.looking_at(vsub(point, this.position), toVector3(up)).scaled(this.scale);
+    }
+    look_at_from_position(position: unknown, target: unknown, up: unknown = Vector3.UP, useModelFront = false): void {
+        this.global_position = position;
+        this.look_at(target, up, useModelFront);
+    }
+    translate(offset: unknown): void {
+        if (this.$entity) {
+            ;
+            (this.$transformApi.translate as Fn)(this.$entity, toVector3(offset), 'local');
+            return;
+        }
+        this.position = vadd(this.position, this.basis.xform(toVector3(offset)));
+    }
+    translate_object_local(offset: unknown): void {
+        this.translate(offset);
+    }
+    global_translate(offset: unknown): void {
+        if (this.$entity) {
+            ;
+            (this.$transformApi.translate as Fn)(this.$entity, toVector3(offset), 'world');
+            return;
+        }
+        this.position = vadd(this.position, toVector3(offset));
+    }
+    rotate(axis: unknown, angle: unknown): void {
+        const scale = this.scale;
+        this.basis = basisFromEulerDegrees(this.$t.rotation).rotated(toVector3(axis), Number(angle)).scaled(scale);
+    }
+    rotate_x(angle: unknown): void {
+        this.rotate(Vector3.RIGHT, angle);
+    }
+    rotate_y(angle: unknown): void {
+        this.rotate(Vector3.UP, angle);
+    }
+    rotate_z(angle: unknown): void {
+        this.rotate(Vector3.BACK, angle);
+    }
+    rotate_object_local(axis: unknown, angle: unknown): void {
+        const scale = this.scale;
+        const current = basisFromEulerDegrees(this.$t.rotation);
+        this.basis = current.multiply(Basis.from_euler(new Vector3()).rotated(toVector3(axis), Number(angle))).scaled(scale);
+    }
+    to_global(local: unknown): Vector3 {
+        if (this.$entity)
+            return fromEngineVec3((this.$transformApi.localToWorld as Fn)(this.$entity, toVector3(local)) as Float32Array);
+        return this.transform.xform(toVector3(local));
+    }
+    to_local(global: unknown): Vector3 {
+        if (this.$entity)
+            return fromEngineVec3((this.$transformApi.worldToLocal as Fn)(this.$entity, toVector3(global)) as Float32Array);
+        return this.transform.affine_inverse().xform(toVector3(global));
+    }
+    get_global_transform(): Transform3D {
+        return this.global_transform;
+    }
+    get_transform(): Transform3D {
+        return this.transform;
+    }
+    set_identity(): void {
+        writeEngineVec3(this.$t.position, Vector3.ZERO);
+        writeEngineVec3(this.$t.rotation, Vector3.ZERO);
+        writeEngineVec3(this.$t.scale, Vector3.ONE);
+    }
+    protected $children(): NodeBase[] {
+        if (this.$entity)
+            return this.$entity.children.map((child) => wrapEntity(child, this.$context));
+        return this.$virtualChildren.slice();
+    }
+    protected $parent(): NodeBase | null {
+        if (this.$entity)
+            return this.$entity.parent ? wrapEntity(this.$entity.parent, this.$context) : null;
+        return this.$virtualParent;
+    }
 }
