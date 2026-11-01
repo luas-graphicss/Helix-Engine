@@ -281,5 +281,285 @@ Value malhas() {
       {"material", mat.call("create", obj({{"baseColor", "#e63946"}, {"roughness", 0.4}, {"metallic", 0.2}}))},
       {"position", v3(4, 0.5, 2)}}));
   checar("spawn malha CSG", !ator["mesh"].isNone());
+  checar("csg.operations", contem(csg.call("operations"), "union"));
+  Value tri = me.call("create", obj({{"name", "Triangulo"},
+    {"positions", arr({-1, 0, 0, 1, 0, 0, 0, 1.5, 0})},
+    {"uvs", arr({0, 0, 1, 0, 0.5, 1})},
+    {"indices", arr({0, 1, 2})}}));
+  me.call("computeNormals", tri);
+  checar("mesh.create + computeBounds", me.call("computeBounds", tri)["max"].y() >= 1.5);
+  Value dupla = me.call("merge", tri, me.call("flipWinding", me.call("clone", tri)));
+  checar("mesh.merge", me.call("triangleCount", dupla).number() == 2);
+  s.call("spawn", "mesh",
+    obj({{"name", "Triangulo"}, {"mesh", dupla},
+      {"material", mat.call("create", obj({{"baseColor", "#06d6a0"}, {"doubleSided", true}}))},
+      {"position", v3(7, 0, -2)}}));
+  Value grande = me.call("scale", me.call("translate", me.call("clone", caixa), v3(0, 0.5, 0)), 2);
+  checar("mesh.translate/scale", me.call("computeBounds", grande)["max"].y() > 1.9);
+  Value distancia = me.call("raycast", api("math.ray").call("create", v3(0, 5, 0), v3(0, -1, 0)), grande);
+  checar("mesh.raycast", distancia.isNumber() && distancia.number() > 0);
+  int vertices = me.call("vertexCount", caixa).toInt();
+  checar("positions/indices", me.call("positions", caixa).length() == vertices * 3 && me.call("indices", caixa).length() == 36);
+  checar("primitivas extras", me.call("triangleCount", me.call("torusKnot")).number() > 0 && me.call("triangleCount", me.call("capsule")).number() > 0);
+  return Value();
+}
+
+                                                                                         
+
+Value materiais() {
+  Value mat = api("material"), s = api("scene"), tex = api("texture");
+  Value base = mat.call("create", obj({{"name", "DebugBase"}, {"baseColor", "#d98c2b"}, {"roughness", 0.5}, {"metallic", 0.1}}));
+  checar("material.create", numero(base, "roughness") == 0.5);
+  Value copia = mat.call("clone", base);
+  mat.call("set", copia, obj({{"roughness", 1}, {"emissive", "#ffffff"}, {"emissiveIntensity", 2}}));
+  checar("material.clone/set", numero(copia, "roughness") == 1 && numero(base, "roughness") == 0.5);
+  Value caixa = s.call("spawnPrimitive", "box", obj({{"name", "CaixaPintada"}, {"position", v3(-7, 0.5, 2)}}));
+  mat.call("assign", caixa, base);
+  checar("material.assign/of", !mat.call("of", caixa).isNone());
+  mat.call("own", caixa);
+  mat.call("setColor", caixa, "#d98c2b");
+  Value desenho = tex.call("canvas", 64, 64);
+  desenho.call("update");
+  mat.call("setTexture", caixa, "baseColorMap", desenho["texture"]);
+  checar("texture.canvas + setTexture", mat.call("hasAnyTexture", mat.call("of", caixa)).truthy() && tex.call("isTexture", desenho["texture"]).truthy());
+  checar("material.slots", mat.call("slots").length() > 0);
+  checar("materials.list", api("materials").call("list").isArray());
+  Value sombreado = mat.call("fromShader", "DebugSuperficie", obj({{"glow", v3(1, 0.45, 0.1)}, {"speed", 2}}));
+  checar("material.fromShader", !sombreado.isNone());
+  if (!sombreado.isNone()) {
+    Value esfera = s.call("spawnPrimitive", "sphere", obj({{"name", "EsferaShader"}, {"position", v3(0, 1, -3)}, {"scale", 1.4}}));
+    mat.call("assign", esfera, sombreado);
+    mat.call("uniforms", esfera).call("set", "speed", 3);
+    checar("material.uniforms.list", mat.call("uniforms", esfera).call("list").length() >= 1);
+  }
+  return Value();
+}
+
+Value luzes() {
+  Value l = api("light");
+  checar("light.types", contem(l.call("types"), "point") && contem(l.call("localTypes"), "spot"));
+  Value lampada = l.call("spawn", "point", obj({{"name", "Lampada"}, {"position", v3(0, 3, 0)}, {"color", "#ffd166"}, {"intensity", 60}, {"range", 14}}));
+  checar("light.spawn", !lampada["light"].isNone() && eh(lampada["light"]["type"], "point"));
+  l.call("set", lampada, obj({{"intensity", 80}}));
+  checar("light.set", numero(lampada["light"], "intensity") == 80);
+  l.call("setTemperature", lampada, 3200);
+  checar("setTemperature", numero(lampada["light"], "temperature") == 3200);
+  Value foco = l.call("spawn", "spot",
+    obj({{"name", "Holofote"}, {"position", v3(4, 4, 0)}, {"rotation", v3(-90, 0, 0)}, {"intensity", 120}, {"range", 16},
+      {"innerAngle", 20}, {"outerAngle", 35}, {"color", "#ffffff"}}));
+  checar("spot", eh(foco["light"]["type"], "spot"));
+  Value convertido = l.call("convert", foco, "disc");
+  checar("light.convert", eh(convertido["type"], "disc") && eh(foco["light"]["type"], "disc"));
+  l.call("convert", foco, "spot");
+  Value presets = l.call("presets");
+  checar("light.presets", presets.length() > 0);
+  if (presets.length() > 0) {
+    Value primeiro = presets[0];
+    Value preset = l.call("spawn", primeiro["id"], obj({{"name", "LuzPreset"}, {"position", v3(-4, 2.5, 4)}}));
+    checar("light.fromPreset", !preset["light"].isNone() && l.call("fromPreset", primeiro["id"])["type"] == primeiro["type"]);
+  }
+  checar("light.all", l.call("all", obj({{"local", true}})).length() >= 2);
+  checar("effectiveRange", l.call("effectiveRange", lampada).number() > 0);
+  checar("light.isLocal", verdadeiro(l.call("isLocal", lampada)));
+  checar("temperatureToColor", !l.call("temperatureToColor", 6500).isNone());
+  l.call("setColor", lampada, "#ffffff");
+  checar("light.setColor", eq3(lampada["light"]["color"], 1, 1, 1, 0.01));
+  return Value();
+}
+
+Value ceu() {
+  Value sky = api("sky"), mundo = api("world");
+  sky.call("set", obj({{"timeOfDay", 10.5}, {"haze", 0.3}, {"clouds", obj({{"enabled", true}, {"coverage", 0.45}})}}));
+  checar("sky.set", aprox(numero(sky, "timeOfDay"), 10.5, 1e-3) && verdadeiro(sky["clouds"]["enabled"]));
+  checar("sky.isDay", verdadeiro(sky["isDay"]));
+  checar("sky.sunDirection", sky.call("sunDirection").y() > 0);
+  std::string hora = sky.call("formatTimeOfDay", 10.5).str();
+  checar("sky.formatTimeOfDay", hora.find(':') != std::string::npos, hora);
+  checar("sky.wrapTimeOfDay", sky.call("wrapTimeOfDay", 25).number() == 1);
+  checar("sky.presets", sky.call("presets").length() > 0);
+  assinar(sky.call("onHourChanged", helix::function([](const Args& a) { info(fmt("Hora do céu: %g", a[0].number())); })));
+  sky.set("cycleSpeed", 0);
+  checar("sky.cycleSpeed", numero(sky, "cycleSpeed") == 0);
+  checar("world.gravity", mundo["gravity"].y() < 0);
+  mundo["wind"].call("set", obj({{"speed", 2}, {"direction", 45}}));
+  checar("world.wind.set", numero(mundo["wind"], "speed") == 2);
+  return Value();
+}
+
+Value camera() {
+  Value c = api("camera");
+  checar("camera.fov", numero(c, "fov") > 0 && numero(c, "aspect") > 0);
+  checar("camera.near/far", numero(c, "near") > 0 && numero(c, "far") > numero(c, "near"));
+  Value viewport = c["viewport"];
+  checar("viewport", numero(viewport, "width") > 0);
+  Value naTela = c.call("worldToScreen", v3(0, 0, 0));
+  checar("worldToScreen", naTela.isNone() || naTela["x"].isNumber());
+  Value raio = c.call("screenToRay", numero(viewport, "width") / 2, numero(viewport, "height") / 2);
+  checar("screenToRay", raio.isNone() || aprox(comprimento(raio["direction"]), 1, 0.01));
+  checar("viewMatrix", c["viewMatrix"].length() == 16);
+  Value jogador = c["player"];
+  jogador.call("set", obj({{"distance", 7}, {"pitch", 18}}));
+  checar("player.set", numero(jogador["settings"], "distance") == 7);
+  checar("distanceTo", c.call("distanceTo", v3(0, 0, 0)).number() >= 0);
+  checar("camera.position", !c["position"].isNone() && !c["forward"].isNone());
+  assinar(c.call("onMainChanged", helix::function([](const Args& a) {
+    Value entidade = a[0];
+    info("Câmera principal: " + (entidade.isNone() ? std::string("editor/jogador") : entidade["name"].str()));
+  })));
+  return Value();
+}
+
+Value pos() {
+  Value p = api("post");
+  checar("post.toneMappers", p.call("toneMappers").length() > 0);
+  p.call("set",
+    obj({{"bloom", obj({{"enabled", true}, {"intensity", 0.5}, {"threshold", 1}, {"softKnee", 0.5}, {"radius", 0.6}})},
+      {"vignette", obj({{"enabled", true}, {"intensity", 0.35}, {"smoothness", 0.5}, {"roundness", 1}})}}));
+  checar("post.set", verdadeiro(p["bloom"]["enabled"]) && verdadeiro(p["vignette"]["enabled"]));
+  p.set("exposure", 1.05);
+  checar("post.exposure", aprox(numero(p, "exposure"), 1.05, 1e-3));
+  p.set("toneMapper", "agx");
+  checar("post.toneMapper", eh(p["toneMapper"], "agx"));
+  checar("post.presets", p.call("presets").length() > 0);
+  Value custom = p["custom"];
+  Value novo = custom.call("add", obj({{"fragment", "DebugPost"}, {"name", "DebugPost"}, {"uniforms", obj({{"tint", v3(0.15, 0.05, 0.3)}, {"strength", 0.6}})}}));
+  g.efeito = novo;
+  checar("post.custom.add", !novo.isNone() && !custom.call("get", "DebugPost").isNone());
+  novo["uniforms"].call("set", "strength", 0.8);
+  checar("efeito.uniforms.list", novo["uniforms"].call("list").length() >= 2);
+  return Value();
+}
+
+Value render() {
+  Value r = api("render");
+  checar("render.passNames", r.call("passNames").length() > 0);
+  checar("render.stats", r["stats"]["drawCalls"].isNumber());
+  checar("render.frame", r["frame"]["width"].isNumber());
+  assinar(r.call("onAfterFrame", helix::function([] { g.renders++; })));
+  r.set("showGrid", false);
+  checar("render.showGrid", falso(r["showGrid"]));
+  checar("render.pixelRatio", numero(r, "pixelRatio") > 0);
+  return Value();
+}
+
+                                                                                      
+
+Value fisica() {
+  Value ph = api("physics"), s = api("scene");
+  checar("physics.enabled", verdadeiro(ph["enabled"]));
+  checar("physics.gravity", ph["gravity"].y() < 0);
+  checar("physics.settings", numero(ph["settings"], "fixedTimestep") > 0);
+  for (int i = 1; i <= 5; i++) {
+    Value caixa = s.call("spawnPrimitive", "box",
+      obj({{"name", "Caixa" + std::to_string(i)},
+        {"position", v3(-2 + (i - 1) * 1.1, 3 + (i - 1) * 1.2, 3)},
+        {"rigidBody", obj({{"type", "dynamic"}, {"collider", "box"}, {"mass", 2}, {"restitution", 0.3}})},
+        {"tags", arr({"caixa"})}}));
+    api("material").call("setColor", caixa, api("math.color").call("hsl", 30 + i * 12, 0.7, 0.5));
+  }
+  Value caixas = s.call("byTag", "caixa");
+  Value primeira = caixas[0];
+  checar("caixas dinâmicas", caixas.length() == 5 && ph.call("hasBody", primeira).truthy());
+  Value corpo = ph.call("bodyOf", primeira);
+  checar("bodyOf", verdadeiro(corpo["isDynamic"]) && numero(corpo, "mass") > 0);
+  corpo.call("applyImpulse", v3(0, 2, 0));
+  corpo.call("applyTorque", v3(0, 1, 0));
+  corpo.call("setMaterial", obj({{"friction", 0.8}}));
+  corpo.call("wake");
+  checar("body.linearVelocity", !corpo["linearVelocity"].isNone());
+  checar("bodies()", ph.call("bodies").length() >= 6);
+  Value hit = ph.call("raycast", v3(0, 5, 0), v3(0, -1, 0), 20);
+  checar("physics.raycast", !hit.isNone() && !hit["entity"].isNone());
+  checar("raycastAll", ph.call("raycastAll", v3(0, 5, 0), v3(0, -1, 0), 20).length() >= 1);
+  checar("overlapSphere", ph.call("overlapSphere", v3(0, 3, 3), 4).isArray());
+  checar("massProperties", numero(ph.call("massProperties", primeira), "mass") > 0);
+  checar("colliderVolume", ph.call("colliderVolume", primeira).number() > 0);
+  Value formas = ph["shapes"];
+  checar("shapes.sphere volume", aprox(formas.call("volume", formas.call("sphere", 1)).number(), 4.18879, 0.01));
+  assinar(ph.call("onCollisionBegin", helix::function([](const Args& a) {
+    if (++g.colisoes > 3) return;
+    Value e = a[0];
+    info(fmt("Colisão: %s × %s (impulso %.2f)", e["a"]["name"].str().c_str(), e["b"]["name"].str().c_str(), numero(e["contact"], "impulse")));
+  })));
+  assinar(ph.call("onOutOfBounds", helix::function([](const Args& a) { aviso(a[0]["name"].str() + " caiu do mundo"); })));
+  Value gatilho = s.call("spawn", "group", obj({{"name", "Gatilho"}, {"position", v3(0, 1, 3)}, {"trigger", obj({{"shape", "box"}, {"size", v3(3, 2, 3)}})}}));
+  checar("trigger spawn", !gatilho.isNone() && s.call("isAttached", gatilho).truthy());
+  checar("physics.stats", ph["stats"]["bodies"].isNumber());
+  return Value();
+}
+
+Value personagem() {
+  Value ch = api("character"), pl = api("player");
+  Value novo = ch.call("spawn", obj({{"name", "Heroi"}, {"position", v3(0, 1.2, 8)}, {"character", obj({{"walkSpeed", 4}, {"runSpeed", 7}, {"jumpHeight", 1.4}})}}));
+  g.heroi = novo;
+  checar("character.spawn", !novo["character"].isNone() && ch.call("has", novo).truthy());
+  Value c = ch.call("of", novo);
+  checar("character.of", c["isGrounded"].isBoolean());
+  checar("settingsOf", numero(ch.call("settingsOf", novo), "walkSpeed") == 4);
+  pl.call("possess", novo);
+  checar("player.possess", pl["possessed"] == novo && verdadeiro(pl["isPossessing"]));
+  assinar(ch.call("onJumped", helix::function([](const Args& a) { info(a[0]["entity"]["name"].str() + " pulou"); })));
+  assinar(pl.call("onPossessed", helix::function([](const Args& a) {
+    Value entidade = a[0];
+    info("Possuindo " + (entidade.isNone() ? std::string("ninguém") : entidade["name"].str()));
+  })));
+  checar("character.all", ch.call("all").length() >= 1);
+  checar("player.spawnPoint", !pl["spawnPoint"].isNone());
+  checar("character.velocity", !c["velocity"].isNone() && !c["position"].isNone());
+  return Value();
+}
+
+Value terreno() {
+  Value te = api("terrain");
+  checar("terrain.presets", te.call("presets").length() > 0);
+  Value colinas = te.call("spawn", obj({{"name", "Colinas"}, {"size", 48}, {"resolution", 65}, {"preset", "hills"}, {"seed", 7}, {"position", v3(0, -6, -70)}}));
+  checar("terrain.spawn", !colinas["terrain"].isNone() && te.call("all").length() >= 1);
+  checar("terrain.of", numero(te.call("of", colinas), "resolution") == 65);
+  checar("heightAt", te.call("heightAt", v3(0, 0, -70), colinas).isNumber());
+  checar("contains", te.call("contains", v3(0, 0, -70), colinas).truthy() && !te.call("contains", v3(500, 0, 0), colinas).truthy());
+  te.call("sculpt", colinas, "raise", v3(5, 0, -70), obj({{"radius", 6}, {"strength", 1}}), 1);
+  te.call("markDirty", colinas);
+  Value grama = te["grass"];
+  grama.call("set", colinas, obj({{"enabled", true}, {"density", 0.5}}));
+  checar("grass.set", verdadeiro(grama.call("settingsOf", colinas)["enabled"]));
+  Value agua = te["water"];
+  agua.call("set", colinas, obj({{"enabled", true}, {"level", -2}}));
+  checar("water.set", verdadeiro(agua.call("settingsOf", colinas)["enabled"]));
+  checar("terrain.raycast", !te.call("raycast", v3(0, 50, -70), v3(0, -1, 0), colinas).isNone());
+  return Value();
+}
+
+                                                                                        
+
+void soltarCaixa() {
+  Value random = api("math.random");
+  Value caixa = api("scene").call("spawnPrimitive", "box",
+    obj({{"name", "CaixaSolta"},
+      {"position", v3(random.call("range", -3, 3).number(), 6, random.call("range", 0, 4).number())},
+      {"rigidBody", obj({{"type", "dynamic"}, {"collider", "box"}, {"mass", 1}})},
+      {"tags", arr({"caixa"})}}));
+  api("material").call("setColor", caixa, random.call("color"));
+  api("gui").call("bind", "pontos", ++g.pontos);
+  api("events").call("emit", "debug.caixa", obj({{"nome", caixa["name"]}}));
+}
+
+Value interfaceGrafica() {
+  Value gui = api("gui");
+  gui.call("css", "DebugEstilo");
+  Value hud = gui.call("html", "DebugHud", obj({{"id", "debug-hud"}}));
+  checar("gui.html", !hud.isNone() && !gui.call("element", "#debug-hud").isNone());
+  Value icone = gui.call("svg", "DebugIcone", obj({{"id", "debug-icone"}}));
+  checar("gui.svg", !icone.isNone());
+  Value slot = gui.call("element", "[data-slot=icone]");
+  if (!slot.isNone() && !icone.isNone()) slot.call("appendChild", icone);
+  checar("gui.bind", gui.call("bind", "linguagem", LINGUAGEM).number() >= 1);
+  gui.call("bind", "titulo", "Helix · Debug");
+  assinar(gui.call("onAction", "caixa", helix::function([] { soltarCaixa(); })));
+  assinar(gui.call("onAction", "reiniciar", helix::function([] { api("play").call("restart"); })));
+  checar("gui.elements", gui.call("elements", "[data-bind]").length() >= 5);
+  checar("gui.size", numero(gui["size"], "width") > 0);
+  Value declarativa = gui.call("create", "DebugTela", obj({{"referenceSize", xy(1280, 720)}}));
+  Value painel = gui.call("add", declarativa, "frame",
+    obj({{"name", "Painel"},
 `;
 }
