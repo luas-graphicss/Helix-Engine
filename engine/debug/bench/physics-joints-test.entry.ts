@@ -258,3 +258,235 @@ function breaking(): void {
     check('uma junta com breakForce acima da carga não quebra', !sturdy.broken && Math.abs(held.position[1] - 3) < 0.02, `reação ${vec3.length(sturdy.reactionForce).toFixed(0)} N (esperado ≈ 981)`);
     check('a reação relatada é o peso', Math.abs(vec3.length(sturdy.reactionForce) - 981) < 60, `${vec3.length(sturdy.reactionForce).toFixed(0)} N`);
 }
+function removalAndCollision(): void {
+    console.log('\n[ciclo de vida]');
+    const world = createWorld();
+    addGround(world);
+    const a = addBody(world, 'dynamic', createBoxShape(0.5, 0.5, 0.5), vec3.create(0, 0.5, 0));
+    const b = addBody(world, 'dynamic', createBoxShape(0.5, 0.5, 0.5), vec3.create(0, 1.2, 0));
+    const weld = joint(world, 'fixed', b, a, { anchor: vec3.create(0, 0.85, 0) });
+    run(world, 1);
+    check('as caixas soldadas se sobrepõem sem colidir entre si', Math.abs(b.position[1] - a.position[1] - 0.7) < 0.05, `distância vertical ${(b.position[1] - a.position[1]).toFixed(3)} m (0.7 na criação)`);
+    world.removeJoint(weld);
+    run(world, 1.5);
+    check('removida a junta, as caixas voltam a colidir e B apoia em A', b.position[1] - a.position[1] > 0.9, `distância vertical ${(b.position[1] - a.position[1]).toFixed(3)} m`);
+    check('contagem de juntas nos corpos volta a zero', a.jointCount === 0 && b.jointCount === 0);
+    const c = addBody(world, 'dynamic', createBoxShape(0.2, 0.2, 0.2), vec3.create(3, 2, 0));
+    joint(world, 'ball', c, a, { anchor: vec3.create(1.5, 1, 0) });
+    check('juntas entram na lista do mundo', world.joints.length === 1 && c.jointCount === 1 && a.jointCount === 1);
+    world.removeBody(a);
+    check('remover um corpo remove as juntas dele', world.joints.length === 0 && c.jointCount === 0);
+    world.clear();
+    check('clear limpa corpos e juntas', world.joints.length === 0 && world.bodies.length === 0 && world.ground.jointCount === 0);
+}
+function forceFields(): void {
+    console.log('\n[campos de força]');
+    const world = createWorld();
+    world.settings.gravity[1] = 0;
+    const leaf = addBody(world, 'dynamic', createBoxShape(0.1, 0.1, 0.1), vec3.create(0, 0, 0), 1);
+    const rock = addBody(world, 'dynamic', createBoxShape(0.1, 0.1, 0.1), vec3.create(0, 2, 0), 10);
+    const wind = new DirectionalField({ direction: vec3.create(1, 0, 0), strength: 5, mode: 'force' });
+    world.addForceField(wind);
+    run(world, 1);
+    check('vento em modo força: o leve voa, o pesado quase não', leaf.position[0] > 2 && rock.position[0] < leaf.position[0] * 0.2, `folha x=${leaf.position[0].toFixed(2)} pedra x=${rock.position[0].toFixed(2)}`);
+    wind.remove();
+    world.clear();
+    const radialWorld = createWorld();
+    radialWorld.settings.gravity[1] = 0;
+    const satellite = addBody(radialWorld, 'dynamic', createSphereShape(0.1), vec3.create(3, 0, 0));
+    const attractor = new RadialField({ center: vec3.create(0, 0, 0), strength: -10, radius: 0, falloff: 'none' });
+    radialWorld.addForceField(attractor);
+    run(radialWorld, 0.5);
+    check('campo radial negativo atrai', satellite.position[0] < 3 && Math.abs(satellite.position[1]) < 1e-6, `x ${satellite.position[0].toFixed(3)} (partiu de 3)`);
+    attractor.strength = 10;
+    const before = satellite.position[0];
+    run(radialWorld, 1);
+    check('inverter o sinal em tempo real repele', satellite.position[0] > before + 0.5 || satellite.linearVelocity[0] > 0, `x ${satellite.position[0].toFixed(3)}`);
+    const vortexWorld = createWorld();
+    vortexWorld.settings.gravity[1] = 0;
+    const dust = addBody(vortexWorld, 'dynamic', createSphereShape(0.05), vec3.create(2, 0, 0));
+    vortexWorld.addForceField(new VortexField({ center: vec3.create(0, 0, 0), axis: vec3.create(0, 1, 0), strength: 6, inwardStrength: 3, liftStrength: 1, radius: 0, falloff: 'none' }));
+    run(vortexWorld, 0.5);
+    check('o vórtice gira, puxa e levanta', dust.linearVelocity[2] < -0.5 && dust.linearVelocity[0] < 0 && dust.linearVelocity[1] > 0.3, `v = (${dust.linearVelocity[0].toFixed(2)}, ${dust.linearVelocity[1].toFixed(2)}, ${dust.linearVelocity[2].toFixed(2)})`);
+    const dragWorld = createWorld();
+    dragWorld.settings.gravity[1] = 0;
+    const bullet = addBody(dragWorld, 'dynamic', createSphereShape(0.05), vec3.create(0, 0, 0));
+    const free = addBody(dragWorld, 'dynamic', createSphereShape(0.05), vec3.create(0, 5, 0));
+    bullet.linearVelocity[0] = 10;
+    free.linearVelocity[0] = 10;
+    const drag = new DragField({ linear: 2 });
+    drag.region = sphereRegion(vec3.create(0, 0, 0), 3);
+    dragWorld.addForceField(drag);
+    run(dragWorld, 1);
+    check('o arrasto freia quem está na região e só ele', bullet.linearVelocity[0] < 6 && Math.abs(free.linearVelocity[0] - 10) < 1e-6, `dentro ${bullet.linearVelocity[0].toFixed(2)} m/s, fora ${free.linearVelocity[0].toFixed(2)} m/s`);
+    check('o arrasto não acorda corpos parados', (() => {
+        const still = addBody(dragWorld, 'dynamic', createSphereShape(0.05), vec3.create(1, 0, 0));
+        still.sleep();
+        dragWorld.advance(FRAME_DT);
+        return still.sleeping;
+    })());
+    const blast = createWorld();
+    blast.settings.gravity[1] = 0;
+    const near = addBody(blast, 'dynamic', createBoxShape(0.2, 0.2, 0.2), vec3.create(1, 0, 0));
+    const far = addBody(blast, 'dynamic', createBoxShape(0.2, 0.2, 0.2), vec3.create(4, 0, 0));
+    const outside = addBody(blast, 'dynamic', createBoxShape(0.2, 0.2, 0.2), vec3.create(9, 0, 0));
+    const hit = applyExplosion(blast, vec3.create(0, 0, 0), 6, 20, { upwardBias: 0.3 });
+    check('a explosão atinge só quem está no raio', hit === 2 && vec3.length(outside.linearVelocity) === 0, `${hit} atingidos`);
+    check('a explosão empurra mais quem está perto, e para cima', near.linearVelocity[0] > far.linearVelocity[0] && far.linearVelocity[0] > 0 && near.linearVelocity[1] > 0, `perto ${near.linearVelocity[0].toFixed(2)} m/s, longe ${far.linearVelocity[0].toFixed(2)} m/s`);
+}
+interface LoopChannel extends PhysicsChannel {
+    failNow(message: string): void;
+}
+function createLoopChannel(core: PhysicsWorkerCore): LoopChannel {
+    let onReply: ((reply: PhysicsReply) => void) | null = null;
+    let onFailure: ((message: string) => void) | null = null;
+    let closed = false;
+    return {
+        post(request: PhysicsRequest) {
+            if (closed)
+                return;
+            setTimeout(() => {
+                if (closed)
+                    return;
+                core.handle(request, (reply) => {
+                    setTimeout(() => {
+                        if (!closed)
+                            onReply?.(reply);
+                    }, 0);
+                });
+            }, 0);
+        },
+        onReply(handler) {
+            onReply = handler;
+        },
+        onFailure(handler) {
+            onFailure = handler;
+        },
+        close() {
+            closed = true;
+        },
+        failNow(message) {
+            onFailure?.(message);
+        },
+    };
+}
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+async function settle(link: PhysicsWorkerLink, timeoutMs = 2000): Promise<void> {
+    const started = performance.now();
+    while (link.busy) {
+        if (performance.now() - started > timeoutMs)
+            throw new Error('o elo com o worker não respondeu a tempo.');
+        await sleep(0);
+    }
+}
+function buildJointScenario(world: PhysicsWorld): {
+    bob: RigidBody;
+    hinge: Joint;
+    wheel: Joint;
+    pendulum: Joint;
+} {
+    addGround(world);
+    const bob = addBody(world, 'dynamic', createSphereShape(0.1), vec3.create(1, 3, 0));
+    const pendulum = joint(world, 'ball', bob, null, { anchor: vec3.create(0, 3, 0) });
+    const disc = addBody(world, 'dynamic', createBoxShape(0.5, 0.05, 0.5), vec3.create(4, 1, 0));
+    const hinge = joint(world, 'hinge', disc, null, { anchor: vec3.create(4, 1, 0), axis: vec3.create(0, 1, 0) }, { motor: { enabled: true, targetVelocity: 2, maxForce: 50 } });
+    const chassis = addBody(world, 'dynamic', createBoxShape(0.8, 0.2, 0.8), vec3.create(-4, 0.9, 0), 20);
+    const tyre = addBody(world, 'dynamic', createSphereShape(0.4), vec3.create(-4, 0.4, 0), 2);
+    const wheel = joint(world, 'wheel', chassis, tyre, { anchor: tyre.position, axis: vec3.create(0, 1, 0), secondaryAxis: vec3.create(1, 0, 0) }, { spring: { enabled: true, hertz: 2, dampingRatio: 0.7, target: 0 } });
+    return { bob, hinge, wheel, pendulum };
+}
+async function workerParity(): Promise<void> {
+    console.log('\n[worker · paridade das juntas]');
+    const local = createWorld();
+    const reference = buildJointScenario(local);
+    for (let frame = 0; frame < 180; frame++)
+        local.advance(FRAME_DT);
+    const mirror = createWorld();
+    const mirrored = buildJointScenario(mirror);
+    const core = new PhysicsWorkerCore();
+    const channel = createLoopChannel(core);
+    const link = new PhysicsWorkerLink(mirror, 'worker-copy', channel);
+    mirror.attachRemote(link);
+    await settle(link);
+    for (let frame = 0; frame < 180; frame++) {
+        mirror.advance(FRAME_DT);
+        await settle(link);
+    }
+    const authoritative = core.authoritativeWorld!;
+    check('juntas existentes apresentadas ao worker', authoritative.joints.length === mirror.joints.length, `${authoritative.joints.length} de ${mirror.joints.length}`);
+    const bobDeviation = vec3.distance(mirrored.bob.position, reference.bob.position);
+    check('o pêndulo espelhado ≈ pêndulo local', bobDeviation < 2e-3, `desvio ${bobDeviation.toExponential(2)}`);
+    check('a velocidade do motor chega ao espelho', Math.abs(mirrored.hinge.speed - reference.hinge.speed) < 0.05 && Math.abs(mirrored.hinge.speed - 2) < 0.05, `espelho ${mirrored.hinge.speed.toFixed(3)} · local ${reference.hinge.speed.toFixed(3)} rad/s`);
+    check('a reação da junta chega ao espelho', vec3.length(mirrored.pendulum.reactionForce) > 0.1 && Math.abs(vec3.length(mirrored.pendulum.reactionForce) - vec3.length(reference.pendulum.reactionForce)) < 0.5, `espelho ${vec3.length(mirrored.pendulum.reactionForce).toFixed(2)} N · local ${vec3.length(reference.pendulum.reactionForce).toFixed(2)} N`);
+    check('a compressão da suspensão chega ao espelho', Math.abs(mirrored.wheel.coordinate - reference.wheel.coordinate) < 5e-3, `espelho ${mirrored.wheel.coordinate.toFixed(4)} · local ${reference.wheel.coordinate.toFixed(4)} m`);
+    check('stats de juntas vêm do worker', mirror.stats.joints === local.stats.joints, `${mirror.stats.joints} vs ${local.stats.joints}`);
+    mirrored.hinge.definition.motor.targetVelocity = -3;
+    mirrored.hinge.markChanged();
+    for (let frame = 0; frame < 90; frame++) {
+        mirror.advance(FRAME_DT);
+        await settle(link);
+    }
+    const authoritativeHinge = authoritative.joints.find((candidate) => candidate.id === mirrored.hinge.id)!;
+    check('markChanged no espelho atualiza a junta do worker', authoritativeHinge.definition.motor.targetVelocity === -3 && Math.abs(mirrored.hinge.speed + 3) < 0.05, `alvo no worker ${authoritativeHinge.definition.motor.targetVelocity}, velocidade ${mirrored.hinge.speed.toFixed(3)} rad/s`);
+    let eventJoint: Joint | null = null;
+    mirror.events.onJointBreak = (joint) => {
+        eventJoint = joint;
+    };
+    const heavy = addBody(mirror, 'dynamic', createBoxShape(0.3, 0.3, 0.3), vec3.create(8, 3, 0), 100);
+    const fuse = joint(mirror, 'fixed', heavy, null, { anchor: vec3.create(8, 3, 0) }, { breakForce: 300 });
+    for (let frame = 0; frame < 60; frame++) {
+        mirror.advance(FRAME_DT);
+        await settle(link);
+    }
+    const drained = mirror.drainBrokenJoints();
+    check('junta criada com o worker ativo chega lá e quebra', fuse.broken && eventJoint === fuse && drained.includes(fuse) && heavy.position[1] < 2.5, `y ${heavy.position[1].toFixed(2)}`);
+    mirror.reportJointBreak(mirrored.hinge);
+    for (let frame = 0; frame < 5; frame++) {
+        mirror.advance(FRAME_DT);
+        await settle(link);
+    }
+    check('break local remove a junta do worker', authoritative.joints.every((candidate) => candidate.id !== mirrored.hinge.id));
+    mirror.removeJoint(mirrored.pendulum);
+    for (let frame = 0; frame < 30; frame++) {
+        mirror.advance(FRAME_DT);
+        await settle(link);
+    }
+    const offArc = vec3.distance(mirrored.bob.position, vec3.create(0, 3, 0));
+    check('remover a junta no espelho solta o pêndulo no worker', authoritative.joints.every((candidate) => candidate.id !== mirrored.pendulum.id) && offArc > 1.05, `distância da âncora ${offArc.toFixed(2)} m (haste de 1 m)`);
+    const lifted = addBody(mirror, 'dynamic', createBoxShape(0.2, 0.2, 0.2), vec3.create(10, 0.2, 0), 1);
+    const removeHook = mirror.addPreStepHook(() => lifted.addForce(vec3.create(0, 9.81 + 4, 0)));
+    for (let frame = 0; frame < 60; frame++) {
+        mirror.advance(FRAME_DT);
+        await settle(link);
+    }
+    removeHook();
+    check('addForce no espelho vira força no worker', lifted.position[1] > 1.3 && lifted.position[1] < 2.6, `subiu para y ${lifted.position[1].toFixed(2)} (esperado ≈ 2.2)`);
+    const jointsBefore = mirror.joints.length;
+    channel.failNow('falha simulada');
+    for (let frame = 0; frame < 30; frame++)
+        mirror.advance(FRAME_DT);
+    check('após o fallback, as juntas seguem no mundo local', mirror.backend === 'local' && mirror.joints.length === jointsBefore && mirror.stats.joints > 0 && allFinite(mirror), `${mirror.stats.joints} juntas ativas`);
+}
+async function main(): Promise<void> {
+    console.log('Juntas e campos de força · preset medium · frames de 1/60 s');
+    pendulum();
+    hingeLimits();
+    hingeMotor();
+    sliderSpring();
+    fixedWeld();
+    distanceRod();
+    coneTwist();
+    car();
+    breaking();
+    removalAndCollision();
+    forceFields();
+    await workerParity();
+    const failed = checks.filter((item) => !item.ok);
+    console.log(`\n${checks.length - failed.length}/${checks.length} verificações passaram.`);
+    if (failed.length > 0) {
+        for (const item of failed)
+            console.log(`  ✗ ${item.name}${item.detail ? ` · ${item.detail}` : ''}`);
+        process.exitCode = 1;
+    }
+}
+await main();
