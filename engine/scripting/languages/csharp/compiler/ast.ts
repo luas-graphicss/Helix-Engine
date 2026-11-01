@@ -277,3 +277,275 @@ export interface UsingStatement {
     readonly body: Statement | null;
     readonly span: SourceSpan;
 }
+export interface LockStatement {
+    readonly kind: 'lock';
+    readonly expression: Expression;
+    readonly body: Statement;
+    readonly span: SourceSpan;
+}
+export interface YieldStatement {
+    readonly kind: 'yield';
+    readonly expression: Expression | null;
+    readonly span: SourceSpan;
+}
+export interface EmptyStatement {
+    readonly kind: 'empty';
+    readonly span: SourceSpan;
+}
+export type Expression = LiteralExpression | IdentifierExpression | ThisExpression | BaseExpression | MemberExpression | ElementExpression | CallExpression | NewExpression | AnonymousObjectExpression | ArrayExpression | LambdaExpression | UnaryExpression | BinaryExpression | AssignmentExpression | ConditionalExpression | CastExpression | IsExpression | AsExpression | TypeOfExpression | NameOfExpression | DefaultExpression | AwaitExpression | ThrowExpression | InterpolatedExpression | TupleExpression | SwitchExpression | RangeExpression | FromEndExpression;
+export type StaticType = {
+    readonly kind: 'int';
+} | {
+    readonly kind: 'float';
+} | {
+    readonly kind: 'bool';
+} | {
+    readonly kind: 'string';
+} | {
+    readonly kind: 'char';
+} | {
+    readonly kind: 'null';
+} | {
+    readonly kind: 'void';
+} | {
+    readonly kind: 'array';
+    readonly element: StaticType;
+} | {
+    readonly kind: 'collection';
+    readonly name: 'List' | 'Dictionary' | 'HashSet' | 'Queue' | 'Stack';
+    readonly args: readonly StaticType[];
+} | {
+    readonly kind: 'class';
+    readonly name: string;
+    readonly script: string | null;
+    readonly runtime?: boolean;
+    readonly jsName?: string;
+} | {
+    readonly kind: 'enum';
+    readonly name: string;
+    readonly script: string | null;
+    readonly jsName?: string;
+} | {
+    readonly kind: 'delegate';
+    readonly params: readonly StaticType[] | null;
+    readonly returns: StaticType | null;
+} | {
+    readonly kind: 'task';
+    readonly result: StaticType | null;
+} | {
+    readonly kind: 'tuple';
+    readonly elements: ReadonlyArray<{
+        readonly name: string | null;
+        readonly type: StaticType;
+    }>;
+} | {
+    readonly kind: 'engine';
+} | {
+    readonly kind: 'dynamic';
+};
+export type Resolution = {
+    readonly kind: 'local';
+    readonly jsName: string;
+    readonly byRef: boolean;
+} | {
+    readonly kind: 'member';
+    readonly owner: string;
+    readonly jsName: string;
+    readonly isStatic: boolean;
+    readonly ownerIsSibling: string | null;
+    readonly memberKind: 'field' | 'property' | 'method' | 'event' | 'const';
+} | {
+    readonly kind: 'type';
+    readonly name: string;
+    readonly jsName: string;
+    readonly sibling: string | null;
+} | {
+    readonly kind: 'runtimeType';
+    readonly name: string;
+} | {
+    readonly kind: 'runtimeStatic';
+    readonly name: string;
+} | {
+    readonly kind: 'engine';
+} | {
+    readonly kind: 'enumMember';
+    readonly enumName: string;
+    readonly sibling: string | null;
+} | {
+    readonly kind: 'direct';
+    readonly jsName: string;
+} | {
+    readonly kind: 'dynamic';
+};
+export interface ExpressionBase {
+    readonly span: SourceSpan;
+    staticType?: StaticType;
+}
+export interface LiteralExpression extends ExpressionBase {
+    readonly kind: 'literal';
+    readonly value: number | string | boolean | null;
+    readonly literalType: 'int' | 'float' | 'string' | 'char' | 'bool' | 'null';
+}
+export interface IdentifierExpression extends ExpressionBase {
+    readonly kind: 'identifier';
+    readonly name: string;
+    readonly typeArguments: readonly TypeRef[] | null;
+    resolution?: Resolution;
+    bindThis?: boolean;
+}
+export interface ThisExpression extends ExpressionBase {
+    readonly kind: 'this';
+}
+export interface BaseExpression extends ExpressionBase {
+    readonly kind: 'base';
+}
+export interface MemberExpression extends ExpressionBase {
+    readonly kind: 'member';
+    readonly target: Expression;
+    readonly name: string;
+    readonly nameSpan: SourceSpan;
+    readonly typeArguments: readonly TypeRef[] | null;
+    readonly nullConditional: boolean;
+    resolution?: Resolution;
+    bindThis?: boolean;
+}
+export interface ElementExpression extends ExpressionBase {
+    readonly kind: 'element';
+    readonly target: Expression;
+    readonly arguments: readonly Argument[];
+    readonly nullConditional: boolean;
+}
+export interface CallExpression extends ExpressionBase {
+    readonly kind: 'call';
+    readonly target: Expression;
+    readonly arguments: readonly Argument[];
+    argumentOrder?: readonly number[];
+    spreadLast?: boolean;
+}
+export type ObjectInitializerEntry = {
+    readonly kind: 'assign';
+    readonly name: string;
+    readonly value: Expression | Initializer;
+    readonly span: SourceSpan;
+} | {
+    readonly kind: 'index';
+    readonly arguments: readonly Argument[];
+    readonly value: Expression;
+    readonly span: SourceSpan;
+};
+export type Initializer = {
+    readonly kind: 'object';
+    readonly entries: readonly ObjectInitializerEntry[];
+    readonly span: SourceSpan;
+} | {
+    readonly kind: 'collection';
+    readonly elements: ReadonlyArray<Expression | readonly Expression[]>;
+    readonly span: SourceSpan;
+};
+export interface NewExpression extends ExpressionBase {
+    readonly kind: 'new';
+    readonly type: TypeRef | null;
+    readonly arguments: readonly Argument[];
+    readonly initializer: Initializer | null;
+    construction?: {
+        readonly kind: 'script';
+        readonly name: string;
+        readonly sibling: string | null;
+        readonly ctorJsName: string;
+        readonly isActor: boolean;
+    } | {
+        readonly kind: 'runtime';
+        readonly name: string;
+    } | {
+        readonly kind: 'options';
+    } | {
+        readonly kind: 'dynamic';
+        readonly name: string;
+    };
+}
+export interface AnonymousObjectExpression extends ExpressionBase {
+    readonly kind: 'anonymous';
+    readonly members: ReadonlyArray<{
+        readonly name: string;
+        readonly value: Expression;
+    }>;
+}
+export interface ArrayExpression extends ExpressionBase {
+    readonly kind: 'array';
+    readonly elementType: TypeRef | null;
+    readonly sizes: readonly Expression[];
+    readonly elements: readonly Expression[] | null;
+}
+export interface LambdaExpression extends ExpressionBase {
+    readonly kind: 'lambda';
+    readonly parameters: readonly Parameter[];
+    readonly body: Block | Expression;
+    readonly isAsync: boolean;
+    needsAsync?: boolean;
+}
+export interface Hoist {
+    readonly name: string;
+    readonly jsName: string;
+}
+export interface UnaryExpression extends ExpressionBase {
+    readonly kind: 'unary';
+    readonly operator: '!' | '-' | '+' | '~' | '++' | '--';
+    readonly operand: Expression;
+    readonly prefix: boolean;
+}
+export type BinaryOperator = '+' | '-' | '*' | '/' | '%' | '==' | '!=' | '<' | '>' | '<=' | '>=' | '&&' | '||' | '&' | '|' | '^' | '<<' | '>>' | '??';
+export interface BinaryExpression extends ExpressionBase {
+    readonly kind: 'binary';
+    readonly operator: BinaryOperator;
+    readonly left: Expression;
+    readonly right: Expression;
+}
+export type AssignmentOperator = '=' | '+=' | '-=' | '*=' | '/=' | '%=' | '&=' | '|=' | '^=' | '<<=' | '>>=' | '??=';
+export interface AssignmentExpression extends ExpressionBase {
+    readonly kind: 'assign';
+    readonly operator: AssignmentOperator;
+    readonly target: Expression;
+    readonly value: Expression;
+}
+export interface ConditionalExpression extends ExpressionBase {
+    readonly kind: 'conditional';
+    readonly condition: Expression;
+    readonly whenTrue: Expression;
+    readonly whenFalse: Expression;
+}
+export interface CastExpression extends ExpressionBase {
+    readonly kind: 'cast';
+    readonly type: TypeRef;
+    readonly expression: Expression;
+}
+export interface IsExpression extends ExpressionBase {
+    readonly kind: 'is';
+    readonly expression: Expression;
+    readonly pattern: Pattern;
+}
+export interface AsExpression extends ExpressionBase {
+    readonly kind: 'as';
+    readonly expression: Expression;
+    readonly type: TypeRef;
+}
+export interface TypeOfExpression extends ExpressionBase {
+    readonly kind: 'typeof';
+    readonly type: TypeRef;
+    operandType?: StaticType;
+}
+export interface NameOfExpression extends ExpressionBase {
+    readonly kind: 'nameof';
+    readonly name: string;
+}
+export interface DefaultExpression extends ExpressionBase {
+    readonly kind: 'default';
+    readonly type: TypeRef | null;
+}
+export interface AwaitExpression extends ExpressionBase {
+    readonly kind: 'await';
+    readonly expression: Expression;
+}
+export interface ThrowExpression extends ExpressionBase {
+    readonly kind: 'throwExpression';
+    readonly expression: Expression;
+}
