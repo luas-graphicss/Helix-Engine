@@ -46,7 +46,8 @@
     "lib.es2018.promise.d.ts": "interface Promise<T> {\n    finally(onfinally?: (() => void) | undefined | null): Promise<T>;\n}\n",
     "lib.es2018.regexp.d.ts": "interface RegExpMatchArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExpExecArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExp {\n    readonly dotAll: boolean;\n}\n",
     "lib.es2016.d.ts": "",
-    "lib.es2017.arraybuffer.d.ts": "interface ArrayBufferConstructor {\n    new (): ArrayBuffer;\n}\n"
+    "lib.es2017.arraybuffer.d.ts": "interface ArrayBufferConstructor {\n    new (): ArrayBuffer;\n}\n",
+    "lib.es2017.date.d.ts": "interface DateConstructor {\n    UTC(year: number, monthIndex?: number, date?: number, hours?: number, minutes?: number, seconds?: number, ms?: number): number;\n}\n"
   },
   "messages": {}
 }
