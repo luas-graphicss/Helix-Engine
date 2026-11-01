@@ -1,0 +1,12 @@
+import { JOINT_MATRICES_TEXTURE_UNIT } from '@/engine/renderer/gl/gpu-skin-cache';
+import { CLOUD_SHADOW_TEXTURE_UNIT, FIRST_PASS_TEXTURE_UNIT } from '@/engine/renderer/lighting/scene-lighting-uniforms';
+import { MATERIAL_MAP_SLOTS } from '@/engine/renderer/batching/material-state';
+import { REFLECTION_PROBE_TEXTURE_UNIT } from '@/engine/renderer/reflections/reflection-binding';
+export const POST_SCENE_COLOR_UNIT = 0;
+export const POST_SCENE_DEPTH_UNIT = 1;
+export const POST_FIRST_USER_TEXTURE_UNIT = 2;
+export const POST_TEXTURE_UNIT_END = 16;
+export const POST_USER_TEXTURE_UNITS = POST_TEXTURE_UNIT_END - POST_FIRST_USER_TEXTURE_UNIT;
+export const SURFACE_FIRST_USER_TEXTURE_UNIT = Math.max(FIRST_PASS_TEXTURE_UNIT + MATERIAL_MAP_SLOTS.length, JOINT_MATRICES_TEXTURE_UNIT + 1);
+export const SURFACE_TEXTURE_UNIT_END = Math.min(REFLECTION_PROBE_TEXTURE_UNIT, CLOUD_SHADOW_TEXTURE_UNIT);
+export const SURFACE_USER_TEXTURE_UNITS = SURFACE_TEXTURE_UNIT_END - SURFACE_FIRST_USER_TEXTURE_UNIT;
