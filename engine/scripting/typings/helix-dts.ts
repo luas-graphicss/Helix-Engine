@@ -321,4 +321,211 @@ const SCENE_TYPES = `
     castShadows: boolean
     receiveShadows: boolean
     mesh: MeshData | null
+    material: Material | null
+    light: Light | null
+    terrain: Terrain | null
+    rigidBody: RigidBodySettings | null
+    character: CharacterSettings | null
+    skin: unknown | null
+    rig: unknown | null
+    csg: CsgSettings | null
+    csgBrush: CsgBrushSettings | null
+    audioSource: AudioSourceSettings | null
+    audioZone: AudioZoneSettings | null
+    guiSurface: GuiSurfaceSettings | null
+    vfx: VfxSettings | null
+    script: ScriptSettings | null
+    readonly tags: Set<string>
+    meta: Record<string, JsonValue>
+    add(child: Entity): Entity
+    insert(child: Entity, index: number): Entity
+    remove(child: Entity): void
+    contains(other: Entity): boolean
+  }
+
+  export interface SpawnOptions {
+    name?: string
+    position?: Vec3Like
+    rotation?: Vec3Like
+    scale?: Vec3Like | number
+    visible?: boolean
+    tags?: readonly string[]
+    parent?: Entity
+    mesh?: MeshData
+    material?: Material
+    light?: Light
+    terrain?: Partial<TerrainOptions>
+    rigidBody?: SettingsInput<RigidBodySettings>
+    character?: SettingsInput<CharacterSettings>
+    csg?: SettingsInput<CsgSettings>
+    csgBrush?: SettingsInput<CsgBrushSettings>
+    audioSource?: SettingsInput<AudioSourceSettings>
+    audioZone?: SettingsInput<AudioZoneSettings>
+    guiSurface?: SettingsInput<GuiSurfaceSettings>
+    vfx?: SettingsInput<VfxSettings> | string
+    script?: SettingsInput<ScriptSettings> | string
+    castShadows?: boolean
+    receiveShadows?: boolean
+    locked?: boolean
+    trigger?: { shape: 'box' | 'sphere'; size?: Vec3Like; radius?: number }
+  }
+
+  export type AssetKind = 'model' | 'texture' | 'audio' | 'animation' | 'gui' | 'font' | 'video' | 'vfx' | 'script' | 'prefab'
+  export interface LibraryAsset {
+    readonly id: string
+    readonly name: string
+    readonly kind: AssetKind
+    readonly format: string
+    readonly size: number
+    readonly tags: string[]
+    readonly contentHash: string
+    readonly createdAt: number
+    readonly updatedAt: number
+    readonly files: string[]
+    readonly details: Record<string, unknown> & { kind: AssetKind }
+  }
+                                                                                       
+  export type AssetRef = LibraryAsset | string
+`;
+const ROOT_TYPES = `
+  export type RunContext = 'shared' | 'client' | 'server'
+  export interface ScriptHandle {
+    readonly assetId: string
+    readonly name: string
+    readonly language: 'javascript' | 'typescript' | string
+    readonly runContext: RunContext
+                                                                    
+    readonly actor: Entity | null
+    readonly enabled: boolean
+    enable(): void
+    disable(): void
+  }
+  export interface EngineInfo {
+    readonly name: string
+    readonly version: string
+    readonly apiVersion: string
+  }
+  export interface TaskHandle {
+    readonly id: number
+    readonly done: Promise<void>
+    readonly cancelled: boolean
+    readonly finished: boolean
+    cancel(): void
+  }
+  export interface FrameInfo {
+    readonly gl: WebGL2RenderingContext | null
+    readonly width: number
+    readonly height: number
+    readonly pixelRatio: number
+    readonly elapsed: number
+    readonly delta: number
+    readonly frame: number
+    readonly view: Mat4
+    readonly projection: Mat4
+    readonly viewProjection: Mat4
+    readonly cameraPosition: Vec3
+    readonly sceneColor: WebGLTexture | null
+    readonly sceneDepth: WebGLTexture | null
+    readonly hdr: boolean
+  }
+  export interface Contact {
+    readonly point: Vec3
+    readonly normal: Vec3
+    readonly impulse: number
+    readonly relativeVelocity: number
+  }
+
+  export interface TimeApi {
+                                                                                          
+    readonly now: number
+    readonly delta: number
+    readonly fixedDelta: number
+    readonly unscaledDelta: number
+    readonly frame: number
+                                                                    
+    readonly realtime: number
+    scale: number
+    wait(seconds: number): Promise<void>
+    waitFrames(frames: number): Promise<void>
+    delay(seconds: number, fn: () => void): Unsubscribe
+    every(seconds: number, fn: () => void): Unsubscribe
+    nextFrame(fn: () => void): Unsubscribe
+  }
+  export interface TaskApi {
+    spawn(fn: () => unknown | Promise<unknown>): TaskHandle
+    cancel(handle: TaskHandle): void
+    all(handles: readonly TaskHandle[]): Promise<void[]>
+    readonly running: number
+  }
+  export interface LogApi {
+    info(message: unknown, ...rest: unknown[]): void
+    info(source: string, message: unknown, ...rest: unknown[]): void
+    warn(message: unknown, ...rest: unknown[]): void
+    warn(source: string, message: unknown, ...rest: unknown[]): void
+    error(message: unknown, ...rest: unknown[]): void
+    error(source: string, message: unknown, ...rest: unknown[]): void
+    debug(message: unknown, ...rest: unknown[]): void
+    debug(source: string, message: unknown, ...rest: unknown[]): void
+    assert(condition: unknown, message?: unknown): asserts condition
+    trace(...args: unknown[]): void
+    clear(): void
+  }
+  export interface DebugApi {
+    line(a: Vec3Like, b: Vec3Like, color?: ColorLike, seconds?: number): void
+    ray(origin: Vec3Like, direction: Vec3Like, length?: number, color?: ColorLike, seconds?: number): void
+    sphere(center: Vec3Like, radius: number, color?: ColorLike, seconds?: number): void
+    box(box: { min: Vec3Like; max: Vec3Like } | { center: Vec3Like; size: Vec3Like }, color?: ColorLike, seconds?: number): void
+    bounds(entity: Entity, color?: ColorLike, seconds?: number): void
+    axes(entity: Entity, size?: number, seconds?: number): void
+    text(position: Vec3Like, text: unknown, color?: string, seconds?: number): void
+    clear(): void
+  }
+  export type EventHandler<T = unknown> = (payload: T) => void
+  export interface EventsApi {
+    on<T = unknown>(name: string, handler: EventHandler<T>): Unsubscribe
+    once<T = unknown>(name: string, handler: EventHandler<T>): Unsubscribe
+    off(name: string, handler: EventHandler<never>): void
+    emit(name: string, payload?: unknown): number
+    onEntity<T = unknown>(entity: Entity, name: string, handler: EventHandler<T>): Unsubscribe
+    emitEntity(entity: Entity, name: string, payload?: unknown): number
+    listenerCount(name: string): number
+    names(): string[]
+  }
+
+  export type PropType = 'number' | 'boolean' | 'string' | 'vec3' | 'color' | 'entity' | 'asset' | 'enum' | 'range'
+  export interface PropDefinition {
+    readonly name: string
+    readonly type: PropType
+    readonly default: JsonValue
+    readonly label?: string
+    readonly hint?: string
+    readonly min?: number
+    readonly max?: number
+    readonly step?: number
+    readonly options?: readonly string[]
+    readonly assetKind?: AssetKind
+  }
+  export interface PropSpec {
+    type?: PropType
+    default?: unknown
+    label?: string
+    hint?: string
+    min?: number
+    max?: number
+    step?: number
+    options?: readonly string[]
+    assetKind?: AssetKind
+  }
+  export interface PropsApi {
+                                                                                                                        
+    define(spec: Record<string, PropSpec | number | string | boolean | Vec3Like | Entity | null> | ReadonlyArray<PropSpec & { name: string }>): void
+    get<T = unknown>(name: string): T
+    set(name: string, value: unknown): void
+    has(name: string): boolean
+    all(): Record<string, unknown>
+    definitions(): PropDefinition[]
+    onChanged(name: string, handler: (value: unknown, previous: unknown) => void): Unsubscribe
+    reset(name?: string): void
+    executionOrder: number
+  }
 `;
