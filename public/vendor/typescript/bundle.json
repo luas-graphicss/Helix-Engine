@@ -19,7 +19,8 @@
     "lib.es2022.object.d.ts": "interface ObjectConstructor {\n    hasOwn(o: object, v: PropertyKey): boolean;\n}\n",
     "lib.es2022.regexp.d.ts": "interface RegExpMatchArray {\n    indices?: RegExpIndicesArray;\n}\ninterface RegExpExecArray {\n    indices?: RegExpIndicesArray;\n}\ninterface RegExpIndicesArray extends Array<[\n    number,\n    number\n]> {\n    groups?: {\n        [key: string]: [\n            number,\n            number\n        ];\n    };\n}\ninterface RegExp {\n    readonly hasIndices: boolean;\n}\n",
     "lib.es2022.string.d.ts": "interface String {\n    at(index: number): string | undefined;\n}\n",
-    "lib.es2020.d.ts": ""
+    "lib.es2020.d.ts": "",
+    "lib.es2021.promise.d.ts": "interface AggregateError extends Error {\n    errors: any[];\n}\ninterface AggregateErrorConstructor {\n    new (errors: Iterable<any>, message?: string): AggregateError;\n    (errors: Iterable<any>, message?: string): AggregateError;\n    readonly prototype: AggregateError;\n}\ndeclare var AggregateError: AggregateErrorConstructor;\ninterface PromiseConstructor {\n    any<T extends readonly unknown[] | [\n    ]>(values: T): Promise<Awaited<T[number]>>;\n    any<T>(values: Iterable<T | PromiseLike<T>>): Promise<Awaited<T>>;\n}\n"
   },
   "messages": {}
 }
