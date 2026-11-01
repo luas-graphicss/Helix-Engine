@@ -36,9 +36,11 @@ export interface CullingStats extends SpatialGridStats {
     visible: number;
     frustumCulled: number;
     sizeCulled: number;
+    boundsChanged: number;
+    renderables: number;
 }
 export function createCullingStats(): CullingStats {
-    return { candidates: 0, visible: 0, frustumCulled: 0, sizeCulled: 0, cells: 0, cellsCulled: 0, culledByCell: 0 };
+    return { candidates: 0, visible: 0, frustumCulled: 0, sizeCulled: 0, boundsChanged: 0, renderables: 0, cells: 0, cellsCulled: 0, culledByCell: 0 };
 }
 export class VisibleSet {
     readonly meshes: VisibleMesh[] = [];
@@ -71,14 +73,18 @@ export class VisibleSet {
         stats.visible = 0;
         stats.frustumCulled = 0;
         stats.sizeCulled = 0;
+        stats.renderables = 0;
+        this.bounds.beginFrame();
         grid.beginFrame();
         scene.traverseVisible(this.register);
         grid.forEachCandidate(options.frustumCulling ? this.frustum : null, stats, this.test);
         stats.frustumCulled += stats.culledByCell;
+        stats.boundsChanged = this.bounds.changes;
     }
     private readonly register = (entity: Entity): void => {
         const { terrain } = entity;
         if (terrain) {
+            this.stats.renderables++;
             const bounds = this.bounds.resolve(entity, terrain.localBounds, terrain.heightVersion);
             if (entity.castShadows)
                 this.pushTerrainCaster(entity, terrain, bounds);
@@ -105,6 +111,7 @@ export class VisibleSet {
             this.pushCaster(entity, mesh, bounds);
         this.grid.update(entity, bounds);
         this.stats.candidates++;
+        this.stats.renderables++;
     };
     private readonly test = (entity: Entity, bounds: RenderableBounds, testIndividually: boolean): void => {
         const { stats, options } = this;
