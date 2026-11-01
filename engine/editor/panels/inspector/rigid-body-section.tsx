@@ -12,9 +12,12 @@ import type { Entity } from '@/engine/core/scene/entity';
 import type { BodyType, RigidBodySettings } from '@/engine/physics/body/rigid-body-settings';
 import { densityForSettings } from '@/engine/physics/body/collider-fit';
 import type { ColliderKind } from '@/engine/physics/shapes/collider-shape';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
+import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
 import { addRigidBody, fitRigidBodyToMesh, removeRigidBody, setRigidBodyCanSleep, setRigidBodyCollider, setRigidBodyScalar, setRigidBodyType, setRigidBodyVectorComponent, } from '@/engine/editor/operations/physics-operations';
 import { ScalarField, Vector3Input } from './number-fields';
+import { GHOST_ACTION_CLASS } from '@/engine/ui/surface-styles';
+import { cn } from '@/lib/utils';
 const BODY_TYPES: ReadonlyArray<{
     value: BodyType;
     label: string;
@@ -36,15 +39,16 @@ const STATIC_ONLY_BODY_TYPES = BODY_TYPES.filter((option) => option.value !== 'd
 function AddRigidBodyPrompt({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
+    const hint = useShortcutHint();
     return (<CollapsibleSection title="Física">
       <div className="flex flex-col gap-1.5 px-2 py-1">
-        <button type="button" onClick={() => addRigidBody(session, entity)} className="flex h-7 items-center justify-center gap-1.5 rounded-sm border border-dashed border-border-strong text-2xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-highlight">
+        <button type="button" onClick={() => addRigidBody(session, entity)} className={cn('flex h-7 items-center justify-center gap-1.5 text-2xs font-medium text-foreground', GHOST_ACTION_CLASS)}>
           <Atom className="size-3.5 text-primary" aria-hidden/>
           Adicionar corpo rígido
         </button>
-        <p className="text-[10px] leading-relaxed text-pretty text-muted-foreground">
-          O colisor é ajustado à malha e a massa, derivada do volume. Pressione Simular (Ctrl+P) para ver a física.
+        <p className="text-3xs leading-relaxed text-pretty text-muted-foreground">
+          O colisor é ajustado à malha e a massa, derivada do volume. Pressione {hint('Simular', 'simulation.playPause')} para ver a física.
         </p>
       </div>
     </CollapsibleSection>);
@@ -58,7 +62,7 @@ function BuoyancyReadout({ entity, settings }: {
     entity: Entity;
     settings: RigidBodySettings;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const density = densityForSettings(settings, entity.transform.scale);
     const waterDensity = Math.max(session.scene.physics.waterDensity, 1);
     const floats = density < waterDensity;
@@ -74,7 +78,7 @@ function BuoyancyReadout({ entity, settings }: {
 function RuntimeReadout({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const binding = session.playtest.physics?.bindingOf(entity) ?? null;
     if (!binding)
         return null;
@@ -107,7 +111,7 @@ function RuntimeReadout({ entity }: {
 export function RigidBodySection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const settings = entity.rigidBody;
     if (!settings) {
         if (entity.csgBrush)
@@ -121,10 +125,10 @@ export function RigidBodySection({ entity }: {
     const colliders = entity.mesh ? COLLIDERS : COLLIDERS.filter((option) => option.value !== 'mesh');
     const triangleCount = entity.mesh ? entity.mesh.indices.length / 3 : 0;
     return (<CollapsibleSection title="Corpo rígido" trailing={<div className="flex items-center">
-          {entity.mesh && (<IconButton label="Ajustar colisor à malha" size="sm" className="size-5 [&_svg]:size-3" onClick={() => fitRigidBodyToMesh(session, entity)}>
+          {entity.mesh && (<IconButton label="Ajustar colisor à malha" size="xs" onClick={() => fitRigidBodyToMesh(session, entity)}>
               <Scan />
             </IconButton>)}
-          <IconButton label="Remover corpo rígido" size="sm" className="size-5 hover:text-destructive [&_svg]:size-3" onClick={() => removeRigidBody(session, entity)}>
+          <IconButton label="Remover corpo rígido" size="xs" className="hover:text-destructive" onClick={() => removeRigidBody(session, entity)}>
             <Trash2 />
           </IconButton>
         </div>}>
@@ -139,7 +143,7 @@ export function RigidBodySection({ entity }: {
           <PropertyRow label="Triângulos">
             <FieldInput readOnly value={triangleCount.toLocaleString('pt-BR')} aria-label="Triângulos do colisor de malha"/>
           </PropertyRow>
-          <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+          <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
             Segue a malha ao vivo, inclusive furos e recortes de CSG. Personagens, esferas, cápsulas e caixas colidem com ela; dois colisores de malha
             não colidem entre si.
           </p>
