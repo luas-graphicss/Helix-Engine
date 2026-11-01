@@ -273,4 +273,243 @@ export function useGuiPointer(hostRef: RefObject<HTMLDivElement | null>, session
             }
         }
     }, [designer, session, frame]);
+    const updateDrag = useCallback((dragging: Dragging, host: GuiPoint, doc: GuiPoint, modifiers: DragModifiers) => {
+        const { drag: current } = dragging;
+        const liveLayout = designer.layout();
+        switch (current.kind) {
+            case 'pan': {
+                designer.panBy(host.x - current.lastHost.x, host.y - current.lastHost.y);
+                current.lastHost = host;
+                break;
+            }
+            case 'move': {
+                if (!liveLayout || !designer.document)
+                    break;
+                const update = updateMove(current.session, doc, modifiers, snapSettings());
+                setGuiNodeBoxes(session, update.changes, 'Mover elementos', current.mergeKey);
+                const target = modifiers.ctrl ? null : pickDropContainer(liveLayout, designer.document.root, doc.x, doc.y, current.ids);
+                const differs = target !== null && current.session.items.some((item) => item.parentId !== target.node.id);
+                setDrag({ guides: update.guides, targetId: differs ? target.node.id : null });
+                break;
+            }
+            case 'resize': {
+                if (!liveLayout)
+                    break;
+                const update = updateResize(current.session, liveLayout, doc, modifiers, snapSettings());
+                setGuiNodeBoxes(session, update.changes, 'Redimensionar elementos', current.mergeKey);
+                setDrag({ guides: update.guides });
+                break;
+            }
+            case 'rotate': {
+                const update = updateRotate(current.session, doc, modifiers);
+                designer.updateNodes('Girar elementos', update.rotations.keys(), (node) => ({ ...node, rect: { ...node.rect, rotation: update.rotations.get(node.id) ?? node.rect.rotation } }), current.mergeKey);
+                setDrag({ rotating: update.display });
+                break;
+            }
+            case 'marquee':
+                setDrag({ marquee: boxBetween(current.origin, doc) });
+                break;
+            case 'draw':
+                setDrag({ draw: constrainDrawBox(current.origin, doc, modifiers.shift, modifiers.alt), targetId: liveLayout && designer.document ? pickDropContainer(liveLayout, designer.document.root, doc.x, doc.y, []).node.id : null });
+                break;
+        }
+    }, [designer, session, snapSettings]);
+    const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+        if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement)
+            return;
+        const host = toHost(event);
+        const doc = designer.toDocument(host.x, host.y);
+        const modifiers = modifiersOf(event);
+        designer.endTextEdit();
+        if (designer.mode === 'preview') {
+            if (event.button === 1 || spaceHeld) {
+                phaseRef.current = { phase: 'pending', pointerId: event.pointerId, button: event.button, host, doc, hit: { kind: 'pan' }, modifiers };
+                event.currentTarget.setPointerCapture(event.pointerId);
+                return;
+            }
+            if (event.button === 0)
+                designer.runtime.pointerDown(doc.x, doc.y);
+            return;
+        }
+        const liveLayout = designer.layout();
+        if (!liveLayout || !designer.document)
+            return;
+        let hit: Pending['hit'];
+        if (event.button === 1 || spaceHeld || designer.tool === 'hand') {
+            hit = { kind: 'pan' };
+        }
+        else if (event.button === 2) {
+            const picked = pickForClick(liveLayout, designer.document.root, doc.x, doc.y, designer.selectedIds, designer.primaryId, modifiers.alt);
+            if (picked && !designer.isSelected(picked.node.id))
+                designer.select([picked.node.id]);
+            else if (picked)
+                designer.select([...designer.selectedIds], { primary: picked.node.id });
+            else
+                designer.clearSelection();
+            return;
+        }
+        else if (designer.tool !== 'select') {
+            hit = { kind: 'draw', tool: designer.tool };
+        }
+        else {
+            const onFrame = frame ? hitFrame(frame, doc, designer.view.zoom) : null;
+            if (onFrame) {
+                hit = onFrame;
+            }
+            else {
+                const picked = pickForClick(liveLayout, designer.document.root, doc.x, doc.y, designer.selectedIds, designer.primaryId, modifiers.alt);
+                if (picked) {
+                    const wasSelected = designer.isSelected(picked.node.id);
+                    if (!wasSelected && !modifiers.shift && !modifiers.ctrl)
+                        designer.select([picked.node.id]);
+                    hit = { kind: 'element', id: picked.node.id, wasSelected };
+                }
+                else {
+                    if (!modifiers.shift && !modifiers.ctrl)
+                        designer.clearSelection();
+                    hit = { kind: 'empty' };
+                }
+            }
+        }
+        phaseRef.current = { phase: 'pending', pointerId: event.pointerId, button: event.button, host, doc, hit, modifiers };
+        event.currentTarget.setPointerCapture(event.pointerId);
+    }, [designer, toHost, frame, spaceHeld]);
+    const onPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+        const host = toHost(event);
+        const doc = designer.toDocument(host.x, host.y);
+        const modifiers = modifiersOf(event);
+        const phase = phaseRef.current;
+        if (phase.phase === 'idle') {
+            if (designer.mode === 'preview') {
+                designer.runtime.pointerMove(doc.x, doc.y);
+                setHoverCursor(designer.runtime.cursor);
+                return;
+            }
+            const liveLayout = designer.layout();
+            if (!liveLayout || !designer.document || designer.tool !== 'select') {
+                designer.setHovered(null);
+                setHoverCursor(null);
+                return;
+            }
+            const onFrame = frame ? hitFrame(frame, doc, designer.view.zoom) : null;
+            if (onFrame?.kind === 'handle') {
+                setHoverCursor(handleCursor(onFrame.handle, frame?.rotation ?? 0));
+                designer.setHovered(null);
+                return;
+            }
+            if (onFrame?.kind === 'rotate') {
+                setHoverCursor(ROTATE_CURSOR);
+                designer.setHovered(null);
+                return;
+            }
+            const picked = pickForClick(liveLayout, designer.document.root, doc.x, doc.y, designer.selectedIds, designer.primaryId, modifiers.alt);
+            designer.setHovered(picked?.node.id ?? null);
+            setHoverCursor(picked && designer.isSelected(picked.node.id) ? 'move' : null);
+            return;
+        }
+        if (phase.pointerId !== event.pointerId)
+            return;
+        if (phase.phase === 'pending') {
+            if (Math.hypot(host.x - phase.host.x, host.y - phase.host.y) < DRAG_THRESHOLD)
+                return;
+            const drag = beginDragFrom(phase);
+            if (!drag) {
+                phaseRef.current = { phase: 'idle' };
+                return;
+            }
+            designer.setHovered(null);
+            phaseRef.current = { phase: 'dragging', pointerId: event.pointerId, drag };
+        }
+        if (phaseRef.current.phase === 'dragging')
+            updateDrag(phaseRef.current, host, doc, modifiers);
+    }, [designer, toHost, frame, beginDragFrom, updateDrag]);
+    const onPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+        const host = toHost(event);
+        const doc = designer.toDocument(host.x, host.y);
+        const modifiers = modifiersOf(event);
+        const phase = phaseRef.current;
+        if (designer.mode === 'preview' && phase.phase === 'idle') {
+            if (event.button === 0)
+                designer.runtime.pointerUp(doc.x, doc.y);
+            return;
+        }
+        if (phase.phase === 'idle' || phase.pointerId !== event.pointerId)
+            return;
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+            event.currentTarget.releasePointerCapture(event.pointerId);
+        phaseRef.current = { phase: 'idle' };
+        if (phase.phase === 'dragging') {
+            finishDrag(phase, doc, modifiers);
+            return;
+        }
+        if (phase.hit.kind === 'element') {
+            if (phase.modifiers.shift || phase.modifiers.ctrl)
+                designer.select([phase.hit.id], { toggle: true });
+            else if (phase.hit.wasSelected)
+                designer.select([phase.hit.id]);
+        }
+        else if (phase.hit.kind === 'draw') {
+            const id = addGuiElement(session, phase.hit.tool, { at: centeredGuiDropPoint(session, phase.hit.tool, phase.doc) });
+            if (id && phase.hit.tool === 'text')
+                designer.beginTextEdit(id);
+        }
+    }, [designer, session, toHost, finishDrag]);
+    const onPointerCancel = useCallback(() => {
+        const phase = phaseRef.current;
+        if (phase.phase === 'idle')
+            return;
+        if (phase.phase === 'dragging' && phase.drag.kind !== 'pan')
+            designer.endMerge();
+        phaseRef.current = { phase: 'idle' };
+        setDrag(null);
+    }, [designer]);
+    const onPointerLeave = useCallback(() => {
+        if (phaseRef.current.phase !== 'idle')
+            return;
+        designer.setHovered(null);
+        setHoverCursor(null);
+        if (designer.mode === 'preview')
+            designer.runtime.pointerLeave();
+    }, [designer]);
+    const onDoubleClick = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+        if (designer.mode !== 'design' || designer.tool !== 'select' || event.button !== 0)
+            return;
+        const liveLayout = designer.layout();
+        if (!liveLayout || !designer.document)
+            return;
+        const host = toHost(event);
+        const doc = designer.toDocument(host.x, host.y);
+        if (frame && hitFrame(frame, doc, designer.view.zoom))
+            return;
+        const picked = pickForDoubleClick(liveLayout, designer.document.root, doc.x, doc.y, designer.selectedIds);
+        if (!picked)
+            return;
+        if (picked.node.id === designer.primaryId && picked.node.text)
+            designer.beginTextEdit(picked.node.id);
+        else
+            designer.select([picked.node.id]);
+    }, [designer, toHost, frame]);
+    const dragging = phaseRef.current.phase === 'dragging' ? phaseRef.current.drag.kind : null;
+    let cursor = 'default';
+    if (designer.mode === 'preview')
+        cursor = dragging === 'pan' ? 'grabbing' : spaceHeld ? 'grab' : (hoverCursor ?? 'default');
+    else if (dragging === 'pan')
+        cursor = 'grabbing';
+    else if (spaceHeld || designer.tool === 'hand')
+        cursor = 'grab';
+    else if (designer.tool !== 'select' || dragging === 'draw')
+        cursor = 'crosshair';
+    else if (dragging === 'rotate')
+        cursor = ROTATE_CURSOR;
+    else if (dragging === 'move')
+        cursor = 'move';
+    else if (hoverCursor)
+        cursor = hoverCursor;
+    return {
+        frame,
+        drag,
+        cursor,
+        hideHandles: dragging === 'move' || dragging === 'rotate' || dragging === 'resize',
+        handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onPointerLeave, onDoubleClick },
+    };
 }
