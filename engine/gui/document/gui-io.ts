@@ -208,3 +208,197 @@ function states(value: unknown, fallback: GuiStates): GuiStates {
         transitionMs: num(value.transitionMs, fallback.transitionMs, 0, 5000),
     };
 }
+function control(value: unknown, fallback: GuiControl | null): GuiControl | null {
+    if (!fallback)
+        return null;
+    if (!isRecord(value))
+        return fallback;
+    switch (fallback.kind) {
+        case 'button':
+            return {
+                kind: 'button',
+                disabled: bool(value.disabled, fallback.disabled),
+                iconName: typeof value.iconName === 'string' ? value.iconName : null,
+                iconPosition: oneOf(value.iconPosition, ['left', 'right', 'top', 'only'] as const, fallback.iconPosition),
+                iconSize: num(value.iconSize, fallback.iconSize, 4, 512),
+                iconGap: num(value.iconGap, fallback.iconGap, 0, 256),
+            };
+        case 'toggle':
+            return {
+                kind: 'toggle',
+                value: bool(value.value, fallback.value),
+                style: oneOf(value.style, ['switch', 'checkbox'] as const, fallback.style),
+                onColor: color(value.onColor, fallback.onColor),
+                knobColor: color(value.knobColor, fallback.knobColor),
+            };
+        case 'slider': {
+            const min = num(value.min, fallback.min);
+            const max = Math.max(min, num(value.max, fallback.max));
+            return {
+                kind: 'slider',
+                min,
+                max,
+                value: num(value.value, fallback.value, min, max),
+                step: num(value.step, fallback.step, 0, Math.max(1, max - min)),
+                direction: oneOf(value.direction, ['horizontal', 'vertical'] as const, fallback.direction),
+                trackColor: color(value.trackColor, fallback.trackColor),
+                trackAlpha: num(value.trackAlpha, fallback.trackAlpha, 0, 1),
+                fillColor: color(value.fillColor, fallback.fillColor),
+                knobColor: color(value.knobColor, fallback.knobColor),
+                knobSize: num(value.knobSize, fallback.knobSize, 2, 256),
+                trackThickness: num(value.trackThickness, fallback.trackThickness, 1, 256),
+            };
+        }
+        case 'progress':
+            return {
+                kind: 'progress',
+                value: num(value.value, fallback.value, 0, 1),
+                direction: oneOf(value.direction, ['horizontal', 'vertical'] as const, fallback.direction),
+                reverse: bool(value.reverse, fallback.reverse),
+                fillColor: color(value.fillColor, fallback.fillColor),
+                fillAlpha: num(value.fillAlpha, fallback.fillAlpha, 0, 1),
+                fillGradient: gradient(value.fillGradient),
+                showLabel: bool(value.showLabel, fallback.showLabel),
+                segments: int(value.segments, fallback.segments, 0, 64),
+            };
+        case 'input':
+            return {
+                kind: 'input',
+                value: str(value.value, fallback.value),
+                placeholder: str(value.placeholder, fallback.placeholder),
+                placeholderColor: color(value.placeholderColor, fallback.placeholderColor),
+                maxLength: value.maxLength === null ? null : int(value.maxLength, fallback.maxLength ?? 64, 1, 100000),
+                password: bool(value.password, fallback.password),
+                multiline: bool(value.multiline, fallback.multiline),
+                caretColor: color(value.caretColor, fallback.caretColor),
+            };
+        case 'scroll':
+            return {
+                kind: 'scroll',
+                canvasSize: udim2(value.canvasSize, fallback.canvasSize),
+                direction: oneOf(value.direction, ['horizontal', 'vertical', 'both'] as const, fallback.direction),
+                scrollbarThickness: num(value.scrollbarThickness, fallback.scrollbarThickness, 0, 64),
+                scrollbarColor: color(value.scrollbarColor, fallback.scrollbarColor),
+                scrollbarAlpha: num(value.scrollbarAlpha, fallback.scrollbarAlpha, 0, 1),
+            };
+        case 'divider':
+            return {
+                kind: 'divider',
+                orientation: oneOf(value.orientation, ['horizontal', 'vertical'] as const, fallback.orientation),
+                thickness: num(value.thickness, fallback.thickness, 0.5, 64),
+                color: color(value.color, fallback.color),
+                alpha: num(value.alpha, fallback.alpha, 0, 1),
+                dashed: bool(value.dashed, fallback.dashed),
+            };
+        case 'video': {
+            const startTime = num(value.startTime, fallback.startTime, 0, 86400);
+            return {
+                kind: 'video',
+                assetId: typeof value.assetId === 'string' ? value.assetId : null,
+                fit: oneOf(value.fit, ['cover', 'contain', 'stretch'] as const, fallback.fit),
+                playOn: oneOf(value.playOn, ['start', 'hover', 'manual'] as const, fallback.playOn),
+                loop: bool(value.loop, fallback.loop),
+                muted: bool(value.muted, fallback.muted),
+                volume: num(value.volume, fallback.volume, 0, 1),
+                speed: num(value.speed, fallback.speed, 0.1, 4),
+                startTime,
+                endTime: value.endTime === null || value.endTime === undefined ? null : num(value.endTime, startTime + 1, startTime, 86400),
+                clickToggles: bool(value.clickToggles, fallback.clickToggles),
+                restartOnPlay: bool(value.restartOnPlay, fallback.restartOnPlay),
+                showControls: bool(value.showControls, fallback.showControls),
+                blend: oneOf(value.blend, GUI_MEDIA_BLENDS, fallback.blend),
+                tint: color(value.tint, fallback.tint),
+                tintAlpha: num(value.tintAlpha, fallback.tintAlpha, 0, 1),
+                flipX: bool(value.flipX, fallback.flipX),
+                flipY: bool(value.flipY, fallback.flipY),
+                posterAssetId: typeof value.posterAssetId === 'string' ? value.posterAssetId : null,
+            };
+        }
+        case 'viewport': {
+            const minDistance = num(value.minDistance, fallback.minDistance, 0.05, 1000);
+            return {
+                kind: 'viewport',
+                camera: oneOf(value.camera, ['entity', 'orbit'] as const, fallback.camera),
+                cameraName: str(value.cameraName, fallback.cameraName).slice(0, 120),
+                targetName: str(value.targetName, fallback.targetName).slice(0, 120),
+                distance: num(value.distance, fallback.distance, 0.05, 1000),
+                yaw: num(value.yaw, fallback.yaw, -360, 360),
+                pitch: num(value.pitch, fallback.pitch, -89, 89),
+                autoRotate: num(value.autoRotate, fallback.autoRotate, -360, 360),
+                fov: num(value.fov, fallback.fov, 5, 150),
+                interactive: bool(value.interactive, fallback.interactive),
+                minDistance,
+                maxDistance: num(value.maxDistance, fallback.maxDistance, minDistance, 1000),
+                resolutionScale: num(value.resolutionScale, fallback.resolutionScale, 0.25, 1),
+                frameRate: num(value.frameRate, fallback.frameRate, 0, 120),
+                grid: bool(value.grid, fallback.grid),
+                blend: oneOf(value.blend, GUI_MEDIA_BLENDS, fallback.blend),
+                tint: color(value.tint, fallback.tint),
+                tintAlpha: num(value.tintAlpha, fallback.tintAlpha, 0, 1),
+            };
+        }
+    }
+}
+function normalizeNode(value: unknown, seen: Set<string>, isRoot: boolean): GuiNode | null {
+    if (!isRecord(value))
+        return null;
+    const kind: GuiElementKind = isRoot ? 'frame' : oneOf(value.kind, GUI_ELEMENT_KINDS, 'frame');
+    const base = isRoot ? createGuiRoot() : createGuiNode(kind);
+    let id = isRoot ? GUI_ROOT_ID : str(value.id, '');
+    if (!id || seen.has(id))
+        id = createGuiId();
+    seen.add(id);
+    const children = Array.isArray(value.children) ? value.children.map((child) => normalizeNode(child, seen, false)).filter((child): child is GuiNode => child !== null) : [];
+    return {
+        id,
+        name: str(value.name, base.name).slice(0, 120) || base.name,
+        kind,
+        visible: bool(value.visible, base.visible),
+        locked: bool(value.locked, base.locked),
+        interactable: bool(value.interactable, base.interactable),
+        clipsContent: bool(value.clipsContent, base.clipsContent),
+        rect: rect(value.rect, base.rect),
+        appearance: appearance(value.appearance, base.appearance),
+        layout: layout(value.layout, base.layout),
+        text: textStyle(value.text, base.text),
+        image: image(value.image, base.image),
+        icon: icon(value.icon, base.icon),
+        control: control(value.control, base.control),
+        states: states(value.states, base.states),
+        children,
+    };
+}
+export function normalizeGuiDocument(raw: unknown): GuiDocument {
+    if (!isRecord(raw))
+        throw new Error('O arquivo não contém um documento de interface.');
+    const base = createGuiDocument();
+    const root = normalizeNode(raw.root, new Set(), true) ?? base.root;
+    return {
+        name: str(raw.name, base.name).trim().slice(0, 120) || base.name,
+        referenceSize: { x: num(isRecord(raw.referenceSize) ? raw.referenceSize.x : undefined, base.referenceSize.x, 64, 16384), y: num(isRecord(raw.referenceSize) ? raw.referenceSize.y : undefined, base.referenceSize.y, 64, 16384) },
+        scaleMode: oneOf(raw.scaleMode, ['none', 'width', 'height', 'shorter', 'longer'] as const, base.scaleMode),
+        enabled: bool(raw.enabled, base.enabled),
+        displayOrder: int(raw.displayOrder, base.displayOrder, -1000, 1000),
+        root,
+        createdAt: num(raw.createdAt, base.createdAt),
+    };
+}
+export function parseGuiDocument(text: string): GuiDocument {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(text);
+    }
+    catch {
+        throw new Error('O arquivo não é um JSON válido.');
+    }
+    if (!isRecord(parsed))
+        throw new Error('O arquivo não contém um documento de interface.');
+    if (parsed.format !== GUI_FORMAT_ID)
+        throw new Error(`Formato desconhecido: esperado "${GUI_FORMAT_ID}".`);
+    if (typeof parsed.version === 'number' && parsed.version > GUI_FORMAT_VERSION)
+        throw new Error(`Versão ${parsed.version} do formato é mais nova que a suportada (${GUI_FORMAT_VERSION}).`);
+    return normalizeGuiDocument(parsed.document);
+}
+export async function readGuiDocument(file: File): Promise<GuiDocument> {
+    return parseGuiDocument(await file.text());
+}
