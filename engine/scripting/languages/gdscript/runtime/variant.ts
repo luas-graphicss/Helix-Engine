@@ -276,3 +276,232 @@ export function pos(a: unknown): unknown {
 }
 const INT32_MIN = -2147483648;
 const INT32_MAX = 2147483647;
+function requireInts(op: string, a: unknown, b: unknown): asserts a is number {
+    if (typeof a !== 'number' || typeof b !== 'number' || !Number.isInteger(a) || !Number.isInteger(b))
+        invalidOperands(op, a, b);
+}
+function fits32(a: number, b: number): boolean {
+    return a >= INT32_MIN && a <= INT32_MAX && b >= INT32_MIN && b <= INT32_MAX;
+}
+export function band(a: unknown, b: unknown): number {
+    requireInts('&', a, b);
+    const right = b as number;
+    return fits32(a, right) ? a & right : Number(BigInt.asIntN(64, BigInt(a) & BigInt(right)));
+}
+export function bor(a: unknown, b: unknown): number {
+    requireInts('|', a, b);
+    const right = b as number;
+    return fits32(a, right) ? a | right : Number(BigInt.asIntN(64, BigInt(a) | BigInt(right)));
+}
+export function bxor(a: unknown, b: unknown): number {
+    requireInts('^', a, b);
+    const right = b as number;
+    return fits32(a, right) ? a ^ right : Number(BigInt.asIntN(64, BigInt(a) ^ BigInt(right)));
+}
+export function bnot(a: unknown): number {
+    if (typeof a !== 'number' || !Number.isInteger(a))
+        fail(`Operando inválido "${describeTypeOf(a)}" no operador "~".`);
+    return -a - 1;
+}
+export function shl(a: unknown, b: unknown): number {
+    requireInts('<<', a, b);
+    const right = b as number;
+    if (right < 0 || right > 63)
+        fail(`Deslocamento inválido (${right}) no operador "<<".`);
+    if (right < 31 && a >= INT32_MIN && a <= INT32_MAX && Math.abs(a * 2 ** right) <= INT32_MAX)
+        return a << right;
+    return Number(BigInt.asIntN(64, BigInt(a) << BigInt(right)));
+}
+export function shr(a: unknown, b: unknown): number {
+    requireInts('>>', a, b);
+    const right = b as number;
+    if (right < 0 || right > 63)
+        fail(`Deslocamento inválido (${right}) no operador ">>".`);
+    if (fits32(a, right) && right < 32)
+        return a >> right;
+    return Number(BigInt.asIntN(64, BigInt(a) >> BigInt(right)));
+}
+export function has(container: unknown, value: unknown): boolean {
+    if (container === null || container === undefined)
+        fail(`Operador "in" sobre null (procurando ${str(value)}).`);
+    if (typeof container === 'string') {
+        if (typeof value !== 'string')
+            fail(`Operador "in": uma String só contém Strings, não ${describeTypeOf(value)}.`);
+        return container.includes(value);
+    }
+    if (Array.isArray(container)) {
+        for (const item of container)
+            if (eq(item, value))
+                return true;
+        return false;
+    }
+    if (container instanceof Dictionary)
+        return container.has(value);
+    if (ArrayBuffer.isView(container))
+        return Array.prototype.includes.call(container, value);
+    if (container instanceof Map)
+        return container.has(value);
+    if (typeof container === 'object' || typeof container === 'function')
+        return typeof value === 'string' && value in (container as object);
+    return fail(`Operador "in" não se aplica a ${describeTypeOf(container)}.`);
+}
+const BUILTIN_TYPE_CHECKS: Record<string, (value: unknown) => boolean> = {
+    Variant: () => true,
+    null: (value) => value === null || value === undefined,
+    Nil: (value) => value === null || value === undefined,
+    bool: (value) => typeof value === 'boolean',
+    int: (value) => typeof value === 'number' && Number.isInteger(value),
+    float: (value) => typeof value === 'number',
+    String: (value) => typeof value === 'string',
+    StringName: (value) => typeof value === 'string',
+    NodePath: (value) => typeof value === 'string',
+    Array: (value) => Array.isArray(value),
+    Dictionary: (value) => value instanceof Dictionary || value instanceof Map || (value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype),
+    Callable: (value) => typeof value === 'function' && !isScriptClass(value),
+    Signal: (value) => value instanceof Signal,
+    Vector2: (value) => value instanceof Vector2 || (isVecLike(value) && vectorArity(value) === 2),
+    Vector2i: (value) => value instanceof Vector2i,
+    Vector3: (value) => value instanceof Vector3 || (isVecLike(value) && vectorArity(value) === 3),
+    Vector3i: (value) => value instanceof Vector3i,
+    Vector4: (value) => value instanceof Vector4 || (isVecLike(value) && vectorArity(value) === 4),
+    Quaternion: (value) => value instanceof Quaternion || (value instanceof Float32Array && value.length === 4),
+    Basis: (value) => value instanceof Basis,
+    Transform3D: (value) => value instanceof Transform3D,
+    Color: (value) => value instanceof Color,
+    Rect2: (value) => value instanceof Rect2,
+    AABB: (value) => value instanceof AABB,
+    Object: (value) => value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Dictionary) && !isVecLike(value),
+    Node: (value) => isScriptInstance(value),
+    PackedFloat32Array: (value) => Array.isArray(value) || value instanceof Float32Array,
+    PackedFloat64Array: (value) => Array.isArray(value) || value instanceof Float64Array,
+    PackedInt32Array: (value) => Array.isArray(value) || value instanceof Int32Array,
+    PackedInt64Array: (value) => Array.isArray(value),
+    PackedByteArray: (value) => Array.isArray(value) || value instanceof Uint8Array,
+    PackedStringArray: (value) => Array.isArray(value),
+    PackedVector2Array: (value) => Array.isArray(value),
+    PackedVector3Array: (value) => Array.isArray(value),
+    PackedColorArray: (value) => Array.isArray(value),
+};
+export const BUILTIN_TYPE_NAMES: readonly string[] = Object.keys(BUILTIN_TYPE_CHECKS);
+export function is(value: unknown, type: unknown): boolean {
+    if (typeof type === 'string') {
+        const check = BUILTIN_TYPE_CHECKS[type];
+        if (!check)
+            fail(`"${type}" não é um tipo conhecido para o operador "is".`);
+        return check(value);
+    }
+    if (typeof type === 'function')
+        return value instanceof type;
+    return fail(`O operador "is" espera um tipo, não ${describeTypeOf(type)}.`);
+}
+export function as(value: unknown, type: unknown): unknown {
+    if (typeof type === 'function')
+        return value instanceof type ? value : null;
+    if (typeof type !== 'string')
+        fail(`O operador "as" espera um tipo, não ${describeTypeOf(type)}.`);
+    if (value === null || value === undefined)
+        return null;
+    switch (type) {
+        case 'int':
+            return toInt(value);
+        case 'float':
+            return toFloat(value);
+        case 'String':
+        case 'StringName':
+        case 'NodePath':
+            return str(value);
+        case 'bool':
+            return truthy(value);
+        case 'Array':
+            return Array.isArray(value) ? value : fail(`Não é possível converter ${describeTypeOf(value)} em Array com "as".`);
+        case 'Dictionary':
+            return value instanceof Dictionary ? value : new Dictionary(value);
+        default: {
+            const check = BUILTIN_TYPE_CHECKS[type];
+            if (!check)
+                fail(`"${type}" não é um tipo conhecido para o operador "as".`);
+            return check(value) ? value : null;
+        }
+    }
+}
+export function checkType(value: unknown, type: unknown, what: string): unknown {
+    if (value === null || value === undefined) {
+        if (typeof type === 'string' && (type === 'int' || type === 'float' || type === 'bool' || type === 'String' || type === 'StringName' || type === 'Array' || type === 'Dictionary' || type.startsWith('Vector') || type === 'Color')) {
+            fail(`${what} é do tipo ${type} e não aceita null.`);
+        }
+        return null;
+    }
+    if (typeof type === 'string') {
+        const generic = type.indexOf('[');
+        const base = generic === -1 ? type : type.slice(0, generic);
+        if (base === 'int' && typeof value === 'number' && !Number.isInteger(value))
+            fail(`${what} é do tipo int e recebeu o float ${str(value)}.`);
+        if (base === 'float' && typeof value === 'number')
+            return value;
+        const check = BUILTIN_TYPE_CHECKS[base];
+        if (check) {
+            if (!check(value))
+                fail(`${what} é do tipo ${type} e recebeu ${describeTypeOf(value)} (${str(value)}).`);
+            if (base === 'Array' && generic !== -1 && Array.isArray(value)) {
+                const element = type.slice(generic + 1, -1);
+                for (let index = 0; index < value.length; index++)
+                    checkType(value[index], element, `${what}[${index}]`);
+            }
+            return value;
+        }
+        return value;
+    }
+    if (typeof type === 'function') {
+        if (!(value instanceof type))
+            fail(`${what} é do tipo ${(type as {
+                __gdName?: string;
+            }).__gdName ?? type.name} e recebeu ${describeTypeOf(value)}.`);
+        return value;
+    }
+    return value;
+}
+export function toInt(value: unknown): number {
+    if (typeof value === 'number')
+        return Math.trunc(value);
+    if (typeof value === 'boolean')
+        return value ? 1 : 0;
+    if (typeof value === 'string') {
+        const parsed = parseInt(value.trim(), 10);
+        return Number.isNaN(parsed) ? 0 : parsed;
+    }
+    if (value === null || value === undefined)
+        return 0;
+    return fail(`Não é possível converter ${describeTypeOf(value)} em int.`);
+}
+export function toFloat(value: unknown): number {
+    if (typeof value === 'number')
+        return value;
+    if (typeof value === 'boolean')
+        return value ? 1 : 0;
+    if (typeof value === 'string') {
+        const parsed = parseFloat(value.trim());
+        return Number.isNaN(parsed) ? 0 : parsed;
+    }
+    if (value === null || value === undefined)
+        return 0;
+    return fail(`Não é possível converter ${describeTypeOf(value)} em float.`);
+}
+export function numberToString(value: number): string {
+    if (Number.isNaN(value))
+        return 'nan';
+    if (value === Infinity)
+        return 'inf';
+    if (value === -Infinity)
+        return '-inf';
+    if (Number.isInteger(value) && Math.abs(value) < 1e21)
+        return String(value);
+    return String(parseFloat(value.toPrecision(15)));
+}
+export function strF(value: unknown): string {
+    if (typeof value === 'number' && Number.isInteger(value) && Math.abs(value) < 1e21)
+        return `${value}.0`;
+    return str(value);
+}
+function componentToString(value: number): string {
+    return Number.isInteger(value) ? `${value}.0` : numberToString(value);
+}
