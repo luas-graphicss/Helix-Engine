@@ -23,11 +23,13 @@ export interface CharacterInstance {
     animator: LocomotionAnimator | null;
     pose: Pose | null;
     rigUnavailable: boolean;
+    locomotionEnabled: boolean;
 }
 export interface CharacterRuntimeOptions {
     canvas: HTMLCanvasElement | null;
     camera: PerspectiveCamera;
     onPointerLockChange?: (locked: boolean) => void;
+    onCharacterEvent?: (entity: Entity, event: 'jumped' | 'landed', speed: number) => void;
 }
 const worldPosition = vec3.create();
 const worldRotation = quat.create();
@@ -47,12 +49,15 @@ function lerpAngle(a: number, b: number, t: number): number {
 }
 export class CharacterRuntime {
     readonly instances: CharacterInstance[] = [];
-    readonly possessed: CharacterInstance | null;
+    possessed: CharacterInstance | null;
     readonly thirdPersonCamera: ThirdPersonCamera;
-    private readonly input: CharacterInput | null;
+    cameraControl: 'engine' | 'script' = 'engine';
+    inputSource: 'engine' | 'script' = 'engine';
+    readonly lastFrame: InputFrame = { x: 0, z: 0, run: false, jump: false, crouchToggles: 0, lookX: 0, lookY: 0, wheel: 0 };
+    private input: CharacterInput | null;
     private readonly terrain: TerrainCollider;
     private readonly removeHook: () => void;
-    private readonly frame: InputFrame = { x: 0, z: 0, run: false, jump: false, crouchToggles: 0, lookX: 0, lookY: 0, wheel: 0 };
+    readonly frame: InputFrame = { x: 0, z: 0, run: false, jump: false, crouchToggles: 0, lookX: 0, lookY: 0, wheel: 0 };
     private readonly animatorInput: AnimatorInput = { speed: 0, grounded: true, crouching: false, jumped: false, landed: false, landingSpeed: 0, crouchSpeed: 1 };
     private readonly moveForward = vec3.create();
     private readonly moveRight = vec3.create();
@@ -62,23 +67,8 @@ export class CharacterRuntime {
         this.thirdPersonCamera = new ThirdPersonCamera(scene.player.camera);
         scene.updateWorldMatrices();
         scene.traverse((entity) => {
-            const settings = entity.character;
-            if (!settings)
-                return;
-            mat4.getTranslation(worldPosition, entity.worldMatrix);
-            quat.fromMat4Rotation(worldRotation, entity.worldMatrix);
-            quat.rotateVec3(forward, worldRotation, vec3.set(forward, 0, 0, 1));
-            const yaw = Math.atan2(forward[0], forward[2]) * RAD_TO_DEG;
-            const instance: CharacterInstance = {
-                entity,
-                controller: new CharacterController(physics.world, settings, this.terrain, worldPosition, yaw),
-                rig: null,
-                animator: null,
-                pose: null,
-                rigUnavailable: false,
-            };
-            this.bindRig(instance);
-            this.instances.push(instance);
+            if (entity.character)
+                this.createInstance(entity, entity.character);
         });
         this.possessed = this.instances.find((instance) => instance.entity.character?.autoPossess) ?? null;
         this.input = this.possessed && options.canvas ? new CharacterInput(options.canvas, (locked) => options.onPointerLockChange?.(locked)) : null;
@@ -92,11 +82,78 @@ export class CharacterRuntime {
     get isPossessing(): boolean {
         return this.possessed !== null && this.input !== null;
     }
+    possess(entity: Entity | null): boolean {
+        const instance = entity ? this.ensureInstance(entity) : null;
+        if (entity && !instance)
+            return false;
+        if (instance === this.possessed)
+            return true;
+        this.input?.dispose();
+        this.input = null;
+        this.possessed = instance;
+        if (instance) {
+            this.input = this.options.canvas ? new CharacterInput(this.options.canvas, (locked) => this.options.onPointerLockChange?.(locked)) : null;
+            this.thirdPersonCamera.yaw = instance.controller.yaw;
+        }
+        this.options.onPointerLockChange?.(this.pointerLocked);
+        return true;
+    }
     get pointerLocked(): boolean {
         return this.input?.pointerLocked ?? false;
     }
     instanceOf(entity: Entity): CharacterInstance | null {
         return this.instances.find((instance) => instance.entity === entity) ?? null;
+    }
+    ensureInstance(entity: Entity): CharacterInstance | null {
+        const existing = this.instanceOf(entity);
+        if (existing)
+            return existing;
+        const settings = entity.character;
+        if (!settings || !this.scene.root.contains(entity))
+            return null;
+        this.scene.updateWorldMatrices();
+        return this.createInstance(entity, settings);
+    }
+    reconcile(): void {
+        let matricesFresh = false;
+        for (let index = this.instances.length - 1; index >= 0; index--) {
+            const instance = this.instances[index];
+            if (instance.entity.character && this.scene.root.contains(instance.entity))
+                continue;
+            if (instance === this.possessed)
+                this.possess(null);
+            instance.controller.dispose();
+            this.instances.splice(index, 1);
+        }
+        const entities = this.scene.entities;
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            if (!entity.character || this.instanceOf(entity))
+                continue;
+            if (!matricesFresh) {
+                this.scene.updateWorldMatrices();
+                matricesFresh = true;
+            }
+            this.createInstance(entity, entity.character);
+        }
+    }
+    private createInstance(entity: Entity, settings: NonNullable<Entity['character']>): CharacterInstance {
+        mat4.getTranslation(worldPosition, entity.worldMatrix);
+        quat.fromMat4Rotation(worldRotation, entity.worldMatrix);
+        quat.rotateVec3(forward, worldRotation, vec3.set(forward, 0, 0, 1));
+        const yaw = Math.atan2(forward[0], forward[2]) * RAD_TO_DEG;
+        const instance: CharacterInstance = {
+            entity,
+            controller: new CharacterController(this.physics.world, settings, this.terrain, worldPosition, yaw),
+            rig: null,
+            animator: null,
+            pose: null,
+            rigUnavailable: false,
+            locomotionEnabled: true,
+        };
+        this.bindRig(instance);
+        this.instances.push(instance);
+        return instance;
     }
     rebind(entity: Entity): void {
         const instance = this.instanceOf(entity);
@@ -118,10 +175,15 @@ export class CharacterRuntime {
         if (!possessed || !input)
             return;
         input.consume(frame);
+        Object.assign(this.lastFrame, frame);
         const camera = this.thirdPersonCamera;
-        camera.rotate(frame.lookX, frame.lookY);
-        camera.zoom(frame.wheel);
+        if (this.cameraControl === 'engine') {
+            camera.rotate(frame.lookX, frame.lookY);
+            camera.zoom(frame.wheel);
+        }
         camera.moveBasis(this.moveForward, this.moveRight);
+        if (this.inputSource === 'script')
+            return;
         const { intent } = possessed.controller;
         const move = intent.move;
         vec3.set(move, 0, 0, 0);
@@ -150,17 +212,24 @@ export class CharacterRuntime {
             input.landed = controller.landed;
             input.landingSpeed = controller.landingSpeed;
             input.crouchSpeed = entity.character?.crouchSpeed ?? 1;
+            if (this.options.onCharacterEvent) {
+                if (controller.jumped)
+                    this.options.onCharacterEvent(entity, 'jumped', 0);
+                if (controller.landed)
+                    this.options.onCharacterEvent(entity, 'landed', controller.landingSpeed);
+            }
             controller.consumeEvents();
             if (!instance.rig && !instance.rigUnavailable)
                 this.bindRig(instance);
             const { animator, pose, rig } = instance;
             if (animator && pose && rig) {
                 animator.update(dt, input, pose);
-                applyPose(rig.joints, pose);
+                if (instance.locomotionEnabled)
+                    applyPose(rig.joints, pose);
             }
         }
         const { possessed } = this;
-        if (possessed) {
+        if (possessed && this.cameraControl === 'engine') {
             const { controller } = possessed;
             this.thirdPersonCamera.update(dt, controller.position, controller.height, this.physics.world, controller.rigidBody, this.terrain, this.options.camera);
         }
