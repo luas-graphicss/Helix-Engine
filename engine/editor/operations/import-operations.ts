@@ -3,7 +3,8 @@ import * as aabb from '@/engine/core/math/aabb';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
 import { computeWorldBounds } from '@/engine/renderer/geometry/bounds';
-import { importModelFile, IMPORT_FORMAT_SUMMARY, partitionImportFiles } from '@/engine/assets/import/import-registry';
+import { IMPORT_FORMAT_SUMMARY, partitionImportFiles } from '@/engine/assets/import/import-registry';
+import { readModelFile } from '@/engine/assets/import/import-worker-client';
 import { computeImportStats, type ImportedScene } from '@/engine/assets/import/import-types';
 import { DEFAULT_MATERIALIZE_OPTIONS, materializeImportedScene, type MaterializeOptions } from '@/engine/assets/import/import-materializer';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
@@ -30,17 +31,24 @@ export interface ParsedImport {
     scene: ImportedScene;
     file: File;
 }
-export async function parseImportFiles(session: EditorSession, files: Iterable<File>): Promise<ParsedImport[]> {
+export interface ImportReadProgress {
+    fileName: string;
+    index: number;
+    total: number;
+    fraction: number;
+    stage: string;
+}
+export async function parseImportFiles(session: EditorSession, files: Iterable<File>, onProgress?: (progress: ImportReadProgress) => void): Promise<ParsedImport[]> {
     const { models, bundle } = partitionImportFiles(files);
     if (models.length === 0) {
         session.log.warn(LOG_SOURCE, `Nenhum arquivo de modelo reconhecido (formatos aceitos: ${IMPORT_FORMAT_SUMMARY}).`);
         return [];
     }
     const parsed: ParsedImport[] = [];
-    for (const file of models) {
+    for (const [position, file] of models.entries()) {
         const started = performance.now();
         try {
-            const scene = await importModelFile(file, bundle);
+            const scene = await readModelFile(file, bundle, (fraction, stage) => onProgress?.({ fileName: file.name, index: position + 1, total: models.length, fraction, stage }));
             const stats = computeImportStats(scene);
             session.log.info(LOG_SOURCE, `${file.name} lido em ${Math.round(performance.now() - started)} ms: ${stats.meshes} malha(s), ${stats.triangles.toLocaleString('pt-BR')} triângulos, ${stats.materials} material(is), ${stats.textures} textura(s)${stats.missingTextures > 0 ? ` (${stats.missingTextures} ausente(s))` : ''}.`);
             parsed.push({ scene, file });
