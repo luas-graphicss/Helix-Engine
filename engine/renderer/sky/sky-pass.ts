@@ -11,11 +11,17 @@ import type { SkyFrame } from './sky-frame';
 const SKY_VIEW_UNIT = 1;
 const LIGHTING_UNIT = 2;
 const CLOUDS_UNIT = 3;
+const CLOUD_LAYER_UNIT = 4;
 export interface SkyPassInput {
     camera: PerspectiveCamera;
     frame: SkyFrame;
     luts: AtmosphereLuts;
     clouds: WebGLTexture | null;
+    cloudLayer?: {
+        readonly texture: WebGLTexture;
+        readonly region: Float32Array;
+    } | null;
+    sunDisk: boolean;
     width: number;
     height: number;
     elapsedSeconds: number;
@@ -46,9 +52,15 @@ export class SkyPass {
         gl.uniform1f(program.uniform('u_exposure'), camera.exposure);
         gl.uniform1f(program.uniform('u_mieScale'), frame.mieScale);
         gl.uniform1f(program.uniform('u_cloudsEnabled'), input.clouds ? 1 : 0);
+        gl.uniform1f(program.uniform('u_sunDisk'), input.sunDisk ? 1 : 0);
+        const cloudLayer = input.clouds ? null : (input.cloudLayer ?? null);
+        gl.uniform1f(program.uniform('u_cloudLayerEnabled'), cloudLayer ? 1 : 0);
+        if (cloudLayer)
+            gl.uniform4fv(program.uniform('u_cloudLayerRegion'), cloudLayer.region);
         this.bindTexture(program, 'u_skyViewLut', SKY_VIEW_UNIT, input.luts.skyView.texture);
         this.bindTexture(program, 'u_skyLightingLut', LIGHTING_UNIT, input.luts.lighting.texture);
         this.bindTexture(program, 'u_clouds', CLOUDS_UNIT, input.clouds ?? input.luts.lighting.texture);
+        this.bindTexture(program, 'u_cloudLayer', CLOUD_LAYER_UNIT, cloudLayer?.texture ?? input.luts.lighting.texture);
         gl.depthMask(false);
         this.triangle.draw();
         gl.depthMask(true);
