@@ -849,5 +849,285 @@ final class Game
             if ($hooks === [] && !$included->declared) {
                 $hooks = $this->hooksFromValue($included->returned);
             }
+            $ids = [];
+            foreach ($hooks as $hook => $callback) {
+                $ids[$hook] = $this->registerCallback($callback);
+            }
+            return $this->reply(['done', $ids === [] ? new \stdClass() : $ids]);
+        } catch (\Throwable $exception) {
+            return $this->error($exception);
+        }
+    }
+
+    public function loadModule(string $key, string $file, string $path, string $version): string
+    {
+        try {
+            return $this->reply(['done', $this->packValue($this->requireModule($key, $file, $path, $version), 0)]);
+        } catch (\Throwable $exception) {
+            return $this->error($exception);
+        }
+    }
+
+    public function unloadModule(string $key): void
+    {
+        unset($this->modules[$key]);
+    }
+
+    public function invokeCallback(int $id, string $argsJson): string
+    {
+        $callback = $this->callbacks[$id] ?? null;
+        if ($callback === null) {
+            return $this->reply(['error', [KIND => 'err', 'message' => 'callback desconhecido (#' . $id . ')', 'name' => 'Error', 'frames' => []]]);
+        }
+        try {
+            $args = $this->materialize($argsJson) ?? [];
+            $result = $callback(...$args);
+        } catch (\Throwable $exception) {
+            return $this->error($exception);
+        }
+        if ($result instanceof \Generator) {
+            return $this->drive(null, $result, null);
+        }
+        if ($result instanceof Pending) {
+                                                                                                                                   
+            return $this->drive(null, (static function () use ($result): \Generator {
+                return yield $result;
+            })(), null);
+        }
+        return $this->reply(['done', $this->packValue($result, 0)]);
+    }
+
+                                                                                                            
+    private function drive(?int $token, \Generator $generator, ?\Closure $step): string
+    {
+        try {
+            if ($step !== null) {
+                $step($generator);
+            }
+            while ($generator->valid()) {
+                $yielded = $generator->current();
+                if ($yielded instanceof Pending) {
+                    $token ??= ++$this->nextToken;
+                    $this->generators[$token] = $generator;
+                    return $this->reply(['await', $token, $yielded->token]);
+                }
+                if ($yielded instanceof \Generator) {
+                    throw new EngineError('para esperar outro gerador dentro de um hook, use "yield from".');
+                }
+                throw new EngineError('yield nos hooks só funciona com esperas da engine (yield $this->helix->task->wait(1)); recebeu ' . get_debug_type($yielded) . '.');
+            }
+            $this->forget($token);
+            return $this->reply(['done', $this->packValue($generator->getReturn(), 0)]);
+        } catch (\Throwable $exception) {
+            $this->forget($token);
+            return $this->error($exception);
+        }
+    }
+
+    private function forget(?int $token): void
+    {
+        if ($token !== null) {
+            unset($this->generators[$token]);
+        }
+    }
+
+    public function resume(int $token, bool $ok, string $valueJson): string
+    {
+        $generator = $this->generators[$token] ?? null;
+        if ($generator === null) {
+            return $this->reply(['error', [KIND => 'err', 'message' => 'o gerador desta espera já foi encerrado', 'name' => 'Error', 'frames' => []]]);
+        }
+        unset($this->generators[$token]);
+        try {
+            $value = $ok ? $this->materialize($valueJson) : null;
+        } catch (\Throwable $exception) {
+            return $this->error($exception);
+        }
+        $message = $ok ? '' : (string) (json_decode($valueJson, true) ?? 'erro na engine');
+        return $this->drive($token, $generator, $ok ? static fn (\Generator $g) => $g->send($value) : static fn (\Generator $g) => $g->throw(new EngineError($message)));
+    }
+
+    public function drop(int $token): void
+    {
+        unset($this->generators[$token]);
+    }
+
+    public function dispose(): void
+    {
+        $this->disposed = true;
+        $this->generators = [];
+        $this->callbacks = [];
+        $this->callbackIds = new \SplObjectStorage();
+        $this->modules = [];
+        $this->root = null;
+    }
+
+    public function isDisposed(): bool
+    {
+        return $this->disposed;
+    }
+
+    public function root(): ?Ref
+    {
+        return $this->root;
+    }
+}
+
+   
+                                                                              
+                                                                              
+                                                                               
+                                                                         
+                                      
+   
+final class Linter
+{
+    public static function lint(string $source): string
+    {
+        $diagnostics = [];
+        $declarations = [];
+        $dependencies = [];
+        try {
+            $tokens = token_get_all($source, TOKEN_PARSE);
+            foreach ($tokens as $token) {
+                if (is_array($token) && $token[0] === T_INLINE_HTML && trim($token[1]) !== '') {
+                    $diagnostics[] = ['severity' => 'warning', 'message' => 'Texto fora de <?php ... ?> é impresso como saída, não executado. Comece o arquivo com <?php.', 'line' => $token[2], 'column' => 1, 'code' => 'inline-html'];
+                    break;
+                }
+            }
+            self::scan($tokens, $declarations, $dependencies);
+        } catch (\ParseError $error) {
+            $diagnostics[] = ['severity' => 'error', 'message' => $error->getMessage(), 'line' => $error->getLine(), 'column' => 1, 'code' => 'ParseError'];
+        } catch (\Throwable $error) {
+            $diagnostics[] = ['severity' => 'error', 'message' => $error->getMessage(), 'line' => 1, 'column' => 1, 'code' => (new \ReflectionClass($error))->getShortName()];
+        }
+        return json_encode(['diagnostics' => $diagnostics, 'declarations' => $declarations, 'dependencies' => $dependencies], JSON_OUT) ?: '{"diagnostics":[],"declarations":[],"dependencies":[]}';
+    }
+
+    private static function scan(array $tokens, array &$declarations, array &$dependencies): void
+    {
+        $namespace = '';
+        $depth = 0;
+        $namespaceDepth = 0;
+        $count = count($tokens);
+        $significant = static function (int $from) use ($tokens, $count): int {
+            for ($i = $from; $i < $count; $i++) {
+                if (!is_array($tokens[$i]) || !in_array($tokens[$i][0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                    return $i;
+                }
+            }
+            return $count;
+        };
+        for ($i = 0; $i < $count; $i++) {
+            $token = $tokens[$i];
+            if (!is_array($token)) {
+                if ($token === '{') {
+                    $depth++;
+                } elseif ($token === '}') {
+                    $depth--;
+                    if ($depth < $namespaceDepth) {
+                        $namespace = '';
+                        $namespaceDepth = 0;
+                    }
+                }
+                continue;
+            }
+            [$id, $text, $line] = $token;
+            if ($id === T_CURLY_OPEN || $id === T_DOLLAR_OPEN_CURLY_BRACES) {
+                $depth++;
+                continue;
+            }
+            if ($id === T_NAMESPACE) {
+                $next = $significant($i + 1);
+                $name = '';
+                if ($next < $count && is_array($tokens[$next]) && in_array($tokens[$next][0], [T_STRING, T_NAME_QUALIFIED], true)) {
+                    $name = $tokens[$next][1];
+                    $next = $significant($next + 1);
+                }
+                $namespace = $name;
+                $namespaceDepth = $next < $count && $tokens[$next] === '{' ? $depth + 1 : 0;
+                continue;
+            }
+            if ($id === T_FUNCTION && $depth === $namespaceDepth) {
+                $next = $significant($i + 1);
+                if ($next < $count && $tokens[$next] === '&') {
+                    $next = $significant($next + 1);
+                }
+                if ($next < $count && is_array($tokens[$next]) && $tokens[$next][0] === T_STRING) {
+                    $declarations[] = ['kind' => 'function', 'name' => strtolower(($namespace !== '' ? $namespace . '\\' : '') . $tokens[$next][1]), 'label' => $tokens[$next][1], 'line' => $line];
+                }
+                continue;
+            }
+            if (in_array($id, [T_CLASS, T_INTERFACE, T_TRAIT, T_ENUM], true) && $depth === $namespaceDepth) {
+                $before = self::previousSignificant($tokens, $i - 1);
+                if ($before !== null && is_array($before) && in_array($before[0], [T_DOUBLE_COLON, T_NEW], true)) {
+                    continue;
+                }
+                $next = $significant($i + 1);
+                if ($next < $count && is_array($tokens[$next]) && $tokens[$next][0] === T_STRING) {
+                    $declarations[] = ['kind' => 'class', 'name' => strtolower(($namespace !== '' ? $namespace . '\\' : '') . $tokens[$next][1]), 'label' => $tokens[$next][1], 'line' => $line];
+                }
+                continue;
+            }
+            if (in_array($id, [T_REQUIRE, T_REQUIRE_ONCE, T_INCLUDE, T_INCLUDE_ONCE], true)) {
+                $next = $significant($i + 1);
+                if ($next < $count && $tokens[$next] === '(') {
+                    $next = $significant($next + 1);
+                }
+                self::noteLiteral($tokens, $next, $count, $dependencies, true);
+                continue;
+            }
+            if ($id === T_STRING && strtolower($text) === 'helix_require') {
+                $next = $significant($i + 1);
+                if ($next < $count && $tokens[$next] === '(') {
+                    self::noteLiteral($tokens, $significant($next + 1), $count, $dependencies, false);
+                }
+            }
+        }
+    }
+
+    private static function previousSignificant(array $tokens, int $from): array|string|null
+    {
+        for ($i = $from; $i >= 0; $i--) {
+            if (!is_array($tokens[$i]) || !in_array($tokens[$i][0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true)) {
+                return $tokens[$i];
+            }
+        }
+        return null;
+    }
+
+    private static function noteLiteral(array $tokens, int $index, int $count, array &$dependencies, bool $isPath): void
+    {
+        if ($index >= $count || !is_array($tokens[$index]) || $tokens[$index][0] !== T_CONSTANT_ENCAPSED_STRING) {
+            return;
+        }
+        $literal = substr($tokens[$index][1], 1, -1);
+        $name = $isPath ? preg_replace('/\.php$/i', '', basename(str_replace('\\', '/', $literal))) : $literal;
+        if ($name !== null && $name !== '' && !in_array($name, $dependencies, true)) {
+            $dependencies[] = $name;
+        }
+    }
+}
+
+}                   
+
+namespace {
+                                                                                                 
+    function helix(): \Helix\Ref
+    {
+        $root = \Helix\Game::$instance?->root();
+        if ($root === null) {
+            throw new \Helix\EngineError('helix() só está disponível enquanto o jogo roda.');
+        }
+        return $root;
+    }
+
+                                                                                              
+    function helix_require(string $name): mixed
+    {
+        $game = \Helix\Game::$instance;
+        if ($game === null) {
+            throw new \Helix\EngineError('helix_require() só está disponível enquanto o jogo roda.');
+        }
 `;
 }
