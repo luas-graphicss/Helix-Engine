@@ -841,5 +841,223 @@ fn tempo_passo2(quadro_antes: i64) -> Value {
     let disparou = Rc::new(Cell::new(false));
     let marcar = disparou.clone();
     tm.invoke("delay", (0.2, Value::function(move |_| marcar.set(true))));
+    tm.invoke("wait", (0.3,)).invoke("then", (Value::function(move |_| checar("time.delay", disparou.get())),))
+}
+
+fn dados() -> Value {
+    api("storage").invoke("ready", ()).invoke("then", (Value::function(|_| dados_passo1()),))
+}
+
+fn dados_passo1() -> Value {
+    let st = api("storage");
+    let atual = st.invoke("get", ("execucoes", 0));
+    let execucoes = (if atual.is_number() { atual.number() as i64 } else { 0 }) + 1;
+    st.invoke("set", ("execucoes", execucoes)).invoke("then", (Value::function(move |_| dados_passo2(execucoes)),))
+}
+
+fn dados_passo2(execucoes: i64) -> Value {
+    let st = api("storage");
+    checarf("storage.get/set", st.invoke("get", ("execucoes",)).number() as i64 == execucoes && st.invoke("has", ("execucoes",)).boolean(), &format!("{execucoes}"));
+    info!("Execução nº {execucoes} deste jogo de teste neste projeto.");
+    api("assets").invoke("data", ("DebugConfig",)).invoke("then", (Value::function(|args| {
+        let cfg = arg(args, 0);
+        checar("assets.data (TOML)", !cfg.is_none() && !cfg.get("jogador").is_none() && numero(&cfg.get("jogador"), "velocidade") == 6.5);
+        api("assets").invoke("text", ("DebugConfig",)).invoke("then", (Value::function(|args| dados_passo4(&arg(args, 0))),))
+    }),))
+}
+
+fn dados_passo4(texto: &Value) -> Value {
+    checar("assets.text", texto.to_string().contains("velocidade"));
+    let ativos = api("assets");
+    checar("assets.byName", !ativos.invoke("byName", ("DebugJogo", "script")).is_none());
+    checar("assets.exists", ativos.invoke("exists", ("DebugUtil",)).boolean() && !ativos.invoke("exists", ("NaoExiste",)).boolean());
+    checar("assets.search", ativos.invoke("search", ("Debug",)).len() >= 5);
+    checar("project.name", api("project").get("name").is_string());
+    checar("project.stats", numero(&api("project").get("stats"), "entities") > 0.0);
+    checar("net.localPlayer", verdadeiro(&api("net").path("localPlayer.local")));
+    checar("play.state", texto_igual(&api("play").get("state"), "playing") && verdadeiro(&api("play").get("isRunning")));
+    Value::undefined()
+}
+
+                                                                                                  
+fn lancar() -> Value {
+    throw("erro proposital: throw interrompe a área e vira ERRO na cadeia")
+}
+
+                                                                                          
+
+struct Area {
+    nome: &'static str,
+    rodar: fn() -> Value,
+                                                                                               
+    espera_erro: bool,
+}
+
+const fn area(nome: &'static str, rodar: fn() -> Value) -> Area {
+    Area { nome, rodar, espera_erro: false }
+}
+
+static AREAS: &[Area] = &[
+    area("Núcleo", nucleo),
+    area("Módulo (require)", modulo),
+    area("Matemática", matematica),
+    area("Cena", cena),
+    area("Transformações", transformacao),
+    area("Malhas e CSG", malhas),
+    area("Materiais", materiais),
+    area("Luzes", luzes),
+    area("Céu e mundo", ceu),
+    area("Câmera", camera),
+    area("Pós-processamento", pos),
+    area("Render", render),
+    area("Física", fisica),
+    area("Personagem e jogador", personagem),
+    area("Terreno", terreno),
+    area("Interface", interface_grafica),
+    area("Áudio", audio),
+    area("VFX", vfx),
+    area("Entrada", entrada),
+    area("Eventos", eventos),
+    area("Tempo e tarefas", tempo),
+    area("Dados, projeto e rede", dados),
+    Area { nome: "Erro proposital (throw)", rodar: lancar, espera_erro: true },
+];
+
+fn area_ok(area: &Area) {
+    if area.espera_erro {
+        checar("throw deveria ter rejeitado a área", false);
+        return;
+    }
+    depurar!("ok {}", area.nome);
+}
+
+fn area_erro(area: &Area, args: &[Value]) {
+    let causa = arg(args, 0);
+    let mensagem = if causa.is_object() { causa.get("message").to_string() } else { causa.to_string() };
+    if area.espera_erro {
+        checarf("throw chega como rejeição da promessa", mensagem.contains("proposital"), &mensagem);
+        return;
+    }
+    contar(|estado| &estado.falhas);
+    erro!("ERRO em {}: {}", area.nome, mensagem);
+}
+
+                                                                                                
+fn encadear(promessa: Value, area: &'static Area) -> Value {
+    let depois = promessa.invoke("then", (Value::function(move |_| (area.rodar)()),));
+    depois.invoke("then", (Value::function(move |_| area_ok(area)), Value::function(move |args| area_erro(area, args))))
+}
+
+fn finalizar() {
+    let girador = api("assets").invoke("byName", ("DebugGirador", "script"));
+    if !girador.is_none() {
+        let extra = api("scene").invoke("spawnPrimitive", ("box", obj! {
+            "name" => "GiradorDinamico",
+            "position" => v3(-2.0, 0.5, -3.0),
+            "rigidBody" => obj! { "type" => "kinematic", "collider" => "box" },
+            "script" => obj! { "assetId" => girador.get("id"), "props" => obj! { "velocidade" => 180, "cor" => "#00b4d8" } },
+        }));
+        checar("spawn com script", !extra.get("script").is_none() && extra.path("script.assetId").equals(&girador.get("id")));
+    } else {
+        checarf("ativo DebugGirador", false, "não está na biblioteca");
+    }
+    let checagens = lido(|estado| &estado.checagens);
+    let falhas = lido(|estado| &estado.falhas);
+    let dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.";
+    if falhas == 0 {
+        info!("API percorrida em {LINGUAGEM}: {checagens} checagens, nenhuma falha. {dica}");
+    } else {
+        aviso!("API percorrida em {LINGUAGEM}: {checagens} checagens, {falhas} falhas (veja FALHOU/ERRO acima). {dica}");
+    }
+    api("gui").invoke("bind", ("checagens", checagens));
+    api("gui").invoke("bind", ("falhas", falhas));
+}
+
+                                                                                         
+
+helix::hooks! {
+    fn on_load() {
+        info!("onLoad do script de entrada");
+    }
+
+    fn on_start() {
+        info!("Jogo de teste em {LINGUAGEM}: percorrendo a API…");
+        let mut promessa = api("time").invoke("wait", (0,));
+        for area in AREAS.iter() {
+            promessa = encadear(promessa, area);
+        }
+        promessa.invoke("then", (Value::function(|_| finalizar()),));
+    }
+
+    fn on_update(dt: f64) {
+        contar(|estado| &estado.quadros);
+        let torus = lembrado(|estado| &estado.torus);
+        if !torus.is_undefined() {
+            api("transform").invoke("rotate", (&torus, v3(0.0, 40.0 * dt, 0.0)));
+        }
+        let d = api("debug");
+        d.invoke("line", (v3(-6.0, 0.05, -6.0), v3(6.0, 0.05, -6.0), "#ff006e"));
+        d.invoke("box", (obj! { "center" => v3(0.0, 1.0, 3.0), "size" => v3(3.0, 2.0, 3.0) }, "#ffbe0b"));
+        let heroi = lembrado(|estado| &estado.heroi);
+        if !heroi.is_undefined() {
+            d.invoke("axes", (&heroi, 1));
+            let acima = api("math.vec3").invoke("add", (api("transform").invoke("worldPosition", (&heroi,)), v3(0.0, 2.2, 0.0)));
+            d.invoke("text", (&acima, format!("Heroi · {} pts", lido(|estado| &estado.pontos)), "#ffffff"));
+        }
+        d.invoke("ray", (v3(0.0, 3.0, 0.0), v3(0.0, -1.0, 0.0), 3, "#06d6a0"));
+        let hud_timer = ESTADO.with(|estado| {
+            estado.hud_timer.set(estado.hud_timer.get() + dt);
+            estado.hud_timer.get()
+        });
+        if hud_timer >= 0.5 {
+            ESTADO.with(|estado| estado.hud_timer.set(0.0));
+            let g = api("gui");
+            g.invoke("bind", ("fps", numero(&api("render").get("stats"), "fps").round()));
+            g.invoke("bind", ("checagens", lido(|estado| &estado.checagens)));
+            g.invoke("bind", ("falhas", lido(|estado| &estado.falhas)));
+        }
+    }
+
+    fn on_fixed_update(h: f64) {
+        contar(|estado| &estado.passos_fisica);
+        if lido(|estado| &estado.passos_fisica) == 1 {
+            checarf("onFixedUpdate recebe o passo", h > 0.0 && h < 1.0, &format!("{h}"));
+        }
+    }
+
+    fn on_late_update() {
+        contar(|estado| &estado.late_updates);
+    }
+
+                                                                              
+    fn on_before_hot_reload() -> f64 {
+        lido(|estado| &estado.pontos) as f64
+    }
+
+    fn on_hot_reload(anterior: f64) {
+        let pontos = if anterior > 0.0 { anterior as u32 } else { 0 };
+        ESTADO.with(|estado| estado.pontos.set(pontos));
+        info!("Recarga a quente: {pontos} pontos preservados");
+    }
+
+    fn on_stop() {
+        let assinaturas: Vec<Value> = ESTADO.with(|estado| std::mem::take(&mut *estado.assinaturas.borrow_mut()));
+        for desligar in &assinaturas {
+            desligar.call(());
+        }
+        info!(
+            "Parou: {} quadros, {} passos de física, {} lateUpdates, {} frames (onAfterFrame), {} colisões.",
+            lido(|estado| &estado.quadros),
+            lido(|estado| &estado.passos_fisica),
+            lido(|estado| &estado.late_updates),
+            lido(|estado| &estado.renders),
+            lido(|estado| &estado.colisoes)
+        );
+        guardar(|estado| &estado.torus, Value::undefined());
+        guardar(|estado| &estado.heroi, Value::undefined());
+        guardar(|estado| &estado.efeito, Value::undefined());
+        guardar(|estado| &estado.tela, Value::undefined());
+    }
+}
 `;
 }
