@@ -1091,4 +1091,155 @@ export class ScriptRuntime implements RuntimeHost {
                 instance.hierarchyIndex = found.index;
         }
     }
+    private createActorInstance(actor: Entity, assetId: string): ScriptInstance | null {
+        const label = actor.kind === 'script' && actor.parent && actor.parent !== this.session.scene.root ? `${actor.name} (em ${actor.parent.name})` : actor.name;
+        if (!this.runsHere(assetId)) {
+            this.warnOnce(`${assetId}:remote`, `${label} aponta para um script de Servidor: ele roda no servidor hospedado (${this.net.address ?? 'endereço do projeto'}), não neste playtest.`, 'info');
+            return null;
+        }
+        const compiled = this.compiled.get(assetId);
+        if (!compiled) {
+            const asset = this.session.library.get(assetId);
+            if (asset?.kind === 'script' && asset.details.kind === 'script' && isCompilableLanguage(asset.details.language)) {
+                this.compileLater(assetId);
+                return null;
+            }
+            this.warnOnce(`${assetId}:missing`, asset ? `${label} aponta para ${asset.name}, que não é um script compilável.` : `${label} aponta para um script que não existe mais na biblioteca.`);
+            return null;
+        }
+        if (!isExecutableKind(compiled.kind)) {
+            this.warnOnce(`${assetId}:kind`, `${label} aponta para ${compiled.name} (${compiled.kind.toUpperCase()}): só scripts de código rodam em atores (${formatLanguageLabels(EXECUTABLE_LANGUAGES)}); HTML, CSS e SVG entram por helix.gui a partir de um deles.`);
+            return null;
+        }
+        if (compiled.errorCount > 0) {
+            this.warnOnce(`${assetId}:errors`, `${compiled.name} tem erros de compilação; ${label} não roda até corrigi-los.`);
+            return null;
+        }
+        const self = actor.kind === 'script' ? (actor.parent ?? actor) : actor;
+        const instance = this.createInstance(compiled, actor, self, 'actor');
+        if (instance && this.running && !this.starting)
+            this.load(instance);
+        return instance;
+    }
+    private createEntryInstance(): void {
+        const entryId = this.session.scene.scripting.entryScriptId;
+        if (!entryId)
+            return;
+        if (!this.runsHere(entryId)) {
+            this.warnOnce(`${entryId}:entry-remote`, 'O script de entrada é de Servidor: ele começa o jogo no servidor hospedado; aqui o cliente começa pela ordem da hierarquia.', 'info');
+            return;
+        }
+        const compiled = this.compiled.get(entryId);
+        if (!compiled) {
+            this.warnOnce(`${entryId}:entry`, 'O script de entrada do jogo não existe mais na biblioteca; o jogo começa pela ordem da hierarquia.');
+            return;
+        }
+        if (!isExecutableKind(compiled.kind)) {
+            this.warnOnce(`${entryId}:entry-kind`, `O script de entrada ${compiled.name} é ${compiled.kind.toUpperCase()} e não pode começar o jogo; escolha um script de código (${formatLanguageLabels(EXECUTABLE_LANGUAGES)}).`);
+            return;
+        }
+        if (compiled.errorCount > 0) {
+            this.warnOnce(`${entryId}:entry-errors`, `O script de entrada ${compiled.name} tem erros de compilação e não rodou.`);
+            return;
+        }
+        if (this.instances.some((instance) => instance.assetId === entryId))
+            return;
+        this.createInstance(compiled, null, null, 'entry');
+    }
+    private playRoots(link: NetLink): Set<string> {
+        const roots = new Set<string>();
+        const { scene, library } = this.session;
+        const includes = (assetId: string) => {
+            if (serverRunsHere(link))
+                return true;
+            const asset = library.get(assetId);
+            return !(asset?.kind === 'script' && asset.details.kind === 'script' && asset.details.runContext === 'server');
+        };
+        if (scene.scripting.entryScriptId && includes(scene.scripting.entryScriptId))
+            roots.add(scene.scripting.entryScriptId);
+        scene.traverse((entity) => {
+            const settings = entity.script;
+            if (settings?.assetId && settings.enabled && includes(settings.assetId))
+                roots.add(settings.assetId);
+        });
+        return roots;
+    }
+    private namedAssetRoots(inputs: readonly ScriptSourceInput[]): string[] {
+        return inputs.filter((input) => !EXECUTABLE_LANGUAGES.includes(input.language)).map((input) => input.assetId);
+    }
+    private compileLater(assetId: string): void {
+        if (this.pendingCompiles.has(assetId))
+            return;
+        this.pendingCompiles.add(assetId);
+        const token = this.runToken;
+        void (async () => {
+            try {
+                const { inputs } = await collectScriptSources(this.session);
+                if (token !== this.runToken)
+                    return;
+                const result = await this.compiler.compile(inputs, { roots: new Set([assetId]) });
+                if (token !== this.runToken)
+                    return;
+                publishCompileResult(this.session, result, { source: LOG_SOURCE, silent: true });
+                for (const script of result.compiled)
+                    this.compiled.set(script.assetId, script);
+                this.session.code.setDiagnostics(toCodeDiagnostics(Array.from(this.compiled.values())));
+                await this.foreign.ensureAll(foreignLanguagesOf(result.compiled));
+                if (token !== this.runToken)
+                    return;
+                this.requestActorSync();
+            }
+            catch (cause) {
+                if (token === this.runToken)
+                    this.say('error', `Não foi possível compilar o script de um ator ligado durante o jogo: ${describeThrown(cause)}`);
+            }
+            finally {
+                this.pendingCompiles.delete(assetId);
+            }
+        })();
+    }
+    private sortInstances(): void {
+        const entryId = this.session.scene.scripting.entryScriptId;
+        const orderOf = (instance: ScriptInstance) => instance.actor?.script?.executionOrder ?? this.props.executionOrder(instance.assetId);
+        this.instances.sort((a, b) => {
+            const aEntry = a.role === 'entry' || a.assetId === entryId ? 0 : 1;
+            const bEntry = b.role === 'entry' || b.assetId === entryId ? 0 : 1;
+            if (aEntry !== bEntry)
+                return aEntry - bEntry;
+            const order = orderOf(a) - orderOf(b);
+            if (order !== 0)
+                return order;
+            return a.hierarchyIndex - b.hierarchyIndex || a.id - b.id;
+        });
+    }
+    private dependentsClosure(assetId: string): LoadedModule[] {
+        const result: LoadedModule[] = [];
+        const seen = new Set<string>([assetId]);
+        const queue = [assetId];
+        while (queue.length > 0) {
+            const next = queue.shift()!;
+            for (const dependent of this.loader.dependentsOf(next)) {
+                const id = dependent.compiled.assetId;
+                if (seen.has(id))
+                    continue;
+                seen.add(id);
+                result.push(dependent);
+                queue.push(id);
+            }
+        }
+        return result;
+    }
+    private entityOfBody(physics: PhysicsScene, body: RigidBody): Entity | null {
+        const entity = physics.entityOf(body);
+        if (entity)
+            return entity;
+        const instance = this.session.playtest.characters?.instances.find((candidate) => candidate.controller.rigidBody === body);
+        return instance?.entity ?? null;
+    }
+    private warnOnce(key: string, message: string, level: LogLevel = 'warn'): void {
+        if (this.warnedAssets.has(key))
+            return;
+        this.warnedAssets.add(key);
+        this.say(level, message);
+    }
 }
