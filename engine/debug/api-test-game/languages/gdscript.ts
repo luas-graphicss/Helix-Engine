@@ -281,5 +281,285 @@ func luzes() -> void:
 	var convertido = l.convert(foco, "disc")
 	checar("light.convert", convertido.type == "disc" and foco.light.type == "disc")
 	l.convert(foco, "spot")
+	var presets = l.presets()
+	checar("light.presets", len(presets) > 0)
+	if len(presets) > 0:
+		var preset = l.spawn(presets[0].id, {"name": "LuzPreset", "position": [-4, 2.5, 4]})
+		checar("light.fromPreset", preset.light != null and l.fromPreset(presets[0].id).type == presets[0].type)
+	checar("light.all", len(l.all({"local": true})) >= 2)
+	checar("effectiveRange", l.effectiveRange(lampada) > 0)
+	checar("light.isLocal", l.isLocal(lampada))
+	checar("temperatureToColor", l.temperatureToColor(6500) != null)
+	l.setColor(lampada, "#ffffff")
+	checar("light.setColor", helix.math.vec3.equals(lampada.light.color, [1, 1, 1], 0.01))
+
+
+func ceu() -> void:
+	var sky = helix.sky
+	sky.set({"timeOfDay": 10.5, "haze": 0.3, "clouds": {"enabled": true, "coverage": 0.45}})
+	checar("sky.set", aprox(sky.timeOfDay, 10.5) and sky.clouds.enabled == true)
+	checar("sky.isDay", sky.isDay == true)
+	checar("sky.sunDirection", sky.sunDirection()[1] > 0)
+	checar("sky.formatTimeOfDay", str(sky.formatTimeOfDay(10.5)).contains(":"), sky.formatTimeOfDay(10.5))
+	checar("sky.wrapTimeOfDay", sky.wrapTimeOfDay(25) == 1)
+	checar("sky.presets", len(sky.presets()) > 0)
+	assinar(sky.onHourChanged(func(h): helix.log.info("Debug", "Hora do céu: " + str(h))))
+	sky.cycleSpeed = 0
+	checar("sky.cycleSpeed", sky.cycleSpeed == 0)
+	checar("world.gravity", helix.world.gravity[1] < 0)
+	helix.world.wind.set({"speed": 2, "direction": 45})
+	checar("world.wind.set", helix.world.wind.speed == 2)
+
+
+func camera() -> void:
+	var c = helix.camera
+	checar("camera.fov", c.fov > 0 and c.aspect > 0)
+	checar("camera.near/far", c.near > 0 and c.far > c.near)
+	checar("viewport", c.viewport.width > 0)
+	var ponto = c.worldToScreen([0, 0, 0])
+	checar("worldToScreen", ponto == null or ponto.x is float)
+	var raio = c.screenToRay(c.viewport.width / 2.0, c.viewport.height / 2.0)
+	checar("screenToRay", raio == null or aprox(helix.math.vec3.length(raio.direction), 1, 0.01))
+	checar("viewMatrix", len(c.viewMatrix) == 16)
+	c.player.set({"distance": 7, "pitch": 18})
+	checar("player.set", c.player.settings.distance == 7)
+	checar("distanceTo", c.distanceTo([0, 0, 0]) >= 0)
+	checar("camera.position", len(c.position) == 3 and len(c.forward) == 3)
+	assinar(c.onMainChanged(func(e): helix.log.info("Debug", "Câmera principal: " + (str(e.name) if e != null else "editor/jogador"))))
+
+
+func pos() -> void:
+	var p = helix.post
+	checar("post.toneMappers", len(p.toneMappers()) > 0)
+	p.set({
+		"bloom": {"enabled": true, "intensity": 0.5, "threshold": 1, "softKnee": 0.5, "radius": 0.6},
+		"vignette": {"enabled": true, "intensity": 0.35, "smoothness": 0.5, "roundness": 1},
+	})
+	checar("post.set", p.bloom.enabled == true and p.vignette.enabled == true)
+	p.exposure = 1.05
+	checar("post.exposure", aprox(p.exposure, 1.05))
+	p.toneMapper = "agx"
+	checar("post.toneMapper", p.toneMapper == "agx")
+	checar("post.presets", len(p.presets()) > 0)
+	var custom = p.custom.add({"fragment": "DebugPost", "name": "DebugPost", "uniforms": {"tint": [0.15, 0.05, 0.3], "strength": 0.6}})
+	efeito = custom
+	checar("post.custom.add", custom != null and p.custom.get("DebugPost") != null)
+	custom.uniforms.set("strength", 0.8)
+	checar("efeito.uniforms.list", len(custom.uniforms.list()) >= 2)
+
+
+func render() -> void:
+	var r = helix.render
+	checar("render.passNames", len(r.passNames()) > 0)
+	checar("render.stats", r.stats.drawCalls is float)
+	checar("render.frame", r.frame.width is float)
+	assinar(r.onAfterFrame(func(): renders += 1))
+	r.showGrid = false
+	checar("render.showGrid", r.showGrid == false)
+	checar("render.pixelRatio", r.pixelRatio > 0)
+
+
+                                                                                                    
+
+func fisica() -> void:
+	var ph = helix.physics
+	checar("physics.enabled", ph.enabled == true)
+	checar("physics.gravity", ph.gravity[1] < 0)
+	checar("physics.settings", ph.settings.fixedTimestep > 0)
+	for i in range(1, 6):
+		var caixa = helix.scene.spawnPrimitive("box", {"name": "Caixa" + str(i), "position": [-2 + (i - 1) * 1.1, 3 + (i - 1) * 1.2, 3], "rigidBody": {"type": "dynamic", "collider": "box", "mass": 2, "restitution": 0.3}, "tags": ["caixa"]})
+		helix.material.setColor(caixa, helix.math.color.hsl(30 + i * 12, 0.7, 0.5))
+	var caixas = helix.scene.byTag("caixa")
+	checar("caixas dinâmicas", len(caixas) == 5 and ph.hasBody(caixas[0]))
+	var corpo = ph.bodyOf(caixas[0])
+	checar("bodyOf", corpo.isDynamic and corpo.mass > 0)
+	corpo.applyImpulse([0, 2, 0])
+	corpo.applyTorque([0, 1, 0])
+	corpo.setMaterial({"friction": 0.8})
+	corpo.wake()
+	checar("body.linearVelocity", len(corpo.linearVelocity) == 3)
+	checar("bodies()", len(ph.bodies()) >= 6)
+	var hit = ph.raycast([0, 5, 0], [0, -1, 0], 20)
+	checar("physics.raycast", hit != null and hit.entity != null, hit.entity.name if hit != null and hit.entity != null else null)
+	checar("raycastAll", len(ph.raycastAll([0, 5, 0], [0, -1, 0], 20)) >= 1)
+	checar("overlapSphere", ph.overlapSphere([0, 3, 3], 4) is Array)
+	checar("massProperties", ph.massProperties(caixas[0]).mass > 0)
+	checar("colliderVolume", ph.colliderVolume(caixas[0]) > 0)
+	checar("shapes.sphere volume", aprox(ph.shapes.volume(ph.shapes.sphere(1)), 4.18879, 0.01))
+	assinar(ph.onCollisionBegin(_on_colisao))
+	assinar(ph.onOutOfBounds(func(e): helix.log.warn("Debug", str(e.name) + " caiu do mundo")))
+	var gatilho = helix.scene.spawn("group", {"name": "Gatilho", "position": [0, 1, 3], "trigger": {"shape": "box", "size": [3, 2, 3]}})
+	checar("trigger spawn", gatilho != null and helix.scene.isAttached(gatilho))
+	checar("physics.stats", ph.stats.bodies is float)
+
+
+func _on_colisao(e) -> void:
+	colisoes += 1
+	if colisoes <= 3:
+		helix.log.info("Debug", "Colisão: %s × %s (impulso %.2f)" % [e.a.name, e.b.name, e.contact.impulse])
+
+
+func personagem() -> void:
+	var h = helix.character.spawn({"name": "Heroi", "position": [0, 1.2, 8], "character": {"walkSpeed": 4, "runSpeed": 7, "jumpHeight": 1.4}})
+	heroi = h
+	checar("character.spawn", h.character != null and helix.character.has(h))
+	var c = helix.character.of(h)
+	checar("character.of", c.isGrounded is bool)
+	checar("settingsOf", helix.character.settingsOf(h).walkSpeed == 4)
+	helix.player.possess(h)
+	checar("player.possess", helix.player.possessed == h and helix.player.isPossessing)
+	assinar(helix.character.onJumped(func(e): helix.log.info("Debug", str(e.entity.name) + " pulou")))
+	assinar(helix.player.onPossessed(func(e): helix.log.info("Debug", "Possuindo " + (str(e.name) if e != null else "ninguém"))))
+	checar("character.all", len(helix.character.all()) >= 1)
+	checar("player.spawnPoint", len(helix.player.spawnPoint) == 3)
+	checar("character.velocity", len(c.velocity) == 3 and len(c.position) == 3)
+
+
+func terreno() -> void:
+	var te = helix.terrain
+	checar("terrain.presets", len(te.presets()) > 0)
+	var colinas = te.spawn({"name": "Colinas", "size": 48, "resolution": 65, "preset": "hills", "seed": 7, "position": [0, -6, -70]})
+	checar("terrain.spawn", colinas.terrain != null and len(te.all()) >= 1)
+	checar("terrain.of", te.of(colinas).resolution == 65)
+	var altura = te.heightAt([0, 0, -70], colinas)
+	checar("heightAt", altura != null and altura is float, altura)
+	checar("contains", te.contains([0, 0, -70], colinas) and not te.contains([500, 0, 0], colinas))
+	te.sculpt(colinas, "raise", [5, 0, -70], {"radius": 6, "strength": 1}, 1)
+	te.markDirty(colinas)
+	te.grass.set(colinas, {"enabled": true, "density": 0.5})
+	checar("grass.set", te.grass.settingsOf(colinas).enabled == true)
+	te.water.set(colinas, {"enabled": true, "level": -2})
+	checar("water.set", te.water.settingsOf(colinas).enabled == true)
+	checar("terrain.raycast", te.raycast([0, 50, -70], [0, -1, 0], colinas) != null)
+
+
+                                                                                                   
+
+func interface_grafica() -> void:
+	var g = helix.gui
+	g.css("DebugEstilo")
+	var hud = g.html("DebugHud", {"id": "debug-hud"})
+	checar("gui.html", hud != null and g.element("#debug-hud") != null)
+	var icone = g.svg("DebugIcone", {"id": "debug-icone"})
+	checar("gui.svg", icone != null)
+	var slot = g.element("[data-slot=icone]")
+	if slot != null and icone != null:
+		slot.appendChild(icone)
+	checar("gui.bind", g.bind("linguagem", LINGUAGEM) >= 1)
+	g.bind("titulo", "Helix · Debug")
+	assinar(g.onAction("caixa", soltar_caixa))
+	assinar(g.onAction("reiniciar", func(): helix.play.restart()))
+	checar("gui.elements", len(g.elements("[data-bind]")) >= 5)
+	checar("gui.size", g.size.width > 0)
+	var doc = g.create("DebugTela", {"referenceSize": {"x": 1280, "y": 720}})
+	var painel = g.add(doc, "frame", {"name": "Painel", "rect": {"position": {"x": {"scale": 1, "offset": -236}, "y": {"scale": 0, "offset": 16}}, "size": {"x": {"scale": 0, "offset": 220}, "y": {"scale": 0, "offset": 48}}}})
+	g.add(doc, "text", {"name": "Rotulo", "text": "Tela declarativa OK"}, painel.node.id)
+	checar("gui.add/find", g.find(doc, "Rotulo").kind == "text")
+	g.setText(doc, "Rotulo", "Tela declarativa OK · " + LINGUAGEM)
+	tela = await g.show(doc, "debug-tela")
+	checar("gui.show/isShown", tela != null and g.isShown(tela))
+	checar("gui.kinds", "button" in g.kinds())
+
+
+func audio() -> void:
+	var a = helix.audio
+	checar("audio.supported", a.supported is bool)
+	a.mixer.setVolumeDb("sfx", -3)
+	checar("mixer.setVolumeDb", a.mixer.bus("sfx").volumeDb == -3)
+	checar("audio.clips", a.clips() is Array)
+	var fonte = helix.scene.spawn("sound", {"name": "FonteSonora", "position": [3, 1, 3], "audioSource": {"trigger": "manual", "spatial": true}})
+	checar("spawn sound", fonte.audioSource != null)
+	a.sources.set(fonte, {"volumeDb": -4})
+	checar("sources.set", fonte.audioSource.volumeDb == -4)
+	checar("sources.isPlaying", a.sources.isPlaying(fonte) == false)
+
+
+func vfx() -> void:
+	var v = helix.vfx
+	var ids = v.templates.ids()
+	checar("vfx.templates", len(ids) > 0)
+	checar("vfx.moduleKinds", len(v.moduleKinds()) > 0)
+	var doc = v.fromTemplate(ids[0], "DebugFaiscas")
+	doc = v.addEmitter(doc, {"name": "Extra", "maxParticles": 50})
+	doc = v.set(doc, {"loop": true})
+	checar("vfx.fromTemplate/addEmitter", len(doc.emitters) >= 2 and doc.loop == true)
+	var ativo = await v.save(doc, "DebugFaiscas")
+	checar("vfx.save", ativo != null and ativo.kind == "vfx")
+	var ator = v.emitAt(ativo, [0, 1.5, -8], {"destroyWhenFinished": false})
+	checar("vfx.emitAt", v.has(ator))
+	v.burst(ator, 20)
+	checar("vfx.stats", v.stats().effects is float)
+
+
+                                                                                                   
+
+func soltar_caixa() -> void:
+	var caixa = helix.scene.spawnPrimitive("box", {"name": "CaixaSolta", "position": [helix.math.random.range(-3, 3), 6, helix.math.random.range(0, 4)], "rigidBody": {"type": "dynamic", "collider": "box", "mass": 1}, "tags": ["caixa"]})
+	helix.material.setColor(caixa, helix.math.random.color())
+	pontos += 1
+	helix.gui.bind("pontos", pontos)
+	helix.events.emit("debug.caixa", {"nome": caixa.name})
+
+
+func ao_teclar(e) -> void:
+	if e.repeat:
+		return
+	match e.code:
+		"KeyR":
+			helix.play.restart()
+		"KeyB":
+			soltar_caixa()
+		"KeyE":
+			helix.events.emit("debug.ping", {"origem": "teclado", "quadro": helix.time.frame})
+		"KeyF":
+			helix.camera.shake(0.4, 0.6)
+		"KeyG":
+			if efeito != null:
+				efeito.enabled = not efeito.enabled
+				helix.log.info("Debug", "Efeito DebugPost " + ("ligado" if efeito.enabled else "desligado"))
+		"KeyT":
+			helix.time.scale = 0.3 if helix.time.scale == 1 else 1
+			helix.log.info("Debug", "time.scale = " + str(helix.time.scale))
+		"KeyH":
+			if tela != null:
+				if helix.gui.isShown(tela):
+					helix.gui.hide(tela)
+				else:
+					helix.gui.show(tela, "debug-tela")
+		"KeyL":
+			var nomes := []
+			for luz in helix.light.all({"local": true}):
+				nomes.append(str(luz.entity.name))
+			helix.log.info("Debug", "Luzes locais: " + ", ".join(nomes))
+
+
+func clique_na_cena(x: float, y: float) -> void:
+	var alvo = helix.camera.pick(x, y)
+	var ponto = helix.camera.pickPoint(x, y)
+	if alvo != null:
+		helix.log.info("Debug", "Clique em " + str(alvo.name))
+	if ponto != null:
+		helix.debug.sphere(ponto, 0.3, "#ff006e", 2)
+
+
+func ao_apontar(e) -> void:
+	if e.button == 0:
+		clique_na_cena(e.x, e.y)
+
+
+func entrada() -> void:
+	var i = helix.input
+	i.actions.define("pular", ["Space", "Gamepad:0"])
+	i.actions.define("soltar", ["KeyB"])
+	checar("actions.define/bindings", len(i.actions.bindings("pular")) >= 1)
+	checar("action()", i.action("pular").name == "pular" and i.actions.down("pular") is bool)
+	checar("isDown", i.isDown("KeyW") == false)
+	checar("pointer", i.pointer.x is float)
+	checar("gamepads", i.gamepads() is Array)
+	checar("axis2d", i.axis2d({"up": "KeyW", "down": "KeyS", "left": "KeyA", "right": "KeyD"}).x is float)
+	checar("keysDown", i.keysDown() is Array)
+	assinar(i.onKeyDown(ao_teclar))
+	assinar(i.onPointerDown(ao_apontar))
+	assinar(i.onGamepadButtonDown(func(e): helix.log.info("Debug", "Gamepad " + str(e.pad) + " botão " + str(e.button))))
 `;
 }
