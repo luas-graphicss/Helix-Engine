@@ -536,4 +536,239 @@ class TomlParser {
             return { pos: pos + 4, value: NaN };
         this.fail(this.describeInvalidValue(pos), 'invalid-value', pos);
     }
+    private describeInvalidValue(pos: number): string {
+        const lineEnd = this.src.indexOf('\n', pos);
+        const rest = this.src.slice(pos, lineEnd === -1 ? undefined : lineEnd).trim();
+        if (/^(True|TRUE|False|FALSE)\b/.test(rest))
+            return `"${/^[A-Za-z]+/.exec(rest)![0]}" não é um booleano em TOML: use true ou false, em minúsculas.`;
+        if (/^(yes|no|on|off|null|nil|None)\b/.test(rest))
+            return `"${/^[A-Za-z]+/.exec(rest)![0]}" não existe em TOML; use true/false, um número, texto entre aspas, ou remova a chave para "sem valor".`;
+        if (/^\.[0-9]/.test(rest))
+            return 'Um float precisa de um dígito antes do ponto (0.5 em vez de .5).';
+        if (/^[+-]?0[0-9]/.test(rest))
+            return 'Números não podem ter zeros à esquerda (escreva 7 em vez de 07).';
+        if (/^[+-]?(0x|0o|0b)/i.test(rest))
+            return 'Números hexadecimais, octais e binários não aceitam sinal e usam o prefixo em minúsculas (0xFF, 0o755, 0b1010).';
+        if (/^0X|^0O|^0B/.test(rest))
+            return 'O prefixo de base precisa ser minúsculo: 0x, 0o ou 0b.';
+        if (/^[0-9]{4}-[0-9]{2}-[0-9]{2}/.test(rest))
+            return 'Data inválida: use AAAA-MM-DD, com mês de 01 a 12 e dia válido para o mês.';
+        if (/^[0-9]{1,2}:[0-9]{2}/.test(rest))
+            return 'Hora inválida: use HH:MM:SS, com horas de 00 a 23 e minutos e segundos de 00 a 59.';
+        if (/^[A-Za-z_]/.test(rest))
+            return `"${/^[A-Za-z_][A-Za-z0-9_-]*/.exec(rest)![0]}" não é um valor válido: texto precisa ficar entre aspas ("${/^[A-Za-z_][A-Za-z0-9_-]*/.exec(rest)![0]}").`;
+        if (rest.startsWith(','))
+            return 'Vírgula no lugar de um valor.';
+        if (rest.startsWith(']'))
+            return 'Falta um valor antes de "]".';
+        if (rest.startsWith('}'))
+            return 'Falta um valor antes de "}".';
+        return `${describeChar(this.charAt(pos))[0].toUpperCase()}${describeChar(this.charAt(pos)).slice(1)} não começa um valor válido de TOML (texto entre aspas, número, true/false, data, [lista] ou {tabela}).`;
+    }
+    private matchToNumber(match: RegExpExecArray): number {
+        const text = match[0].replace(/_/g, '');
+        if (match[1])
+            return parseInt(text.slice(2), 16);
+        if (match[2])
+            return parseInt(text.slice(2), 2);
+        if (match[3])
+            return parseInt(text.slice(2), 8);
+        if (match[5] || match[6])
+            return parseFloat(text);
+        return parseInt(text, 10);
+    }
+    private matchToLocalTime(match: RegExpExecArray, pos: number): TomlDateTime {
+        const hour = Number(match[1]);
+        const minute = Number(match[2]);
+        const second = Number(match[3]);
+        const nanosecond = this.fractionToNanoseconds(match[4]);
+        if (second === 60 && !(hour === 23 && minute === 59))
+            this.fail('Segundo 60 (segundo bissexto) só existe em 23:59:60.', 'invalid-time', pos, pos + match[0].length);
+        return new TomlDateTime({ kind: 'local-time', year: 1970, month: 1, day: 1, hour, minute, second, nanosecond, offsetMinutes: null });
+    }
+    private matchToDateTime(match: RegExpExecArray, pos: number): TomlDateTime {
+        const year = Number(match[1]);
+        const month = Number(match[2]);
+        const day = Number(match[3]);
+        const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+        if (day > daysInMonth)
+            this.fail(`${match[1]}-${match[2]} não tem dia ${match[3]} (o mês tem ${daysInMonth} dias).`, 'invalid-date', pos, pos + match[0].length);
+        if (match[4] === undefined)
+            return new TomlDateTime({ kind: 'local-date', year, month, day, hour: 0, minute: 0, second: 0, nanosecond: 0, offsetMinutes: null });
+        const hour = Number(match[4]);
+        const minute = Number(match[5]);
+        const second = Number(match[6]);
+        const nanosecond = this.fractionToNanoseconds(match[7]);
+        if (second === 60 && !(hour === 23 && minute === 59))
+            this.fail('Segundo 60 (segundo bissexto) só existe em 23:59:60.', 'invalid-time', pos, pos + match[0].length);
+        let kind: TomlDateTimeKind = 'local-date-time';
+        let offsetMinutes: number | null = null;
+        if (match[8] !== undefined) {
+            kind = 'offset-date-time';
+            offsetMinutes = 0;
+        }
+        else if (match[9] !== undefined) {
+            kind = 'offset-date-time';
+            const sign = match[9] === '-' ? -1 : 1;
+            offsetMinutes = sign * (Number(match[10]) * 60 + Number(match[11]));
+        }
+        return new TomlDateTime({ kind, year, month, day, hour, minute, second, nanosecond, offsetMinutes });
+    }
+    private fractionToNanoseconds(digits: string | undefined): number {
+        if (!digits)
+            return 0;
+        return Number(digits.slice(0, 9).padEnd(9, '0'));
+    }
+    private parseOneLineBasicStr(pos: number): {
+        pos: number;
+        value: string;
+    } {
+        return this.parseBasicStr(pos + 1, false, pos);
+    }
+    private parseLiteralStr(pos: number): {
+        pos: number;
+        value: string;
+    } {
+        const start = pos + 1;
+        const end = this.skipUntil(start, "'", ILLEGAL_LITERAL_STR_CHARS, true, 'Uma string literal');
+        return { pos: end + 1, value: this.src.slice(start, end) };
+    }
+    private parseMultilineStr(pos: number, literal: boolean): {
+        pos: number;
+        value: string;
+    } {
+        const opening = pos;
+        pos += 3;
+        if (this.src.startsWith('\n', pos))
+            pos++;
+        let result: string;
+        const delimiter = literal ? "'" : '"';
+        if (literal) {
+            const end = this.skipUntil(pos, "'''", ILLEGAL_MULTILINE_LITERAL_STR_CHARS, true, 'Uma string literal de várias linhas');
+            result = this.src.slice(pos, end);
+            pos = end + 3;
+        }
+        else {
+            const parsed = this.parseBasicStr(pos, true, opening);
+            result = parsed.value;
+            pos = parsed.pos;
+        }
+        if (!this.src.startsWith(delimiter, pos))
+            return { pos, value: result };
+        pos++;
+        if (!this.src.startsWith(delimiter, pos))
+            return { pos, value: result + delimiter };
+        pos++;
+        return { pos, value: result + delimiter + delimiter };
+    }
+    private parseBasicStr(pos: number, multiline: boolean, opening: number): {
+        pos: number;
+        value: string;
+    } {
+        const src = this.src;
+        const errorOn = multiline ? ILLEGAL_MULTILINE_BASIC_STR_CHARS : ILLEGAL_BASIC_STR_CHARS;
+        let result = '';
+        let startPos = pos;
+        for (;;) {
+            if (pos >= src.length)
+                this.fail(`A string que começa aqui não foi fechada${multiline ? ' (faltam as três aspas de fecho """)' : ' (falta a aspa de fecho ")'}.`, 'unterminated-string', opening, src.length);
+            const char = src[pos];
+            if (char === '"') {
+                if (!multiline)
+                    return { pos: pos + 1, value: result + src.slice(startPos, pos) };
+                if (src.startsWith('"""', pos))
+                    return { pos: pos + 3, value: result + src.slice(startPos, pos) };
+                pos++;
+                continue;
+            }
+            if (char === '\\') {
+                result += src.slice(startPos, pos);
+                const escaped = this.parseBasicStrEscape(pos, multiline);
+                pos = escaped.pos;
+                result += escaped.value;
+                startPos = pos;
+                continue;
+            }
+            if (errorOn.has(char)) {
+                if (char === '\n')
+                    this.fail('Uma string entre aspas simples não pode quebrar linha; feche-a na mesma linha ou use três aspas (""") para texto em várias linhas.', 'unterminated-string', opening, pos);
+                this.fail(`${describeChar(char)[0].toUpperCase()}${describeChar(char).slice(1)} não pode aparecer dentro de uma string; use o escape \\u${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}.`, 'illegal-character', pos);
+            }
+            pos++;
+        }
+    }
+    private parseBasicStrEscape(pos: number, multiline: boolean): {
+        pos: number;
+        value: string;
+    } {
+        const src = this.src;
+        const escapeId = src.slice(pos, pos + 2);
+        const escapeStart = pos;
+        pos += 2;
+        if (multiline && (escapeId === '\\ ' || escapeId === '\\\t' || escapeId === '\\\n')) {
+            if (escapeId !== '\\\n') {
+                pos = this.skipChars(pos, WS);
+                if (pos >= src.length)
+                    return { pos, value: '' };
+                if (src[pos] !== '\n')
+                    this.fail('Uma barra invertida só pode terminar a linha (para juntar linhas) se depois dela vier apenas espaço até a quebra de linha.', 'invalid-escape', escapeStart, pos);
+                pos++;
+            }
+            pos = this.skipChars(pos, WS_AND_NEWLINE);
+            return { pos, value: '' };
+        }
+        if (escapeId === '\\u')
+            return this.parseHexChar(pos, 4, escapeStart);
+        if (escapeId === '\\U')
+            return this.parseHexChar(pos, 8, escapeStart);
+        const replacement = BASIC_STR_ESCAPE_REPLACEMENTS[escapeId];
+        if (replacement === undefined) {
+            const shown = escapeId.length < 2 || escapeId[1] === '\n' ? '\\' : escapeId;
+            this.fail(`"${shown}" não é um escape válido; os escapes de TOML são \\b \\t \\n \\f \\r \\" \\\\ \\uXXXX e \\UXXXXXXXX (para uma barra literal escreva \\\\ ou use aspas simples).`, 'invalid-escape', escapeStart, pos);
+        }
+        return { pos, value: replacement };
+    }
+    private parseHexChar(pos: number, length: number, escapeStart: number): {
+        pos: number;
+        value: string;
+    } {
+        const hex = this.src.slice(pos, pos + length);
+        if (hex.length !== length || [...hex].some((char) => !HEX_DIGITS.includes(char)))
+            this.fail(`O escape \\${length === 4 ? 'u' : 'U'} precisa de exatamente ${length} dígitos hexadecimais.`, 'invalid-escape', escapeStart, pos + hex.length);
+        pos += length;
+        const codePoint = parseInt(hex, 16);
+        const scalar = (codePoint >= 0 && codePoint <= 0xd7ff) || (codePoint >= 0xe000 && codePoint <= 0x10ffff);
+        if (!scalar)
+            this.fail(`\\${length === 4 ? 'u' : 'U'}${hex} não é um caractere Unicode válido (pares substitutos e valores acima de U+10FFFF não existem como caracteres).`, 'invalid-escape', escapeStart, pos);
+        return { pos, value: String.fromCodePoint(codePoint) };
+    }
+    private parseArray(pos: number): {
+        pos: number;
+        value: TomlValue[];
+    } {
+        const opening = pos;
+        pos++;
+        const array: TomlValue[] = [];
+        pos = this.skipCommentsAndArrayWs(pos);
+        if (this.src.startsWith(']', pos))
+            return { pos: pos + 1, value: array };
+        for (;;) {
+            const item = this.parseValue(pos);
+            pos = item.pos;
+            array.push(item.value);
+            pos = this.skipCommentsAndArrayWs(pos);
+            const char = this.charAt(pos);
+            if (char === ']')
+                return { pos: pos + 1, value: array };
+            if (char !== ',') {
+                if (char === '')
+                    this.fail('A lista que começa aqui não foi fechada: falta "]".', 'unclosed-array', opening, pos);
+                this.fail(`Dentro de uma lista os itens são separados por vírgula, mas depois de um item encontrei ${describeChar(char)}.`, 'unclosed-array', pos);
+            }
+            pos++;
+            pos = this.skipCommentsAndArrayWs(pos);
+            if (this.src.startsWith(']', pos))
+                return { pos: pos + 1, value: array };
+        }
+    }
 }
