@@ -273,3 +273,159 @@ export interface IfStatement {
     readonly then: Block;
     readonly otherwise: Block | null;
 }
+export interface WhileStatement {
+    readonly kind: 'while';
+    readonly span: SourceSpan;
+    readonly condition: Expression;
+    readonly body: Block;
+}
+export interface ForStatement {
+    readonly kind: 'for';
+    readonly span: SourceSpan;
+    readonly variable: string;
+    readonly variableSpan: SourceSpan;
+    readonly variableType: TypeRef | null;
+    readonly iterable: Expression;
+    readonly body: Block;
+    jsName?: string;
+}
+export interface MatchBranch {
+    readonly span: SourceSpan;
+    readonly patterns: readonly Pattern[];
+    readonly guard: Expression | null;
+    readonly body: Block;
+}
+export interface MatchStatement {
+    readonly kind: 'match';
+    readonly span: SourceSpan;
+    readonly value: Expression;
+    readonly branches: readonly MatchBranch[];
+}
+export interface ReturnStatement {
+    readonly kind: 'return';
+    readonly span: SourceSpan;
+    readonly value: Expression | null;
+}
+export interface BreakStatement {
+    readonly kind: 'break';
+    readonly span: SourceSpan;
+}
+export interface ContinueStatement {
+    readonly kind: 'continue';
+    readonly span: SourceSpan;
+}
+export interface PassStatement {
+    readonly kind: 'pass';
+    readonly span: SourceSpan;
+}
+export interface BreakpointStatement {
+    readonly kind: 'breakpoint';
+    readonly span: SourceSpan;
+}
+export interface AssertStatement {
+    readonly kind: 'assert';
+    readonly span: SourceSpan;
+    readonly condition: Expression;
+    readonly message: Expression | null;
+}
+export type ClassMember = VariableMember | ConstantMember | EnumMember | SignalMember | FunctionMember | ClassDeclaration;
+export interface PropertyAccessors {
+    readonly setter: {
+        readonly kind: 'inline';
+        readonly param: string;
+        readonly body: Block;
+        readonly span: SourceSpan;
+    } | {
+        readonly kind: 'named';
+        readonly name: string;
+        readonly span: SourceSpan;
+    } | null;
+    readonly getter: {
+        readonly kind: 'inline';
+        readonly body: Block;
+        readonly span: SourceSpan;
+    } | {
+        readonly kind: 'named';
+        readonly name: string;
+        readonly span: SourceSpan;
+    } | null;
+}
+export interface VariableMember {
+    readonly kind: 'variable';
+    readonly span: SourceSpan;
+    readonly name: string;
+    readonly nameSpan: SourceSpan;
+    readonly type: TypeRef | null;
+    readonly inferred: boolean;
+    readonly value: Expression | null;
+    readonly isStatic: boolean;
+    readonly annotations: readonly Annotation[];
+    readonly accessors: PropertyAccessors | null;
+    readonly onReady: boolean;
+    readonly exported: boolean;
+    staticType?: StaticType;
+}
+export interface ConstantMember {
+    readonly kind: 'constant';
+    readonly span: SourceSpan;
+    readonly name: string;
+    readonly nameSpan: SourceSpan;
+    readonly type: TypeRef | null;
+    readonly value: Expression;
+    readonly annotations: readonly Annotation[];
+    staticType?: StaticType;
+}
+export interface EnumMember {
+    readonly kind: 'enum';
+    readonly span: SourceSpan;
+    readonly name: string | null;
+    readonly values: readonly {
+        readonly name: string;
+        readonly span: SourceSpan;
+        readonly value: Expression | null;
+    }[];
+}
+export interface SignalMember {
+    readonly kind: 'signal';
+    readonly span: SourceSpan;
+    readonly name: string;
+    readonly params: readonly Parameter[];
+}
+export interface FunctionMember {
+    readonly kind: 'function';
+    readonly span: SourceSpan;
+    readonly name: string;
+    readonly nameSpan: SourceSpan;
+    readonly params: readonly Parameter[];
+    readonly returnType: TypeRef | null;
+    readonly body: Block;
+    readonly isStatic: boolean;
+    readonly annotations: readonly Annotation[];
+    isAsync?: boolean;
+    accessorOf?: string;
+}
+export interface ClassDeclaration {
+    readonly kind: 'class';
+    readonly span: SourceSpan;
+    readonly name: string;
+    readonly nameSpan: SourceSpan;
+    readonly extendsType: TypeRef | null;
+    readonly extendsPath: string | null;
+    readonly members: readonly ClassMember[];
+    readonly annotations: readonly Annotation[];
+    jsName?: string;
+}
+export interface ScriptFile {
+    readonly span: SourceSpan;
+    readonly className: string | null;
+    readonly classNameSpan: SourceSpan | null;
+    readonly extendsType: TypeRef | null;
+    readonly extendsPath: string | null;
+    readonly isTool: boolean;
+    readonly icon: string | null;
+    readonly members: readonly ClassMember[];
+    readonly annotations: readonly Annotation[];
+}
+export function typeRefToString(type: TypeRef): string {
+    return type.args.length === 0 ? type.name : `${type.name}[${type.args.map(typeRefToString).join(', ')}]`;
+}
