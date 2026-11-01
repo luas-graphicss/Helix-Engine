@@ -10,16 +10,20 @@ export const MYRIAD_DEBUG_VIEW_LABELS: Record<MyriadDebugView, string> = {
     occlusion: 'Oclusão',
     hzb: 'Pirâmide de profundidade',
 };
+const CLASSIC_MESH_HINT = 'Malhas fora da geometria virtual ficam em cinza.';
 export const MYRIAD_DEBUG_VIEW_HINTS: Record<MyriadDebugView, string> = {
     none: 'Material e iluminação finais; a geometria virtual é indistinguível da clássica.',
-    clusters: 'Uma cor por cluster de até 128 triângulos: o grão em que a GPU seleciona e descarta geometria.',
-    groups: 'Uma cor por grupo do DAG: clusters simplificados juntos trocam de nível ao mesmo tempo.',
-    levels: 'Nível de detalhe de cada cluster: azul = malha original, quente = mais simplificado, roxo = nível 7 ou além.',
-    triangles: 'Cada triângulo rasterizado, com arestas: perto deve haver cerca de um por pixel.',
-    normals: 'Normais interpoladas em mundo: descontinuidades revelam costuras na simplificação.',
-    occlusion: 'Verde = visível no passe principal; laranja = resgatado pelo pós-passe após o culling.',
-    hzb: 'Nível da pirâmide de profundidade usado pelo culling de oclusão (escuro = longe).',
+    clusters: `Uma cor por cluster de até 128 triângulos: o grão em que a GPU seleciona e descarta geometria. ${CLASSIC_MESH_HINT}`,
+    groups: `Uma cor por grupo do DAG: clusters simplificados juntos trocam de nível ao mesmo tempo. ${CLASSIC_MESH_HINT}`,
+    levels: `Nível de detalhe de cada cluster: azul = malha original, quente = mais simplificado, roxo = nível 7 ou além. ${CLASSIC_MESH_HINT}`,
+    triangles: 'Cada triângulo rasterizado, com arestas, em toda malha da cena: perto deve haver cerca de um por pixel.',
+    normals: 'Normais interpoladas em mundo, em toda malha da cena: descontinuidades revelam costuras na simplificação.',
+    occlusion: `Verde = visível no passe principal; laranja = resgatado pelo pós-passe após o culling. ${CLASSIC_MESH_HINT}`,
+    hzb: 'Nível da pirâmide de profundidade usado pelo culling de oclusão (escuro = longe); só existe com a geometria virtual ativa.',
 };
+export function debugViewNeedsMyriad(view: MyriadDebugView): boolean {
+    return view === 'hzb';
+}
 export function debugViewIndex(view: MyriadDebugView): number {
     return MYRIAD_DEBUG_VIEWS.indexOf(view);
 }
