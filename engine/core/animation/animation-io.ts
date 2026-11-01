@@ -1,5 +1,6 @@
 import { FileBundle } from '@/engine/assets/import/file-bundle';
-import { importModelFile, isModelFile } from '@/engine/assets/import/import-registry';
+import { isModelFile } from '@/engine/assets/import/import-registry';
+import { readModelFile } from '@/engine/assets/import/import-worker-client';
 import { baseNameWithoutExtension, fileExtension, type ImportedScene } from '@/engine/assets/import/import-types';
 import { ANIMATION_EXTENSION, ANIMATION_MIME_TYPE, animationFileName, looksLikeAnimationDocument, parseAnimationDocument, serializeAnimationDocument, type AnimationDocument, } from './animation-document';
 import { animationDocumentsFromScene } from './animation-from-imported';
@@ -95,7 +96,7 @@ export async function readAnimations(file: File, options: ReadAnimationsOptions 
         return { documents: [document], scene: null, warnings };
     }
     if (isModelFile(file)) {
-        const scene = options.scene ?? (await importModelFile(file, options.bundle ?? new FileBundle([file])));
+        const scene = options.scene ?? (await readModelFile(file, options.bundle ?? new FileBundle([file])));
         const documents = animationDocumentsFromScene(scene);
         if (documents.length === 0)
             warnings.push(`"${file.name}" não contém animações.`);
