@@ -32,7 +32,7 @@ export function ColorField({ label, value, onChange }: ColorFieldProps) {
         }
     };
     return (<PropertyRow label={label}>
-      <span className="relative size-6 shrink-0 overflow-hidden rounded-sm border border-border" style={{ backgroundColor: linearRgbToCss(value) }}>
+      <span className="relative size-control shrink-0 overflow-hidden rounded-sm border border-border shadow-[inset_0_0_0_1px_var(--border-strong),0_1px_0_0_oklch(0_0_0/55%)]" style={{ backgroundColor: linearRgbToCss(value) }}>
         <input type="color" value={hex} disabled={!onChange} aria-label={`${label} (seletor)`} onChange={(event) => commitHex(event.currentTarget.value)} className="absolute inset-0 size-full cursor-pointer opacity-0 disabled:cursor-default"/>
       </span>
       <FieldInput key={hex} defaultValue={hex.toUpperCase()} readOnly={!onChange} aria-label={`${label} (hexadecimal)`} onBlur={(event) => {
