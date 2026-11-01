@@ -838,3 +838,106 @@ Toda linguagem deve expor os três níveis para cada linha desta tabela; um test
 
 ---
 
+## 21. O que uma linguagem precisa entregar
+
+Além de ligar as seções 1–20, cada linguagem tem obrigações próprias.
+
+### 21.1 Execução
+
+- Definir como o código roda no navegador: interpretador em JS/WASM (Luau, Lua, Python, Ruby, PHP, GDScript), transpilação para JS (TypeScript, Haxe, Dart, Kotlin/JS), compilação para WASM (C, C++, Rust, Zig, Go, Swift, C#/.NET, Java) ou nativo do navegador (JavaScript, WAT, GLSL/WGSL).
+- `ScriptLanguage.compiler` passa por `pending → beta → ready` (`script-languages.ts`); só `ready` esconde o aviso do editor.
+- Tempo de compilação visível no console e no `compileProject`; erros com arquivo e linha.
+- Sandbox: sem acesso a `window`/DOM fora do que `helix` dá (a não ser pelos pontos brutos documentados). Isolamento por jogo.
+
+### 21.2 Tipos e autocompletar
+
+- Um pacote de definições `helix` na linguagem (`.d.ts`, `.d.luau`, `.pyi`, headers C, crate Rust, …) gerado **a partir deste documento** por `scripting/api-manifest` (o manifesto é a fonte; o `.md` e os pacotes derivam dele). `novo`
+- O editor de código consome o mesmo manifesto para autocompletar e documentar ao passar o mouse (`editor/code/*`).
+
+### 21.3 ABI entre linguagens (jogos mesclados)
+
+- Valores que atravessam: `number, boolean, string, Vec3, Quat, Entity (por id), Asset (por id), arrays, mapas, funções (callbacks por handle)`.
+- `require` de um script em outra linguagem devolve um módulo com essas assinaturas; tudo além disso é erro de compilação com mensagem clara.
+
+### 21.4 Erros e depuração
+
+- Mapeamento de pilha para linha do script (source maps ou tabela própria).
+- Breakpoints e inspeção de variáveis no editor de código são desejáveis, não bloqueiam `ready`.
+- `helix.log.error` nunca derruba a engine; o script faltoso é desligado (`ScriptSettings.enabled = false`) com aviso.
+
+### 21.5 Recarga a quente
+
+- Salvar um script com o jogo rodando recompila só ele, chama `onBeforeHotReload` → troca → `onHotReload(state)`.
+
+### 21.6 Modelos
+
+- Os seis modelos de `scripting/script-templates.ts` (`blank, actor, module, game, ui, shader`) escritos na linguagem, compilando sem aviso.
+
+---
+
+## 22. Suíte de conformidade
+
+Antes de uma linguagem entrar no editor, ela roda a mesma suíte que todas as outras: um script por seção, na linguagem candidata, verificado pela engine.
+
+```
+scripting/conformance/
+  01-runtime.<ext>        ciclo de vida, tempo, eventos, props, require
+  02-scene.<ext>          consulta, spawn, clone, destroy, transform, tags
+  03-mesh.<ext>           primitivas, procedural, raycast, CSG
+  04-material.<ext>       material, biblioteca, textura dinâmica
+  05-light.<ext>          todos os tipos, presets, sincronia com o céu
+  06-camera.<ext>         main, screenToRay, pick, câmera do jogador
+  07-sky.<ext>            tempo, nuvens, presets, substituir
+  08-render.<ext>         pós, opções, stats, ganchos, gl bruto, shader
+  09-physics.<ext>        mundo, corpos, consultas, eventos, triggers, personagem
+  10-terrain.<ext>        alturas, geração, esculpir, camadas, grama, água
+  11-gui.<ext>            telas, nós, controles, eventos, HUD, superfícies, HTML
+  12-audio.<ext>          mixer, fontes, zonas, clipes, análise, bruto
+  13-animation.<ext>      clipes, player, eventos, IK, pose
+  14-vfx.<ext>            componente, documento, burst, partículas brutas
+  15-input.<ext>          teclado, ponteiro, ações, gamepad
+  16-assets.<ext>         consulta, carregar por tipo, importar, dados
+  17-project.<ext>        serializar, snapshots, storage de saves
+  18-play.<ext>           estados, eventos, standalone
+  19-editor.<ext>         seleção, histórico, painéis (só em isEditor)
+  20-override.<ext>       os três níveis de cada sistema
+```
+
+Critério de aprovação: todas as asserções passam, nenhum aviso no console, nenhum membro deste documento sem ponte (o manifesto da seção 21.2 compara automaticamente a lista de membros com o que a ponte registrou e falha listando o que falta).
+
+---
+
+## 23. Mapa de pontes (onde cada namespace vive no código)
+
+| Namespace | Módulos da engine |
+| --- | --- |
+| `helix` (núcleo) | `scripting/*`, `editor/playtest/playtest-controller.ts`, `core/engine-info.ts` |
+| `helix.time`, `helix.task`, `helix.events`, `helix.props`, `helix.storage`, `helix.net`, `helix.input` | novos módulos `scripting/runtime/*` |
+| `helix.log`, `helix.debug` | `editor/session/editor-session.ts` (`log`), `renderer/gl/line-batch.ts` |
+| `helix.math` | `core/math/*`, `core/noise/*`, `core/color/*` |
+| `helix.scene`, `helix.transform` | `core/scene/*`, `editor/commands/entity-commands.ts` |
+| `helix.mesh`, `helix.csg` | `renderer/geometry/*`, `geometry/csg/*`, `renderer/lod/*` |
+| `helix.material`, `helix.texture` | `core/scene/material.ts`, `core/scene/texture.ts`, `materials/*` |
+| `helix.light` | `core/scene/light.ts`, `core/scene/light-presets.ts`, `editor/lights/*` |
+| `helix.camera` | `renderer/camera/*`, `editor/viewport/pick-entity.ts`, `editor/gizmo/screen-space.ts` |
+| `helix.sky` | `core/environment/*`, `renderer/sky/*` |
+| `helix.render`, `helix.post` | `renderer/renderer.ts`, `renderer/passes/*`, `renderer/post/*`, `renderer/gl/*`, `renderer/quality/*`, `renderer/myriad/*`, `renderer/shaders/*` |
+| `helix.physics`, `helix.character`, `helix.player` | `physics/*`, `character/*` |
+| `helix.terrain` | `terrain/*`, `renderer/terrain/*`, `renderer/foliage/*` |
+| `helix.gui` | `gui/*`, `editor/playtest/playtest-hud.ts` |
+| `helix.audio` | `audio/*` |
+| `helix.animation` | `core/animation/*`, `animation/*`, `character/animation/*`, `character/rig/*` |
+| `helix.vfx` | `vfx/*` |
+| `helix.assets` | `assets/*`, `editor/operations/asset-library-operations.ts` |
+| `helix.project` | `project/*`, `core/storage/*` |
+| `helix.play` | `editor/playtest/*` |
+| `helix.editor` | `editor/*`, `settings/*` |
+
+---
+
+## 24. Manutenção deste documento
+
+- Mudou algo no editor (campo novo no inspetor, ferramenta nova, painel novo)? A mudança só está completa quando o membro correspondente está aqui, com estado, e no manifesto.
+- Um membro `expor` ou `novo` que ficou pronto vira `engine` no mesmo commit que o implementa.
+- Nenhuma linguagem fica `ready` com um membro `expor`/`novo` da sua família sem ponte: ou a engine expõe antes, ou a linguagem espera.
+- Versão do contrato: `API_VERSION` em `scripting/api-manifest` acompanha `ENGINE_VERSION` (`core/engine-info.ts`, hoje `0.2.0`); scripts declaram a versão mínima que esperam e a engine avisa quando o jogo abre numa engine mais nova com membros renomeados.
