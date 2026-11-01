@@ -33,13 +33,40 @@ const VARIABLES: Record<keyof CanvasTheme, {
     axisY: { name: '--axis-y', fallback: '#6cc04a' },
     axisZ: { name: '--axis-z', fallback: '#4a8de0' },
 };
+const themeCache = new WeakMap<Element, {
+    epoch: number;
+    theme: CanvasTheme;
+}>();
+let themeEpoch = 0;
+let themeObserver: MutationObserver | null = null;
+function watchThemeChanges(): void {
+    if (themeObserver || typeof MutationObserver === 'undefined' || typeof document === 'undefined')
+        return;
+    themeObserver = new MutationObserver(() => {
+        themeEpoch++;
+    });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-ui-scale'] });
+    if (typeof matchMedia === 'function') {
+        matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            themeEpoch++;
+        });
+    }
+}
+export function invalidateCanvasTheme(): void {
+    themeEpoch++;
+}
 export function readCanvasTheme(element: Element): CanvasTheme {
+    watchThemeChanges();
+    const cached = themeCache.get(element);
+    if (cached && cached.epoch === themeEpoch)
+        return cached.theme;
     const style = getComputedStyle(element);
     const theme = {} as Record<keyof CanvasTheme, string>;
     for (const key of Object.keys(VARIABLES) as Array<keyof CanvasTheme>) {
         const { name, fallback } = VARIABLES[key];
         theme[key] = style.getPropertyValue(name).trim() || fallback;
     }
+    themeCache.set(element, { epoch: themeEpoch, theme });
     return theme;
 }
 export function prepareCanvas(canvas: HTMLCanvasElement, width: number, height: number): CanvasRenderingContext2D | null {
