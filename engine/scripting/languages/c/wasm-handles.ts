@@ -277,3 +277,52 @@ function isConstructor(value: unknown): boolean {
     const source = Function.prototype.toString.call(value);
     return /^class[\s{]/.test(source);
 }
+function describeKey(key: string | number): string {
+    return typeof key === 'number' ? `[${key}]` : `"${key}"`;
+}
+export function describeType(value: unknown): string {
+    if (value === undefined)
+        return 'undefined (nada)';
+    if (value === null)
+        return 'null';
+    if (Array.isArray(value))
+        return 'uma lista';
+    switch (typeof value) {
+        case 'number':
+            return `o número ${value}`;
+        case 'string':
+            return `o texto "${value.length > 40 ? `${value.slice(0, 40)}…` : value}"`;
+        case 'boolean':
+            return value ? 'true' : 'false';
+        case 'function':
+            return 'uma função';
+        default:
+            return 'um objeto';
+    }
+}
+function enumerableKeys(target: object): string[] {
+    const keys = new Set<string>(Object.keys(target));
+    for (let current: object | null = Object.getPrototypeOf(target); current && current !== Object.prototype; current = Object.getPrototypeOf(current)) {
+        for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(current))) {
+            if (name === 'constructor' || !descriptor.enumerable)
+                continue;
+            keys.add(name);
+        }
+    }
+    return Array.from(keys);
+}
+function copyNumbers(target: ArrayBufferView, value: object, member: string): void {
+    const typed = target as unknown as {
+        length: number;
+        set(values: ArrayLike<number>): void;
+    };
+    const numbers = Array.isArray(value)
+        ? value
+        : ArrayBuffer.isView(value)
+            ? Array.from(value as unknown as ArrayLike<number>)
+            : ['x', 'y', 'z', 'w'].slice(0, typed.length).map((axis) => (value as Record<string, unknown>)[axis]);
+    if (numbers.length !== typed.length || numbers.some((entry) => typeof entry !== 'number')) {
+        throw new HandleError(`${member}: esperava ${typed.length} números.`);
+    }
+    typed.set(numbers as number[]);
+}
