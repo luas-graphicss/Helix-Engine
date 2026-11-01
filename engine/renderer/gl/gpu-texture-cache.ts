@@ -3,8 +3,11 @@ import type { Texture, TextureFilter, TextureWrap } from '@/engine/core/scene/te
 interface CacheEntry {
     handle: WebGLTexture;
     version: number;
+    width: number;
+    height: number;
+    dynamic: boolean;
 }
-const MAX_ANISOTROPY = 8;
+const MAX_ANISOTROPY = 16;
 function createSolidTexture(gl: GL, r: number, g: number, b: number, a: number): WebGLTexture {
     const handle = gl.createTexture();
     if (!handle)
@@ -29,6 +32,7 @@ function minFilterMode(gl: GL, filter: TextureFilter): number {
 export class GpuTextureCache {
     readonly white: WebGLTexture;
     readonly flatNormal: WebGLTexture;
+    readonly stats = { uploads: 0, pending: 0 };
     private readonly entries = new Map<number, CacheEntry>();
     private readonly anisotropic: EXT_texture_filter_anisotropic | null;
     private readonly maxAnisotropy: number;
@@ -40,35 +44,62 @@ export class GpuTextureCache {
             ? Math.min(gl.getParameter(this.anisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT) as number, MAX_ANISOTROPY)
             : 1;
     }
+    beginFrame(): void {
+        this.stats.uploads = 0;
+        this.stats.pending = 0;
+    }
     resolve(texture: Texture): WebGLTexture | null {
-        if (!texture.image)
+        if (!texture.image) {
+            this.stats.pending++;
             return null;
+        }
         const entry = this.entries.get(texture.id);
         if (entry && entry.version === texture.version)
             return entry.handle;
         const handle = entry?.handle ?? this.gl.createTexture();
         if (!handle)
             return null;
-        this.upload(handle, texture);
-        this.entries.set(texture.id, { handle, version: texture.version });
+        const reuse = entry !== undefined && entry.dynamic && texture.dynamic && entry.width === texture.width && entry.height === texture.height;
+        if (reuse)
+            this.update(handle, texture);
+        else
+            this.upload(handle, texture);
+        this.entries.set(texture.id, { handle, version: texture.version, width: texture.width, height: texture.height, dynamic: texture.dynamic });
+        this.stats.uploads++;
         return handle;
+    }
+    private setUnpackState(): void {
+        const { gl } = this;
+        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+        gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
     }
     private upload(handle: WebGLTexture, texture: Texture): void {
         const { gl } = this;
         gl.bindTexture(gl.TEXTURE_2D, handle);
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-        gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+        this.setUnpackState();
         const internalFormat = texture.colorSpace === 'srgb' ? gl.SRGB8_ALPHA8 : gl.RGBA8;
         gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, texture.image as TexImageSource);
-        gl.generateMipmap(gl.TEXTURE_2D);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilterMode(gl, texture.minFilter));
+        if (texture.dynamic) {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, texture.minFilter === 'nearest' ? gl.NEAREST : gl.LINEAR);
+        }
+        else {
+            gl.generateMipmap(gl.TEXTURE_2D);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilterMode(gl, texture.minFilter));
+        }
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, texture.magFilter === 'nearest' ? gl.NEAREST : gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrapMode(gl, texture.wrapS));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrapMode(gl, texture.wrapT));
-        if (this.anisotropic && this.maxAnisotropy > 1) {
+        if (this.anisotropic && this.maxAnisotropy > 1 && !texture.dynamic) {
             gl.texParameterf(gl.TEXTURE_2D, this.anisotropic.TEXTURE_MAX_ANISOTROPY_EXT, this.maxAnisotropy);
         }
+        gl.bindTexture(gl.TEXTURE_2D, null);
+    }
+    private update(handle: WebGLTexture, texture: Texture): void {
+        const { gl } = this;
+        gl.bindTexture(gl.TEXTURE_2D, handle);
+        this.setUnpackState();
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, texture.image as TexImageSource);
         gl.bindTexture(gl.TEXTURE_2D, null);
     }
     release(texture: Texture): void {
