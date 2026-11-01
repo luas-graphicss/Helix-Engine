@@ -1548,4 +1548,275 @@ class Parser {
             this.fail('não são argumentos genéricos');
         });
     }
+    private primary(): Expression {
+        const token = this.current;
+        switch (token.kind) {
+            case 'number': {
+                this.advance();
+                return { kind: 'literal', value: token.value as number, literalType: token.integer ? 'int' : 'float', span: token.span };
+            }
+            case 'string':
+                this.advance();
+                return { kind: 'literal', value: token.value as string, literalType: 'string', span: token.span };
+            case 'char':
+                this.advance();
+                return { kind: 'literal', value: token.value as string, literalType: 'char', span: token.span };
+            case 'interpolated':
+                this.advance();
+                return this.interpolated(token);
+            case 'identifier': {
+                if (this.atIdentifier('nameof') && this.at('(', this.peek())) {
+                    this.advance();
+                    this.expect('(');
+                    const target = this.expression();
+                    this.expect(')', 'fechando nameof');
+                    const name = target.kind === 'identifier' ? target.name : target.kind === 'member' ? target.name : this.fail('nameof precisa de um nome ou acesso a membro.', target.span);
+                    return { kind: 'nameof', name, span: this.spanFrom(token) };
+                }
+                this.advance();
+                const typeArguments = this.at('<') ? this.typeArgumentsIfGeneric() : null;
+                return { kind: 'identifier', name: String(token.value), typeArguments, span: this.spanFrom(token) };
+            }
+            case 'keyword':
+                return this.keywordPrimary(token);
+            case 'punct':
+                if (this.at('('))
+                    return this.parenthesizedOrTuple();
+                break;
+            default:
+                break;
+        }
+        this.fail(`Esperada uma expressão, encontrado ${this.describe(token)}.`);
+    }
+    private keywordPrimary(token: Token): Expression {
+        switch (token.text) {
+            case 'true':
+            case 'false':
+                this.advance();
+                return { kind: 'literal', value: token.text === 'true', literalType: 'bool', span: token.span };
+            case 'null':
+                this.advance();
+                return { kind: 'literal', value: null, literalType: 'null', span: token.span };
+            case 'this':
+                this.advance();
+                return { kind: 'this', span: token.span };
+            case 'base':
+                this.advance();
+                return { kind: 'base', span: token.span };
+            case 'new':
+                return this.newExpression();
+            case 'typeof': {
+                this.advance();
+                this.expect('(');
+                const type = this.type();
+                this.expect(')', 'fechando typeof');
+                return { kind: 'typeof', type, span: this.spanFrom(token) };
+            }
+            case 'default': {
+                this.advance();
+                let type: TypeRef | null = null;
+                if (this.match('(')) {
+                    type = this.type();
+                    this.expect(')', 'fechando default');
+                }
+                return { kind: 'default', type, span: this.spanFrom(token) };
+            }
+            case 'checked':
+            case 'unchecked': {
+                this.advance();
+                this.expect('(');
+                const expression = this.expression();
+                this.expect(')');
+                return expression;
+            }
+            case 'sizeof':
+                this.fail('sizeof não existe neste runtime.');
+            case 'delegate':
+                return this.lambdaIfAny() ?? this.fail('Esperado delegate (…) { … }.');
+            default:
+                if (PRIMITIVE_TYPE_KEYWORDS.has(token.text)) {
+                    this.advance();
+                    return { kind: 'identifier', name: token.text, typeArguments: null, span: token.span };
+                }
+                this.fail(`Esperada uma expressão, encontrado "${token.text}".`);
+        }
+    }
+    private parenthesizedOrTuple(): Expression {
+        const start = this.expect('(');
+        const first = this.tupleElement();
+        if (this.at(',')) {
+            const elements = [first];
+            while (this.match(','))
+                elements.push(this.tupleElement());
+            this.expect(')', 'fechando a tupla');
+            return { kind: 'tuple', elements, span: this.spanFrom(start) };
+        }
+        this.expect(')', 'fechando os parênteses');
+        if (first.name)
+            this.fail('Um elemento nomeado só faz sentido numa tupla com dois ou mais elementos.', first.value.span);
+        return first.value;
+    }
+    private tupleElement(): {
+        name: string | null;
+        value: Expression;
+    } {
+        if (this.current.kind === 'identifier' && this.at(':', this.peek()) && !this.at(':', this.peek(2))) {
+            const name = String(this.advance().value);
+            this.advance();
+            return { name, value: this.expression() };
+        }
+        return { name: null, value: this.expression() };
+    }
+    private newExpression(): Expression {
+        const start = this.expect('new');
+        if (this.at('{')) {
+            this.advance();
+            const members: Array<{
+                name: string;
+                value: Expression;
+            }> = [];
+            while (!this.at('}') && !this.atEnd()) {
+                const memberStart = this.current;
+                if (this.current.kind === 'identifier' && this.at('=', this.peek())) {
+                    const name = String(this.advance().value);
+                    this.advance();
+                    members.push({ name, value: this.expression() });
+                }
+                else {
+                    const value = this.expression();
+                    const name = value.kind === 'identifier' ? value.name : value.kind === 'member' ? value.name : this.fail('Um membro de objeto anônimo precisa de nome (Nome = valor).', memberStart.span);
+                    members.push({ name, value });
+                }
+                if (!this.match(','))
+                    break;
+            }
+            this.expect('}', 'fechando o objeto anônimo');
+            return { kind: 'anonymous', members, span: this.spanFrom(start) };
+        }
+        if (this.at('[')) {
+            this.advance();
+            this.expect(']', 'em new[]');
+            const elements = this.collectionElements().map((element) => (Array.isArray(element) ? this.fail('new[] não aceita pares { a, b }.', start.span) : (element as Expression)));
+            return { kind: 'array', elementType: null, sizes: [], elements, span: this.spanFrom(start) };
+        }
+        if (this.at('(')) {
+            const args = this.argumentList();
+            const initializer = this.at('{') ? this.initializer() : null;
+            return { kind: 'new', type: null, arguments: args, initializer, span: this.spanFrom(start) };
+        }
+        const typeStart = this.current;
+        const type = this.typeWithoutArrayRank();
+        if (this.at('[')) {
+            this.advance();
+            const sizes: Expression[] = [];
+            if (!this.at(']')) {
+                do {
+                    if (this.at(',') || this.at(']'))
+                        this.fail('Arrays multidimensionais (int[,]) não são suportados; use arrays de arrays (int[][]).');
+                    sizes.push(this.expression());
+                } while (this.match(','));
+            }
+            this.expect(']', 'fechando o tamanho do array');
+            while (this.at('[') && this.at(']', this.peek())) {
+                this.advance();
+                this.advance();
+            }
+            if (sizes.length > 1)
+                this.fail('Arrays multidimensionais (int[,]) não são suportados; use arrays de arrays (int[][]).', typeStart.span);
+            const elements = this.at('{') ? this.collectionElements().map((element) => (Array.isArray(element) ? this.fail('Inicializador de array não aceita pares { a, b }.', start.span) : (element as Expression))) : null;
+            return { kind: 'array', elementType: type, sizes, elements, span: this.spanFrom(start) };
+        }
+        const hasArguments = this.at('(');
+        const args = hasArguments ? this.argumentList() : [];
+        const initializer = this.at('{') ? this.initializer() : null;
+        if (!hasArguments && !initializer)
+            this.fail(`Esperado "(" ou "{" depois de new ${type.name}.`);
+        return { kind: 'new', type, arguments: args, initializer, span: this.spanFrom(start) };
+    }
+    private typeWithoutArrayRank(): TypeRef {
+        const start = this.current;
+        let name: string;
+        let typeArguments: TypeRef[] = [];
+        if (this.current.kind === 'keyword' && PRIMITIVE_TYPE_KEYWORDS.has(this.current.text))
+            name = this.advance().text;
+        else if (this.current.kind === 'identifier') {
+            name = String(this.advance().value);
+            if (this.at('<'))
+                typeArguments = this.typeArguments();
+            while (this.at('.') && this.peek().kind === 'identifier') {
+                this.advance();
+                name = String(this.advance().value);
+                typeArguments = this.at('<') ? this.typeArguments() : [];
+            }
+        }
+        else if (this.at('(')) {
+            return this.type();
+        }
+        else {
+            this.fail(`Esperado um tipo depois de new, encontrado ${this.describe(this.current)}.`);
+        }
+        const nullable = this.at('?') && this.nullableFollows() ? (this.advance(), true) : false;
+        return { name, typeArguments, arrayRank: 0, nullable, tupleElements: null, span: this.spanFrom(start) };
+    }
+    private initializer(): Initializer {
+        const start = this.current;
+        const isObject = this.looksLikeObjectInitializer();
+        if (!isObject) {
+            const elements = this.collectionElements();
+            return { kind: 'collection', elements, span: this.spanFrom(start) };
+        }
+        this.expect('{');
+        const entries: ObjectInitializerEntry[] = [];
+        while (!this.at('}') && !this.atEnd()) {
+            const entryStart = this.current;
+            if (this.at('[')) {
+                this.advance();
+                const args = this.argumentsUntil(']');
+                this.expect(']');
+                this.expect('=', 'no inicializador por índice');
+                entries.push({ kind: 'index', arguments: args, value: this.expression(), span: this.spanFrom(entryStart) });
+            }
+            else {
+                const name = String(this.expectIdentifier('do membro no inicializador').value);
+                this.expect('=', 'no inicializador de objeto');
+                const value = this.at('{') ? this.initializer() : this.expression();
+                entries.push({ kind: 'assign', name, value, span: this.spanFrom(entryStart) });
+            }
+            if (!this.match(','))
+                break;
+        }
+        this.expect('}', 'fechando o inicializador');
+        return { kind: 'object', entries, span: this.spanFrom(start) };
+    }
+    private looksLikeObjectInitializer(): boolean {
+        const first = this.peek();
+        const second = this.peek(2);
+        if (this.at('}', first))
+            return false;
+        if (this.at('[', first))
+            return true;
+        return first.kind === 'identifier' && this.at('=', second);
+    }
+    private collectionElements(): Array<Expression | Expression[]> {
+        this.expect('{', 'abrindo o inicializador de coleção');
+        const elements: Array<Expression | Expression[]> = [];
+        while (!this.at('}') && !this.atEnd()) {
+            if (this.at('{')) {
+                this.advance();
+                const pair: Expression[] = [];
+                do
+                    pair.push(this.expression());
+                while (this.match(','));
+                this.expect('}', 'fechando o par do inicializador');
+                elements.push(pair);
+            }
+            else {
+                elements.push(this.expression());
+            }
+            if (!this.match(','))
+                break;
+        }
+        this.expect('}', 'fechando o inicializador de coleção');
+        return elements;
+    }
 }
