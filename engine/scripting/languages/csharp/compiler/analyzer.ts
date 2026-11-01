@@ -266,3 +266,272 @@ export function isNumericType(type: StaticType | undefined): boolean {
 export function isIntegralType(type: StaticType | undefined): boolean {
     return type !== undefined && (type.kind === 'int' || type.kind === 'enum');
 }
+export function sameType(a: StaticType, b: StaticType): boolean {
+    if (a.kind !== b.kind)
+        return false;
+    switch (a.kind) {
+        case 'array':
+            return sameType(a.element, (b as typeof a).element);
+        case 'collection': {
+            const other = b as typeof a;
+            return a.name === other.name && a.args.length === other.args.length && a.args.every((arg, index) => sameType(arg, other.args[index]));
+        }
+        case 'class':
+        case 'enum':
+            return a.name === (b as typeof a).name && a.script === (b as typeof a).script;
+        default:
+            return true;
+    }
+}
+export function elementTypeOf(type: StaticType): StaticType | null {
+    switch (type.kind) {
+        case 'array':
+            return type.element;
+        case 'string':
+            return STATIC_TYPES.char;
+        case 'collection':
+            if (type.name === 'Dictionary')
+                return { kind: 'class', name: 'KeyValuePair', script: null, runtime: true };
+            return type.args[0] ?? STATIC_TYPES.dynamic;
+        default:
+            return null;
+    }
+}
+export function isDirectlyIterable(type: StaticType): boolean {
+    return type.kind === 'array' || type.kind === 'string' || type.kind === 'collection';
+}
+interface LocalInfo {
+    readonly name: string;
+    readonly jsName: string;
+    type: StaticType;
+    readonly byRef: boolean;
+}
+interface FunctionContext {
+    readonly cls: ClassInfo | null;
+    readonly isStatic: boolean;
+    readonly returnType: StaticType | null;
+    usesAwait: boolean;
+    usesYield: boolean;
+    catchDepth: number;
+}
+class Scope {
+    private readonly locals = new Map<string, LocalInfo>();
+    constructor(readonly parent: Scope | null, readonly fn: FunctionContext) { }
+    declare(name: string, type: StaticType, byRef = false): LocalInfo {
+        const info: LocalInfo = { name, jsName: localJsName(name), type, byRef };
+        this.locals.set(name, info);
+        return info;
+    }
+    lookup(name: string): LocalInfo | null {
+        for (let scope: Scope | null = this; scope; scope = scope.parent) {
+            const found = scope.locals.get(name);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+    lookupInFunction(name: string): LocalInfo | null {
+        for (let scope: Scope | null = this; scope && scope.fn === this.fn; scope = scope.parent) {
+            const found = scope.locals.get(name);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+    names(): string[] {
+        const names: string[] = [];
+        for (let scope: Scope | null = this; scope; scope = scope.parent)
+            names.push(...scope.locals.keys());
+        return names;
+    }
+}
+const siblingUnits = new Map<string, CompilationUnit>();
+const MAX_CACHED_SIBLINGS = 96;
+function siblingUnit(source: string): CompilationUnit | null {
+    const cached = siblingUnits.get(source);
+    if (cached)
+        return cached;
+    const parsed = parse(source);
+    if (parsed.diagnostics.length > 0)
+        return null;
+    if (siblingUnits.size >= MAX_CACHED_SIBLINGS)
+        siblingUnits.clear();
+    siblingUnits.set(source, parsed.unit);
+    return parsed.unit;
+}
+export function analyze(input: AnalyzeInput): AnalyzeOutput {
+    return new Analyzer(input).run();
+}
+function bodyReturnType(declared: StaticType, isAsync: boolean): StaticType {
+    if (!isAsync || declared.kind !== 'task')
+        return declared;
+    return declared.result ?? STATIC_TYPES.void;
+}
+const TYPE_LIKE_STATICS: ReadonlySet<string> = new Set(['Array', 'String', 'Double']);
+function promoteTypePattern(pattern: Pattern & {
+    kind: 'constant';
+}): boolean {
+    const e = pattern.expression;
+    if (e.kind !== 'identifier' || e.typeArguments)
+        return false;
+    const resolution = e.resolution;
+    if (!resolution)
+        return false;
+    const isType = resolution.kind === 'type' || resolution.kind === 'runtimeType' || (resolution.kind === 'runtimeStatic' && TYPE_LIKE_STATICS.has(resolution.name));
+    if (!isType)
+        return false;
+    const type: TypeRef = { name: e.name, typeArguments: [], arrayRank: 0, nullable: false, tupleElements: null, span: e.span };
+    const promoted = pattern as unknown as {
+        kind: Pattern['kind'];
+        type: TypeRef;
+        expression?: Expression;
+    };
+    promoted.kind = 'type';
+    promoted.type = type;
+    delete promoted.expression;
+    return true;
+}
+class Analyzer {
+    readonly diagnostics: CompileDiagnostic[] = [];
+    private readonly fileTypes = new Map<string, TypeInfo>();
+    private readonly siblingTypes = new Map<string, TypeInfo>();
+    private readonly interfaces = new Set<string>();
+    private readonly usedSiblingTypes = new Map<string, SiblingTypeRef>();
+    private readonly classes: ClassInfo[] = [];
+    private readonly enums: EnumInfo[] = [];
+    private main: ClassInfo | null = null;
+    private errorCount = 0;
+    constructor(private readonly input: AnalyzeInput) { }
+    run(): AnalyzeOutput {
+        const { unit, scriptName, siblings } = this.input;
+        for (const sibling of siblings) {
+            const siblingTree = siblingUnit(sibling.source);
+            if (!siblingTree)
+                continue;
+            for (const declaration of siblingTree.types)
+                this.collectType(declaration, sibling.name, null, this.siblingTypes);
+        }
+        for (const declaration of unit.types)
+            this.collectType(declaration, null, null, this.fileTypes);
+        for (const cls of this.allClasses())
+            this.resolveBase(cls);
+        for (const cls of this.allClasses())
+            this.buildMembers(cls);
+        this.chooseMain(scriptName);
+        for (const cls of this.classes)
+            this.analyzeClass(cls);
+        if (this.errorCount > 0)
+            return { program: null, diagnostics: this.diagnostics };
+        const ordered = this.orderClasses();
+        const siblingRefs = Array.from(this.usedSiblingTypes.values());
+        const dependencies = Array.from(new Set(siblingRefs.map((ref) => ref.script)));
+        return {
+            program: { main: this.main, classes: ordered, enums: this.enums, dependencies, siblingTypes: siblingRefs },
+            diagnostics: this.diagnostics,
+        };
+    }
+    private error(span: SourceSpan, message: string): void {
+        this.errorCount++;
+        this.diagnostics.push({ severity: 'error', message, ...spanOf(span), code: 'semantic', source: 'C#' });
+    }
+    private warn(span: SourceSpan, message: string): void {
+        this.diagnostics.push({ severity: 'warning', message, ...spanOf(span), code: 'semantic', source: 'C#' });
+    }
+    private allClasses(): ClassInfo[] {
+        const all: ClassInfo[] = [];
+        const visit = (types: Iterable<TypeInfo>) => {
+            for (const type of types) {
+                if (type.kind !== 'class')
+                    continue;
+                all.push(type);
+                visit(type.nested.values());
+            }
+        };
+        visit(this.fileTypes.values());
+        visit(this.siblingTypes.values());
+        return all;
+    }
+    private collectType(declaration: TypeDeclaration, script: string | null, outer: ClassInfo | null, into: Map<string, TypeInfo>): void {
+        const local = script === null;
+        switch (declaration.kind) {
+            case 'class': {
+                const existing = into.get(declaration.name);
+                if (existing?.kind === 'class' && existing.decl.modifiers.includes('partial') && declaration.modifiers.includes('partial')) {
+                    ;
+                    (existing.decl.members as Member[]).push(...declaration.members);
+                    return;
+                }
+                if (existing && local) {
+                    this.error(declaration.nameSpan, `O tipo "${declaration.name}" já foi declarado neste arquivo.`);
+                    return;
+                }
+                if (existing)
+                    return;
+                const cls: ClassInfo = {
+                    kind: 'class',
+                    name: declaration.name,
+                    jsName: classJsName(declaration.name, outer),
+                    decl: declaration,
+                    script,
+                    outer,
+                    flavor: declaration.flavor,
+                    isStatic: declaration.modifiers.includes('static'),
+                    typeParameters: new Set(declaration.typeParameters),
+                    members: new Map(),
+                    ctors: [],
+                    nested: new Map(),
+                    base: null,
+                    baseRuntime: null,
+                    isMain: false,
+                    isActor: false,
+                    recordFields: declaration.recordParameters ? declaration.recordParameters.map((parameter) => parameter.name) : null,
+                    hasIndexer: declaration.members.some((member) => member.kind === 'indexer'),
+                    hasStaticConstructor: declaration.members.some((member) => member.kind === 'constructor' && member.modifiers.includes('static')),
+                };
+                into.set(declaration.name, cls);
+                if (local)
+                    this.classes.push(cls);
+                for (const member of declaration.members) {
+                    if (member.kind === 'class' || member.kind === 'enum' || member.kind === 'interface' || member.kind === 'delegate')
+                        this.collectType(member, script, cls, cls.nested);
+                }
+                return;
+            }
+            case 'enum': {
+                if (into.has(declaration.name)) {
+                    if (local)
+                        this.error(declaration.nameSpan, `O tipo "${declaration.name}" já foi declarado neste arquivo.`);
+                    return;
+                }
+                const info: EnumInfo = { kind: 'enum', name: declaration.name, jsName: classJsName(declaration.name, outer), decl: declaration, script, outer, values: this.enumValues(declaration, local) };
+                into.set(declaration.name, info);
+                if (local)
+                    this.enums.push(info);
+                return;
+            }
+            case 'interface':
+            case 'delegate':
+                this.interfaces.add(declaration.name);
+                return;
+        }
+    }
+    private enumValues(declaration: EnumDeclaration, report: boolean): Map<string, number> {
+        const values = new Map<string, number>();
+        let next = 0;
+        for (const member of declaration.members) {
+            let value = next;
+            if (member.value) {
+                const constant = this.constantInt(member.value, values);
+                if (constant === null) {
+                    if (report)
+                        this.error(member.value.span, `O valor de "${declaration.name}.${member.name}" precisa ser uma constante inteira.`);
+                }
+                else
+                    value = constant;
+            }
+            values.set(member.name, value);
+            next = value + 1;
+        }
+        return values;
+    }
+}
