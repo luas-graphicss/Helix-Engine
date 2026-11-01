@@ -44,6 +44,10 @@ export class SkySystem {
     private readonly cloudPass: CloudPass;
     private readonly skyPass: SkyPass;
     private cloudsRenderedLastFrame = false;
+    cloudsCompiling = false;
+    cloudStepsScale = 1;
+    cloudScale = 1;
+    private cloudSettings: SkySettings['clouds'] | null = null;
     constructor(private readonly gl: GL, capabilities: GlCapabilities, triangle: FullscreenTriangle, private readonly profile: RenderProfile) {
         const format: ColorFormat = capabilities.floatColorTargets ? 'rgba16f' : 'rgba8';
         const defines = hdrShaderDefines(capabilities);
@@ -63,10 +67,11 @@ export class SkySystem {
             cloudShadow: { enabled: false, texture: this.cloudShadow.target.texture, region: this.cloudShadow.region },
         };
     }
-    update(settings: SkySettings, lighting: FrameLighting, camera: PerspectiveCamera, canvasWidth: number, canvasHeight: number, deltaSeconds: number): SkyFrame {
+    update(settings: SkySettings, lighting: FrameLighting, camera: PerspectiveCamera, deltaSeconds: number): SkyFrame {
         const { gl, frame, binding } = this;
         resolveSkyFrame(frame, settings, lighting);
         this.stats.drawCalls = 0;
+        this.cloudSettings = settings.clouds;
         binding.skyLighting = frame.skyLighting;
         binding.skyViewValid = frame.enabled;
         binding.shadowOnMoon = frame.shadowOnMoon;
@@ -76,43 +81,62 @@ export class SkySystem {
         else
             vec3.set(binding.moonIrradiance, 0, 0, 0);
         binding.cloudShadow.enabled = false;
-        if (!frame.enabled) {
-            this.cloudsRenderedLastFrame = false;
+        if (!frame.enabled)
             return frame;
-        }
         gl.disable(gl.DEPTH_TEST);
         this.luts.update(frame);
         this.stats.drawCalls += this.luts.stats.drawCalls;
         this.clouds.update(settings.clouds, deltaSeconds);
-        if (frame.cloudsEnabled && camera.invertible) {
-            if (settings.clouds.shadows) {
-                binding.cloudShadow.enabled = this.cloudShadow.render(frame.shadowCasterDirection, camera.position, this.clouds, this.noise);
-                this.stats.drawCalls += this.cloudShadow.stats.drawCalls;
-            }
-            if (!this.cloudsRenderedLastFrame)
-                this.cloudPass.invalidateHistory();
-            this.cloudsRenderedLastFrame = this.cloudPass.render({
-                camera,
-                frame,
-                quality: settings.clouds.quality,
-                stepsPerFrame: this.profile.cloudStepsPerFrame,
-                interleave: this.profile.cloudInterleave,
-                luts: this.luts,
-                clouds: this.clouds,
-                noise: this.noise,
-                canvasWidth,
-                canvasHeight,
-            });
-            this.stats.drawCalls += this.cloudPass.stats.drawCalls;
-            this.stats.cloudWidth = this.cloudPass.stats.width;
-            this.stats.cloudHeight = this.cloudPass.stats.height;
-        }
-        else {
-            this.cloudsRenderedLastFrame = false;
+        if (frame.cloudsEnabled && camera.invertible && settings.clouds.shadows) {
+            binding.cloudShadow.enabled = this.cloudShadow.render(frame.shadowCasterDirection, camera.position, this.clouds, this.noise);
+            this.stats.drawCalls += this.cloudShadow.stats.drawCalls;
         }
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.enable(gl.DEPTH_TEST);
         return frame;
+    }
+    renderClouds(camera: PerspectiveCamera, canvasWidth: number, canvasHeight: number): void {
+        const { gl, frame } = this;
+        const settings = this.cloudSettings;
+        if (!frame.enabled || !frame.cloudsEnabled || !camera.invertible || !settings) {
+            this.cloudsRenderedLastFrame = false;
+            this.cloudsCompiling = false;
+            return;
+        }
+        gl.disable(gl.DEPTH_TEST);
+        if (!this.cloudsRenderedLastFrame)
+            this.cloudPass.invalidateHistory();
+        this.cloudsRenderedLastFrame = this.cloudPass.render({
+            camera,
+            frame,
+            quality: settings.quality,
+            stepsPerFrame: Math.max(4, Math.round(this.profile.cloudStepsPerFrame * this.cloudStepsScale)),
+            interleave: this.profile.cloudInterleave,
+            resolutionScale: this.cloudScale,
+            luts: this.luts,
+            clouds: this.clouds,
+            noise: this.noise,
+            canvasWidth,
+            canvasHeight,
+        });
+        this.cloudsCompiling = !this.cloudsRenderedLastFrame;
+        this.stats.drawCalls += this.cloudPass.stats.drawCalls;
+        this.stats.cloudWidth = this.cloudPass.stats.width;
+        this.stats.cloudHeight = this.cloudPass.stats.height;
+        gl.enable(gl.DEPTH_TEST);
+    }
+    get settled(): boolean {
+        const { frame } = this;
+        if (!frame.enabled)
+            return true;
+        if (frame.starsIntensity > 0)
+            return false;
+        if (!frame.cloudsEnabled)
+            return true;
+        const settings = this.cloudSettings;
+        if (!settings || settings.windSpeed !== 0)
+            return false;
+        return this.cloudsRenderedLastFrame && this.cloudPass.converged;
     }
     renderBackground(camera: PerspectiveCamera, width: number, height: number, elapsedSeconds: number): number {
         if (!this.frame.enabled || !camera.invertible)
@@ -122,8 +146,26 @@ export class SkySystem {
             frame: this.frame,
             luts: this.luts,
             clouds: this.cloudsRenderedLastFrame ? this.cloudPass.texture : null,
+            sunDisk: true,
             width,
             height,
+            elapsedSeconds,
+        });
+        return 1;
+    }
+    renderProbeBackground(camera: PerspectiveCamera, size: number, elapsedSeconds: number): number {
+        if (!this.frame.enabled || !camera.invertible)
+            return 0;
+        const { cloudShadow } = this.binding;
+        this.skyPass.render({
+            camera,
+            frame: this.frame,
+            luts: this.luts,
+            clouds: null,
+            cloudLayer: this.frame.cloudsEnabled && cloudShadow.enabled ? cloudShadow : null,
+            sunDisk: false,
+            width: size,
+            height: size,
             elapsedSeconds,
         });
         return 1;
