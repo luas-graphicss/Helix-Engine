@@ -1297,4 +1297,281 @@ class Analyzer {
                 this.analyzeAccessors(decl, member, cls);
         }
     }
+    private analyzeAccessors(decl: VariableMember, member: MemberInfo, cls: ClassInfo): void {
+        const accessors = decl.accessors!;
+        const setter = accessors.setter;
+        if (setter) {
+            if (setter.kind === 'named') {
+                const target = cls.members.get(setter.name);
+                if (!target || target.kind !== 'func' || !target.func)
+                    this.error(setter.span, `O setter "${setter.name}" de ${member.name} precisa ser uma função desta classe.`);
+                else if (target.func.params.length !== 1)
+                    this.error(setter.span, `O setter "${setter.name}" precisa receber exatamente 1 parâmetro (o novo valor).`);
+                else if (target.isStatic)
+                    this.error(setter.span, `O setter "${setter.name}" não pode ser static.`);
+                else
+                    target.func.accessorOf = member.name;
+            }
+            else {
+                const fn: FunctionContext = { cls, isStatic: false, name: null, returnType: 'void', isLambda: false, parent: null, captures: new Set(), assigned: new Set(), accessorOf: member.name, isInitializer: false, loopDepth: 0, hasAwait: false };
+                collectAssigned(setter.body, fn.assigned);
+                this.withFunction(fn, () => {
+                    const local = this.declareLocal(setter.param, setter.span, member.type, false, true);
+                    local.used = true;
+                    this.block(setter.body, false);
+                    if (fn.hasAwait)
+                        this.error(setter.span, 'await não é permitido dentro de set().');
+                });
+            }
+        }
+        const getter = accessors.getter;
+        if (getter) {
+            if (getter.kind === 'named') {
+                const target = cls.members.get(getter.name);
+                if (!target || target.kind !== 'func' || !target.func)
+                    this.error(getter.span, `O getter "${getter.name}" de ${member.name} precisa ser uma função desta classe.`);
+                else if (target.func.params.length !== 0)
+                    this.error(getter.span, `O getter "${getter.name}" não recebe parâmetros.`);
+                else if (target.isStatic)
+                    this.error(getter.span, `O getter "${getter.name}" não pode ser static.`);
+                else
+                    target.func.accessorOf = member.name;
+            }
+            else {
+                const fn: FunctionContext = { cls, isStatic: false, name: null, returnType: member.type === 'Variant' ? null : member.type, isLambda: false, parent: null, captures: new Set(), assigned: new Set(), accessorOf: member.name, isInitializer: false, loopDepth: 0, hasAwait: false };
+                collectAssigned(getter.body, fn.assigned);
+                this.withFunction(fn, () => {
+                    this.block(getter.body, false);
+                    if (fn.hasAwait)
+                        this.error(getter.span, 'await não é permitido dentro de get().');
+                });
+            }
+        }
+    }
+    private analyzeFunctions(cls: ClassInfo): void {
+        for (const member of cls.members.values()) {
+            const decl = member.func;
+            if (!decl)
+                continue;
+            decl.isAsync = containsAwait(decl.body);
+            const fn: FunctionContext = {
+                cls,
+                isStatic: decl.isStatic,
+                name: decl.name,
+                returnType: decl.returnType ? member.type : decl.name === '_init' ? 'void' : null,
+                isLambda: false,
+                parent: null,
+                captures: new Set(),
+                assigned: new Set(),
+                accessorOf: decl.accessorOf ?? null,
+                isInitializer: false,
+                loopDepth: 0,
+                hasAwait: false,
+            };
+            collectAssigned(decl.body, fn.assigned);
+            this.withFunction(fn, () => {
+                this.declareParams(decl.params);
+                this.block(decl.body, false);
+                this.popScopeWarnings();
+            });
+        }
+    }
+    private popScopeWarnings(): void {
+        const scope = this.scope!;
+        for (const local of scope.locals.values()) {
+            if (!local.used && !local.name.startsWith('_')) {
+                this.warn(local.span, local.isParam ? `O parâmetro "${local.name}" nunca é usado (prefixe com _ para silenciar).` : `A variável local "${local.name}" nunca é usada.`);
+            }
+        }
+    }
+    private declareParams(params: readonly Parameter[]): void {
+        const seen = new Set<string>();
+        for (const param of params) {
+            if (seen.has(param.name))
+                this.error(param.span, `O parâmetro "${param.name}" está repetido.`);
+            seen.add(param.name);
+            const type = param.staticType ?? (param.type ? this.resolveTypeRef(param.type, this.fn!.cls) : 'Variant');
+            param.staticType = type;
+            if (param.defaultValue) {
+                const valueType = this.expression(param.defaultValue);
+                if (param.type)
+                    this.checkAssignable(valueType, type, param.defaultValue.span, `o parâmetro "${param.name}"`);
+                else if (valueType !== 'null' && valueType !== 'Variant' && !isMeta(valueType))
+                    param.staticType = this.fn!.assigned.has(param.name) ? 'Variant' : valueType;
+            }
+            const local = this.declareLocal(param.name, param.span, param.staticType, false, true);
+            param.jsName = local.jsName;
+        }
+    }
+    private block(block: Block, newScope = true): void {
+        if (newScope)
+            this.pushScope();
+        let terminated: Statement | null = null;
+        for (const statement of block.statements) {
+            if (terminated) {
+                this.warn(statement.span, `Código inacessível: a linha ${terminated.span.line} sempre ${terminated.kind === 'return' ? 'sai da função' : 'interrompe o laço'} antes daqui.`);
+                terminated = null;
+            }
+            this.statement(statement);
+            if (statement.kind === 'return' || statement.kind === 'break' || statement.kind === 'continue')
+                terminated = statement;
+        }
+        if (newScope)
+            this.popScope();
+    }
+    private statement(statement: Statement): void {
+        const fn = this.fn!;
+        switch (statement.kind) {
+            case 'expression': {
+                const e = statement.expression;
+                this.expression(e);
+                if (e.kind !== 'call' && e.kind !== 'await' && !(e.kind === 'lambda'))
+                    this.warn(statement.span, 'Esta expressão não tem efeito (o valor é descartado).');
+                if (e.kind === 'await' && e.value.kind !== 'call' && e.value.type !== 'Signal' && e.value.type !== 'Variant' && !isMeta(e.value.type ?? 'Variant'))
+                    this.warn(statement.span, 'await de um valor que não é sinal nem corrotina não espera nada.');
+                return;
+            }
+            case 'assignment':
+                this.assignment(statement);
+                return;
+            case 'variable': {
+                let valueType: StaticType = 'null';
+                if (statement.value)
+                    valueType = this.expression(statement.value);
+                let type: StaticType = 'Variant';
+                if (statement.type) {
+                    type = this.resolveTypeRef(statement.type, fn.cls);
+                    if (statement.value)
+                        this.checkAssignable(valueType, type, statement.value.span, `a variável "${statement.name}"`);
+                    else if (NON_NULLABLE.has(baseTypeName(type)) && !isNumeric(type) && type !== 'bool' && !STRING_TYPES.has(type)) {
+                    }
+                }
+                else if (statement.inferred) {
+                    if (!statement.value)
+                        this.error(statement.nameSpan, `"${statement.name}" usa := mas não tem valor para inferir o tipo.`);
+                    else if (valueType === 'null' || valueType === 'void')
+                        this.error(statement.value.span, `Não dá para inferir o tipo de "${statement.name}" a partir de ${valueType === 'null' ? 'null' : 'uma chamada sem retorno'}.`);
+                    else
+                        type = valueType;
+                }
+                else if (statement.value && valueType !== 'null' && valueType !== 'void' && valueType !== 'Variant' && !fn.assigned.has(statement.name)) {
+                    type = valueType;
+                }
+                if (valueType === 'void' && statement.value)
+                    this.error(statement.value.span, 'Esta chamada não devolve valor (void) e não pode inicializar uma variável.');
+                const local = this.declareLocal(statement.name, statement.nameSpan, type, false, false);
+                statement.jsName = local.jsName;
+                statement.staticType = type;
+                return;
+            }
+            case 'constant': {
+                const valueType = this.expression(statement.value);
+                let type = valueType === 'null' ? 'Variant' : valueType;
+                if (statement.type) {
+                    type = this.resolveTypeRef(statement.type, fn.cls);
+                    this.checkAssignable(valueType, type, statement.value.span, `a constante "${statement.name}"`);
+                }
+                if (!this.isConstantExpression(statement.value))
+                    this.error(statement.value.span, `O valor de const ${statement.name} precisa ser uma expressão constante.`);
+                const local = this.declareLocal(statement.name, statement.nameSpan, type, true, false);
+                statement.jsName = local.jsName;
+                statement.staticType = type;
+                return;
+            }
+            case 'if':
+                this.condition(statement.condition);
+                this.block(statement.then);
+                if (statement.otherwise)
+                    this.block(statement.otherwise);
+                return;
+            case 'while':
+                this.condition(statement.condition);
+                fn.loopDepth++;
+                this.block(statement.body);
+                fn.loopDepth--;
+                return;
+            case 'for': {
+                const iterableType = this.expression(statement.iterable);
+                let variableType: StaticType = 'Variant';
+                if (isArrayType(iterableType))
+                    variableType = arrayElement(iterableType);
+                else if (iterableType === 'int' || iterableType === 'float')
+                    variableType = iterableType;
+                else if (STRING_TYPES.has(iterableType))
+                    variableType = 'String';
+                else if (iterableType === 'Dictionary')
+                    variableType = 'Variant';
+                else if (iterableType === 'bool' || iterableType === 'null' || VALUE_TYPES.has(iterableType) || iterableType === 'Callable' || iterableType === 'Signal')
+                    this.error(statement.iterable.span, `Não é possível percorrer um valor do tipo ${iterableType} com for.`);
+                if (statement.variableType) {
+                    const declared = this.resolveTypeRef(statement.variableType, fn.cls);
+                    if (variableType !== 'Variant')
+                        this.checkAssignable(variableType, declared, statement.variableSpan, `a variável do laço "${statement.variable}"`);
+                    variableType = declared;
+                }
+                this.pushScope();
+                const local = this.declareLocal(statement.variable, statement.variableSpan, variableType, false, false);
+                statement.jsName = local.jsName;
+                fn.loopDepth++;
+                this.block(statement.body, false);
+                fn.loopDepth--;
+                this.popScope();
+                return;
+            }
+            case 'match': {
+                const valueType = this.expression(statement.value);
+                for (const branch of statement.branches) {
+                    this.pushScope();
+                    for (const pattern of branch.patterns)
+                        this.pattern(pattern, valueType);
+                    if (branch.guard)
+                        this.condition(branch.guard);
+                    this.block(branch.body, false);
+                    this.popScope();
+                }
+                return;
+            }
+            case 'return': {
+                if (fn.isInitializer) {
+                    this.error(statement.span, 'return não pode aparecer fora de uma função.');
+                    return;
+                }
+                const valueType = statement.value ? this.expression(statement.value) : 'void';
+                if (fn.returnType === 'void') {
+                    if (statement.value)
+                        this.error(statement.span, fn.name === '_init' ? '_init não devolve valor.' : fn.accessorOf && !statement.value ? '' : 'Esta função é void e não pode devolver um valor.');
+                }
+                else if (fn.returnType) {
+                    if (!statement.value)
+                        this.error(statement.span, `Esta função devolve ${fn.returnType}: o return precisa de um valor.`);
+                    else
+                        this.checkAssignable(valueType, fn.returnType, statement.value.span, 'o valor devolvido');
+                }
+                return;
+            }
+            case 'break':
+                if (fn.loopDepth === 0)
+                    this.error(statement.span, 'break só pode aparecer dentro de um laço (for/while).');
+                return;
+            case 'continue':
+                if (fn.loopDepth === 0)
+                    this.error(statement.span, 'continue só pode aparecer dentro de um laço (for/while).');
+                return;
+            case 'assert':
+                this.condition(statement.condition);
+                if (statement.message)
+                    this.expression(statement.message);
+                return;
+            case 'pass':
+            case 'breakpoint':
+                return;
+        }
+    }
+    private condition(e: Expression): void {
+        const type = this.expression(e);
+        if (type === 'void')
+            this.error(e.span, 'A condição é uma chamada sem retorno (void).');
+        if (e.kind === 'assignment' as never)
+            this.error(e.span, 'Use == para comparar; = é atribuição.');
+    }
 }
