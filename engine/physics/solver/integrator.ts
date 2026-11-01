@@ -12,6 +12,18 @@ export function integrateVelocities(bodies: readonly RigidBody[], settings: Phys
         v[0] += gravity[0] * gravityScale;
         v[1] += gravity[1] * gravityScale;
         v[2] += gravity[2] * gravityScale;
+        if (body.hasForces) {
+            const f = body.force;
+            const t = body.torque;
+            const linear = body.invMass * h;
+            v[0] += f[0] * linear;
+            v[1] += f[1] * linear;
+            v[2] += f[2] * linear;
+            const m = body.invInertiaWorld;
+            w[0] += (m[0] * t[0] + m[3] * t[1] + m[6] * t[2]) * h;
+            w[1] += (m[1] * t[0] + m[4] * t[1] + m[7] * t[2]) * h;
+            w[2] += (m[2] * t[0] + m[5] * t[1] + m[8] * t[2]) * h;
+        }
         const linearDamping = 1 / (1 + h * body.linearDamping);
         const angularDamping = 1 / (1 + h * body.angularDamping);
         v[0] *= linearDamping;
