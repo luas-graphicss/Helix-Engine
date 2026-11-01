@@ -2228,4 +2228,268 @@ class Analyzer {
         }
         return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
     }
+    private valueMember(typeName: string, name: string, span: SourceSpan): MemberLookup | null {
+        const fields = VALUE_FIELDS[typeName] ?? {};
+        const field = fields[name];
+        if (field)
+            return { type: field, callable: false, readonly: false, what: 'componente' };
+        const valueClass = VALUE_CLASSES[typeName]!;
+        const prototype = Object.getPrototypeOf(valueClass.sample) as object;
+        if (!(name in prototype) || name === 'constructor') {
+            const candidates = [...Object.keys(fields), ...Object.getOwnPropertyNames(prototype).filter((key) => key !== 'constructor')];
+            this.error(span, `${typeName} não tem o membro "${name}".${this.suggest(name, candidates)}`);
+            return null;
+        }
+        const isMethod = typeof (prototype as Record<string, unknown>)[name] === 'function';
+        let type: StaticType = typeName;
+        if (VECTOR_TYPES.has(typeName)) {
+            if (VECTOR_FLOAT_METHODS.has(name) || (name === 'cross' && (typeName === 'Vector2' || typeName === 'Vector2i')))
+                type = 'float';
+            else if (name === 'max_axis_index' || name === 'min_axis_index')
+                type = 'int';
+            else if (name.startsWith('is_'))
+                type = 'bool';
+            else if (name === 'to_vector3' || name === 'to_vector2')
+                type = 'Variant';
+        }
+        else if (typeName === 'Color') {
+            if (name === 'to_html')
+                type = 'String';
+            else if (name.startsWith('to_'))
+                type = 'int';
+            else if (name.startsWith('is_'))
+                type = 'bool';
+            else if (name === 'luminance' || name === 'get_luminance')
+                type = 'float';
+        }
+        else if (typeName === 'Quaternion') {
+            if (name === 'length' || name === 'length_squared' || name === 'dot' || name === 'angle_to' || name === 'get_angle')
+                type = 'float';
+            else if (name.startsWith('is_'))
+                type = 'bool';
+            else if (name === 'get_euler' || name === 'get_axis')
+                type = 'Vector3';
+        }
+        else if (typeName === 'Basis') {
+            if (name === 'determinant' || name.startsWith('tdot'))
+                type = 'float';
+            else if (name === 'get_euler' || name === 'get_scale')
+                type = 'Vector3';
+            else if (name === 'get_rotation_quaternion')
+                type = 'Quaternion';
+            else if (name.startsWith('is_'))
+                type = 'bool';
+        }
+        else if (typeName === 'Transform3D') {
+            if (name.startsWith('is_'))
+                type = 'bool';
+        }
+        else if (typeName === 'Rect2') {
+            if (name === 'has_point' || name === 'intersects' || name === 'encloses' || name === 'has_area' || name.startsWith('is_'))
+                type = 'bool';
+            else if (name === 'get_area')
+                type = 'float';
+            else if (name === 'get_center')
+                type = 'Vector2';
+        }
+        else if (typeName === 'AABB') {
+            if (name === 'has_point' || name === 'intersects' || name === 'encloses' || name === 'has_volume' || name === 'has_surface' || name.startsWith('is_'))
+                type = 'bool';
+            else if (name === 'get_volume')
+                type = 'float';
+            else if (name === 'get_center' || name === 'get_longest_axis' || name === 'get_shortest_axis' || name === 'get_endpoint' || name === 'get_support')
+                type = 'Vector3';
+            else if (name === 'get_longest_axis_index' || name === 'get_shortest_axis_index')
+                type = 'int';
+            else if (name === 'get_longest_axis_size' || name === 'get_shortest_axis_size')
+                type = 'float';
+        }
+        if (!isMethod)
+            return { type: 'Variant', callable: false, readonly: false, what: 'propriedade' };
+        return { type, callable: true, readonly: true, what: `método de ${typeName}` };
+    }
+    private call(e: CallExpression): StaticType {
+        const callee = e.callee;
+        const fn = this.fn!;
+        if (callee.kind === 'identifier') {
+            const calleeType = this.resolveIdentifier(callee, 'call');
+            callee.type = calleeType;
+            const argTypes = e.args.map((arg) => this.expression(arg));
+            const resolution = callee.resolved;
+            if (!resolution)
+                return 'Variant';
+            switch (resolution.kind) {
+                case 'local': {
+                    if (calleeType !== 'Callable' && calleeType !== 'Variant' && !isMeta(calleeType)) {
+                        this.error(callee.span, `"${callee.name}" é ${describeType(calleeType)} e não pode ser chamado como função.`);
+                        return 'Variant';
+                    }
+                    if (calleeType.startsWith('@class:')) {
+                        this.error(callee.span, `Para criar uma instância use ${callee.name}.new(...).`);
+                        return 'Variant';
+                    }
+                    return 'Variant';
+                }
+                case 'member': {
+                    const member = this.findMember(fn.cls, callee.name) ?? this.findStaticInOuters(fn.cls, callee.name);
+                    if (!member)
+                        return 'Variant';
+                    switch (member.kind) {
+                        case 'func':
+                            this.checkArity(callee.name, member.func!.params.filter((p) => !p.defaultValue).length, member.func!.params.length, e, argTypes, member.func!);
+                            return member.type;
+                        case 'var':
+                        case 'const':
+                            if (member.type === 'Callable' || member.type === 'Variant')
+                                return 'Variant';
+                            if (member.type.startsWith('@class:'))
+                                this.error(callee.span, `Para criar uma instância use ${callee.name}.new(...).`);
+                            else
+                                this.error(callee.span, `"${callee.name}" é ${describeType(member.type)} e não pode ser chamado como função.`);
+                            return 'Variant';
+                        case 'signal':
+                            this.error(callee.span, `Sinais não são chamados diretamente: use ${callee.name}.emit(...).`);
+                            return 'Variant';
+                        case 'class':
+                            this.error(callee.span, `Para criar uma instância use ${callee.name}.new(...).`);
+                            return 'Variant';
+                        default:
+                            this.error(callee.span, `"${callee.name}" é ${this.describeMemberKind(member.kind)} e não pode ser chamado como função.`);
+                            return 'Variant';
+                    }
+                }
+                case 'base': {
+                    const base = this.baseMember(callee.name, fn.cls.godotBase);
+                    if (!base)
+                        return 'Variant';
+                    if (base.kind !== 'method') {
+                        this.error(callee.span, `"${callee.name}" é ${base.what}, não um método.`);
+                        return 'Variant';
+                    }
+                    this.checkArity(callee.name, base.min, base.max, e, argTypes, null);
+                    return base.type;
+                }
+                case 'class':
+                case 'sibling':
+                    this.error(callee.span, `Para criar uma instância use ${callee.name}.new(...).`);
+                    return 'Variant';
+                case 'builtin_type': {
+                    const name = resolution.name;
+                    const arity = CONSTRUCTOR_ARITY[name];
+                    if (arity && !arity.includes(e.args.length))
+                        this.error(e.span, `${name}(...) aceita ${arity.join(', ')} argumentos, não ${e.args.length}.`);
+                    if (isGodotClass(name) || name === 'Object' || name === 'Node') {
+                        this.error(callee.span, `Para criar um ${name} use ${name}.new().`);
+                        return 'Variant';
+                    }
+                    const globalArity = GLOBAL_ARITY[name];
+                    if (globalArity && (e.args.length < globalArity[0] || e.args.length > globalArity[1]))
+                        this.error(e.span, `${name}(...) aceita ${globalArity[0] === globalArity[1] ? globalArity[0] : `de ${globalArity[0]} a ${globalArity[1]}`} argumento(s), não ${e.args.length}.`);
+                    return name;
+                }
+                case 'singleton':
+                    this.error(callee.span, `${callee.name} é um singleton: chame um método dele (${callee.name}.${this.firstMethodOf(callee.name)}(...)).`);
+                    return 'Variant';
+                case 'global_function': {
+                    const name = resolution.name;
+                    const arity = GLOBAL_ARITY[name];
+                    if (arity && (e.args.length < arity[0] || e.args.length > arity[1])) {
+                        this.error(e.span, `${name}() espera ${arity[0] === arity[1] ? `${arity[0]}` : arity[1] === Infinity ? `pelo menos ${arity[0]}` : `de ${arity[0]} a ${arity[1]}`} argumento${arity[0] === 1 && arity[1] === 1 ? '' : 's'}, mas recebeu ${e.args.length}.`);
+                    }
+                    if (name === 'preload')
+                        this.error(e.span, 'preload precisa de um caminho fixo entre aspas: preload("res://Nome.gd").');
+                    const known = GLOBAL_RETURN_TYPES[name];
+                    if (known)
+                        return known;
+                    if (SAME_TYPE_GLOBALS.has(name)) {
+                        const first = argTypes[0] ?? 'Variant';
+                        if (name === 'lerp')
+                            return isNumeric(first) ? 'float' : first;
+                        if (name === 'min' || name === 'max')
+                            return argTypes.every((t) => t === 'int') ? 'int' : argTypes.every(isNumeric) ? 'float' : argTypes.every((t) => t === first) ? first : 'Variant';
+                        return isNumeric(first) || VALUE_TYPES.has(first) ? first : 'Variant';
+                    }
+                    return 'Variant';
+                }
+                case 'io':
+                    return 'void';
+                case 'constant':
+                case 'key':
+                    this.error(callee.span, `"${callee.name}" é uma constante e não pode ser chamada.`);
+                    return 'Variant';
+                case 'helix':
+                    return 'Variant';
+            }
+        }
+        if (callee.kind === 'member') {
+            const lookup = this.member(callee, 'call');
+            const argTypes = e.args.map((arg) => this.expression(arg));
+            if (!lookup)
+                return 'Variant';
+            if (!lookup.callable) {
+                this.error(callee.nameSpan, `"${callee.name}" é ${lookup.what} (${describeType(lookup.type)}) e não pode ser chamado como função.`);
+                return 'Variant';
+            }
+            if (lookup.min !== undefined && lookup.max !== undefined)
+                this.checkArity(callee.name, lookup.min, lookup.max, e, argTypes, lookup.func ?? null);
+            if (lookup.type === 'Signal' && lookup.resolution?.kind === 'member') {
+                this.error(callee.nameSpan, `Sinais não são chamados diretamente: use ${callee.name}.emit(...).`);
+                return 'Variant';
+            }
+            if (lookup.resolution?.kind === 'member' && lookup.resolution.memberKind === 'var')
+                return 'Variant';
+            return lookup.type;
+        }
+        if (callee.kind === 'super') {
+            const argTypes = e.args.map((arg) => this.expression(arg));
+            if (fn.isLambda || fn.isInitializer || !fn.name) {
+                this.error(callee.span, 'super() só pode ser chamado dentro de um método, e chama o método de mesmo nome da classe pai.');
+                return 'Variant';
+            }
+            const lookup = this.superMember(fn.name, callee.span);
+            if (!lookup)
+                return 'Variant';
+            if (lookup.min !== undefined && lookup.max !== undefined)
+                this.checkArity(`super (${fn.name})`, lookup.min, lookup.max, e, argTypes, lookup.func ?? null);
+            callee.type = 'Callable';
+            return lookup.type;
+        }
+        const calleeType = this.expression(callee);
+        for (const arg of e.args)
+            this.expression(arg);
+        if (calleeType !== 'Callable' && calleeType !== 'Variant' && !isMeta(calleeType)) {
+            this.error(callee.span, `Um valor do tipo ${calleeType} não pode ser chamado como função.`);
+            return 'Variant';
+        }
+        if (calleeType.startsWith('@class:'))
+            this.error(callee.span, `Para criar uma instância use ${calleeType.slice(7)}.new(...).`);
+        return 'Variant';
+    }
+    private firstMethodOf(singleton: string): string {
+        const table = SINGLETON_MEMBERS[singleton];
+        if (!table)
+            return 'metodo';
+        for (const [name, entry] of Object.entries(table))
+            if (entry.kind === 'method')
+                return name;
+        return 'metodo';
+    }
+    private checkArity(name: string, min: number, max: number, e: CallExpression, argTypes: readonly StaticType[], func: FunctionMember | null): void {
+        const count = e.args.length;
+        if (count < min)
+            this.error(e.span, `Faltam argumentos para "${name}": espera ${min === max ? min : `pelo menos ${min}`}, recebeu ${count}.`);
+        else if (count > max)
+            this.error(e.span, `Argumentos demais para "${name}": espera ${min === max ? max : `no máximo ${max}`}, recebeu ${count}.`);
+        if (!func)
+            return;
+        for (let index = 0; index < Math.min(count, func.params.length); index++) {
+            const param = func.params[index]!;
+            const argType = argTypes[index] ?? 'Variant';
+            if (param.type && param.staticType && argType === 'void')
+                this.error(e.args[index]!.span, `O argumento ${index + 1} de "${name}" é uma chamada sem retorno (void).`);
+            else if (param.type && param.staticType && !this.assignable(argType, param.staticType)) {
+                this.error(e.args[index]!.span, `O argumento ${index + 1} de "${name}" (${param.name}) é do tipo ${param.staticType}, mas recebeu ${describeType(argType)}.`);
+            }
+        }
+    }
 }
