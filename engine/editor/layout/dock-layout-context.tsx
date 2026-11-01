@@ -2,12 +2,20 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { DockLayoutStore, type DockLayoutState } from './dock-layout';
 const DockLayoutContext = createContext<DockLayoutStore | null>(null);
+export const dockLayoutRegistry: {
+    current: DockLayoutStore | null;
+} = { current: null };
 export function DockLayoutProvider({ children }: {
     children: ReactNode;
 }) {
     const [store] = useState(() => new DockLayoutStore());
     useEffect(() => {
         void store.load();
+        dockLayoutRegistry.current = store;
+        return () => {
+            if (dockLayoutRegistry.current === store)
+                dockLayoutRegistry.current = null;
+        };
     }, [store]);
     return <DockLayoutContext.Provider value={store}>{children}</DockLayoutContext.Provider>;
 }
