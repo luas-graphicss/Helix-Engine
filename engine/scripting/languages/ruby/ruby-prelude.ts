@@ -564,4 +564,284 @@ module Helix
 
     def print(*args)
       @__hx_game.console("info", args.map(&:to_s).join, Helix.script_location)
+      nil
+    end
+
+    def p(*args)
+      location = Helix.script_location
+      args.each { |arg| @__hx_game.console("info", arg.inspect, location) }
+      args.size <= 1 ? args.first : args
+    end
+    alias pp p
+
+    def warn(*args, **_options)
+      @__hx_game.console("warn", args.map(&:to_s).join("\n"), Helix.script_location)
+      nil
+    end
+
+    def to_s
+      "#<Script #{@__hx_file}>"
+    end
+    alias inspect to_s
+
+                                                                                                                                              
+    def __hx_bind(instance)
+      script_object = self
+      klass = instance.class
+      own = klass.instance_methods(false) + klass.private_instance_methods(false)
+      %i[helix script actor puts print p pp warn require require_relative].each do |name|
+        next if own.include?(name)
+        if name == :actor
+          instance.define_singleton_method(name) { script_object.helix.self }
+        else
+          instance.define_singleton_method(name) { |*args, **kwargs, &block| script_object.__send__(name, *args, **kwargs, &block) }
+        end
+      end
+      instance
+    end
+  end
+
+                                                                                              
+  class Game
+    attr_reader :id
+
+    def initialize(id, host)
+      @id = id
+      @host = host
+      @callbacks = {}
+      @callback_ids = {}.compare_by_identity
+      @next_callback = 1
+      @fibers = {}
+      @next_token = 1
+      @active_fiber = nil
+      @depth = 0
+      @modules = {}
+      @loading = []
+      @root = nil
+    end
+
+                                                                                              
+
+    def set_root(helix)
+      entry do
+        @root = decode(helix)
+        [:done, nil]
+      end
+    end
+
+                                                                                                                                     
+    def instantiate(key, file, helix, script)
+      entry do
+        object = ScriptObject.new(self, key, file, decode(helix), decode(script))
+        object.__hx_run(source_of(key))
+        hooks = collect_hooks(object, object.singleton_methods)
+        if hooks.empty?
+          klass = script_class(object, file)
+          if klass
+            instance = object.__hx_bind(klass.instance_method(:initialize).arity.zero? ? klass.new : klass.allocate)
+            hooks = collect_hooks(instance, klass.public_instance_methods)
+          end
+        end
+        [:done, hooks]
+      end
+    end
+
+    def load_module(key, file)
+      entry { [:done, encode(require_module(key, file))] }
+    end
+
+    def unload_module(key)
+      @modules.delete(key)
+      [:done, nil]
+    end
+
+    def invoke(callback_id, args)
+      entry do
+        callable = @callbacks[callback_id]
+        raise EngineError.new("callback ##{callback_id} não existe mais nesta execução.") unless callable
+        arguments = decode(args)
+        if @depth > 1
+          [:done, encode(call_callable(callable, arguments))]
+        else
+          start_fiber(::Fiber.new { [:done, encode(call_callable(callable, arguments))] })
+        end
+      end
+    end
+
+    def resume(token, ok, payload)
+      entry do
+        fiber = @fibers.delete(token)
+        raise EngineError.new("a espera ##{token} não existe mais nesta execução.") unless fiber
+        previous = @active_fiber
+        @active_fiber = fiber
+        begin
+          drive(fiber, fiber.resume([ok, payload]))
+        ensure
+          @active_fiber = previous
+        end
+      end
+    end
+
+    def drop(token)
+      @fibers.delete(token)
+      [:done, nil]
+    end
+
+    def dispose
+      @callbacks.clear
+      @callback_ids.clear
+      @fibers.clear
+      @modules.clear
+    end
+
+                                                                                               
+
+    def ref_get(id, key)
+      host_result(@host.call(:get, id, key_argument(key)))
+    end
+
+    def ref_set(id, key, value)
+      host_result(@host.call(:set, id, key_argument(key), ::JSON.generate(encode(value))))
+      value
+    end
+
+    def ref_invoke(id, key, args)
+      host_result(@host.call(:invoke, id, key, ::JSON.generate(args.map { |arg| encode(arg) })))
+    end
+
+    def fn_call(fn_id, args)
+      host_result(@host.call(:call, fn_id, ::JSON.generate(args.map { |arg| encode(arg) })))
+    end
+
+    def ref_str(id)
+      @host.call(:str, id).to_s
+    end
+
+    def ref_len(id)
+      @host.call(:len, id).to_s.to_i
+    end
+
+    def ref_keys(id)
+      ::JSON.parse(@host.call(:keys, id).to_s)
+    end
+
+    def ref_has?(id, key)
+      @host.call(:has, id, key).to_s == "true"
+    end
+
+    def console(level, message, location)
+      @host.call(:console, level, message.to_s, location&.path, location&.lineno)
+      nil
+    end
+
+                                                                                                                      
+                                                                                                                      
+                                                                                                                
+    def require_from(requirer, name)
+      envelope = ::JSON.parse(@host.call(:resolve, requirer.__hx_key, name).to_s)
+      raise EngineError.new(envelope["e"].to_s) if envelope.key?("e")
+      info = envelope["v"]
+      if ::Hash === info && info[KIND] == "module"
+        value = require_module(info["key"], info["file"])
+        share_constants(@modules[info["key"]][:object], requirer)
+        return value
+      end
+      if ::Hash === info && info[KIND] == "missing"
+        begin
+          return ::Kernel.require(name)
+        rescue ::LoadError
+          raise EngineError.new(info["message"].to_s)
+        end
+      end
+      value = decode(info)
+      base = ::File.basename(name, ".*")
+      define_constant(requirer, base, value) if base.match?(/\A[A-Z]\w*\z/)
+      value
+    end
+
+    def share_constants(source, target)
+      return if source.equal?(target)
+      namespace = source.singleton_class
+      namespace.constants(false).each { |constant| define_constant(target, constant, namespace.const_get(constant, false)) }
+    end
+
+    def define_constant(object, name, value)
+      namespace = object.singleton_class
+      namespace.const_set(name, value) unless namespace.const_defined?(name, false)
+    end
+
+                                                                                             
+
+    def encode(value)
+      case value
+      when nil, true, false, ::String, ::Integer then value
+      when ::Float then value.finite? ? value : nil
+      when ::Symbol then value.to_s
+      when Ref then value.__hx_descriptor
+      when ::Proc, ::Method then { KIND => "cb", "id" => callback_id(value) }
+      when ::Array then value.map { |entry| encode(entry) }
+      when ::Hash then value.each_with_object({}) { |(key, entry), out| out[key.to_s] = encode(entry) }
+      when ScriptObject then encode_exports(value.singleton_class, value.singleton_methods) { |name| value.method(name) }
+      when ::Module then encode_exports(value, value.singleton_methods(false)) { |name| value.method(name) }
+      else
+        if defined?(::Set) && ::Set === value then value.to_a.map { |entry| encode(entry) }
+        elsif value.respond_to?(:to_h) then encode(value.to_h)
+        else value.to_s
+        end
+      end
+    end
+
+                                                                                                                                       
+    def encode_exports(namespace, method_names)
+      out = {}
+      method_names.each { |name| out[name.to_s] = encode(yield(name)) }
+      namespace.constants(false).each { |name| out[name.to_s] = encode(namespace.const_get(name, false)) }
+      out
+    end
+
+    def decode(value)
+      case value
+      when ::Array then value.map { |entry| decode(entry) }
+      when ::Hash
+        kind = value[KIND]
+        return decode_descriptor(kind, value) unless kind.nil?
+        record = Record.new
+        value.each { |key, entry| record.store(key, decode(entry)) }
+        record
+      else value
+      end
+    end
+
+    private
+
+    def decode_descriptor(kind, record)
+      case kind
+      when ::Integer then Ref.new(self, kind)
+      when "ref" then Ref.new(self, record["id"].to_i)
+      when "fn" then FnRef.new(self, record["id"].to_i)
+      when "cb" then @callbacks[record["id"].to_i]
+      when "vec" then Vec.new(record["value"] || [])
+      when "data" then decode(record["value"])
+      when "err" then raise EngineError.new(record["message"].to_s, record["name"].to_s.empty? ? "HelixError" : record["name"].to_s)
+      when "await" then suspend!
+      else raise EngineError.new("descritor de protocolo desconhecido (#{kind}).")
+      end
+    end
+
+    def suspend!
+      current = ::Fiber.current
+      if @depth != 1 || @active_fiber.nil? || !current.equal?(@active_fiber)
+        @host.call(:discard)
+        where = @depth > 1 ? "dentro de um callback chamado de forma síncrona pela engine, enquanto outro código Ruby ainda roda" : "no nível superior do script"
+        raise EngineError.new("não é possível esperar pela engine #{where}: mova a espera para um hook (on_start, on_update…) ou para helix.task.spawn { … }.")
+      end
+      token = @next_token
+      @next_token += 1
+      ok, payload = ::Fiber.yield([:await, token])
+      raise EngineError.new(payload.to_s) unless ok
+      decode(payload)
+    end
+
+    def entry
+      @depth += 1
 `;
