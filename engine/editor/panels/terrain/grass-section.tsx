@@ -5,7 +5,7 @@ import { SliderField } from '@/engine/ui/slider-field';
 import { ToggleField, ToggleSwitch } from '@/engine/ui/toggle-field';
 import { ColorField } from '@/engine/ui/color-field';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
-import { useEditorState, useViewportStats } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useViewportStats } from '@/engine/editor/session/editor-session-context';
 import { fillGrass, terrainSupportsGrass, updateGrassSettings } from '@/engine/editor/operations/terrain-operations';
 import { MAX_GRASS_DENSITY, type GrassSettings } from '@/engine/terrain/foliage/grass-settings';
 import type { TerrainTarget } from '../terrain-panel';
@@ -13,7 +13,7 @@ import { centimeters, degrees, meters, percent, perSquareMeter, seconds, times }
 export function GrassSection({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { entity, terrain } = target;
     const { grass } = terrain;
     const supported = terrainSupportsGrass(terrain);
@@ -30,7 +30,7 @@ export function GrassSection({ target }: {
           Limpar
         </ActionButton>
       </ActionRow>
-      <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
         {supported
             ? `A grama nasce onde foi pintada e o solo aceita (vegetação e terra). ${blades.toLocaleString('pt-BR')} lâminas em tela.`
             : 'Nenhuma camada aceita grama: adicione uma camada de vegetação ou de solo.'}
@@ -51,7 +51,7 @@ export function GrassSection({ target }: {
 
       <SliderField label="Pisoteio" value={grass.trample} min={0} max={1} format={percent} onChange={set('trample')}/>
       <SliderField label="Recuperação" value={grass.recoverySeconds} min={0.5} max={30} scale="log" format={seconds} onChange={set('recoverySeconds')}/>
-      <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
         {grass.trample > 0
             ? `O jogador e os corpos rígidos deitam a grama por onde passam. ${interactors === 0 ? 'Nada' : interactors === 1 ? '1 corpo' : `${interactors} corpos`} pisando a grama agora.`
             : 'A grama ignora o jogador e os corpos da cena.'}
