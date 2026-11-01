@@ -5,8 +5,10 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { isModelFile } from '@/engine/assets/import/import-registry';
 import type { ImportedScene } from '@/engine/assets/import/import-types';
 import { addFilesToLibrary } from '@/engine/editor/operations/asset-library-operations';
-import { instantiateImportedScene, parseImportFiles, type ImportOptions, type ParsedImport } from '@/engine/editor/operations/import-operations';
+import { instantiateImportedScene, parseImportFiles, type ImportOptions, type ImportReadProgress, type ParsedImport } from '@/engine/editor/operations/import-operations';
 import { useEditorSession } from '@/engine/editor/session/editor-session-context';
+import { WELL_CLASS } from '@/engine/ui/surface-styles';
+import { cn } from '@/lib/utils';
 import { subscribeImportRequests } from '../import-requests';
 import { ImportDialog } from './import-dialog';
 const LOG_SOURCE = 'Importação';
@@ -15,6 +17,7 @@ type HostState = {
 } | {
     status: 'parsing';
     fileNames: string[];
+    progress: ImportReadProgress | null;
 } | {
     status: 'ready';
     queue: ParsedImport[];
@@ -25,8 +28,8 @@ export function ImportDialogHost() {
     const session = useEditorSession();
     const [state, setState] = useState<HostState>({ status: 'idle' });
     useEffect(() => subscribeImportRequests(async (files) => {
-        setState((current) => (current.status === 'ready' ? current : { status: 'parsing', fileNames: files.map((file) => file.name) }));
-        const parsed = await parseImportFiles(session, files);
+        setState((current) => (current.status === 'ready' ? current : { status: 'parsing', fileNames: files.map((file) => file.name), progress: null }));
+        const parsed = await parseImportFiles(session, files, (progress) => setState((current) => (current.status === 'parsing' ? { ...current, progress } : current)));
         setState((current) => {
             if (current.status === 'ready') {
                 return parsed.length > 0 ? { ...current, queue: [...current.queue, ...parsed], files: [...current.files, ...files] } : current;
@@ -67,15 +70,25 @@ export function ImportDialogHost() {
     }, [session, advance]);
     const reportPreviewError = useCallback((message: string) => session.log.error(LOG_SOURCE, `Falha na pré-visualização: ${message}`), [session]);
     if (state.status === 'parsing') {
+        const { progress } = state;
+        const percent = progress ? Math.round(progress.fraction * 100) : 0;
+        const detail = progress ? `${progress.stage}${progress.total > 1 ? ` · arquivo ${progress.index} de ${progress.total}` : ''}` : 'Preparando…';
         return (<Dialog open disablePointerDismissal onOpenChange={() => undefined}>
-        <DialogContent showCloseButton={false} className="w-auto max-w-sm gap-3 rounded-sm border border-border-strong bg-surface p-5 text-foreground" aria-busy>
+        <DialogContent showCloseButton={false} className="w-80 max-w-[calc(100vw-2rem)] gap-3 rounded-sm border border-border-strong bg-surface p-5 text-foreground" aria-busy>
           <div className="flex items-center gap-3">
             <LoaderCircle className="size-4 shrink-0 animate-spin text-primary" aria-hidden/>
-            <div className="flex min-w-0 flex-col">
+            <div className="flex min-w-0 flex-1 flex-col">
               <DialogTitle className="text-xs font-semibold">Lendo {state.fileNames.length === 1 ? 'arquivo' : 'arquivos'}…</DialogTitle>
-              <DialogDescription className="truncate font-mono text-2xs text-muted-foreground">{state.fileNames.join(', ')}</DialogDescription>
+              <DialogDescription className="truncate font-mono text-2xs text-muted-foreground">{progress?.fileName ?? state.fileNames.join(', ')}</DialogDescription>
             </div>
+            <span className="shrink-0 font-mono text-2xs text-muted-foreground tabular-nums">{percent}%</span>
           </div>
+          <div className={cn('h-1.5 overflow-hidden rounded-full', WELL_CLASS)} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-label="Progresso da leitura">
+            <div className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out" style={{ width: `${percent}%` }}/>
+          </div>
+          <p className="min-h-4 truncate text-2xs text-muted-foreground" aria-live="polite">
+            {detail}
+          </p>
         </DialogContent>
       </Dialog>);
     }
