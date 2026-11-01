@@ -1,0 +1,137 @@
+.  Copyright (C) 2005-2010   Gregory P. Smith (greg@krypto.org)
+
+0x0097 -> COPYRIGHT SIGN
+
+0x00a8 -> COPYRIGHT SIGN
+
+0x00b8 -> COPYRIGHT SIGN
+
+0xA9 -> COPYRIGHT SIGN
+
+0xB4 -> COPYRIGHT SIGN
+
+0xB8 -> COPYRIGHT SIGN
+
+0xBF -> COPYRIGHT SIGN
+
+0xD9 -> COPYRIGHT SIGN
+
+0xFB -> COPYRIGHT SIGN
+
+COPYRIGHT SIGN
+
+Copyright (C) 1999-2001 Gregory P. Ward.
+
+Copyright (C) 2001 Python Software Foundation
+
+Copyright (C) 2002 Lars Gustaebel <lars@gustaebel.de>
+
+Copyright (C) 2002 Python Software Foundation
+
+Copyright (C) 2002 Python Software Foundation.
+
+Copyright (C) 2004 Python Software Foundation
+
+Copyright (C) 2004-2005 Gerhard Häring <gh@ghaering.de>
+
+Copyright (C) 2005 Gerhard Häring <gh@ghaering.de>
+
+Copyright (C) 2006 Python Software Foundation.
+
+Copyright (c) 1997-2001 by Secret Labs AB.  All rights reserved.
+
+Copyright (c) 1998-2001 by Secret Labs AB.  All rights reserved.
+
+Copyright (c) 1999-2002 by Fredrik Lundh
+
+Copyright (c) 1999-2002 by Fredrik Lundh.
+
+Copyright (c) 1999-2002 by Secret Labs AB
+
+Copyright (c) 1999-2002 by Secret Labs AB.
+
+Copyright (c) 1999-2008 by Fredrik Lundh
+
+Copyright (c) 1999-2008 by Fredrik Lundh.  All rights reserved.
+
+Copyright (c) 1999-2009 by Fredrik Lundh
+
+Copyright (c) 2003-2004 by Fredrik Lundh.  All rights reserved.
+
+Copyright (c) 2003-2005 by Peter Astrand <astrand@lysator.liu.se>
+
+Copyright (c) 2003-2009 by Fredrik Lundh.  All rights reserved.
+
+Copyright (c) 2006-2008, R Oudkerk
+
+Copyright 1991-1995, Stichting Mathematisch Centrum, all rights reserved.
+
+Copyright 1995-1997, Automatrix, Inc., all rights reserved.
+
+Copyright 1999, Bioreason, Inc., all rights reserved.
+
+Copyright 2000 by Timothy O'Malley <timo@alum.mit.edu>
+
+Copyright 2000, Mojam Media, Inc., all rights reserved.
+
+Copyright 2000-2004 Michael Hudson-Doyle <micahel@gmail.com>
+
+Copyright 2000-2008 Michael Hudson-Doyle <micahel@gmail.com>
+
+Copyright 2000-2010 Michael Hudson-Doyle <micahel@gmail.com>
+
+Copyright 2001-2021 by Vinay Sajip. All Rights Reserved.
+
+Copyright 2001-2022 by Vinay Sajip. All Rights Reserved.
+
+Copyright 2001-2023 by Vinay Sajip. All Rights Reserved.
+
+Copyright 2007 Google Inc.
+
+Copyright 2007 Google, Inc. All Rights Reserved.
+
+Copyright 2009 Brian Quinlan. All Rights Reserved.
+
+Copyright Disney Enterprises, Inc.  All Rights Reserved.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+
+Licensed under the MIT license: https://opensource.org/licenses/mit-license.php
+
+NONINFRINGEMENT.  IN  NO  EVENT SHALL  THE  AUTHORS  OR COPYRIGHT
+
+SPDX-FileCopyrightText: 2021 Taneli Hukkinen
+
+SPDX-FileCopyrightText: Copyright (c) 2015-2021 MagicStack Inc.  http://magic.io
+
+SPDX-License-Identifier: MIT
+
+SPDX-License-Identifier: PSF-2.0 AND (MIT OR Apache-2.0)
+
+See C source code for _functools credits/copyright
+
+The above copyright  notice and this  permission notice shall  be
+
+all copies, and that both that copyright notice and this permission
+
+and that both that copyright notice and this permission notice appear in
+
+both that copyright notice and this permission notice appear in
+
+copies and that both that copyright notice and this permission
+
+copyright sign, U+00A9 ISOnum
+
+granted, provided that the above copyright notice appear in all
+
+granted, provided that the above copyright notice appears in all copies,
+
+hereby granted, provided that the above copyright notice appears in
+
+portions copyright 2001, Autonomous Zones Industries, Inc., all rights...
+
+provided that the above copyright notice appear in all copies and
+
+provided that the above copyright notice appear in all copies and that
+
+that both that copyright notice and this permission notice appear in
