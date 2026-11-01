@@ -1272,4 +1272,280 @@ class Parser {
     private lambdaBody(): Block | Expression {
         return this.at('{') ? this.block() : this.expression();
     }
+    private conditional(): Expression {
+        const start = this.current;
+        const condition = this.coalesce();
+        if (this.at('?') && !this.nullConditionalAhead()) {
+            this.advance();
+            const whenTrue = this.conditionalBranch();
+            this.expect(':', 'na expressão condicional (a ? b : c)');
+            const whenFalse = this.conditionalBranch();
+            return { kind: 'conditional', condition, whenTrue, whenFalse, span: this.spanFrom(start) };
+        }
+        return condition;
+    }
+    private conditionalBranch(): Expression {
+        const lambda = this.lambdaIfAny();
+        if (lambda)
+            return lambda;
+        return this.conditional();
+    }
+    private nullConditionalAhead(): boolean {
+        return this.at('[', this.peek()) && this.peek().adjacent;
+    }
+    private coalesce(): Expression {
+        const start = this.current;
+        const left = this.binary(0);
+        if (this.at('??')) {
+            this.advance();
+            const right = this.coalesce();
+            return { kind: 'binary', operator: '??', left, right, span: this.spanFrom(start) };
+        }
+        return left;
+    }
+    private static readonly LEVELS: ReadonlyArray<ReadonlySet<string>> = [
+        new Set(['||']),
+        new Set(['&&']),
+        new Set(['|']),
+        new Set(['^']),
+        new Set(['&']),
+        new Set(['==', '!=']),
+        new Set(['<', '>', '<=', '>=']),
+        new Set(['<<', '>>']),
+        new Set(['+', '-']),
+        new Set(['*', '/', '%']),
+    ];
+    private static readonly RELATIONAL_LEVEL = 6;
+    private static readonly ADDITIVE_LEVEL = 8;
+    private additive(): Expression {
+        return this.binary(Parser.ADDITIVE_LEVEL);
+    }
+    private binary(level: number): Expression {
+        if (level >= Parser.LEVELS.length)
+            return this.switchOrRange();
+        const start = this.current;
+        let left = this.binary(level + 1);
+        while (true) {
+            if (level === Parser.RELATIONAL_LEVEL) {
+                if (this.at('is')) {
+                    this.advance();
+                    const pattern = this.pattern();
+                    left = { kind: 'is', expression: left, pattern, span: this.spanFrom(start) };
+                    continue;
+                }
+                if (this.at('as')) {
+                    this.advance();
+                    const type = this.type();
+                    left = { kind: 'as', expression: left, type, span: this.spanFrom(start) };
+                    continue;
+                }
+            }
+            const operator = this.binaryOperatorAt(level);
+            if (!operator)
+                break;
+            const right = this.binary(level + 1);
+            left = { kind: 'binary', operator, left, right, span: this.spanFrom(start) };
+        }
+        return left;
+    }
+    private binaryOperatorAt(level: number): BinaryOperator | null {
+        const operators = Parser.LEVELS[level];
+        const token = this.current;
+        if (token.kind !== 'punct')
+            return null;
+        if (token.text === '>') {
+            const next = this.peek();
+            if (this.at('>', next) && next.adjacent) {
+                if (this.at('=', this.peek(2)) && this.peek(2).adjacent)
+                    return null;
+                if (!operators.has('>>'))
+                    return null;
+                this.advance();
+                this.advance();
+                return '>>';
+            }
+            if (this.at('=', next) && next.adjacent) {
+                if (!operators.has('>='))
+                    return null;
+                this.advance();
+                this.advance();
+                return '>=';
+            }
+            if (!operators.has('>'))
+                return null;
+            this.advance();
+            return '>';
+        }
+        if (!operators.has(token.text))
+            return null;
+        this.advance();
+        return token.text as BinaryOperator;
+    }
+    private switchOrRange(): Expression {
+        const start = this.current;
+        if (this.at('..')) {
+            this.advance();
+            const end = this.rangeOperandFollows() ? this.unary() : null;
+            return { kind: 'range', start: null, end, span: this.spanFrom(start) };
+        }
+        let left = this.unary();
+        while (true) {
+            if (this.at('switch') && this.at('{', this.peek())) {
+                left = this.switchExpression(start, left);
+                continue;
+            }
+            if (this.at('..')) {
+                this.advance();
+                const end = this.rangeOperandFollows() ? this.unary() : null;
+                left = { kind: 'range', start: left, end, span: this.spanFrom(start) };
+                continue;
+            }
+            if (this.atIdentifier('with') && this.at('{', this.peek()))
+                this.fail('Expressões "with" não são suportadas; crie o objeto de novo com os valores alterados.');
+            break;
+        }
+        return left;
+    }
+    private rangeOperandFollows(): boolean {
+        return !this.at(']') && !this.at(')') && !this.at(',') && !this.at(';') && !this.atEnd();
+    }
+    private switchExpression(start: Token, value: Expression): Expression {
+        this.expect('switch');
+        this.expect('{', 'abrindo o switch');
+        const arms: SwitchArm[] = [];
+        while (!this.at('}') && !this.atEnd()) {
+            const armStart = this.current;
+            const pattern = this.pattern();
+            const guard = this.matchIdentifier('when') ? this.expression() : null;
+            this.expect('=>', 'no braço do switch');
+            const result = this.expression();
+            arms.push({ pattern, guard, result, span: this.spanFrom(armStart) });
+            if (!this.match(','))
+                break;
+        }
+        this.expect('}', 'fechando o switch');
+        return { kind: 'switchExpression', value, arms, span: this.spanFrom(start) };
+    }
+    private unary(): Expression {
+        const start = this.current;
+        if (this.at('!') || this.at('-') || this.at('+') || this.at('~')) {
+            const operator = this.advance().text as '!' | '-' | '+' | '~';
+            const operand = this.unary();
+            if (operator === '-' && operand.kind === 'literal' && typeof operand.value === 'number') {
+                return { ...operand, value: -operand.value, span: this.spanFrom(start) };
+            }
+            return { kind: 'unary', operator, operand, prefix: true, span: this.spanFrom(start) };
+        }
+        if (this.at('++') || this.at('--')) {
+            const operator = this.advance().text as '++' | '--';
+            const operand = this.unary();
+            return { kind: 'unary', operator, operand, prefix: true, span: this.spanFrom(start) };
+        }
+        if (this.at('^')) {
+            this.advance();
+            const operand = this.unary();
+            return { kind: 'fromEnd', operand, span: this.spanFrom(start) };
+        }
+        if (this.atIdentifier('await') && this.awaitOperandFollows()) {
+            this.advance();
+            const expression = this.unary();
+            return { kind: 'await', expression, span: this.spanFrom(start) };
+        }
+        if (this.at('throw')) {
+            this.advance();
+            const expression = this.unary();
+            return { kind: 'throwExpression', expression, span: this.spanFrom(start) };
+        }
+        if (this.at('&') || this.at('*'))
+            this.fail('Ponteiros não existem neste runtime.');
+        if (this.at('(')) {
+            const cast = this.castIfAny();
+            if (cast)
+                return cast;
+        }
+        return this.postfix(this.primary());
+    }
+    private awaitOperandFollows(): boolean {
+        const next = this.peek();
+        if (next.kind === 'eof')
+            return false;
+        if (next.kind === 'punct')
+            return this.at('(', next) || this.at('!', next) || this.at('-', next) || this.at('+', next);
+        if (next.kind === 'keyword')
+            return this.at('this', next) || this.at('base', next) || this.at('new', next) || this.at('default', next) || this.at('typeof', next);
+        return true;
+    }
+    private castIfAny(): Expression | null {
+        const start = this.current;
+        return this.attempt(() => {
+            this.expect('(');
+            const type = this.type();
+            this.expect(')');
+            const next = this.current;
+            const isPrimitive = type.tupleElements === null && type.typeArguments.length === 0 && type.arrayRank === 0 && PRIMITIVE_TYPE_KEYWORDS.has(type.name);
+            const follows = next.kind === 'identifier' ||
+                next.kind === 'number' ||
+                next.kind === 'string' ||
+                next.kind === 'interpolated' ||
+                next.kind === 'char' ||
+                (next.kind === 'keyword' && CAST_FOLLOWERS.has(next.text)) ||
+                (next.kind === 'punct' && (next.text === '(' || next.text === '!' || next.text === '~')) ||
+                (isPrimitive && next.kind === 'punct' && (next.text === '-' || next.text === '+'));
+            if (!follows)
+                this.fail('não é um cast');
+            if (next.kind === 'identifier' && (this.atIdentifier('is') || this.atIdentifier('as')))
+                this.fail('não é um cast');
+            const expression = this.unary();
+            return { kind: 'cast', type, expression, span: this.spanFrom(start) } as Expression;
+        });
+    }
+    private postfix(expression: Expression): Expression {
+        let result = expression;
+        while (true) {
+            if (this.at('.') || this.at('?.')) {
+                const nullConditional = this.advance().text === '?.';
+                const nameToken = this.expectIdentifier('do membro depois de "."');
+                const typeArguments = this.at('<') ? this.typeArgumentsIfGeneric() : null;
+                result = { kind: 'member', target: result, name: String(nameToken.value), nameSpan: nameToken.span, typeArguments, nullConditional, span: spanBetween(result.span, this.previous().span) };
+                continue;
+            }
+            if (this.at('(')) {
+                const args = this.argumentList();
+                result = { kind: 'call', target: result, arguments: args, span: spanBetween(result.span, this.previous().span) };
+                continue;
+            }
+            if (this.at('[') || (this.at('?') && this.nullConditionalAhead())) {
+                const nullConditional = this.current.text === '?';
+                if (nullConditional)
+                    this.advance();
+                this.expect('[');
+                const args = this.argumentsUntil(']');
+                this.expect(']', 'fechando o índice');
+                result = { kind: 'element', target: result, arguments: args, nullConditional, span: spanBetween(result.span, this.previous().span) };
+                continue;
+            }
+            if (this.at('++') || this.at('--')) {
+                const operator = this.advance().text as '++' | '--';
+                result = { kind: 'unary', operator, operand: result, prefix: false, span: spanBetween(result.span, this.previous().span) };
+                continue;
+            }
+            if (this.at('!') && this.current.adjacent && !this.at('=', this.peek())) {
+                this.advance();
+                continue;
+            }
+            break;
+        }
+        return result;
+    }
+    private typeArgumentsIfGeneric(): TypeRef[] | null {
+        return this.attempt(() => {
+            const args = this.typeArguments();
+            const next = this.current;
+            if (next.kind === 'punct' && AFTER_TYPE_ARGUMENTS.has(next.text))
+                return args;
+            if (next.kind === 'eof')
+                return args;
+            this.fail('não são argumentos genéricos');
+        });
+    }
 }
