@@ -73,9 +73,9 @@ export function ImportDialog({ parsed, companionFiles, position, onImport, onSki
             if (!open && !importing)
                 onCancel();
         }}>
-      <DialogContent showCloseButton={false} aria-busy={importing} {...drop.handlers} className={cn('flex h-[min(780px,calc(100dvh-2rem))] w-[min(1240px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-sm border border-border-strong bg-surface p-0 text-foreground shadow-2xl ring-0 sm:max-w-none', drop.active && 'outline-2 outline-offset-[-2px] outline-primary outline-dashed')}>
-        <header className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-border px-3">
-          <div className="flex min-w-0 items-center gap-2">
+      <DialogContent showCloseButton={false} aria-busy={importing} {...drop.handlers} className={cn('flex h-[min(780px,calc(100dvh-2rem))] w-[min(1240px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-sm bg-surface p-0 text-foreground shadow-overlay sm:max-w-none', drop.active && 'outline-2 outline-offset-[-2px] outline-primary')}>
+        <header className="flex min-h-10 shrink-0 items-center justify-between gap-3 border-b border-border px-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
             <Import className="size-4 shrink-0 text-primary" aria-hidden/>
             <DialogTitle className="shrink-0 text-xs font-semibold">Importar modelo</DialogTitle>
             <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground" title={parsed.file.name}>
@@ -98,7 +98,7 @@ export function ImportDialog({ parsed, companionFiles, position, onImport, onSki
 
         <div className="flex min-h-0 flex-1">
           <ImportPreview model={preview.model} texturesVisible={preview.texturesVisible} onTexturesVisibleChange={preview.setTexturesVisible} building={preview.building} dimensions={preview.dimensions} triangles={preview.triangles}/>
-          <aside className="flex w-[460px] shrink-0 flex-col border-l border-border bg-surface" aria-label="Configurações da importação">
+          <aside className="flex w-[clamp(16rem,42%,460px)] shrink-0 flex-col border-l border-border bg-surface" aria-label="Configurações da importação">
             <div className="h-8 shrink-0 border-b border-border bg-surface-raised/60">
               <TabStrip tabs={tabs} activeId={tab} onChange={(id) => setTab(id as ImportTab)}/>
             </div>
@@ -111,8 +111,8 @@ export function ImportDialog({ parsed, companionFiles, position, onImport, onSki
           </aside>
         </div>
 
-        <footer className="flex h-11 shrink-0 items-center justify-between gap-3 border-t border-border bg-surface-raised/60 px-3">
-          <div className="flex min-w-0 items-center gap-2 font-mono text-2xs text-muted-foreground">
+        <footer className="flex min-h-11 shrink-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-border bg-surface-raised/60 px-3 py-1.5">
+          <div className="flex min-w-0 flex-1 basis-48 items-center gap-2 font-mono text-2xs text-muted-foreground">
             <span className="truncate">
               {formatInteger(stats.nodes)} {stats.nodes === 1 ? 'nó' : 'nós'} · {formatInteger(includedMeshes)} {includedMeshes === 1 ? 'malha' : 'malhas'} · {formatInteger(stats.materials)}{' '}
               {stats.materials === 1 ? 'material' : 'materiais'} · {formatInteger(stats.textures)} {stats.textures === 1 ? 'textura' : 'texturas'}
