@@ -385,6 +385,56 @@ class _Absent {
                                                                                
                                                                                 
                                                             
+abstract class Script {
+  Value helix = Value.none;
+
+                                     
+  Value self = Value.none;
+
+                                                                      
+  Value script = Value.none;
+
+                          
+  Value get entity => self;
+
+  void log(Object? a, [Object? b = _absent, Object? c = _absent, Object? d = _absent, Object? e = _absent, Object? f = _absent]) => Helix.log(a, b, c, d, e, f);
+  void debug(Object? a, [Object? b = _absent, Object? c = _absent, Object? d = _absent, Object? e = _absent, Object? f = _absent]) => Helix.debug(a, b, c, d, e, f);
+  void warn(Object? a, [Object? b = _absent, Object? c = _absent, Object? d = _absent, Object? e = _absent, Object? f = _absent]) => Helix.warn(a, b, c, d, e, f);
+  void error(Object? a, [Object? b = _absent, Object? c = _absent, Object? d = _absent, Object? e = _absent, Object? f = _absent]) => Helix.error(a, b, c, d, e, f);
+  Value require(String name) => Helix.require(name);
+
+                                                                                                
+
+  void onLoad() {}
+  void onStart() {}
+  void onUpdate(double dt) {}
+  void onFixedUpdate(double h) {}
+  void onLateUpdate(double dt) {}
+  void onRender(Value frame) {}
+  void onEnable() {}
+  void onDisable() {}
+  void onStop() {}
+  void onDestroy() {}
+
+                                                                                 
+  Object? onBeforeHotReload() => null;
+  void onHotReload(Value previousState) {}
+
+                                                                                                 
+
+  void onCollisionBegin(Value other, Value contact) {}
+  void onCollisionStay(Value other, Value contact) {}
+  void onCollisionEnd(Value other) {}
+  void onTriggerEnter(Value other) {}
+  void onTriggerStay(Value other) {}
+  void onTriggerExit(Value other) {}
+
+  void _attach(JSObject inject) {
+    helix = Value(inject['helix']);
+    self = Value(inject['entity']);
+    script = Value(inject['script']);
+  }
+}
 
                                                                                                 
 
@@ -393,6 +443,70 @@ class _Absent {
                                                                              
                                                                              
                                                                             
+abstract final class Runtime {
+  static JSObject boot(Script instance, JSObject inject, String declaredHooks) {
+    instance._attach(inject);
+    final hooks = JSObject();
+    for (final declared in declaredHooks.split(',')) {
+      switch (declared.trim()) {
+        case 'onLoad':
+          hooks['onLoad'] = instance.onLoad.toJS;
+        case 'onStart':
+          hooks['onStart'] = instance.onStart.toJS;
+        case 'onUpdate':
+          hooks['onUpdate'] = instance.onUpdate.toJS;
+        case 'onFixedUpdate':
+          hooks['onFixedUpdate'] = instance.onFixedUpdate.toJS;
+        case 'onLateUpdate':
+          hooks['onLateUpdate'] = instance.onLateUpdate.toJS;
+        case 'onRender':
+          hooks['onRender'] = ((JSAny? frame) => instance.onRender(Value(frame))).toJS;
+        case 'onEnable':
+          hooks['onEnable'] = instance.onEnable.toJS;
+        case 'onDisable':
+          hooks['onDisable'] = instance.onDisable.toJS;
+        case 'onStop':
+          hooks['onStop'] = instance.onStop.toJS;
+        case 'onDestroy':
+          hooks['onDestroy'] = instance.onDestroy.toJS;
+        case 'onBeforeHotReload':
+          hooks['onBeforeHotReload'] = (() => _toJs(instance.onBeforeHotReload())).toJS;
+        case 'onHotReload':
+          hooks['onHotReload'] = ((JSAny? previous) => instance.onHotReload(Value(previous))).toJS;
+        case 'onCollisionBegin':
+          hooks['onCollisionBegin'] = ((JSAny? other, JSAny? contact) => instance.onCollisionBegin(Value(other), Value(contact))).toJS;
+        case 'onCollisionStay':
+          hooks['onCollisionStay'] = ((JSAny? other, JSAny? contact) => instance.onCollisionStay(Value(other), Value(contact))).toJS;
+        case 'onCollisionEnd':
+          hooks['onCollisionEnd'] = ((JSAny? other) => instance.onCollisionEnd(Value(other))).toJS;
+        case 'onTriggerEnter':
+          hooks['onTriggerEnter'] = ((JSAny? other) => instance.onTriggerEnter(Value(other))).toJS;
+        case 'onTriggerStay':
+          hooks['onTriggerStay'] = ((JSAny? other) => instance.onTriggerStay(Value(other))).toJS;
+        case 'onTriggerExit':
+          hooks['onTriggerExit'] = ((JSAny? other) => instance.onTriggerExit(Value(other))).toJS;
+      }
+    }
+    return hooks;
+  }
+
+                                                                                                  
+  static void register(JSObject module) {
+    globalContext['__helixDart'] = module;
+  }
+
+                                                                                            
+  static Value arg(JSArray<JSAny?> args, int index) {
+    final list = args.toDart;
+    return index < list.length ? Value(list[index]) : Value.none;
+  }
+
+  static int argCount(JSArray<JSAny?> args) => args.toDart.length;
+
+  static List<Value> args(JSArray<JSAny?> args) => args.toDart.map(Value.new).toList();
+
+  static JSAny? result(Object? value) => _toJs(value);
+}
 
                                                                                                  
 
@@ -400,16 +514,42 @@ class _Absent {
                                                                          
                                                                                
 JSAny? _toJs(Object? value) {
+  if (value == null) return null;
+  if (value is Value) return value.raw;
+  if (value is Vec3) return value.toJs();
+  if (value is bool) return value.toJS;
+  if (value is num) return value.toJS;
+  if (value is String) return value.toJS;
+  if (value is Map) {
+    final out = JSObject();
+    value.forEach((key, item) => out[key.toString()] = _toJs(item));
+    return out;
+  }
+  if (value is Iterable) return _toJsList(value);
+  if (value is Future) return value.then(_toJs).toJS;
+  if (value is Object? Function(List<Value>)) return _callback(value);
+  if (value is Object? Function()) return _callback((args) => value());
+  if (value is Object? Function(Value)) return _callback((args) => value(_at(args, 0)));
+  if (value is Object? Function(Value, Value)) return _callback((args) => value(_at(args, 0), _at(args, 1)));
+  if (value is Object? Function(Value, Value, Value)) return _callback((args) => value(_at(args, 0), _at(args, 1), _at(args, 2)));
+  if (value is Object? Function(Value, Value, Value, Value)) return _callback((args) => value(_at(args, 0), _at(args, 1), _at(args, 2), _at(args, 3)));
+  if (value is JSAny) return value;
+  return value.toString().toJS;
 }
 
                                                                                                                   
 JSArray<JSAny?> _toJsList(Iterable<Object?> items) {
   final out = JSArray<JSAny?>.withLength(0);
   var index = 0;
+  for (final item in items) {
+    out.setProperty((index++).toJS, _toJs(item));
+  }
+  return out;
 }
 
 Value _at(List<Value> args, int index) => index < args.length ? args[index] : Value.none;
 
 JSFunction _callback(Object? Function(List<Value> args) body) {
   JSAny? variadic(JSArray<JSAny?> args) => _toJs(body(args.toDart.map(Value.new).toList()));
+  return _host.callback(variadic.toJS);
 }
