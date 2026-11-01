@@ -560,4 +560,135 @@ export class Room {
       },
       emit: () => {
         throw new Error('helix.net.emit só existe no cliente: o servidor fala com os jogadores por send e broadcast.')
+      },
+      send: (target, name, ...args) => {
+        const player = room.requirePlayer(target, 'helix.net.send')
+        room.send(player, { t: 'event', name: requireKey(name, 'helix.net.send'), args: room.requireJsonArgs('helix.net.send', args) })
+      },
+      broadcast: (name, ...args) => {
+        room.broadcast({ t: 'event', name: requireKey(name, 'helix.net.broadcast'), args: room.requireJsonArgs('helix.net.broadcast', args) })
+      },
+      on: (name, handler) => room.listeners.add(requireKey(name, 'helix.net.on'), requireFn(handler, 'helix.net.on')),
+      state,
+      replicate: (entity, fields) => {
+        if (!entity || typeof entity !== 'object') throw new Error('helix.net.replicate: esperava um objeto com id, name e os campos a replicar.')
+        if (!Array.isArray(fields) || fields.some((field) => typeof field !== 'string')) throw new Error('helix.net.replicate: os campos precisam ser uma lista de strings.')
+        let set = room.replicated.get(entity)
+        if (!set) {
+          set = new Set()
+          room.replicated.set(entity, set)
+        }
+        for (const field of fields) set.add(field)
+        return Array.from(set)
+      },
+      replicatedFields: (entity) => Array.from(room.replicated.get(entity) || []),
+      onReplicated: () => {
+        throw new Error('helix.net.onReplicated só existe no cliente.')
+      },
+      authenticate: (handler) => {
+        const fn = requireFn(handler, 'helix.net.authenticate')
+        room.gate = fn
+        return () => {
+          if (room.gate === fn) room.gate = null
+        }
+      },
+      kick: (target, reason) => {
+        const player = room.requirePlayer(target, 'helix.net.kick')
+        const why = typeof reason === 'string' && reason.trim() ? reason.trim() : 'removido pelo servidor'
+        room.send(player, { t: 'kick', reason: why })
+        player.socket.close('removido: ' + why)
+        room.removePlayer(player, 'removido: ' + why)
+      },
+      onPlayerJoined: (handler) => room.bus.add('net.playerJoined', requireFn(handler, 'helix.net.onPlayerJoined')),
+      onPlayerLeft: (handler) => room.bus.add('net.playerLeft', requireFn(handler, 'helix.net.onPlayerLeft')),
+      onConnected: () => () => undefined,
+      onDisconnected: () => () => undefined,
+      connect: () => {
+        throw new Error('helix.net.connect não existe no servidor.')
+      },
+    }
+    const log = (level) => (...args) => room.onLog(level, args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '))
+    const events = {
+      on: (name, handler) => room.bus.add('events:' + requireKey(name, 'helix.events.on'), requireFn(handler, 'helix.events.on')),
+      once: (name, handler) => {
+        const fn = requireFn(handler, 'helix.events.once')
+        const off = room.bus.add('events:' + requireKey(name, 'helix.events.once'), (...args) => {
+          off()
+          fn(...args)
+        })
+        return off
+      },
+      emit: (name, payload) => room.bus.emit('events:' + requireKey(name, 'helix.events.emit'), [payload], report),
+    }
+    const task = {
+      wait: (seconds = 0) => room.clock.wait(Number(seconds) || 0),
+      delay: (seconds, fn) => room.clock.schedule(Number(seconds) || 0, requireFn(fn, 'helix.task.delay')),
+      every: (seconds, fn) => room.clock.schedule(Number(seconds) || 0, requireFn(fn, 'helix.task.every'), Math.max(1 / room.tickRate, Number(seconds) || 0)),
+      spawn: (fn) => {
+        const run = requireFn(fn, 'helix.task.spawn')
+        return Promise.resolve().then(() => run()).catch((cause) => report('helix.task.spawn', cause))
+      },
+      nextFrame: () => room.clock.wait(0),
+    }
+    const math = {
+      clamp: (value, min, max) => Math.min(Math.max(value, min), max),
+      lerp: (a, b, t) => a + (b - a) * t,
+      random: (min = 0, max = 1) => min + Math.random() * (max - min),
+      randomInt: (min, max) => Math.floor(min + Math.random() * (max - min + 1)),
+      degToRad: (degrees) => (degrees * Math.PI) / 180,
+      radToDeg: (radians) => (radians * 180) / Math.PI,
+    }
+    const time = {
+      get now() {
+        return room.clock.now
+      },
+      get delta() {
+        return room.clock.delta
+      },
+      get unscaledDelta() {
+        return room.clock.delta
+      },
+      get fixedDelta() {
+        return 1 / room.tickRate
+      },
+      get frame() {
+        return room.clock.frame
+      },
+      get startedAt() {
+        return room.clock.startedAt
+      },
+      get serverTime() {
+        return room.serverTime()
+      },
+    }
+    const helix = {
+      engine: { name: 'Helix Engine', side: 'server' },
+      context: 'server',
+      isEditor: false,
+      isPlaying: true,
+      isServer: true,
+      self: null,
+      script: null,
+      log: { info: log('info'), warn: log('warn'), error: log('error'), debug: log('info') },
+      time,
+      task,
+      events,
+      math,
+      net,
+    }
+    Object.defineProperties(helix, { __esModule: { value: true }, default: { value: helix } })
+    return helix
+  }
+}
+
+                                                                                                   
+export async function loadGameFromDisk(dir, fs, path) {
+  const manifest = JSON.parse(await fs.readFile(path.join(dir, 'manifest.json'), 'utf8'))
+  const scripts = []
+  for (const entry of manifest.scripts) {
+    const code = entry.kind === 'module' ? await fs.readFile(path.join(dir, entry.file), 'utf8') : null
+    scripts.push({ ...entry, code })
+  }
+  return { ...manifest, scripts }
+}
 `;
