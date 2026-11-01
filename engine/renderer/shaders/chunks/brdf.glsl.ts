@@ -1,10 +1,13 @@
 export const BRDF_CHUNK = `
 const float PI = 3.14159265359;
 
-float distributionGgx(float NdotH, float alpha) {
-  float a2 = alpha * alpha;
+float distributionGgxA2(float NdotH, float a2) {
   float d = NdotH * NdotH * (a2 - 1.0) + 1.0;
   return a2 / (PI * d * d);
+}
+
+float distributionGgx(float NdotH, float alpha) {
+  return distributionGgxA2(NdotH, alpha * alpha);
 }
 
 float visibilitySmithGgxCorrelated(float NdotV, float NdotL, float alpha) {
@@ -19,13 +22,44 @@ vec3 fresnelSchlick(float VdotH, vec3 f0) {
   return f0 + (1.0 - f0) * f;
 }
 
- 
-vec3 environmentBrdf(vec3 f0, float roughness, float NdotV) {
+   
+                                                                             
+                                                                            
+                                                                           
+                            
+   
+vec2 environmentBrdfTerms(float roughness, float NdotV) {
   const vec4 c0 = vec4(-1.0, -0.0275, -0.572, 0.022);
   const vec4 c1 = vec4(1.0, 0.0425, 1.04, -0.04);
   vec4 r = roughness * c0 + c1;
   float a004 = min(r.x * r.x, exp2(-9.28 * NdotV)) * r.x + r.y;
-  vec2 ab = vec2(-1.04, 1.04) * a004 + r.zw;
-  return f0 * ab.x + ab.y;
+  return vec2(-1.04, 1.04) * a004 + r.zw;
+}
+
+vec3 environmentBrdf(vec3 f0, vec2 terms) {
+  return f0 * terms.x + terms.y;
+}
+
+   
+                                                                                
+                                                                         
+                                                                          
+                                                                              
+                                                                               
+                                                                      
+   
+vec3 multiScatterCompensation(vec3 f0, vec2 terms) {
+  float singleScatter = terms.x + terms.y;
+  return 1.0 + f0 * (1.0 / max(singleScatter, 1e-3) - 1.0);
+}
+
+   
+                                                                          
+                                                                        
+                                                                         
+                                                                           
+   
+float discLightAlpha2(float a2, float sinAlpha, float VdotH) {
+  return a2 + 0.25 * sinAlpha * (3.0 * sqrt(a2) + sinAlpha) / (VdotH + 0.001);
 }
 `;
