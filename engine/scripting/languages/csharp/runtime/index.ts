@@ -555,3 +555,258 @@ export function construct(ctor: unknown, args: readonly unknown[]): unknown {
         return new (ctor as new (...rest: unknown[]) => object)(...args);
     return (ctor as Fn)(...args);
 }
+export function elementAt(target: unknown, ...keys: unknown[]): unknown {
+    if (isNullish(target))
+        throw new NullReferenceException(`Não dá para indexar um valor nulo ([${keys.map((key) => str(key)).join(', ')}]).`);
+    if (Array.isArray(target)) {
+        let current: unknown = target;
+        for (const key of keys) {
+            if (!Array.isArray(current))
+                throw new InvalidOperationException('Índice a mais para as dimensões do array.');
+            current = arrayAt(current, key);
+        }
+        return current;
+    }
+    if (typeof target === 'string') {
+        const index = Number(keys[0]);
+        if (!Number.isInteger(index) || index < 0 || index >= target.length)
+            throw new IndexOutOfRangeException(`Índice ${str(keys[0])} fora da string (Length = ${target.length}).`);
+        return target[index];
+    }
+    const object = target as AnyRecord;
+    if (typeof object.$at === 'function')
+        return (object.$at as Fn)(...keys);
+    if (object instanceof Map) {
+        if (!object.has(keys[0]))
+            throw new KeyNotFoundException(`A chave "${str(keys[0])}" não está no dicionário.`);
+        return object.get(keys[0]);
+    }
+    if (typeof object === 'object' || typeof object === 'function') {
+        const key = keys[0];
+        const value = object[String(key)];
+        return value === undefined ? null : value;
+    }
+    throw new InvalidOperationException(`${describeType(target)} não aceita indexação.`);
+}
+export function setElementAt(target: unknown, keys: readonly unknown[], value: unknown): unknown {
+    if (isNullish(target))
+        throw new NullReferenceException(`Não dá para indexar um valor nulo ([${keys.map((key) => str(key)).join(', ')}] = …).`);
+    if (Array.isArray(target)) {
+        let current: unknown[] = target;
+        for (const key of keys.slice(0, -1)) {
+            const next = arrayAt(current, key);
+            if (!Array.isArray(next))
+                throw new InvalidOperationException('Índice a mais para as dimensões do array.');
+            current = next;
+        }
+        arraySet(current, keys[keys.length - 1], value);
+        return value;
+    }
+    if (typeof target === 'string')
+        throw new InvalidOperationException('Strings são imutáveis: use StringBuilder ou monte outra string.');
+    const object = target as AnyRecord;
+    if (typeof object.$set === 'function') {
+        ;
+        (object.$set as Fn)(...keys, value);
+        return value;
+    }
+    if (object instanceof Map) {
+        object.set(keys[0], value);
+        return value;
+    }
+    if (typeof object === 'object' || typeof object === 'function') {
+        object[String(keys[0])] = value;
+        return value;
+    }
+    throw new InvalidOperationException(`${describeType(target)} não aceita indexação.`);
+}
+export function deconstruct(value: unknown, count: number): unknown[] {
+    if (isNullish(value))
+        throw new NullReferenceException('Não dá para desconstruir um valor nulo.');
+    if (typeof value !== 'string' && isIterable(value))
+        return Array.from(value);
+    const method = (value as AnyRecord).Deconstruct;
+    if (typeof method === 'function') {
+        const refs = Array.from({ length: count }, (): Ref<unknown> => ({ v: null }));
+        (method as Fn).apply(value, refs);
+        return refs.map((ref) => ref.v);
+    }
+    throw new InvalidOperationException(`${describeType(value)} não pode ser desconstruído em ${count} partes.`);
+}
+export function fromEnd(target: unknown, offset: unknown): number {
+    return lengthOf(target) - Number(offset);
+}
+export function lengthOf(target: unknown): number {
+    if (isNullish(target))
+        throw new NullReferenceException('Não dá para medir um valor nulo.');
+    if (typeof target === 'string' || Array.isArray(target))
+        return target.length;
+    const count = (target as {
+        Count?: unknown;
+    }).Count;
+    if (typeof count === 'number')
+        return count;
+    const length = (target as {
+        length?: unknown;
+    }).length;
+    if (typeof length === 'number')
+        return length;
+    if (target instanceof Map || target instanceof Set)
+        return target.size;
+    throw new InvalidOperationException(`${describeType(target)} não tem comprimento.`);
+}
+export function slice(target: unknown, start: unknown, end: unknown): unknown {
+    if (isNullish(target))
+        throw new NullReferenceException('Não dá para fatiar um valor nulo.');
+    const length = lengthOf(target);
+    const from = isNullish(start) ? 0 : Number(start);
+    const to = isNullish(end) ? length : Number(end);
+    if (from < 0 || to > length || from > to)
+        throw new ArgumentOutOfRangeException('range', `O intervalo ${from}..${to} está fora do alvo (comprimento ${length}).`);
+    if (typeof target === 'string')
+        return target.slice(from, to);
+    if (Array.isArray(target))
+        return target.slice(from, to);
+    if (target instanceof List)
+        return List.from(target.$items.slice(from, to));
+    return Array.from(iterate(target, 'fatia')).slice(from, to);
+}
+function arithmeticOperands(a: unknown, b: unknown, operator: string): [
+    number,
+    number
+] | null {
+    if (typeof a === 'number' && typeof b === 'number')
+        return [a, b];
+    if (isNullish(a) || isNullish(b))
+        return null;
+    const left = typeof a === 'string' && a.length === 1 ? a.charCodeAt(0) : typeof a === 'boolean' ? NaN : a;
+    const right = typeof b === 'string' && b.length === 1 ? b.charCodeAt(0) : typeof b === 'boolean' ? NaN : b;
+    if (typeof left === 'number' && typeof right === 'number' && !Number.isNaN(left) && !Number.isNaN(right))
+        return [left, right];
+    throw new InvalidOperationException(`O operador ${operator} não vale entre ${describeType(a)} e ${describeType(b)}.`);
+}
+export function add(a: unknown, b: unknown): unknown {
+    if (typeof a === 'number' && typeof b === 'number')
+        return a + b;
+    if (typeof a === 'string' || typeof b === 'string')
+        return str(a) + str(b);
+    const operands = arithmeticOperands(a, b, '+');
+    return operands ? operands[0] + operands[1] : null;
+}
+export function sub(a: unknown, b: unknown): unknown {
+    const operands = arithmeticOperands(a, b, '-');
+    return operands ? operands[0] - operands[1] : null;
+}
+export function mul(a: unknown, b: unknown): unknown {
+    const operands = arithmeticOperands(a, b, '*');
+    return operands ? operands[0] * operands[1] : null;
+}
+export function div(a: unknown, b: unknown): unknown {
+    const operands = arithmeticOperands(a, b, '/');
+    return operands ? operands[0] / operands[1] : null;
+}
+export function idiv(a: number, b: number): number {
+    if (b === 0)
+        throw new DivideByZeroException();
+    return Math.trunc(a / b);
+}
+export function rem(a: unknown, b: unknown): unknown {
+    const operands = arithmeticOperands(a, b, '%');
+    if (!operands)
+        return null;
+    if (operands[1] === 0 && Number.isInteger(operands[0]) && Number.isInteger(operands[1]))
+        throw new DivideByZeroException();
+    return operands[0] % operands[1];
+}
+export function irem(a: number, b: number): number {
+    if (b === 0)
+        throw new DivideByZeroException();
+    return a % b;
+}
+export function neg(a: unknown): unknown {
+    if (typeof a === 'number')
+        return -a;
+    if (isNullish(a))
+        return null;
+    const operands = arithmeticOperands(a, 0, '-');
+    return operands ? -operands[0] : null;
+}
+export function eq(a: unknown, b: unknown): boolean {
+    return equals(a, b);
+}
+export function neq(a: unknown, b: unknown): boolean {
+    return !equals(a, b);
+}
+export function lt(a: unknown, b: unknown): boolean {
+    return compare(a, b) < 0;
+}
+export function le(a: unknown, b: unknown): boolean {
+    return compare(a, b) <= 0;
+}
+export function gt(a: unknown, b: unknown): boolean {
+    return compare(a, b) > 0;
+}
+export function ge(a: unknown, b: unknown): boolean {
+    return compare(a, b) >= 0;
+}
+export function concat(...parts: unknown[]): string {
+    let text = '';
+    for (const part of parts)
+        text += str(part);
+    return text;
+}
+export function truthy(value: unknown): boolean {
+    if (typeof value === 'boolean')
+        return value;
+    if (isNullish(value))
+        return false;
+    throw new InvalidCastException(`Esperado um bool na condição, encontrado ${describeType(value)}.`);
+}
+type Multicast = Fn & {
+    $targets?: Fn[];
+};
+function targetsOf(fn: unknown): Fn[] {
+    if (isNullish(fn))
+        return [];
+    if (typeof fn !== 'function')
+        throw new InvalidOperationException(`${describeType(fn)} não é um delegate.`);
+    return (fn as Multicast).$targets ?? [fn as Fn];
+}
+function multicast(targets: Fn[]): Fn | null {
+    if (targets.length === 0)
+        return null;
+    if (targets.length === 1)
+        return targets[0];
+    const combined: Multicast = (...args: unknown[]) => {
+        let result: unknown;
+        for (const target of targets)
+            result = target(...args);
+        return result;
+    };
+    combined.$targets = targets;
+    return combined;
+}
+export function combine(a: unknown, b: unknown): Fn | null {
+    return multicast([...targetsOf(a), ...targetsOf(b)]);
+}
+export function remove(a: unknown, b: unknown): Fn | null {
+    const targets = [...targetsOf(a)];
+    for (const removed of targetsOf(b)) {
+        const index = targets.lastIndexOf(removed);
+        if (index >= 0)
+            targets.splice(index, 1);
+    }
+    return multicast(targets);
+}
+function defineEnum(name: string, members: Record<string, number>, flags = false): Record<string, unknown> {
+    const names = Object.keys(members);
+    const values = names.map((member) => members[member]);
+    const info: EnumInfo = { name, names, values, flags };
+    const enumObject: Record<string, unknown> = { ...members };
+    Object.defineProperty(enumObject, ENUM_INFO, { value: info });
+    Object.defineProperty(enumObject, TYPE_NAME, { value: name });
+    Object.defineProperty(enumObject, 'ToString', { value: (value: unknown) => enumToString(enumObject, value) });
+    Object.defineProperty(enumObject, '$values', { value: values });
+    Object.defineProperty(enumObject, '$names', { value: names });
+    return Object.freeze(enumObject);
+}
