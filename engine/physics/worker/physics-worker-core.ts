@@ -442,4 +442,63 @@ export class PhysicsWorkerCore {
         this.poses = buffer ? new PoseBuffer(buffer) : PoseBuffer.allocate(capacity, false);
         return this.poses;
     }
+    private collectJoints(): Float32Array {
+        const out = new Float32Array(this.joints.size * JOINT_RECORD_FLOATS);
+        let cursor = 0;
+        for (const joint of this.joints.values()) {
+            out[cursor++] = joint.id;
+            out[cursor++] = joint.reactionForce[0];
+            out[cursor++] = joint.reactionForce[1];
+            out[cursor++] = joint.reactionForce[2];
+            out[cursor++] = joint.reactionTorque[0];
+            out[cursor++] = joint.reactionTorque[1];
+            out[cursor++] = joint.reactionTorque[2];
+            out[cursor++] = joint.coordinate;
+            out[cursor++] = joint.speed;
+            out[cursor++] = joint.axialForce;
+            out[cursor++] = joint.motorForce;
+            out[cursor++] = joint.broken ? 1 : 0;
+        }
+        return out;
+    }
+    private collectContacts(world: PhysicsWorld): Float32Array {
+        const manifolds = world.manifolds;
+        let count = 0;
+        for (const manifold of manifolds)
+            if (manifold.pointCount > 0)
+                count++;
+        const needed = count * CONTACT_RECORD_FLOATS;
+        const out = new Float32Array(needed);
+        let cursor = 0;
+        for (const manifold of manifolds) {
+            if (manifold.pointCount === 0)
+                continue;
+            let impulse = 0;
+            let relativeVelocity = 0;
+            let px = 0;
+            let py = 0;
+            let pz = 0;
+            for (let index = 0; index < manifold.pointCount; index++) {
+                const contact = manifold.points[index];
+                impulse = Math.max(impulse, contact.maxNormalImpulse);
+                relativeVelocity = Math.min(relativeVelocity, contact.relativeVelocity);
+                px += contact.anchorA[0];
+                py += contact.anchorA[1];
+                pz += contact.anchorA[2];
+            }
+            const inv = 1 / manifold.pointCount;
+            const a = manifold.bodyA.position;
+            out[cursor++] = manifold.bodyA.id;
+            out[cursor++] = manifold.bodyB.id;
+            out[cursor++] = manifold.normal[0];
+            out[cursor++] = manifold.normal[1];
+            out[cursor++] = manifold.normal[2];
+            out[cursor++] = px * inv + a[0];
+            out[cursor++] = py * inv + a[1];
+            out[cursor++] = pz * inv + a[2];
+            out[cursor++] = impulse;
+            out[cursor++] = relativeVelocity;
+        }
+        return out;
+    }
 }
