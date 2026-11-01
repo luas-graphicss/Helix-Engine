@@ -272,4 +272,269 @@ class Parser {
         }
         this.fail(`Esperada a declaração de um tipo (class, struct, record, enum), encontrado ${this.describe(this.current)}.`);
     }
+    private classDeclaration(start: Token, modifiers: readonly string[]): ClassDeclaration {
+        let flavor: ClassFlavor;
+        if (this.matchIdentifier('record')) {
+            flavor = 'record';
+            if (this.at('class') || this.at('struct'))
+                this.advance();
+        }
+        else {
+            flavor = this.advance().text === 'struct' ? 'struct' : 'class';
+        }
+        const nameToken = this.expectIdentifier(`do ${flavor}`);
+        const name = String(nameToken.value);
+        const typeParameters = this.typeParametersIfAny();
+        let recordParameters: Parameter[] | null = null;
+        if (this.at('('))
+            recordParameters = this.parameterList();
+        const bases: TypeRef[] = [];
+        if (this.match(':')) {
+            do
+                bases.push(this.type());
+            while (this.match(','));
+        }
+        this.skipConstraints();
+        const members: Member[] = [];
+        if (this.match(';')) {
+            if (!recordParameters)
+                this.fail('Esperado "{" com os membros do tipo.', this.previous().span);
+        }
+        else {
+            this.expect('{', `depois do nome de ${name}`);
+            const outerClass = this.className;
+            this.className = name;
+            while (!this.at('}') && !this.atEnd()) {
+                try {
+                    const member = this.member();
+                    if (member)
+                        members.push(member);
+                }
+                catch (error) {
+                    if (!(error instanceof ParseError))
+                        throw error;
+                    this.report(error.message, error.span);
+                    if (this.diagnostics.length >= MAX_DIAGNOSTICS)
+                        break;
+                    this.recover();
+                }
+            }
+            this.className = outerClass;
+            this.expect('}', `fechando ${name}`);
+        }
+        return { kind: 'class', flavor, name, nameSpan: nameToken.span, modifiers, typeParameters, bases, recordParameters, members, span: this.spanFrom(start) };
+    }
+    private typeParametersIfAny(): string[] {
+        const names: string[] = [];
+        if (!this.at('<'))
+            return names;
+        this.advance();
+        do {
+            this.skipAttributes();
+            if (this.atIdentifier('in') || this.atIdentifier('out') || this.at('in') || this.at('out'))
+                this.advance();
+            names.push(String(this.expectIdentifier('do parâmetro de tipo').value));
+        } while (this.match(','));
+        this.expect('>', 'fechando os parâmetros de tipo');
+        return names;
+    }
+    private skipConstraints(): void {
+        while (this.atIdentifier('where')) {
+            while (!this.at('{') && !this.at('=>') && !this.at(';') && !this.atIdentifier('where') && !this.atEnd())
+                this.advance();
+        }
+    }
+    private enumDeclaration(start: Token, modifiers: readonly string[]): EnumDeclaration {
+        this.expect('enum');
+        const nameToken = this.expectIdentifier('do enum');
+        if (this.match(':'))
+            this.type();
+        this.expect('{', 'depois do nome do enum');
+        const members: EnumMember[] = [];
+        while (!this.at('}') && !this.atEnd()) {
+            this.skipAttributes();
+            const memberToken = this.expectIdentifier('do membro do enum');
+            const value = this.match('=') ? this.expression() : null;
+            members.push({ name: String(memberToken.value), value, span: this.spanFrom(memberToken) });
+            if (!this.match(','))
+                break;
+        }
+        this.expect('}', 'fechando o enum');
+        this.match(';');
+        return { kind: 'enum', name: String(nameToken.value), nameSpan: nameToken.span, modifiers, members, span: this.spanFrom(start) };
+    }
+    private interfaceDeclaration(start: Token): TypeDeclaration {
+        this.expect('interface');
+        const nameToken = this.expectIdentifier('da interface');
+        this.typeParametersIfAny();
+        if (this.match(':')) {
+            do
+                this.type();
+            while (this.match(','));
+        }
+        this.skipConstraints();
+        this.expect('{');
+        this.skipBalanced('{', '}');
+        return { kind: 'interface', name: String(nameToken.value), span: this.spanFrom(start) };
+    }
+    private delegateDeclaration(start: Token): TypeDeclaration {
+        this.expect('delegate');
+        this.type();
+        const nameToken = this.expectIdentifier('do delegate');
+        this.typeParametersIfAny();
+        this.parameterList();
+        this.skipConstraints();
+        this.expect(';', 'depois do delegate');
+        return { kind: 'delegate', name: String(nameToken.value), span: this.spanFrom(start) };
+    }
+    private skipBalanced(open: string, close: string): void {
+        let depth = 1;
+        while (depth > 0 && !this.atEnd()) {
+            if (this.at(open))
+                depth++;
+            else if (this.at(close))
+                depth--;
+            this.advance();
+        }
+    }
+    private member(): Member | null {
+        this.skipAttributes();
+        if (this.match(';'))
+            return null;
+        const start = this.current;
+        const modifiers = this.modifiers();
+        if (this.at('class') || this.at('struct') || (this.atIdentifier('record') && (this.peek().kind === 'identifier' || this.at('class', this.peek()) || this.at('struct', this.peek())))) {
+            return this.classDeclaration(start, modifiers);
+        }
+        if (this.at('enum'))
+            return this.enumDeclaration(start, modifiers);
+        if (this.at('interface'))
+            return this.interfaceDeclaration(start);
+        if (this.at('delegate') && !this.at('(', this.peek()) && !this.at('{', this.peek()))
+            return this.delegateDeclaration(start);
+        if (this.at('event'))
+            return this.eventMember(start, modifiers);
+        if (this.at('~'))
+            this.fail('Finalizadores (~Nome) não existem neste runtime: libere recursos em OnDestroy.');
+        if (this.atIdentifier(this.className ?? '') && this.at('(', this.peek()))
+            return this.constructorMember(start, modifiers);
+        if (this.at('implicit') || this.at('explicit'))
+            this.fail('Conversões implícitas/explícitas definidas pelo usuário não são suportadas.');
+        const type = this.type();
+        if (this.at('operator'))
+            this.fail('Sobrecarga de operadores não é suportada; use um método com nome (Somar, Igual…).');
+        if (this.at('this'))
+            return this.indexerMember(start, modifiers, type);
+        const nameToken = this.expectIdentifier('do membro');
+        while (this.at('.')) {
+            this.advance();
+            this.expectIdentifier('do membro');
+        }
+        const name = String(this.previous().value);
+        const nameSpan = this.previous().span;
+        if (this.at('(') || this.at('<'))
+            return this.methodMember(start, modifiers, type, name, nameSpan);
+        if (this.at('{') || this.at('=>'))
+            return this.propertyMember(start, modifiers, type, name, nameSpan);
+        return this.fieldMember(start, modifiers, type, nameToken);
+    }
+    private eventMember(start: Token, modifiers: readonly string[]): Member {
+        this.expect('event');
+        const type = this.type();
+        const declarators = this.declarators('do evento');
+        if (this.at('{')) {
+            this.advance();
+            this.skipBalanced('{', '}');
+        }
+        else {
+            this.expect(';', 'depois do evento');
+        }
+        return { kind: 'event', modifiers, type, declarators, span: this.spanFrom(start) };
+    }
+    private constructorMember(start: Token, modifiers: readonly string[]): ConstructorMember {
+        this.advance();
+        const parameters = this.parameterList();
+        let initializer: ConstructorMember['initializer'] = null;
+        if (this.match(':')) {
+            const keyword = this.current;
+            if (!this.at('base') && !this.at('this'))
+                this.fail('Esperado base(…) ou this(…) depois de ":" no construtor.');
+            this.advance();
+            const args = this.argumentList();
+            initializer = { kind: keyword.text as 'base' | 'this', arguments: args, span: this.spanFrom(keyword) };
+        }
+        const { body, expressionBody } = this.bodyOrExpression('do construtor');
+        return { kind: 'constructor', modifiers, parameters, initializer, body, expressionBody, span: this.spanFrom(start) };
+    }
+    private methodMember(start: Token, modifiers: readonly string[], returnType: TypeRef, name: string, nameSpan: SourceSpan): MethodMember {
+        const typeParameters = this.typeParametersIfAny();
+        const parameters = this.parameterList();
+        this.skipConstraints();
+        const { body, expressionBody } = this.bodyOrExpression(`do método ${name}`);
+        return { kind: 'method', modifiers, returnType, name, nameSpan, typeParameters, parameters, body, expressionBody, span: this.spanFrom(start) };
+    }
+    private bodyOrExpression(context: string): {
+        body: Block | null;
+        expressionBody: Expression | null;
+    } {
+        if (this.at('{'))
+            return { body: this.block(), expressionBody: null };
+        if (this.match('=>')) {
+            const expressionBody = this.expression();
+            this.expect(';', `depois do corpo ${context}`);
+            return { body: null, expressionBody };
+        }
+        if (this.match(';'))
+            return { body: null, expressionBody: null };
+        this.fail(`Esperado "{", "=>" ou ";" ${context}, encontrado ${this.describe(this.current)}.`);
+    }
+    private propertyMember(start: Token, modifiers: readonly string[], type: TypeRef, name: string, nameSpan: SourceSpan): PropertyMember {
+        if (this.match('=>')) {
+            const expressionBody = this.expression();
+            this.expect(';', 'depois da propriedade');
+            return { kind: 'property', modifiers, type, name, nameSpan, getter: null, setter: null, expressionBody, initializer: null, span: this.spanFrom(start) };
+        }
+        const { getter, setter } = this.accessors();
+        const initializer = this.match('=') ? this.expression() : null;
+        if (initializer)
+            this.expect(';', 'depois do valor inicial da propriedade');
+        else
+            this.match(';');
+        return { kind: 'property', modifiers, type, name, nameSpan, getter, setter, expressionBody: null, initializer, span: this.spanFrom(start) };
+    }
+    private accessors(): {
+        getter: Accessor | null;
+        setter: Accessor | null;
+    } {
+        this.expect('{', 'abrindo os acessores');
+        let getter: Accessor | null = null;
+        let setter: Accessor | null = null;
+        while (!this.at('}') && !this.atEnd()) {
+            this.skipAttributes();
+            const start = this.current;
+            this.modifiers();
+            const kindToken = this.current;
+            const kind = kindToken.kind === 'identifier' ? String(kindToken.value) : '';
+            if (kind !== 'get' && kind !== 'set' && kind !== 'init')
+                this.fail(`Esperado get, set ou init, encontrado ${this.describe(kindToken)}.`);
+            this.advance();
+            let body: Block | null = null;
+            let expressionBody: Expression | null = null;
+            if (this.at('{'))
+                body = this.block();
+            else if (this.match('=>')) {
+                expressionBody = this.expression();
+                this.expect(';', 'depois do acessor');
+            }
+            else
+                this.expect(';', 'depois do acessor');
+            const accessor: Accessor = { kind: kind as Accessor['kind'], body, expressionBody, span: this.spanFrom(start) };
+            if (kind === 'get')
+                getter = accessor;
+            else
+                setter = accessor;
+        }
+        this.expect('}', 'fechando os acessores');
+        return { getter, setter };
+    }
 }
