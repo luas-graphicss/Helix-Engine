@@ -5,6 +5,7 @@ import { mimeTypeFromFileName } from '@/engine/assets/image-decoder';
 import { computeImportStats, type ImportedScene, type ImportedTexture, type ImportStats, type ImportUpAxis } from '@/engine/assets/import/import-types';
 import { effectiveImportScale, resolveUpAxis } from '@/engine/assets/import/import-materializer';
 import { DEFAULT_IMPORT_OPTIONS, type ImportOptions } from '@/engine/editor/operations/import-operations';
+import { engineSettings } from '@/engine/settings/engine-settings-store';
 export type TextureStatus = 'embedded' | 'file' | 'missing';
 export interface ImportDraft {
     scene: ImportedScene;
@@ -34,7 +35,14 @@ function bindFile(texture: ImportedTexture, file: File): void {
     texture.mimeType = file.type || mimeTypeFromFileName(file.name);
 }
 export function useImportDraft(scene: ImportedScene, initialFiles: File[]): ImportDraft {
-    const [options, setOptions] = useState<ImportOptions>(() => ({ ...DEFAULT_IMPORT_OPTIONS, excludedMeshes: new Set<number>() }));
+    const [options, setOptions] = useState<ImportOptions>(() => ({
+        ...DEFAULT_IMPORT_OPTIONS,
+        placement: engineSettings.get('editor.import.placement'),
+        frameAfterImport: engineSettings.get('editor.import.frameAfterImport'),
+        saveToLibrary: engineSettings.get('editor.import.saveToLibrary'),
+        convertUnits: engineSettings.get('editor.import.convertUnits'),
+        excludedMeshes: new Set<number>(),
+    }));
     const [bundleFiles, setBundleFiles] = useState(initialFiles);
     const [revision, setRevision] = useState(0);
     const bundle = useMemo(() => new FileBundle(bundleFiles), [bundleFiles]);
