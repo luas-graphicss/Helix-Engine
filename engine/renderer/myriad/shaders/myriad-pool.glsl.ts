@@ -1,19 +1,22 @@
-import { CLUSTER_MAX_TRIANGLES, INSTANCE_TEXELS } from '../data/myriad-limits';
+import { CLUSTER_BOUNDS_TEXEL, CLUSTER_INFO_TEXEL, CLUSTER_MAX_TRIANGLES, CLUSTER_TEXELS, CLUSTER_TRIANGLES_TEXEL, INSTANCE_TEXELS } from '../data/myriad-limits';
 export const MYRIAD_POOL_CHUNK = `
 uniform highp usampler2D u_vertices;
-uniform highp usampler2D u_triangles;
-uniform highp usampler2D u_clusterInfo;
-uniform highp sampler2D u_clusterBounds;
+uniform highp usampler2D u_clusters;
 
 const uint MYRIAD_WIDTH_MASK = (1u << uint(MYRIAD_WIDTH_SHIFT)) - 1u;
 const uint TRIANGLES_PER_CLUSTER = ${CLUSTER_MAX_TRIANGLES}u;
+const uint CLUSTER_TEXELS = ${CLUSTER_TEXELS}u;
 const int INSTANCE_TEXELS = ${INSTANCE_TEXELS};
 
 ivec2 texelCoord(uint index) {
   return ivec2(int(index & MYRIAD_WIDTH_MASK), int(index >> uint(MYRIAD_WIDTH_SHIFT)));
 }
 
- 
+uvec4 clusterTexel(uint cluster, uint texel) {
+  return texelFetch(u_clusters, texelCoord(cluster * CLUSTER_TEXELS + texel), 0);
+}
+
+                                                                                                   
 struct ClusterBox {
   vec3 min;
   vec3 extent;
@@ -22,18 +25,22 @@ struct ClusterBox {
 };
 
 ClusterBox loadClusterBox(uint cluster) {
-  vec4 a = texelFetch(u_clusterBounds, texelCoord(cluster * 2u), 0);
-  vec4 b = texelFetch(u_clusterBounds, texelCoord(cluster * 2u + 1u), 0);
+  vec4 a = uintBitsToFloat(clusterTexel(cluster, ${CLUSTER_BOUNDS_TEXEL}u));
+  vec4 b = uintBitsToFloat(clusterTexel(cluster, ${CLUSTER_BOUNDS_TEXEL + 1}u));
   return ClusterBox(a.xyz, b.xyz, a.w, b.w);
 }
 
- 
+                                                                                                                                                           
 uvec4 loadClusterInfo(uint cluster) {
-  return texelFetch(u_clusterInfo, texelCoord(cluster), 0);
+  return clusterTexel(cluster, ${CLUSTER_INFO_TEXEL}u);
 }
 
+                                                                                                                             
 uvec3 loadTriangle(uint cluster, uint triangle) {
-  return texelFetch(u_triangles, texelCoord(cluster * TRIANGLES_PER_CLUSTER + triangle), 0).xyz;
+  uvec4 four = clusterTexel(cluster, ${CLUSTER_TRIANGLES_TEXEL}u + (triangle >> 2u));
+  uint lane = triangle & 3u;
+  uint packed = lane == 0u ? four.x : (lane == 1u ? four.y : (lane == 2u ? four.z : four.w));
+  return uvec3(packed & 0xffu, (packed >> 8u) & 0xffu, (packed >> 16u) & 0xffu);
 }
 
 vec2 decodeSnorm2(uint packed) {
