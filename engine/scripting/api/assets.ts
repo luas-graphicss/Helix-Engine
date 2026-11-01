@@ -140,3 +140,216 @@ function parseYaml(text: string): unknown {
         return null;
     return parseBlock(indentOf(lines[0]));
 }
+export function createAssetsApi(host: RuntimeHost) {
+    const { session, bus } = host;
+    const { library } = session;
+    const urls = new Map<string, string>();
+    const videos = new Map<string, HTMLVideoElement>();
+    function resolve(value: unknown, member: string, kind?: AssetKind): LibraryAsset {
+        return host.resolveAsset(value, member, kind);
+    }
+    function kindOf(value: unknown, member: string): AssetKind | undefined {
+        return value === undefined ? undefined : requireOneOf(value, ASSET_KINDS, member, 'o tipo de ativo');
+    }
+    async function url(asset: LibraryAsset): Promise<string> {
+        const cached = urls.get(asset.id);
+        if (cached)
+            return cached;
+        const file = await library.primaryFile(asset);
+        const created = URL.createObjectURL(file);
+        urls.set(asset.id, created);
+        return created;
+    }
+    async function text(asset: LibraryAsset): Promise<string> {
+        const file = await library.primaryFile(asset);
+        return file.text();
+    }
+    function extensionOf(asset: LibraryAsset): string {
+        const path = asset.primaryPath || asset.name;
+        const dot = path.lastIndexOf('.');
+        return dot === -1 ? '' : path.slice(dot + 1).toLowerCase();
+    }
+    async function data(asset: LibraryAsset, formatValue: unknown, member: string): Promise<unknown> {
+        const source = await text(asset);
+        const format = formatValue === undefined ? extensionOf(asset) : requireOneOf(formatValue, DATA_EXTENSIONS, member, 'o formato');
+        switch (format) {
+            case 'json':
+                return JSON.parse(source);
+            case 'yaml':
+            case 'yml':
+                return parseYaml(source);
+            case 'toml': {
+                const parsed = parseToml(source);
+                const first = parsed.diagnostics[0];
+                if (first)
+                    throw new HelixError(`${member}: TOML inválido em ${asset.name} (linha ${first.line}, coluna ${first.column}): ${first.message}`);
+                return parsed.value;
+            }
+            case 'csv':
+                return parseCsv(source);
+            case 'xml': {
+                const parsed = new DOMParser().parseFromString(source, 'application/xml');
+                const error = parsed.querySelector('parsererror');
+                if (error)
+                    throw new HelixError(`${member}: XML inválido em ${asset.name}: ${error.textContent?.trim() ?? ''}`);
+                return parsed;
+            }
+            case 'md':
+            case 'markdown':
+            case 'txt':
+                return source;
+            default:
+                throw new HelixArgumentError(member, `não sei interpretar ".${format}" como dados; passe o formato (${DATA_EXTENSIONS.join(', ')}).`);
+        }
+    }
+    host.disposers.add(() => {
+        for (const created of urls.values())
+            URL.revokeObjectURL(created);
+        urls.clear();
+        for (const video of videos.values()) {
+            video.pause();
+            video.removeAttribute('src');
+            video.load();
+        }
+        videos.clear();
+    });
+    return {
+        kinds: () => ASSET_KINDS.slice(),
+        get: (id: unknown) => {
+            const asset = library.get(requireString(id, 'helix.assets.get', 'o id'));
+            return asset ? describeAsset(asset) : null;
+        },
+        byName: (name: unknown, kind?: unknown) => {
+            const wanted = requireString(name, 'helix.assets.byName', 'o nome');
+            const type = kindOf(kind, 'helix.assets.byName');
+            const asset = library.all.find((candidate) => candidate.name === wanted && (!type || candidate.kind === type)) ?? null;
+            return asset ? describeAsset(asset) : null;
+        },
+        list: (kind?: unknown) => {
+            const type = kindOf(kind, 'helix.assets.list');
+            return (type ? library.byKind(type) : library.all).map(describeAsset);
+        },
+        byTag: (tag: unknown) => {
+            const wanted = requireString(tag, 'helix.assets.byTag', 'a tag').toLowerCase();
+            return library.all.filter((asset) => asset.tags.some((candidate) => candidate.toLowerCase() === wanted)).map(describeAsset);
+        },
+        search: (query: unknown, kind?: unknown) => {
+            const needle = requireString(query, 'helix.assets.search', 'a busca').trim().toLowerCase();
+            const type = kindOf(kind, 'helix.assets.search');
+            return library.all
+                .filter((asset) => (!type || asset.kind === type) && (needle === '' || asset.name.toLowerCase().includes(needle) || asset.format.toLowerCase().includes(needle) || asset.tags.some((tag) => tag.toLowerCase().includes(needle))))
+                .map(describeAsset);
+        },
+        exists: (value: unknown) => {
+            try {
+                resolve(value, 'helix.assets.exists');
+                return true;
+            }
+            catch {
+                return false;
+            }
+        },
+        tags: (asset: unknown) => resolve(asset, 'helix.assets.tags').tags.slice(),
+        setTags: (asset: unknown, tags: unknown) => {
+            if (!Array.isArray(tags) || tags.some((tag) => typeof tag !== 'string'))
+                throw new HelixArgumentError('helix.assets.setTags', 'as tags precisam ser uma lista de strings.');
+            setLibraryAssetTags(session, resolve(asset, 'helix.assets.setTags'), tags as string[]);
+        },
+        rename: (asset: unknown, name: unknown) => renameLibraryAsset(session, resolve(asset, 'helix.assets.rename'), requireString(name, 'helix.assets.rename', 'o novo nome')),
+        remove: (asset: unknown) => removeLibraryAsset(session, resolve(asset, 'helix.assets.remove')),
+        file: (asset: unknown) => library.primaryFile(resolve(asset, 'helix.assets.file')),
+        files: (asset: unknown) => library.files(resolve(asset, 'helix.assets.files')),
+        url: (asset: unknown) => url(resolve(asset, 'helix.assets.url')),
+        text: (asset: unknown) => text(resolve(asset, 'helix.assets.text')),
+        bytes: async (asset: unknown) => new Uint8Array(await (await library.primaryFile(resolve(asset, 'helix.assets.bytes'))).arrayBuffer()),
+        data: (asset: unknown, format?: unknown) => data(resolve(asset, 'helix.assets.data'), format, 'helix.assets.data'),
+        model: (asset: unknown) => library.loadModel(resolve(asset, 'helix.assets.model', 'model')),
+        image: async (asset: unknown) => {
+            const resolved = resolve(asset, 'helix.assets.image', 'texture');
+            const file = await library.primaryFile(resolved);
+            return decodeImage(file, file.type || null);
+        },
+        audio: async (asset: unknown) => {
+            const resolved = resolve(asset, 'helix.assets.audio', 'audio');
+            const engine = session.audio.engine;
+            if (!engine.supported)
+                throw new HelixError('helix.assets.audio: este navegador não tem Web Audio.');
+            return engine.load(resolved.id, () => library.primaryFile(resolved));
+        },
+        animation: async (asset: unknown) => {
+            const resolved = resolve(asset, 'helix.assets.animation', 'animation');
+            const document = getAnimationDocument(resolved.id) ?? (await ensureAnimationDocument(session, resolved.id));
+            if (!document)
+                throw new HelixError(`helix.assets.animation: não foi possível ler ${resolved.name}.`);
+            return document;
+        },
+        gui: (asset: unknown) => loadGuiAsset(session, resolve(asset, 'helix.assets.gui', 'gui')),
+        vfx: (asset: unknown) => loadVfxAsset(session, resolve(asset, 'helix.assets.vfx', 'vfx')),
+        script: (asset: unknown) => loadScriptAsset(session, resolve(asset, 'helix.assets.script', 'script')),
+        font: async (asset: unknown) => {
+            const resolved = resolve(asset, 'helix.assets.font', 'font');
+            await guiFonts.ensure(resolved.id);
+            if (guiFonts.hasFailed(resolved.id))
+                throw new HelixError(`helix.assets.font: não foi possível carregar a fonte ${resolved.name}.`);
+            return guiFonts.cssFamily(fontAssetFamily(resolved.id));
+        },
+        video: async (asset: unknown) => {
+            const resolved = resolve(asset, 'helix.assets.video', 'video');
+            const existing = videos.get(resolved.id);
+            if (existing)
+                return existing;
+            const video = document.createElement('video');
+            video.src = await url(resolved);
+            video.playsInline = true;
+            video.muted = true;
+            video.loop = false;
+            video.preload = 'auto';
+            videos.set(resolved.id, video);
+            return video;
+        },
+        import: async (source: unknown, options?: unknown) => {
+            const member = 'helix.assets.import';
+            const settings = options === undefined ? {} : requireObject(options, member);
+            const files: File[] = [];
+            const pushBlob = async (blob: Blob, name: string) => files.push(blob instanceof File ? blob : new File([blob], name, { type: blob.type }));
+            const list = Array.isArray(source) ? source : [source];
+            for (const item of list) {
+                if (item instanceof File)
+                    files.push(item);
+                else if (item instanceof Blob)
+                    await pushBlob(item, typeof settings.name === 'string' ? settings.name : 'arquivo');
+                else if (typeof item === 'string') {
+                    const response = await fetch(item);
+                    if (!response.ok)
+                        throw new HelixError(`${member}: ${item} respondeu ${response.status}.`);
+                    const name = typeof settings.name === 'string' ? settings.name : decodeURIComponent(item.split('/').pop()?.split('?')[0] || 'arquivo');
+                    await pushBlob(await response.blob(), name);
+                }
+                else
+                    throw new HelixArgumentError(member, 'esperava File, Blob, URL ou uma lista deles.');
+            }
+            const added = await addFilesToLibrary(session, files);
+            return added.map(describeAsset);
+        },
+        pickFiles: async (accept: unknown = '*/*', multiple: unknown = true) => pickFiles({ accept: requireString(accept, 'helix.assets.pickFiles', 'os tipos aceitos'), multiple: Boolean(multiple) }),
+        thumbnail: (asset: unknown) => resolve(asset, 'helix.assets.thumbnail').thumbnail?.blob ?? null,
+        onChange: (handler: unknown) => {
+            const fn = requireFunction<(event: {
+                type: string;
+                asset: ReturnType<typeof describeAsset>;
+            }) => void>(handler, 'helix.assets.onChange');
+            const unsubscribes = ['assets.added', 'assets.changed', 'assets.removed'].map((name) => bus.on(name, (payload) => fn({ type: name.slice('assets.'.length), asset: payload as ReturnType<typeof describeAsset> }), host.current));
+            return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+        },
+        get count() {
+            return library.size;
+        },
+        get busy() {
+            return library.busy;
+        },
+        get status() {
+            return library.status;
+        },
+    };
+}
+export type AssetsApi = ReturnType<typeof createAssetsApi>;
