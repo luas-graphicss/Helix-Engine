@@ -525,33 +525,160 @@ func Func(fn func(args []Value) Value) Value {
 
                                                                                          
                                                                             
+func From(x any) Value {
+	switch v := x.(type) {
+	case nil:
+		return NullValue()
+	case Value:
+		return v
+	case *Value:
+		if v == nil {
+			return NullValue()
+		}
+		return *v
+	case bool:
+		if v {
+			return wrap(hxBoolean(1))
+		}
+		return wrap(hxBoolean(0))
+	case float64:
+		return wrap(hxNumber(v))
+	case float32:
+		return wrap(hxNumber(float64(v)))
+	case int:
+		return wrap(hxNumber(float64(v)))
+	case int8:
+		return wrap(hxNumber(float64(v)))
+	case int16:
+		return wrap(hxNumber(float64(v)))
+	case int32:
+		return wrap(hxNumber(float64(v)))
+	case int64:
+		return wrap(hxNumber(float64(v)))
+	case uint:
+		return wrap(hxNumber(float64(v)))
+	case uint8:
+		return wrap(hxNumber(float64(v)))
+	case uint16:
+		return wrap(hxNumber(float64(v)))
+	case uint32:
+		return wrap(hxNumber(float64(v)))
+	case uint64:
+		return wrap(hxNumber(float64(v)))
+	case string:
+		return wrap(hxString(v))
+	case Vec3:
+		object := NewObject()
+		object.Set("x", v.X)
+		object.Set("y", v.Y)
+		object.Set("z", v.Z)
+		return object
+	case []Value:
+		array := NewArray()
+		for i, item := range v {
+			array.SetAt(i, item)
+		}
+		return array
+	case []any:
+		return List(v...)
+	case []float64:
+		array := NewArray()
+		for i, item := range v {
+			array.SetAt(i, item)
+		}
+		return array
+	case []int:
+		array := NewArray()
+		for i, item := range v {
+			array.SetAt(i, item)
+		}
+		return array
+	case []string:
+		array := NewArray()
+		for i, item := range v {
+			array.SetAt(i, item)
+		}
+		return array
+	case map[string]any:
+		return Map(v)
+	case func(args []Value) Value:
+		return Func(v)
+	case func(args []Value):
+		return Func(func(args []Value) Value {
+			v(args)
+			return Value{}
+		})
+	case func():
+		return Func(func([]Value) Value {
+			v()
+			return Value{}
+		})
+	case fmt.Stringer:
+		return wrap(hxString(v.String()))
+	case error:
+		return wrap(hxString(v.Error()))
+	default:
+		panic(EngineError(fmt.Sprintf("helix.From: não sei converter um %T para a engine; use float64, string, bool, Vec3, Value, slices ou map[string]any.", x)))
+	}
+}
 
                                                                                               
 
+var (
+	callbacks    = map[uint32]func(args []Value) Value{}
+	nextCallback uint32
+)
 
                                                                        
   
                                     
+func invokeCallback(id uint32, args uint32) uint32 {
+	fn, ok := callbacks[id]
+	if !ok {
+		return 0
+	}
+	result := fn(Wrap(args).Slice())
+	return result.Handle()
+}
 
                                                                                        
   
                                   
+func dropCallback(id uint32) {
+	delete(callbacks, id)
+}
 
                                                                                                  
 
                                                                                           
+func Root() Value { return wrap(hxRoot()) }
 
                                                                                  
+func Self() Value { return wrap(hxSelf()) }
 
                                                                           
+func Script() Value { return wrap(hxScript()) }
 
                                                                                                       
+func Require(name string) Value { return wrap(hxRequire(name)) }
 
                                                       
+func Now() float64 { return hxNow() }
 
                                                       
+func Log(level Level, message string) { hxLog(int32(level), message) }
 
+func Print(args ...any)                 { hxLog(int32(LevelInfo), fmt.Sprint(args...)) }
+func Printf(format string, args ...any) { hxLog(int32(LevelInfo), fmt.Sprintf(format, args...)) }
+func Warn(args ...any)                  { hxLog(int32(LevelWarn), fmt.Sprint(args...)) }
+func Warnf(format string, args ...any)  { hxLog(int32(LevelWarn), fmt.Sprintf(format, args...)) }
+func Error(args ...any)                 { hxLog(int32(LevelError), fmt.Sprint(args...)) }
+func Errorf(format string, args ...any) { hxLog(int32(LevelError), fmt.Sprintf(format, args...)) }
+func Debug(args ...any)                 { hxLog(int32(LevelDebug), fmt.Sprint(args...)) }
+func Debugf(format string, args ...any) { hxLog(int32(LevelDebug), fmt.Sprintf(format, args...)) }
 
                                                                                          
+func Throw(message string) { panic(EngineError(message)) }
 
                                     
+func Throwf(format string, args ...any) { panic(EngineError(fmt.Sprintf(format, args...))) }
