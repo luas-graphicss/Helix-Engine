@@ -278,3 +278,38 @@ function buildDialog(): GuiDocument {
     });
     return { ...document, root: { ...document.root, children: [box, choices] } };
 }
+function buildTouchControls(): GuiDocument {
+    const document = createGuiDocument('Controles de toque', { x: 1280, y: 720 });
+    const round = (name: string, icon: string, size: number, position: UDim2): GuiNode => element('button', name, { position, anchor: { x: 1, y: 1 }, size: { x: size, y: size } }, {
+        rect: { aspectRatio: 1 },
+        appearance: { fill: solidFill('#ffffff', 0.1), stroke: stroke('#ffffff', 0.25, 2), radii: uniformRadii(size / 2), shadow: null },
+        text: { content: '' },
+        control: { kind: 'button', disabled: false, iconName: icon, iconPosition: 'only', iconSize: Math.round(size * 0.42), iconGap: 0 },
+        states: { ...ghostStates(), pressed: { ...emptyStateStyle(), fillColor: '#ffffff', fillAlpha: 0.3, scale: 0.94 } },
+    });
+    const stick = element('frame', 'Direcional', { position: udim2(0, 56, 1, -56), anchor: { x: 0, y: 1 }, size: { x: 168, y: 168 } }, {
+        rect: { aspectRatio: 1 },
+        interactable: true,
+        appearance: { fill: solidFill('#ffffff', 0.07), stroke: stroke('#ffffff', 0.2, 2), radii: uniformRadii(84), shadow: null },
+        children: [element('frame', 'Alavanca', { position: udim2(0.5, 0, 0.5, 0), anchor: { x: 0.5, y: 0.5 }, size: { x: 68, y: 68 } }, { appearance: { fill: solidFill('#ffffff', 0.32), stroke: null, radii: uniformRadii(34), shadow: shadow(10, 2, 0.3) } })],
+    });
+    const pause = element('button', 'Pausa', { position: udim2(1, -24, 0, 24), anchor: { x: 1, y: 0 }, size: { x: 44, y: 44 } }, { appearance: { ...GHOST, radii: uniformRadii(22) }, text: { content: '' }, control: { kind: 'button', disabled: false, iconName: 'Pause', iconPosition: 'only', iconSize: 18, iconGap: 0 }, states: ghostStates() });
+    const health = element('progress', 'Vida', { position: udim2(0, 24, 0, 28), size: { x: 220, y: 12 } }, { appearance: { radii: uniformRadii(6) }, control: { kind: 'progress', value: 0.8, direction: 'horizontal', reverse: false, fillColor: GUI_THEME.success, fillAlpha: 1, fillGradient: null, showLabel: false, segments: 0 } });
+    return {
+        ...document,
+        root: { ...document.root, children: [health, pause, stick, round('Pular', 'ArrowUp', 96, udim2(1, -56, 1, -140)), round('Atacar', 'Sword', 76, udim2(1, -170, 1, -56)), round('Interagir', 'Hand', 64, udim2(1, -176, 1, -196))] },
+    };
+}
+export const GUI_TEMPLATES: readonly GuiTemplate[] = [
+    { id: 'blank', label: 'Em branco', description: 'Só a tela, para montar do zero.', build: () => createGuiDocument('Nova tela') },
+    { id: 'hud', label: 'HUD de jogo', description: 'Vida e vigor, objetivo, mira, minimapa, munição e barra de atalhos ancorados nas bordas.', build: buildHud },
+    { id: 'main-menu', label: 'Menu principal', description: 'Fundo em gradiente, título em destaque e a coluna de botões Jogar, Continuar, Opções.', build: buildMainMenu },
+    { id: 'pause', label: 'Menu de pausa', description: 'Jogo escurecido com um painel central e botões empilhados por layout automático.', build: buildPause },
+    { id: 'settings', label: 'Configurações', description: 'Linhas de volume com controles deslizantes e opções de vídeo com interruptores.', build: buildSettings },
+    { id: 'inventory', label: 'Inventário', description: 'Grade rolável de espaços, coluna de detalhes do item e barra de peso.', build: buildInventory },
+    { id: 'dialog', label: 'Caixa de diálogo', description: 'Retrato, nome e fala com quebra automática, mais as respostas do jogador.', build: buildDialog },
+    { id: 'touch', label: 'Controles de toque', description: 'Direcional virtual e botões redondos de ação para celular, em 1280×720.', build: buildTouchControls },
+];
+export function findGuiTemplate(id: string): GuiTemplate {
+    return GUI_TEMPLATES.find((template) => template.id === id) ?? GUI_TEMPLATES[0];
+}
