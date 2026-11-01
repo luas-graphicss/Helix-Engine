@@ -1066,4 +1066,95 @@ public class DebugJogo : ActorScript
     }
 }
 `;
+    const actor = `                                 
+                                                                                              
+                                                                                                                   
+using Helix;
+using System;
+
+public class DebugGirador : ActorScript
+{
+    private float angulo;
+    private int contatos;
+    private int quadros;
+    private Action desligar;
+
+    public override void OnLoad()
+    {
+        Helix.Props.Define(new
+        {
+            velocidade = new { type = "range", @default = 90, min = 0, max = 360, step = 1, label = "Velocidade (°/s)" },
+            cor = new { type = "color", @default = "#ff8800", label = "Cor" },
+            pulsar = new { type = "boolean", @default = true, label = "Pulsar" },
+        });
+    }
+
+    public override void OnStart()
+    {
+        var ator = Self;
+        var sufixo = Helix.Script != null ? $" (script {Helix.Script.Name})" : "";
+        Helix.Log.Info("Girador", $"{ator.Name} acordou com velocidade {Helix.Props.Get("velocidade")}°/s{sufixo}");
+        Helix.Material.SetColor(ator, Helix.Props.Get("cor"));
+        desligar = Helix.Props.OnChanged("cor", cor => Helix.Material.SetColor(ator, cor));
+        Helix.Log.Assert(Helix.Self == ator, "Helix.Self deveria ser o ator deste script");
+        Helix.Log.Assert(Helix.Props.Has("velocidade") && Helix.Props.Definitions().Length == 3, "Props.Define deveria registrar 3 propriedades");
+    }
+
+    public override void OnUpdate(float dt)
+    {
+        quadros++;
+        angulo += (float)Helix.Props.Get("velocidade") * dt;
+        Helix.Transform.SetRotation(Self, new[] { 0f, angulo, 0f });
+        if (Helix.Props.Get("pulsar") == true) Helix.Transform.SetScale(Self, 1 + Math.Sin((double)Helix.Time.Now * 3) * 0.1);
+    }
+
+    public override void OnCollisionBegin(dynamic outro, dynamic contato)
+    {
+        contatos++;
+        if (contatos <= 3) Helix.Log.Info("Girador", $"{Self.Name} tocou {outro.Name} (impulso {contato.Impulse:F2})");
+    }
+
+    public override void OnTriggerEnter(dynamic outro)
+    {
+        Helix.Log.Info("Girador", $"{outro.Name} entrou no gatilho de {Self.Name}");
+    }
+
+    public override void OnEnable()
+    {
+        Helix.Log.Debug("Girador", $"{Self.Name} ativo");
+    }
+
+    public override void OnDisable()
+    {
+        Helix.Log.Debug("Girador", $"{Self.Name} inativo");
+    }
+
+    public override void OnStop()
+    {
+        Helix.Log.Info("Girador", $"{Self.Name}: {quadros} quadros, {contatos} contatos");
+    }
+
+    public override void OnDestroy()
+    {
+        desligar?.Invoke();
+    }
+}
+`;
+    const module = `                                     
+                                                                                                 
+                                                       
+using System;
+
+public static class DebugUtil
+{
+    public const string Versao = "1.0";
+
+    public static double Soma(double a, double b) => a + b;
+
+    public static string Saudacao(string quem) => $"Olá, {quem}";
+
+    public static double Limitar(double valor, double minimo, double maximo) => Math.Min(maximo, Math.Max(minimo, valor));
+}
+`;
+    return { entry, actor, module };
 }
