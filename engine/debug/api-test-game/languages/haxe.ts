@@ -561,5 +561,285 @@ class DebugJogo extends Script {
 		g.bind("titulo", "Helix · Debug");
 		assinar(g.onAction("caixa", function() soltarCaixa()));
 		assinar(g.onAction("reiniciar", function() helix.play.restart()));
+		checar("gui.elements", g.elements("[data-bind]").length >= 5);
+		checar("gui.size", g.size.width > 0);
+		var escala = function(scale:Float, offset:Float) return {scale: scale, offset: offset};
+		var declarativa:Dynamic = g.create("DebugTela", {referenceSize: {x: 1280, y: 720}});
+		var painel:Dynamic = g.add(declarativa, "frame", {
+			name: "Painel",
+			rect: {
+				position: {x: escala(1, -236), y: escala(0, 16)},
+				size: {x: escala(0, 220), y: escala(0, 48)}
+			}
+		});
+		g.add(declarativa, "text", {name: "Rotulo", text: "Tela declarativa OK"}, painel.node.id);
+		checar("gui.add/find", g.find(declarativa, "Rotulo").kind == "text");
+		g.setText(declarativa, "Rotulo", "Tela declarativa OK · " + LINGUAGEM);
+		                                                                                   
+		return g.show(declarativa, "debug-tela").then(function(mostrada) {
+			tela = mostrada;
+			checar("gui.show/isShown", tela != null && helix.gui.isShown(tela) == true);
+			checar("gui.kinds", contem(helix.gui.kinds(), "button"));
+		});
+	}
+
+	function audio():Dynamic {
+		var a:Dynamic = helix.audio, s:Dynamic = helix.scene;
+		checar("audio.supported", ehBool(a.supported));
+		var mixer:Dynamic = a.mixer;
+		mixer.setVolumeDb("sfx", -3);
+		checar("mixer.setVolumeDb", mixer.bus("sfx").volumeDb == -3);
+		checar("audio.clips", ehLista(a.clips()));
+		var fonte:Dynamic = s.spawn("sound", {name: "FonteSonora", position: v3(3, 1, 3), audioSource: {trigger: "manual", spatial: true}});
+		checar("spawn sound", fonte.audioSource != null);
+		var fontes:Dynamic = a.sources;
+		fontes.set(fonte, {volumeDb: -4});
+		checar("sources.set", fonte.audioSource.volumeDb == -4);
+		checar("sources.isPlaying", fontes.isPlaying(fonte) == false);
+		return null;
+	}
+
+	function vfx():Dynamic {
+		var v:Dynamic = helix.vfx;
+		var ids:Array<Dynamic> = v.templates.ids();
+		checar("vfx.templates", ids.length > 0);
+		checar("vfx.moduleKinds", v.moduleKinds().length > 0);
+		var doc:Dynamic = v.fromTemplate(ids[0], "DebugFaiscas");
+		doc = v.addEmitter(doc, {name: "Extra", maxParticles: 50});
+		doc = v.set(doc, {loop: true});
+		checar("vfx.fromTemplate/addEmitter", doc.emitters.length >= 2 && doc.loop == true);
+		return v.save(doc, "DebugFaiscas").then(function(ativo) {
+			var v:Dynamic = helix.vfx;
+			checar("vfx.save", ativo != null && ativo.kind == "vfx");
+			var ator:Dynamic = v.emitAt(ativo, v3(0, 1.5, -8), {destroyWhenFinished: false});
+			checar("vfx.emitAt", v.has(ator) == true);
+			v.burst(ator, 20);
+			checar("vfx.stats", ehNumero(v.stats().effects));
+		});
+	}
+
+	                                                                                          
+
+	function aoTeclar(e:Dynamic):Void {
+		if (e.repeat == true) return;
+		var code:String = e.code;
+		switch (code) {
+			case "KeyR":
+				helix.play.restart();
+			case "KeyB":
+				soltarCaixa();
+			case "KeyE":
+				helix.events.emit("debug.ping", {origem: "teclado", quadro: helix.time.frame});
+			case "KeyF":
+				helix.camera.shake(0.4, 0.6);
+			case "KeyG":
+				if (efeito != null) {
+					efeito.enabled = !(efeito.enabled == true);
+					info(efeito.enabled == true ? "Efeito DebugPost ligado" : "Efeito DebugPost desligado");
+				}
+			case "KeyT":
+				var tm:Dynamic = helix.time;
+				tm.scale = tm.scale == 1 ? 0.3 : 1;
+				info("time.scale = " + tm.scale);
+			case "KeyH":
+				if (tela != null) {
+					var g:Dynamic = helix.gui;
+					if (g.isShown(tela) == true) g.hide(tela) else g.show(tela, "debug-tela");
+				}
+			case "KeyL":
+				var luzes:Array<Dynamic> = helix.light.all({local: true});
+				info("Luzes locais: " + [for (luz in luzes) nomeDe(luz.entity)].join(", "));
+			default:
+		}
+	}
+
+	function cliqueNaCena(x:Float, y:Float):Void {
+		var c:Dynamic = helix.camera;
+		var alvo:Dynamic = c.pick(x, y);
+		var ponto:Dynamic = c.pickPoint(x, y);
+		if (alvo != null) info("Clique em " + nomeDe(alvo));
+		if (ponto != null) helix.debug.sphere(ponto, 0.3, "#ff006e", 2);
+	}
+
+	function entrada():Dynamic {
+		var input:Dynamic = helix.input;
+		var acoes:Dynamic = input.actions;
+		acoes.define("pular", ["Space", "Gamepad:0"]);
+		acoes.define("soltar", ["KeyB"]);
+		checar("actions.define/bindings", acoes.bindings("pular").length >= 1);
+		checar("action()", input.action("pular").name == "pular" && ehBool(acoes.down("pular")));
+		checar("isDown", input.isDown("KeyW") == false);
+		checar("pointer", ehNumero(input.pointer.x));
+		checar("gamepads", ehLista(input.gamepads()));
+		checar("axis2d", ehNumero(input.axis2d({up: "KeyW", down: "KeyS", left: "KeyA", right: "KeyD"}).x));
+		var teclas:Dynamic = input.keysDown();
+		checar("keysDown", ehObjeto(teclas));
+		assinar(input.onKeyDown(function(e) aoTeclar(e)));
+		assinar(input.onPointerDown(function(e) {
+			if (e.button == 0) cliqueNaCena(e.x, e.y);
+		}));
+		assinar(input.onGamepadButtonDown(function(e) info("Gamepad " + e.pad + " botão " + e.button)));
+		return null;
+	}
+
+	function eventos():Dynamic {
+		var ev:Dynamic = helix.events, play:Dynamic = helix.play;
+		                                                                                
+		var recebido:Dynamic = null;
+		var desligar:Dynamic = ev.on("debug.ping", function(payload) recebido = payload);
+		checar("events.emit conta ouvintes", ev.emit("debug.ping", {origem: "teste"}) == 1);
+		checar("events.on recebe", recebido != null && recebido.origem == "teste");
+		checar("listenerCount", ev.listenerCount("debug.ping") == 1);
+		desligar();
+		checar("unsubscribe", ev.listenerCount("debug.ping") == 0);
+		var umaVez = 0;
+		ev.once("debug.once", function() umaVez++);
+		ev.emit("debug.once");
+		ev.emit("debug.once");
+		checar("events.once", umaVez == 1);
+		assinar(ev.on("debug.ping", function(payload) info("ping de " + payload.origem)));
+		assinar(ev.on("debug.caixa", function(payload) depurar("caixa " + payload.nome)));
+		var doAtor = 0;
+		assinar(ev.onEntity(torus, "toque", function() doAtor++));
+		ev.emitEntity(torus, "toque");
+		checar("onEntity/emitEntity", doAtor == 1);
+		assinar(play.onStopped(function() info("play.onStopped disparou")));
+		assinar(play.onPaused(function() info("pausado")));
+		assinar(play.onResumed(function() info("retomado")));
+		return null;
+	}
+
+	                                                                                 
+	function tempo():Dynamic {
+		var tm:Dynamic = helix.time;
+		checar("time.now", tm.now >= 0 && tm.frame >= 0);
+		checar("time.delta", tm.delta >= 0 && tm.fixedDelta > 0);
+		var inicio:Float = tm.now;
+		return tm.wait(0.1).then(function(_) {
+			var tm:Dynamic = helix.time;
+			var decorrido:Float = tm.now - inicio;
+			checar("time.wait", decorrido >= 0.09, arred(decorrido));
+			var quadro:Int = tm.frame;
+			return tm.waitFrames(2).then(function(_) {
+				var tm:Dynamic = helix.time;
+				var agora:Int = tm.frame;
+				checar("time.waitFrames", agora >= quadro + 2, agora - quadro);
+				assinar(tm.every(2, function() helix.gui.bind("atores", helix.scene.count())));
+				var disparou = false;
+				tm.delay(0.2, function() disparou = true);
+				return tm.wait(0.3).then(function(_) checar("time.delay", disparou));
+			});
+		});
+	}
+
+	function dados():Dynamic {
+		return helix.storage.ready().then(function(_) {
+			var st:Dynamic = helix.storage;
+			var atual:Dynamic = st.get("execucoes", 0);
+			var execucoes:Int = (ehNumero(atual) ? Std.int(atual) : 0) + 1;
+			return st.set("execucoes", execucoes).then(function(_) {
+				var st:Dynamic = helix.storage;
+				checar("storage.get/set", st.get("execucoes") == execucoes && st.has("execucoes") == true, execucoes);
+				info("Execução nº " + execucoes + " deste jogo de teste neste projeto.");
+				return helix.assets.data("DebugConfig").then(function(cfg) {
+					checar("assets.data (TOML)", cfg != null && cfg.jogador != null && cfg.jogador.velocidade == 6.5);
+					return helix.assets.text("DebugConfig").then(function(texto) {
+						var conteudo:String = texto;
+						checar("assets.text", conteudo.indexOf("velocidade") >= 0);
+						var ativos:Dynamic = helix.assets;
+						checar("assets.byName", ativos.byName("DebugJogo", "script") != null);
+						checar("assets.exists", ativos.exists("DebugUtil") == true && ativos.exists("NaoExiste") == false);
+						checar("assets.search", ativos.search("Debug").length >= 5);
+						checar("project.name", ehTexto(helix.project.name));
+						checar("project.stats", helix.project.stats.entities > 0);
+						checar("net.localPlayer", helix.net.localPlayer.local == true);
+						checar("play.state", helix.play.state == "playing" && helix.play.isRunning == true);
+					});
+				});
+			});
+		});
+	}
+
+	                                                                                              
+	function lancar():Dynamic {
+		throw new haxe.Exception("erro proposital: a exceção vira ERRO na cadeia");
+	}
+
+	                                                                                           
+
+	function areas():Array<Area> {
+		return [
+			{nome: "Núcleo", rodar: nucleo, esperaErro: false},
+			{nome: "Módulo (require)", rodar: modulo, esperaErro: false},
+			{nome: "Matemática", rodar: matematica, esperaErro: false},
+			{nome: "Cena", rodar: cena, esperaErro: false},
+			{nome: "Transformações", rodar: transformacao, esperaErro: false},
+			{nome: "Malhas e CSG", rodar: malhas, esperaErro: false},
+			{nome: "Materiais", rodar: materiais, esperaErro: false},
+			{nome: "Luzes", rodar: luzes, esperaErro: false},
+			{nome: "Céu e mundo", rodar: ceu, esperaErro: false},
+			{nome: "Câmera", rodar: camera, esperaErro: false},
+			{nome: "Pós-processamento", rodar: pos, esperaErro: false},
+			{nome: "Render", rodar: render, esperaErro: false},
+			{nome: "Física", rodar: fisica, esperaErro: false},
+			{nome: "Personagem e jogador", rodar: personagem, esperaErro: false},
+			{nome: "Terreno", rodar: terreno, esperaErro: false},
+			{nome: "Interface", rodar: interfaceGrafica, esperaErro: false},
+			{nome: "Áudio", rodar: audio, esperaErro: false},
+			{nome: "VFX", rodar: vfx, esperaErro: false},
+			{nome: "Entrada", rodar: entrada, esperaErro: false},
+			{nome: "Eventos", rodar: eventos, esperaErro: false},
+			{nome: "Tempo e tarefas", rodar: tempo, esperaErro: false},
+			{nome: "Dados, projeto e rede", rodar: dados, esperaErro: false},
+			{nome: "Erro proposital (exceção Haxe)", rodar: lancar, esperaErro: true}
+		];
+	}
+
+	function areaOk(a:Area):Void {
+		if (a.esperaErro) {
+			checar("a exceção deveria ter chegado à cadeia", false);
+			return;
+		}
+		depurar("ok " + a.nome);
+	}
+
+	function areaErro(a:Area, causa:Dynamic):Void {
+		var mensagem:String = causa != null && ehObjeto(causa) && causa.message != null ? causa.message : Std.string(causa);
+		if (a.esperaErro) {
+			checar("a exceção chega como erro da promessa", mensagem.indexOf("proposital") >= 0, mensagem);
+			return;
+		}
+		falhas++;
+		erro("ERRO em " + a.nome + ": " + mensagem);
+	}
+
+	                                                                                               
+	function encadear(promessa:Dynamic, a:Area):Dynamic {
+		var depois:Dynamic = promessa.then(function(_) return a.rodar());
+		return depois.then(function(_) areaOk(a), function(causa) areaErro(a, causa));
+	}
+
+	function finalizar():Void {
+		var girador:Dynamic = helix.assets.byName("DebugGirador", "script");
+		if (girador != null) {
+			var extra:Dynamic = helix.scene.spawnPrimitive("box", {
+				name: "GiradorDinamico",
+				position: v3(-2, 0.5, -3),
+				rigidBody: {type: "kinematic", collider: "box"},
+				script: {assetId: girador.id, props: {velocidade: 180, cor: "#00b4d8"}}
+			});
+			checar("spawn com script", extra.script != null && extra.script.assetId == girador.id);
+		} else {
+			checar("ativo DebugGirador", false, "não está na biblioteca");
+		}
+		var dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.";
+		if (falhas == 0) info("API percorrida em " + LINGUAGEM + ": " + checagens + " checagens, nenhuma falha. " + dica);
+		else aviso("API percorrida em " + LINGUAGEM + ": " + checagens + " checagens, " + falhas + " falhas (veja FALHOU/ERRO acima). " + dica);
+		helix.gui.bind("checagens", checagens);
+		helix.gui.bind("falhas", falhas);
+	}
+
+	                                                                                          
+
 `;
 }
