@@ -271,4 +271,56 @@ export class PhpGame implements ForeignGame {
         const location: ForeignLocation | null = scriptFile && scriptFile !== file ? { file: scriptFile, line: Number(line) || 0, assetId: this.host.assetIdOfFile(scriptFile) } : this.callerLocation();
         this.host.console(normalized, String(message), location);
     }
+    private output(level: PhpOutputLevel, text: string): void {
+        if (this.disposed)
+            return;
+        if (level === 'error') {
+            this.stderr += text;
+            return;
+        }
+        this.host.console('info', text.replace(/\n$/, ''), this.callerLocation());
+    }
+    private drainStderr(): void {
+        if (!this.stderr || this.disposed || !this.instance || this.instance.dead)
+            return;
+        const text = this.stderr.trim();
+        this.stderr = '';
+        if (text)
+            this.host.console('warn', text.replace(/^PHP /, ''), null);
+    }
+    private resolve(fromKey: unknown, specifier: unknown): Encoded {
+        try {
+            if (typeof specifier !== 'string' || specifier.length === 0)
+                throw new HelixError('helix_require precisa do nome de um script da biblioteca.');
+            const target = this.host.resolveScript(specifier);
+            if (!target) {
+                const suggestion = closestName(specifier, this.host.moduleNames());
+                const hint = suggestion ? ` Você quis dizer "${suggestion}"?` : ' Os módulos importáveis são os scripts do projeto, pelo nome.';
+                return { [PHP_KIND_KEY]: 'missing', message: `"${specifier}" não existe na biblioteca.${hint}` };
+            }
+            if (target.language === this.language) {
+                this.sync(target);
+                const file = scriptFileName(target.name, target.language);
+                return { [PHP_KIND_KEY]: 'module', key: target.assetId, file, path: PHP_SCRIPT_DIR + file, version: target.key };
+            }
+            const from = typeof fromKey === 'string' ? this.host.compiledById(fromKey) : null;
+            return this.bridge.encode(this.host.requireForeign(from, target));
+        }
+        catch (cause) {
+            return this.bridge.error(cause);
+        }
+    }
+    private json(value: unknown): string {
+        return JSON.stringify(value === undefined ? null : value);
+    }
+    private parse(value: unknown): unknown {
+        if (typeof value !== 'string' || value === '')
+            return value ?? null;
+        try {
+            return JSON.parse(value);
+        }
+        catch {
+            throw new HelixError(`o prelúdio PHP devolveu JSON inválido: ${value.slice(0, 120)}`);
+        }
+    }
 }
