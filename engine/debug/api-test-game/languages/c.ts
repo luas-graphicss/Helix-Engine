@@ -841,5 +841,285 @@ static hx_ref contar_uma_vez(void* userdata, hx_ref args) {
   (void)args;
   uma_vez++;
   return HX_NONE;
+}
+static hx_ref contar_toque(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  do_ator++;
+  return HX_NONE;
+}
+static hx_ref logar_ping(void* userdata, hx_ref args) {
+  (void)userdata;
+  char origem[64];
+  hx_string_copy(hx_get(hx_index(args, 0), "origem"), origem, sizeof origem);
+  info("ping de %s", origem);
+  return HX_NONE;
+}
+static hx_ref logar_caixa(void* userdata, hx_ref args) {
+  (void)userdata;
+  char nome[64];
+  hx_string_copy(hx_get(hx_index(args, 0), "nome"), nome, sizeof nome);
+  depurar("caixa %s", nome);
+  return HX_NONE;
+}
+static hx_ref logar_parou(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  info("play.onStopped disparou");
+  return HX_NONE;
+}
+static hx_ref logar_pausado(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  info("pausado");
+  return HX_NONE;
+}
+static hx_ref logar_retomado(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  info("retomado");
+  return HX_NONE;
+}
+
+static hx_ref eventos(void) {
+  hx_ref ev = api("events"), play = api("play");
+  hx_ref desligar = hx_invoke2(ev, "on", str("debug.ping"), cb(guardar_ping));
+  checar("events.emit conta ouvintes", hx_to_number(hx_invoke2(ev, "emit", str("debug.ping"), opts("origem", str("teste"), NULL))) == 1);
+  checar("events.on recebe", recebido != HX_NONE && str_eq(hx_get(recebido, "origem"), "teste"));
+  drop(&recebido);
+  checar("listenerCount", hx_to_number(hx_invoke1(ev, "listenerCount", str("debug.ping"))) == 1);
+  hx_call0(desligar);
+  checar("unsubscribe", hx_to_number(hx_invoke1(ev, "listenerCount", str("debug.ping"))) == 0);
+  uma_vez = 0;
+  hx_invoke2(ev, "once", str("debug.once"), cb(contar_uma_vez));
+  hx_invoke1(ev, "emit", str("debug.once"));
+  hx_invoke1(ev, "emit", str("debug.once"));
+  checar("events.once", uma_vez == 1);
+  assinar(hx_invoke2(ev, "on", str("debug.ping"), cb(logar_ping)));
+  assinar(hx_invoke2(ev, "on", str("debug.caixa"), cb(logar_caixa)));
+  do_ator = 0;
+  assinar(hx_invoke3(ev, "onEntity", torus, str("toque"), cb(contar_toque)));
+  hx_invoke2(ev, "emitEntity", torus, str("toque"));
+  checar("onEntity/emitEntity", do_ator == 1);
+  assinar(hx_invoke1(play, "onStopped", cb(logar_parou)));
+  assinar(hx_invoke1(play, "onPaused", cb(logar_pausado)));
+  assinar(hx_invoke1(play, "onResumed", cb(logar_retomado)));
+  return HX_NONE;
+}
+
+                                                                                    
+static double tempo_inicio;
+static int tempo_quadro, atraso_disparou;
+
+static hx_ref a_cada_2s(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  hx_invoke2(api("gui"), "bind", str("atores"), hx_invoke0(api("scene"), "count"));
+  return HX_NONE;
+}
+static hx_ref marcar_atraso(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  atraso_disparou = 1;
+  return HX_NONE;
+}
+static hx_ref tempo_passo3(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  checar("time.delay", atraso_disparou);
+  return HX_NONE;
+}
+static hx_ref tempo_passo2(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  hx_ref tm = api("time");
+  int quadro = (int)numero(tm, "frame");
+  checarf("time.waitFrames", quadro >= tempo_quadro + 2, "%d", quadro - tempo_quadro);
+  assinar(hx_invoke2(tm, "every", num(2), cb(a_cada_2s)));
+  atraso_disparou = 0;
+  hx_invoke2(tm, "delay", num(0.2), cb(marcar_atraso));
+  return hx_invoke1(hx_invoke1(tm, "wait", num(0.3)), "then", cb(tempo_passo3));
+}
+static hx_ref tempo_passo1(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  hx_ref tm = api("time");
+  double decorrido = numero(tm, "now") - tempo_inicio;
+  checarf("time.wait", decorrido >= 0.09, "%.3f", decorrido);
+  tempo_quadro = (int)numero(tm, "frame");
+  return hx_invoke1(hx_invoke1(tm, "waitFrames", num(2)), "then", cb(tempo_passo2));
+}
+static hx_ref tempo(void) {
+  hx_ref tm = api("time");
+  checar("time.now", numero(tm, "now") >= 0 && numero(tm, "frame") >= 0);
+  checar("time.delta", numero(tm, "delta") >= 0 && numero(tm, "fixedDelta") > 0);
+  tempo_inicio = numero(tm, "now");
+  return hx_invoke1(hx_invoke1(tm, "wait", num(0.1)), "then", cb(tempo_passo1));
+}
+
+static int execucoes;
+
+static hx_ref dados_passo4(void* userdata, hx_ref args) {
+  (void)userdata;
+  char texto[1024];
+  hx_string_copy(hx_index(args, 0), texto, sizeof texto);
+  checar("assets.text", strstr(texto, "velocidade") != NULL);
+  hx_ref ativos = api("assets");
+  checar("assets.byName", !hx_is_none(hx_invoke2(ativos, "byName", str("DebugJogo"), str("script"))));
+  checar("assets.exists", hx_to_boolean(hx_invoke1(ativos, "exists", str("DebugUtil"))) && !hx_to_boolean(hx_invoke1(ativos, "exists", str("NaoExiste"))));
+  checar("assets.search", hx_length(hx_invoke1(ativos, "search", str("Debug"))) >= 5);
+  checar("project.name", hx_is_string(hx_get(api("project"), "name")));
+  checar("project.stats", numero(hx_get(api("project"), "stats"), "entities") > 0);
+  checar("net.localPlayer", verdadeiro(hx_get(hx_get(api("net"), "localPlayer"), "local")));
+  checar("play.state", str_eq(hx_get(api("play"), "state"), "playing") && verdadeiro(hx_get(api("play"), "isRunning")));
+  return HX_NONE;
+}
+static hx_ref dados_passo3(void* userdata, hx_ref args) {
+  (void)userdata;
+  hx_ref cfg = hx_index(args, 0);
+  checar("assets.data (TOML)", !hx_is_none(cfg) && !hx_is_none(hx_get(cfg, "jogador")) && numero(hx_get(cfg, "jogador"), "velocidade") == 6.5);
+  return hx_invoke1(hx_invoke1(api("assets"), "text", str("DebugConfig")), "then", cb(dados_passo4));
+}
+static hx_ref dados_passo2(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  hx_ref st = api("storage");
+  checarf("storage.get/set", (int)hx_to_number(hx_invoke1(st, "get", str("execucoes"))) == execucoes && hx_to_boolean(hx_invoke1(st, "has", str("execucoes"))), "%d", execucoes);
+  info("Execução nº %d deste jogo de teste neste projeto.", execucoes);
+  return hx_invoke1(hx_invoke1(api("assets"), "data", str("DebugConfig")), "then", cb(dados_passo3));
+}
+static hx_ref dados_passo1(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  hx_ref st = api("storage");
+  hx_ref atual = hx_invoke2(st, "get", str("execucoes"), num(0));
+  execucoes = (hx_is_number(atual) ? (int)hx_to_number(atual) : 0) + 1;
+  return hx_invoke1(hx_invoke2(st, "set", str("execucoes"), num(execucoes)), "then", cb(dados_passo2));
+}
+static hx_ref dados(void) {
+  return hx_invoke1(hx_invoke0(api("storage"), "ready"), "then", cb(dados_passo1));
+}
+
+                                                                                            
+static hx_ref lancar(void) {
+  hx_throw("erro proposital: hx_throw interrompe a área e vira ERRO na cadeia");
+}
+
+                                                                                          
+
+typedef hx_ref (*area_fn)(void);
+typedef struct Area {
+  const char* nome;
+  area_fn fn;
+                                                                                               
+  int espera_erro;
+} Area;
+
+static const Area AREAS[] = {
+  { "Núcleo", nucleo, 0 },
+  { "Módulo (#include + hx_require)", modulo, 0 },
+  { "Matemática", matematica, 0 },
+  { "Cena", cena, 0 },
+  { "Transformações", transformacao, 0 },
+  { "Malhas e CSG", malhas, 0 },
+  { "Materiais", materiais, 0 },
+  { "Luzes", luzes, 0 },
+  { "Céu e mundo", ceu, 0 },
+  { "Câmera", camera, 0 },
+  { "Pós-processamento", pos, 0 },
+  { "Render", render, 0 },
+  { "Física", fisica, 0 },
+  { "Personagem e jogador", personagem, 0 },
+  { "Terreno", terreno, 0 },
+  { "Interface", interface_grafica, 0 },
+  { "Áudio", audio, 0 },
+  { "VFX", vfx, 0 },
+  { "Entrada", entrada, 0 },
+  { "Eventos", eventos, 0 },
+  { "Tempo e tarefas", tempo, 0 },
+  { "Dados, projeto e rede", dados, 0 },
+  { "Erro proposital (hx_throw)", lancar, 1 },
+};
+
+static hx_ref area_rodar(void* userdata, hx_ref args) {
+  (void)args;
+  return ((const Area*)userdata)->fn();
+}
+static hx_ref area_ok(void* userdata, hx_ref args) {
+  (void)args;
+  const Area* area = (const Area*)userdata;
+  if (area->espera_erro) {
+    checar("hx_throw deveria ter rejeitado a área", 0);
+    return HX_NONE;
+  }
+  depurar("ok %s", area->nome);
+  return HX_NONE;
+}
+static hx_ref area_erro(void* userdata, hx_ref args) {
+  const Area* area = (const Area*)userdata;
+  hx_ref causa = hx_index(args, 0);
+  char mensagem[512];
+  hx_string_copy(hx_is_object(causa) ? hx_get(causa, "message") : causa, mensagem, sizeof mensagem);
+  if (area->espera_erro) {
+    checarf("hx_throw chega como rejeição da promessa", strstr(mensagem, "proposital") != NULL, "%s", mensagem);
+    return HX_NONE;
+  }
+  falhas++;
+  erro("ERRO em %s: %s", area->nome, mensagem);
+  return HX_NONE;
+}
+
+                                                                                                  
+static hx_ref encadear(hx_ref promessa, const Area* area) {
+  hx_ref depois = hx_invoke1(promessa, "then", hx_function(area_rodar, (void*)area, NULL));
+  return hx_invoke2(depois, "then", hx_function(area_ok, (void*)area, NULL), hx_function(area_erro, (void*)area, NULL));
+}
+
+static hx_ref finalizar(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  hx_ref girador = hx_invoke2(api("assets"), "byName", str("DebugGirador"), str("script"));
+  if (!hx_is_none(girador)) {
+    hx_ref extra = hx_invoke2(api("scene"), "spawnPrimitive", str("box"),
+      opts("name", str("GiradorDinamico"), "position", v3(-2, 0.5, -3),
+        "rigidBody", opts("type", str("kinematic"), "collider", str("box"), NULL),
+        "script", opts("assetId", hx_get(girador, "id"), "props", opts("velocidade", num(180), "cor", str("#00b4d8"), NULL), NULL),
+        NULL));
+    checar("spawn com script", !hx_is_none(hx_get(extra, "script")) && hx_equals(hx_get(hx_get(extra, "script"), "assetId"), hx_get(girador, "id")));
+  } else {
+    checarf("ativo DebugGirador", 0, "%s", "não está na biblioteca");
+  }
+  const char* dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.";
+  if (falhas == 0) info("API percorrida em " LINGUAGEM ": %d checagens, nenhuma falha. %s", checagens, dica);
+  else aviso("API percorrida em " LINGUAGEM ": %d checagens, %d falhas (veja FALHOU/ERRO acima). %s", checagens, falhas, dica);
+  hx_invoke2(api("gui"), "bind", str("checagens"), num(checagens));
+  hx_invoke2(api("gui"), "bind", str("falhas"), num(falhas));
+  return HX_NONE;
+}
+
+                                                                                         
+
+                                                                                          
+int main(void) {
+  printf("DebugJogo.c: main rodou antes dos hooks (stdout da WASI)\n");
+  return 0;
+}
+
+HX_HOOK void onLoad(void) {
+  info("onLoad do script de entrada");
+}
+
+HX_HOOK void onStart(void) {
+  info("Jogo de teste em " LINGUAGEM ": percorrendo a API…");
+  hx_ref promessa = hx_invoke1(api("time"), "wait", num(0));
+  for (size_t i = 0; i < sizeof AREAS / sizeof AREAS[0]; i++) promessa = encadear(promessa, &AREAS[i]);
+  hx_invoke1(promessa, "then", cb(finalizar));
+}
+
+HX_HOOK void onUpdate(double dt) {
+  quadros++;
+  if (torus) hx_invoke2(api("transform"), "rotate", torus, v3(0, 40 * dt, 0));
+  hx_ref d = api("debug");
+  hx_invoke3(d, "line", v3(-6, 0.05, -6), v3(6, 0.05, -6), str("#ff006e"));
 `;
 }
