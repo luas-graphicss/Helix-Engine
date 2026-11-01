@@ -7,17 +7,17 @@ interface TreeKeyboardOptions {
     session: EditorSession;
     rows: readonly Entity[];
     expansion: Expansion;
-    anchorId: number | null;
+    anchorIdOf: () => number | null;
     setAnchorId: (id: number | null) => void;
     startRename: (entity: Entity) => void;
 }
-export function useTreeKeyboard({ session, rows, expansion, anchorId, setAnchorId, startRename }: TreeKeyboardOptions) {
+export function useTreeKeyboard({ session, rows, expansion, anchorIdOf, setAnchorId, startRename }: TreeKeyboardOptions) {
     const selectRow = (index: number, extend: boolean) => {
         const target = rows[Math.max(0, Math.min(index, rows.length - 1))];
         if (!target)
             return;
         if (extend) {
-            const anchor = rows.findIndex((row) => row.id === (anchorId ?? session.selectedId));
+            const anchor = rows.findIndex((row) => row.id === (anchorIdOf() ?? session.selectedId));
             const from = anchor === -1 ? index : anchor;
             const [start, end] = from <= index ? [from, index] : [index, from];
             session.setSelection(rows.slice(start, end + 1), target);
