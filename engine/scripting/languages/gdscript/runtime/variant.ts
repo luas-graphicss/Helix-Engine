@@ -505,3 +505,264 @@ export function strF(value: unknown): string {
 function componentToString(value: number): string {
     return Number.isInteger(value) ? `${value}.0` : numberToString(value);
 }
+export function str(value: unknown, seen: Set<object> = new Set()): string {
+    if (value === null || value === undefined)
+        return '<null>';
+    switch (typeof value) {
+        case 'string':
+            return value;
+        case 'number':
+            return numberToString(value);
+        case 'boolean':
+            return value ? 'true' : 'false';
+        case 'function': {
+            if (isScriptClass(value))
+                return `<GDScript ${(value as {
+                    __gdName?: string;
+                }).__gdName ?? value.name}>`;
+            const meta = callableMeta(value);
+            if (meta?.method)
+                return `${meta.object !== null && typeof meta.object === 'object' ? (scriptClassName(meta.object) ?? 'Object') : 'Object'}::${meta.method}`;
+            return value.name ? `<Callable ${value.name}>` : '<Callable>';
+        }
+        case 'bigint':
+            return value.toString();
+        case 'symbol':
+            return value.toString();
+        case 'object':
+            break;
+        default:
+            return String(value);
+    }
+    const object = value as object;
+    if (seen.has(object))
+        return '...';
+    if (Array.isArray(object)) {
+        seen.add(object);
+        const text = `[${object.map((item) => repr(item, seen)).join(', ')}]`;
+        seen.delete(object);
+        return text;
+    }
+    if (object instanceof Dictionary) {
+        if (object.size === 0)
+            return '{  }';
+        seen.add(object);
+        const text = `{ ${Array.from(object, ([key, entry]) => `${repr(key, seen)}: ${repr(entry, seen)}`).join(', ')} }`;
+        seen.delete(object);
+        return text;
+    }
+    if (object instanceof Vector2i || object instanceof Vector3i)
+        return object instanceof Vector3i ? `(${object.x}, ${object.y}, ${object.z})` : `(${object.x}, ${object.y})`;
+    if (object instanceof Vector4)
+        return `(${componentToString(object.x)}, ${componentToString(object.y)}, ${componentToString(object.z)}, ${componentToString(object.w)})`;
+    if (object instanceof Quaternion)
+        return `(${componentToString(object.x)}, ${componentToString(object.y)}, ${componentToString(object.z)}, ${componentToString(object.w)})`;
+    if (object instanceof Color)
+        return `(${componentToString(object.r)}, ${componentToString(object.g)}, ${componentToString(object.b)}, ${componentToString(object.a)})`;
+    if (object instanceof Rect2 || object instanceof AABB)
+        return `[P: ${str(object.position)}, S: ${str(object.size)}]`;
+    if (object instanceof Basis)
+        return `[X: ${str(object.x)}, Y: ${str(object.y)}, Z: ${str(object.z)}]`;
+    if (object instanceof Transform3D)
+        return `[X: ${str(object.basis.x)}, Y: ${str(object.basis.y)}, Z: ${str(object.basis.z)}, O: ${str(object.origin)}]`;
+    if (isVecLike(object)) {
+        const arity = vectorArity(object);
+        const vec = object as VecLike;
+        return arity === 2 ? `(${componentToString(vec.x)}, ${componentToString(vec.y)})` : arity === 3 ? `(${componentToString(vec.x)}, ${componentToString(vec.y)}, ${componentToString(vec.z ?? 0)})` : `(${componentToString(vec.x)}, ${componentToString(vec.y)}, ${componentToString(vec.z ?? 0)}, ${componentToString(vec.w ?? 0)})`;
+    }
+    if (object instanceof Signal)
+        return `Signal(${object.name})`;
+    if (ArrayBuffer.isView(object))
+        return `[${Array.from(object as unknown as ArrayLike<number>, (item) => numberToString(item)).join(', ')}]`;
+    if (object instanceof Map) {
+        seen.add(object);
+        const text = `{ ${Array.from(object, ([key, entry]) => `${repr(key, seen)}: ${repr(entry, seen)}`).join(', ')} }`;
+        seen.delete(object);
+        return text;
+    }
+    if (object instanceof Promise)
+        return '<Coroutine>';
+    if (object instanceof Error)
+        return object.message;
+    const scriptName = scriptClassName(object);
+    if (scriptName) {
+        const custom = (object as {
+            _to_string?: unknown;
+        })._to_string;
+        if (typeof custom === 'function')
+            return String(custom.call(object));
+        const name = (object as {
+            name?: unknown;
+        }).name;
+        return typeof name === 'string' && name.length > 0 ? `<${scriptName}:${name}>` : `<${scriptName}>`;
+    }
+    const tag = Object.prototype.toString.call(object);
+    if (tag === '[object Object]') {
+        const proto = Object.getPrototypeOf(object);
+        if (proto === Object.prototype || proto === null) {
+            seen.add(object);
+            const text = `{ ${Object.entries(object as Record<string, unknown>).map(([key, entry]) => `"${key}": ${repr(entry, seen)}`).join(', ')} }`;
+            seen.delete(object);
+            return text;
+        }
+        const ctorName = (object.constructor as {
+            name?: string;
+        } | undefined)?.name;
+        const name = (object as {
+            name?: unknown;
+        }).name;
+        return typeof name === 'string' && name.length > 0 ? `<${ctorName || 'Object'}:${name}>` : `<${ctorName || 'Object'}>`;
+    }
+    return String(object);
+}
+function repr(value: unknown, seen: Set<object>): string {
+    if (typeof value === 'string')
+        return `"${value}"`;
+    return str(value, seen);
+}
+export function varToStr(value: unknown): string {
+    if (typeof value === 'string')
+        return JSON.stringify(value);
+    if (typeof value === 'number' && !Number.isInteger(value))
+        return numberToString(value);
+    if (value === null || value === undefined)
+        return 'null';
+    if (Array.isArray(value))
+        return `[${value.map((item) => varToStr(item)).join(', ')}]`;
+    if (value instanceof Dictionary)
+        return `{\n${Array.from(value, ([key, entry]) => `${varToStr(key)}: ${varToStr(entry)}`).join(',\n')}\n}`;
+    if (value instanceof Vector2)
+        return `Vector2(${value.x}, ${value.y})`;
+    if (value instanceof Vector3)
+        return `Vector3(${value.x}, ${value.y}, ${value.z})`;
+    if (value instanceof Vector4)
+        return `Vector4(${value.x}, ${value.y}, ${value.z}, ${value.w})`;
+    if (value instanceof Color)
+        return `Color(${value.r}, ${value.g}, ${value.b}, ${value.a})`;
+    if (value instanceof Quaternion)
+        return `Quaternion(${value.x}, ${value.y}, ${value.z}, ${value.w})`;
+    return str(value);
+}
+const FORMAT_SPEC = /%([-+ 0]*)(\*|\d+)?(?:\.(\*|\d+))?([sdiofxXcv%])/g;
+export function format(template: string, values: unknown): string {
+    const list = Array.isArray(values) ? values : [values];
+    let index = 0;
+    const next = (): unknown => {
+        if (index >= list.length)
+            fail(`Formato "%" sem valores suficientes: "${template}" espera mais que ${list.length}.`);
+        return list[index++];
+    };
+    const result = template.replace(FORMAT_SPEC, (_match, flags: string, widthSpec: string | undefined, precisionSpec: string | undefined, kind: string) => {
+        if (kind === '%')
+            return '%';
+        const width = widthSpec === '*' ? toInt(next()) : widthSpec ? Number(widthSpec) : 0;
+        const precision = precisionSpec === '*' ? toInt(next()) : precisionSpec !== undefined ? Number(precisionSpec) : null;
+        const value = next();
+        const leftAlign = flags.includes('-');
+        const padZero = flags.includes('0') && !leftAlign;
+        const plus = flags.includes('+');
+        const pad = (text: string, numeric: boolean) => {
+            if (text.length >= width)
+                return text;
+            if (leftAlign)
+                return text.padEnd(width);
+            if (padZero && numeric) {
+                const sign = text.startsWith('-') || text.startsWith('+') ? text[0] : '';
+                return sign + text.slice(sign.length).padStart(width - sign.length, '0');
+            }
+            return text.padStart(width);
+        };
+        switch (kind) {
+            case 's':
+                return pad(str(value), false);
+            case 'c':
+                return pad(typeof value === 'number' ? String.fromCodePoint(value) : str(value).slice(0, 1), false);
+            case 'd':
+            case 'i': {
+                if (typeof value !== 'number')
+                    fail(`Formato "%${kind}" espera um número, recebeu ${describeTypeOf(value)}.`);
+                const integer = Math.trunc(value);
+                let text = String(Math.abs(integer));
+                if (precision !== null)
+                    text = text.padStart(precision, '0');
+                return pad((integer < 0 ? '-' : plus ? '+' : '') + text, true);
+            }
+            case 'o':
+            case 'x':
+            case 'X': {
+                if (typeof value !== 'number')
+                    fail(`Formato "%${kind}" espera um inteiro, recebeu ${describeTypeOf(value)}.`);
+                const integer = Math.trunc(value);
+                let text = Math.abs(integer).toString(kind === 'o' ? 8 : 16);
+                if (kind === 'X')
+                    text = text.toUpperCase();
+                if (precision !== null)
+                    text = text.padStart(precision, '0');
+                return pad((integer < 0 ? '-' : plus ? '+' : '') + text, true);
+            }
+            case 'f': {
+                if (typeof value !== 'number')
+                    fail(`Formato "%f" espera um número, recebeu ${describeTypeOf(value)}.`);
+                const text = value.toFixed(precision ?? 6);
+                return pad(value >= 0 && plus ? `+${text}` : text, true);
+            }
+            case 'v': {
+                if (!isVecLike(value))
+                    fail(`Formato "%v" espera um vetor, recebeu ${describeTypeOf(value)}.`);
+                const arity = vectorArity(value);
+                const parts = [value.x, value.y, value.z ?? 0, value.w ?? 0].slice(0, arity).map((component) => {
+                    const text = component.toFixed(precision ?? 6);
+                    return pad(component >= 0 && plus ? `+${text}` : text, true);
+                });
+                return `(${parts.join(', ')})`;
+            }
+            default:
+                return _match;
+        }
+    });
+    if (index < list.length)
+        fail(`Formato "%" com valores demais: "${template}" usa ${index}, recebeu ${list.length}.`);
+    return result;
+}
+export const TYPE_CONSTANTS: Record<string, number> = {
+    TYPE_NIL: 0,
+    TYPE_BOOL: 1,
+    TYPE_INT: 2,
+    TYPE_FLOAT: 3,
+    TYPE_STRING: 4,
+    TYPE_VECTOR2: 5,
+    TYPE_VECTOR2I: 6,
+    TYPE_RECT2: 7,
+    TYPE_RECT2I: 8,
+    TYPE_VECTOR3: 9,
+    TYPE_VECTOR3I: 10,
+    TYPE_TRANSFORM2D: 11,
+    TYPE_VECTOR4: 12,
+    TYPE_VECTOR4I: 13,
+    TYPE_PLANE: 14,
+    TYPE_QUATERNION: 15,
+    TYPE_AABB: 16,
+    TYPE_BASIS: 17,
+    TYPE_TRANSFORM3D: 18,
+    TYPE_PROJECTION: 19,
+    TYPE_COLOR: 20,
+    TYPE_STRING_NAME: 21,
+    TYPE_NODE_PATH: 22,
+    TYPE_RID: 23,
+    TYPE_OBJECT: 24,
+    TYPE_CALLABLE: 25,
+    TYPE_SIGNAL: 26,
+    TYPE_DICTIONARY: 27,
+    TYPE_ARRAY: 28,
+    TYPE_PACKED_BYTE_ARRAY: 29,
+    TYPE_PACKED_INT32_ARRAY: 30,
+    TYPE_PACKED_INT64_ARRAY: 31,
+    TYPE_PACKED_FLOAT32_ARRAY: 32,
+    TYPE_PACKED_FLOAT64_ARRAY: 33,
+    TYPE_PACKED_STRING_ARRAY: 34,
+    TYPE_PACKED_VECTOR2_ARRAY: 35,
+    TYPE_PACKED_VECTOR3_ARRAY: 36,
+    TYPE_PACKED_COLOR_ARRAY: 37,
+    TYPE_PACKED_VECTOR4_ARRAY: 38,
+    TYPE_MAX: 39,
+};
