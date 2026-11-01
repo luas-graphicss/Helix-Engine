@@ -2,7 +2,10 @@
 import { ChevronsDownUp, ChevronsUpDown, FolderPlus, Plus } from 'lucide-react';
 import { SearchField } from '@/engine/ui/search-field';
 import { IconButton } from '@/engine/ui/icon-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { PanelToolbar } from '@/engine/ui/panel-toolbar';
+import { FOCUS_RING_CLASS } from '@/engine/ui/surface-styles';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
+import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
 import { addFolder } from '@/engine/editor/operations/entity-operations';
 import { AddEntityMenu } from '@/engine/editor/menus/add-entity-menu';
 type HierarchyToolbarProps = {
@@ -12,22 +15,23 @@ type HierarchyToolbarProps = {
     onCollapseAll: () => void;
     onFolderCreated: (id: number) => void;
 };
-const TOOL_BUTTON_CLASS = 'inline-flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-highlight hover:text-foreground [&_svg]:size-3.5';
+const ADD_BUTTON_CLASS = `inline-flex size-control shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-highlight hover:text-foreground data-[popup-open]:bg-highlight data-[popup-open]:text-foreground [&_svg]:size-3.5 ${FOCUS_RING_CLASS}`;
 export function HierarchyToolbar({ query, onQueryChange, onExpandAll, onCollapseAll, onFolderCreated }: HierarchyToolbarProps) {
-    const session = useEditorState();
-    return (<div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-1.5">
-      <AddEntityMenu trigger={<button type="button" aria-label="Adicionar ator" title="Adicionar ator" className={TOOL_BUTTON_CLASS}/>}>
+    const session = useEditorSession();
+    const hint = useShortcutHint();
+    return (<PanelToolbar>
+      <AddEntityMenu trigger={<button type="button" aria-label="Adicionar ator" title="Adicionar ator" className={ADD_BUTTON_CLASS}/>}>
         <Plus />
       </AddEntityMenu>
-      <IconButton label="Nova pasta (Ctrl+Shift+N)" size="sm" className="size-6 [&_svg]:size-3.5" onClick={() => onFolderCreated(addFolder(session).id)}>
+      <IconButton label={hint('Nova pasta', 'edit.newFolder')} size="sm" onClick={() => onFolderCreated(addFolder(session).id)}>
         <FolderPlus />
       </IconButton>
       <SearchField placeholder="Filtrar atores" value={query} onChange={onQueryChange}/>
-      <IconButton label="Expandir tudo" size="sm" className="size-6 [&_svg]:size-3.5" onClick={onExpandAll}>
+      <IconButton label="Expandir tudo" size="sm" onClick={onExpandAll}>
         <ChevronsUpDown />
       </IconButton>
-      <IconButton label="Recolher tudo" size="sm" className="size-6 [&_svg]:size-3.5" onClick={onCollapseAll}>
+      <IconButton label="Recolher tudo" size="sm" onClick={onCollapseAll}>
         <ChevronsDownUp />
       </IconButton>
-    </div>);
+    </PanelToolbar>);
 }
