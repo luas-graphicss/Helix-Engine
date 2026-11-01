@@ -277,3 +277,15 @@ export function patchGuiSurfaceBillboard(session: EditorSession, entity: Entity,
         return mount.lockY === settings.mount.lockY && mount.constantSize === settings.mount.constantSize ? settings : { ...settings, mount };
     }, label);
 }
+export function applyGuiSurfacePreset(session: EditorSession, entity: Entity, presetId: string): void {
+    const preset = findGuiSurfacePreset(presetId);
+    if (!preset || !entity.guiSurface)
+        return;
+    updateGuiSurface(session, entity, (settings) => {
+        let next = preset.apply(settings);
+        if (!entity.mesh && next.mount.kind === 'face')
+            next = { ...next, mount: convertGuiSurfaceMount(next.mount, 'panel') };
+        return next;
+    }, `Preset ${preset.label} em ${entity.name}`);
+    session.log.info(LOG_SOURCE, `${entity.name}: preset "${preset.label}" aplicado.`);
+}
