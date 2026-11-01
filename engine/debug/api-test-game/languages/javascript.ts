@@ -284,5 +284,285 @@ function materiais() {
   mat.assign(caixa, base)
   checar("material.assign/of", mat.of(caixa) === base)
   const propria = mat.own(caixa)
+  checar("material.own", mat.of(caixa) === propria)
+  const tela = helix.texture.canvas(64, 64)
+  const ctx = tela.context
+  for (let y = 0; y < 8; y++) {
+    for (let x = 0; x < 8; x++) {
+      ctx.fillStyle = (x + y) % 2 ? "#1d3557" : "#f1faee"
+      ctx.fillRect(x * 8, y * 8, 8, 8)
+    }
+  }
+  tela.update()
+  mat.setTexture(caixa, "baseColorMap", tela.texture)
+  checar("texture.canvas + setTexture", mat.hasAnyTexture(propria) && helix.texture.isTexture(tela.texture))
+  const pixels = new Uint8Array(4 * 4 * 4).fill(255)
+  const textura = helix.texture.fromPixels(4, 4, pixels)
+  checar("texture.fromPixels", textura.width === 4 && textura.height === 4)
+  helix.texture.touch(textura)
+  checar("texture.create", helix.texture.create({ width: 2, height: 2 }).width === 2)
+  checar("material.slots", mat.slots().some((slot) => slot.slot === "normalMap"))
+  checar("materials.list/names", Array.isArray(helix.materials.list()) && Array.isArray(helix.materials.names()))
+  const sombreado = mat.fromShader("DebugSuperficie", { glow: [1, 0.45, 0.1], speed: 2 })
+  checar("material.fromShader", sombreado !== null && typeof sombreado.uniforms.set === "function")
+  const esfera = helix.scene.spawnPrimitive("sphere", { name: "EsferaShader", position: [0, 1, -3], scale: 1.4 })
+  mat.assign(esfera, sombreado)
+  mat.uniforms(esfera).set("speed", 3)
+  const lista = mat.uniforms(esfera).list()
+  checar("material.uniforms.list", Array.isArray(lista) && lista.some((u) => u.name === "glow"), lista.map((u) => u.name).join(","))
+}
+
+function luzes() {
+  const l = helix.light
+  checar("light.types", l.types().includes("point") && l.localTypes().includes("spot"))
+  const lampada = l.spawn("point", { name: "Lampada", position: [0, 3, 0], color: "#ffd166", intensity: 60, range: 14 })
+  checar("light.spawn", lampada.light !== null && lampada.light.type === "point")
+  l.set(lampada, { intensity: 80 })
+  checar("light.set", lampada.light${t('!')}.intensity === 80)
+  l.setTemperature(lampada, 3200)
+  checar("setTemperature", (lampada.light${t(' as any')}).temperature === 3200)
+  checar("resolvedColor", helix.math.vec3.length(l.resolvedColor(lampada)) > 0)
+  const foco = l.spawn("spot", { name: "Holofote", position: [4, 4, 0], rotation: [-90, 0, 0], intensity: 120, range: 16, innerAngle: 20, outerAngle: 35, color: "#ffffff" })
+  checar("spot", foco.light${t('!')}.type === "spot")
+  const convertido = l.convert(foco, "disc")
+  checar("light.convert", convertido.type === "disc" && foco.light${t('!')}.type === "disc")
+  l.convert(foco, "spot")
+  const presets = l.presets()
+  checar("light.presets", presets.length > 0)
+  if (presets.length > 0) {
+    const preset = l.spawn(presets[0].id, { name: "LuzPreset", position: [-4, 2.5, 4] })
+    checar("light.fromPreset", preset.light !== null && l.fromPreset(presets[0].id).type === presets[0].type)
+  }
+  const criada = l.create("point", { intensity: 5 })
+  checar("light.create/clone", criada.type === "point" && l.clone(criada).type === "point")
+  checar("light.all", l.all({ local: true }).length >= 2)
+  checar("light.sun", l.sun() === helix.scene.sun)
+  checar("effectiveRange", l.effectiveRange(lampada) > 0)
+  checar("light.temperatureToColor", l.temperatureToColor(6500).length === 3)
+  checar("cssColor", typeof l.cssColor(lampada) === "string")
+  checar("light.isLocal", l.isLocal(lampada))
+  checar("temperatureRange", l.temperatureRange.min < l.temperatureRange.max)
+  l.setColor(lampada, "#ffffff")
+  const luz = lampada.light${t('!')}
+  checar("light.setColor", luz.type !== "ambient" && helix.math.vec3.equals(luz.color, [1, 1, 1], 0.01))
+}
+
+function ceu() {
+  const sky = helix.sky
+  sky.set({ timeOfDay: 10.5, haze: 0.3, clouds: { enabled: true, coverage: 0.45 } })
+  checar("sky.set", aprox(sky.timeOfDay, 10.5) && sky.clouds.enabled === true)
+  checar("sky.isDay", sky.isDay === true)
+  checar("sky.sunDirection", sky.sunDirection()[1] > 0)
+  checar("sky.moonDirection", sky.moonDirection().length === 3)
+  checar("sky.formatTimeOfDay", /\\d{1,2}:\\d{2}/.test(sky.formatTimeOfDay(10.5)), sky.formatTimeOfDay(10.5))
+  checar("sky.wrapTimeOfDay", sky.wrapTimeOfDay(25) === 1)
+  checar("sky.presets", sky.presets().some((p) => p.id === "dusk"))
+  checar("sky.moonPhaseName", typeof sky.moonPhaseName() === "string")
+  checar("sky.hourAngle", typeof sky.hourAngle() === "number")
+  estado.assinaturas.push(sky.onHourChanged((h) => helix.log.info("Debug", \`Hora do céu: \${h}\`)))
+  estado.assinaturas.push(sky.onSunset(() => helix.log.info("Debug", "Pôr do sol")))
+  sky.cycleSpeed = 0
+  checar("sky.cycleSpeed", sky.cycleSpeed === 0)
+  checar("world.gravity", helix.world.gravity[1] < 0)
+  checar("world.wind", typeof helix.world.wind.speed === "number")
+  helix.world.wind.set({ speed: 2, direction: 45 })
+  checar("world.wind.set", helix.world.wind.speed === 2)
+  checar("world.sky", helix.world.sky === sky.settings)
+  checar("world.player", helix.world.player.camera !== undefined)
+}
+
+function camera() {
+  const c = helix.camera
+  checar("camera.fov", c.fov > 0 && c.aspect > 0)
+  checar("camera.near/far", c.near > 0 && c.far > c.near)
+  checar("viewport", c.viewport.width > 0)
+  const tela = c.worldToScreen([0, 0, 0])
+  checar("worldToScreen", tela === null || typeof tela.x === "number")
+  const raio = c.screenToRay(c.viewport.width / 2, c.viewport.height / 2)
+  checar("screenToRay", raio === null || aprox(helix.math.vec3.length(raio.direction), 1, 0.01))
+  checar("viewMatrix", c.viewMatrix.length === 16 && c.projectionMatrix.length === 16 && c.viewProjectionMatrix.length === 16)
+  checar("camera.main inicial", c.main === null)
+  checar("player.settings", c.player.settings.distance > 0)
+  c.player.set({ distance: 7, pitch: 18 })
+  checar("player.set", c.player.settings.distance === 7)
+  checar("distanceTo", c.distanceTo([0, 0, 0]) >= 0)
+  checar("mainForward", helix.math.vec3.length(c.mainForward()) > 0.99)
+  checar("camera.position", c.position.length === 3 && c.target.length === 3 && c.forward.length === 3)
+  estado.assinaturas.push(c.onMainChanged((e) => helix.log.info("Debug", \`Câmera principal: \${e ? e.name : "editor/jogador"}\`)))
+}
+
+function pos() {
+  const p = helix.post
+  checar("post.toneMappers", p.toneMappers().includes("aces"))
+  p.set({
+    bloom: { enabled: true, intensity: 0.5, threshold: 1, softKnee: 0.5, radius: 0.6 },
+    vignette: { enabled: true, intensity: 0.35, smoothness: 0.5, roundness: 1 },
+  })
+  checar("post.set", p.bloom.enabled === true && p.vignette.enabled === true)
+  p.exposure = 1.05
+  checar("post.exposure", p.exposure === 1.05)
+  p.toneMapper = "agx"
+  checar("post.toneMapper", p.toneMapper === "agx")
+  checar("post.presets", p.presets().length > 0)
+  checar("post.snapshot", p.snapshot().bloom.intensity === p.bloom.intensity)
+  checar("post.create", p.create().bloom !== undefined)
+  const efeito = p.custom.add({ fragment: "DebugPost", name: "DebugPost", uniforms: { tint: [0.15, 0.05, 0.3], strength: 0.6 } })
+  estado.efeito = efeito
+  checar("post.custom.add", p.custom.get("DebugPost") === efeito && p.custom.list().some((e) => e.name === "DebugPost"))
+  efeito.uniforms.set("strength", 0.8)
+  const u = efeito.uniforms.list()
+  checar("efeito.uniforms.list", u.some((x) => x.name === "tint") && u.some((x) => x.name === "strength"), u.map((x) => x.name).join(","))
+  void p.tween("bloom.intensity", 0.9, 1.5, "easeInOut")
+}
+
+function render() {
+  const r = helix.render
+  checar("render.passNames", r.passNames().includes("mesh"))
+  checar("render.passes", typeof r.passes.mesh.enabled === "boolean")
+  checar("render.stats", typeof r.stats.drawCalls === "number")
+  checar("render.profile", typeof r.profile.shadowMapSize === "number")
+  checar("render.gl", r.gl !== null && typeof r.gl.drawArrays === "function")
+  estado.assinaturas.push(r.onAfterFrame(() => { estado.renders++ }))
+  estado.assinaturas.push(r.onBeforePass("post", () => {}))
+  checar("render.frame", typeof r.frame.width === "number")
+  r.showGrid = false
+  checar("render.showGrid", r.showGrid === false)
+  checar("render.culling", typeof r.culling.frustumCulling === "boolean")
+  checar("render.capabilities", typeof r.capabilities === "object")
+  checar("render.pixelRatio", r.pixelRatio > 0)
+  checar("render.custom.list", Array.isArray(r.custom.list()))
+  const programa = r.createProgram("#version 300 es\\nvoid main(){gl_Position=vec4(0.0);}", "#version 300 es\\nprecision mediump float;out vec4 o;void main(){o=vec4(1.0);}")
+  checar("render.createProgram", programa !== null && typeof programa.use === "function")
+  programa.dispose()
+}
+
+// 4. Física, personagem, terreno --------------------------------------------------------------
+
+function fisica() {
+  const ph = helix.physics
+  checar("physics.enabled", ph.enabled === true)
+  checar("physics.gravity", ph.gravity[1] < 0)
+  checar("physics.settings", ph.settings.fixedTimestep > 0 && ph.fixedTimestep === ph.settings.fixedTimestep)
+  for (let i = 0; i < 5; i++) {
+    const caixa = helix.scene.spawnPrimitive("box", { name: \`Caixa\${i + 1}\`, position: [-2 + i * 1.1, 3 + i * 1.2, 3], rigidBody: { type: "dynamic", collider: "box", mass: 2, restitution: 0.3 }, tags: ["caixa"] })
+    helix.material.setColor(caixa, helix.math.color.hsl(30 + i * 12, 0.7, 0.5))
+  }
+  const caixas = helix.scene.byTag("caixa")
+  checar("caixas dinâmicas", caixas.length === 5 && ph.hasBody(caixas[0]))
+  const corpo = ph.bodyOf(caixas[0])
+  checar("bodyOf", corpo.isDynamic && corpo.mass > 0)
+  corpo.applyImpulse([0, 2, 0])
+  corpo.applyTorque([0, 1, 0])
+  corpo.setMaterial({ friction: 0.8 })
+  corpo.lockRotation(false, false, false)
+  corpo.wake()
+  checar("body.entity", corpo.entity === caixas[0] && ph.entityOf(corpo) === caixas[0])
+  checar("body.linearVelocity", corpo.linearVelocity.length === 3)
+  checar("bodies()", ph.bodies().length >= 6 && ph.bodyCount >= 6)
+  const hit = ph.raycast([0, 5, 0], [0, -1, 0], 20)
+  checar("physics.raycast", hit !== null && hit.entity !== null, hit && hit.entity && hit.entity.name)
+  checar("raycastAll", ph.raycastAll([0, 5, 0], [0, -1, 0], 20).length >= 1)
+  checar("overlapSphere", Array.isArray(ph.overlapSphere([0, 3, 3], 4)))
+  checar("overlapBox", Array.isArray(ph.overlapBox([0, 3, 3], [3, 3, 3])))
+  checar("overlapAabb", Array.isArray(ph.overlapAabb({ min: [-5, 0, 0], max: [5, 8, 6] })))
+  checar("massProperties", ph.massProperties(caixas[0]).mass > 0)
+  checar("colliderRequiresStatic", ph.colliderRequiresStatic("mesh") === true)
+  checar("colliderVolume", ph.colliderVolume(caixas[0]) > 0)
+  const presets = ph.physical.presets()
+  checar("physical.presets", presets.length > 0)
+  if (presets.length > 0) checar("physical.apply", ph.physical.apply(caixas[1], presets[0].id).type !== undefined)
+  checar("physical.create/match", typeof ph.physical.match(ph.physical.create()) !== "undefined")
+  checar("shapes.sphere volume", aprox(ph.shapes.volume(ph.shapes.sphere(1)), 4.18879, 0.01))
+  checar("shapes.aabb", ph.shapes.aabb(ph.shapes.box(1, 1, 1), [0, 0, 0]).max[0] === 1)
+  checar("fitCollider", ph.fitCollider(caixas[0]).collider !== undefined)
+  checar("closestPoint", ph.closestPoint([0, 10, 3], caixas[0]).length === 3)
+  estado.assinaturas.push(ph.onCollisionBegin((e) => {
+    estado.colisoes++
+    if (estado.colisoes <= 3) helix.log.info("Debug", \`Colisão: \${e.a.name} × \${e.b.name} (impulso \${e.contact.impulse.toFixed(2)})\`)
+  }))
+  estado.assinaturas.push(ph.onCollisionEnd(() => {}))
+  estado.assinaturas.push(ph.onOutOfBounds((e) => helix.log.warn("Debug", \`\${e.name} caiu do mundo\`)))
+  estado.assinaturas.push(ph.onPreStep(() => {}))
+  const gatilho = helix.scene.spawn("group", { name: "Gatilho", position: [0, 1, 3], trigger: { shape: "box", size: [3, 2, 3] } })
+  checar("trigger spawn", gatilho !== null && helix.scene.isAttached(gatilho))
+  checar("physics.stats", typeof ph.stats.bodies === "number")
+  const agua = ph.waterAt([0, 0, 0])
+  checar("waterAt", agua === null || typeof agua.height === "number")
+  ph.layers.define(["padrao", "fantasma"])
+  ph.layers.setCollision("padrao", "fantasma", false)
+  checar("physics.quality", ph.quality === null || ["low", "medium", "high"].includes(ph.quality))
+}
+
+function personagem() {
+  const heroi = helix.character.spawn({ name: "Heroi", position: [0, 1.2, 8], character: { walkSpeed: 4, runSpeed: 7, jumpHeight: 1.4 } })
+  estado.heroi = heroi
+  checar("character.spawn", heroi.character !== null && helix.character.has(heroi))
+  const h = helix.character.of(heroi)
+  checar("character.of", h.entity === heroi && typeof h.isGrounded === "boolean")
+  checar("settingsOf", helix.character.settingsOf(heroi)${t('!')}.walkSpeed === 4)
+  helix.player.possess(heroi)
+  checar("player.possess", helix.player.possessed === heroi && helix.player.isPossessing)
+  checar("findPossessable", helix.character.findPossessable() !== null)
+  estado.assinaturas.push(helix.character.onJumped((e) => helix.log.info("Debug", \`\${e.entity.name} pulou\`)))
+  estado.assinaturas.push(helix.character.onLanded((e) => { if (e.speed > 6) helix.log.info("Debug", \`\${e.entity.name} aterrissou a \${e.speed.toFixed(1)} m/s\`) }))
+  estado.assinaturas.push(helix.player.onPossessed((e) => helix.log.info("Debug", \`Possuindo \${e ? e.name : "ninguém"}\`)))
+  checar("character.all", helix.character.all().length >= 1)
+  checar("player.spawnPoint", helix.player.spawnPoint.length === 3)
+  checar("character.inputSource", helix.character.inputSource === "engine")
+  checar("player.cameraControl", helix.player.cameraControl === "engine")
+  checar("player.settings", helix.player.settings.character.walkSpeed > 0)
+  checar("character.velocity", h.velocity.length === 3 && h.position.length === 3)
+}
+
+function terreno() {
+  const t = helix.terrain
+  checar("terrain.presets", t.presets().some((p) => p.value === "hills"))
+  checar("terrain.resolutions", t.resolutions().includes(65))
+  const colinas = t.spawn({ name: "Colinas", size: 48, resolution: 65, preset: "hills", seed: 7, position: [0, -6, -70] })
+  checar("terrain.spawn", colinas.terrain !== null && t.all().includes(colinas))
+  const dados = t.of(colinas)
+  checar("terrain.of", dados.resolution === 65 && dados.heightfield.heights.length === 65 * 65)
+  const altura = t.heightAt([0, 0, -70], colinas)
+  checar("heightAt", altura !== null && Number.isFinite(altura), altura)
+  checar("normalAt", t.normalAt([0, 0, -70], colinas) !== null)
+  checar("contains", t.contains([0, 0, -70], colinas) && !t.contains([500, 0, 0], colinas))
+  t.sculpt(colinas, "raise", [5, 0, -70], { radius: 6, strength: 1 }, 1)
+  t.markDirty(colinas)
+  const grade = t.worldToGrid([0, 0, -70], colinas)
+  checar("worldToGrid/gridToWorld", grade !== null && t.gridToWorld(grade.gx, grade.gz, colinas).length === 3)
+  checar("terrain.layers", Array.isArray(t.layers(colinas)))
+  const catalogo = t.materials.catalog()
+  checar("materials.catalog", catalogo.length > 0)
+  if (catalogo.length > 0 && t.layers(colinas).length < 2) checar("addLayer", t.addLayer(colinas, catalogo[0].id) !== null)
+  t.autoPaint(colinas)
+  checar("weightsAt", t.weightsAt([0, 0, -70], colinas) === null || Array.isArray(t.weightsAt([0, 0, -70], colinas)))
+  t.grass.set(colinas, { enabled: true, density: 0.5 })
+  checar("grass.set", t.grass.settingsOf(colinas).enabled === true)
+  t.water.set(colinas, { enabled: true, level: -2 })
+  checar("water.set", t.water.settingsOf(colinas).enabled === true)
+  checar("water.isUnderwater", typeof t.water.isUnderwater([0, -100, -70], colinas) === "boolean")
+  checar("water.sampleSurface", typeof t.water.sampleSurface(colinas, 0, -70).height === "number")
+  checar("terrain.brush", t.brush({ radius: 3 }).radius === 3)
+  checar("terrain.tools/falloffs", t.tools().includes("smooth") && t.falloffs().includes("linear"))
+  checar("terrain.first", t.first() !== null)
+  checar("terrain.raycast", t.raycast([0, 50, -70], [0, -1, 0], colinas) !== null)
+  checar("terrain.shadingOf", typeof t.shadingOf(colinas) === "object")
+}
+
+// 5. Interface, áudio, animação, VFX -----------------------------------------------------------
+
+async function interfaceGrafica() {
+  const g = helix.gui
+  g.css("DebugEstilo")
+  const hud = g.html("DebugHud", { id: "debug-hud" })
+  checar("gui.html", hud !== null && g.element("#debug-hud") !== null)
+  const icone = g.svg("DebugIcone", { id: "debug-icone" })
+  checar("gui.svg", icone !== null && icone.tagName.toLowerCase() === "svg")
+  const slot = g.element("[data-slot=icone]")
+  if (slot) slot.appendChild(icone)
+  checar("gui.bind", g.bind("linguagem", LINGUAGEM) >= 1)
+  g.bind("titulo", "Helix · Debug")
+  estado.assinaturas.push(g.onAction("caixa", () => soltarCaixa()))
+  estado.assinaturas.push(g.onAction("reiniciar", () => helix.play.restart()))
 `;
 }
