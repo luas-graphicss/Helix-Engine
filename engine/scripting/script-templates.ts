@@ -273,3 +273,250 @@ function csharpBody(template: ScriptTemplateId, name: string, tab: string): stri
             return '';
     }
 }
+function pythonBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'actor':
+            return [`class ${name}:`, `${tab}def on_start(self):`, `${tab}${tab}print(f"{self.actor.name} acordou")`, '', `${tab}def on_update(self, dt: float):`, `${tab}${tab}pass                      `, '', `${tab}def on_destroy(self):`, `${tab}${tab}pass`, ''].join('\n');
+        case 'module':
+            return ['def hello(who: str) -> str:', `${tab}return f"Olá, {who}"`, ''].join('\n');
+        case 'game':
+            return [
+                'def on_start():',
+                `${tab}print(f"Jogo iniciado com {helix.scene.count()} atores")`,
+                `${tab}helix.input.onKeyDown(on_key_down)`,
+                '',
+                '',
+                'def on_key_down(event):',
+                `${tab}if event.code == "KeyR":`,
+                `${tab}${tab}helix.play.restart()`,
+                '',
+            ].join('\n');
+        default:
+            return '';
+    }
+}
+function rubyBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'actor':
+            return [`class ${name}`, `${tab}def on_start`, `${tab}${tab}puts "#{actor.name} acordou"`, `${tab}end`, '', `${tab}def on_update(dt)`, `${tab}${tab}# roda a cada quadro`, `${tab}end`, '', `${tab}def on_destroy`, `${tab}end`, 'end', ''].join('\n');
+        case 'module':
+            return [`module ${name}`, `${tab}def self.hello(who)`, `${tab}${tab}"Olá, #{who}"`, `${tab}end`, 'end', ''].join('\n');
+        case 'game':
+            return [
+                'def on_start',
+                `${tab}puts "Jogo iniciado com #{helix.scene.count} atores"`,
+                `${tab}helix.input.onKeyDown(method(:on_key_down))`,
+                'end',
+                '',
+                'def on_key_down(event)',
+                `${tab}helix.play.restart if event.code == "KeyR"`,
+                'end',
+                '',
+            ].join('\n');
+        default:
+            return '';
+    }
+}
+function cBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'module':
+            return [
+                '#include <stdio.h>',
+                '#include <stdlib.h>',
+                '#include "helix.h"',
+                '',
+                `                                                                                                 `,
+                'HX_EXPORT double soma(double a, double b) {',
+                `${tab}return a + b;`,
+                '}',
+                '',
+                'HX_EXPORT hx_ref saudacao(hx_ref quem) {',
+                `${tab}char* nome = hx_string_dup(quem);`,
+                `${tab}char texto[128];`,
+                `${tab}snprintf(texto, sizeof texto, "Olá, %s", nome);`,
+                `${tab}free(nome);`,
+                `${tab}return hx_string(texto);`,
+                '}',
+                '',
+            ].join('\n');
+        case 'game':
+            return [
+                '#include <stdio.h>',
+                '#include "helix.h"',
+                '',
+                '                                                                    ',
+                'HX_HOOK void onStart(void) {',
+                `${tab}hx_print("${name}: a partida começou");`,
+                `${tab}hx_ref jogador = hx_invoke1(hx_get(hx_root(), "scene"), "find", hx_string("Player"));`,
+                `${tab}if (hx_is_none(jogador)) hx_warn("não há um ator chamado Player na cena");`,
+                '}',
+                '',
+                'HX_HOOK void onUpdate(double dt) {',
+                `${tab}(void)dt;`,
+                '}',
+                '',
+            ].join('\n');
+        default:
+            return [
+                '#include <stdio.h>',
+                '#include <stdlib.h>',
+                '#include "helix.h"',
+                '',
+                '                                                                                              ',
+                'static double velocidade = 1.0;',
+                '',
+                'HX_HOOK void onStart(void) {',
+                `${tab}char* nome = hx_get_string(hx_self(), "name");`,
+                `${tab}printf("%s acordou\\n", nome);`,
+                `${tab}free(nome);`,
+                '}',
+                '',
+                'HX_HOOK void onUpdate(double dt) {',
+                `${tab}hx_ref posicao = hx_path("self.transform.position");`,
+                `${tab}hx_set_number(posicao, "x", hx_get_number(posicao, "x") + velocidade * dt);`,
+                '}',
+                '',
+                'HX_HOOK void onDestroy(void) {',
+                `${tab}hx_print("tchau");`,
+                '}',
+                '',
+            ].join('\n');
+    }
+}
+function cppBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'module':
+            return [
+                '#include <string>',
+                '#include "helix.hpp"',
+                '',
+                `                                                                                              `,
+                'HX_EXPORT double soma(double a, double b) {',
+                `${tab}return a + b;`,
+                '}',
+                '',
+                'HX_EXPORT hx_ref saudacao(hx_ref quem) {',
+                `${tab}helix::Value nome = helix::Value::adopt(hx_retain(quem));`,
+                `${tab}                                                                                             `,
+                `${tab}return helix::Value("Olá, " + nome.str()).ref();`,
+                '}',
+                '',
+            ].join('\n');
+        case 'game':
+            return [
+                '#include "helix.hpp"',
+                '',
+                'using namespace helix;',
+                '',
+                '                                                                 ',
+                'HX_HOOK void onStart() {',
+                `${tab}print("${name}: a partida começou");`,
+                `${tab}Value jogador = root()["scene"].call("find", "Player");`,
+                `${tab}if (jogador.isNone()) warn("não há um ator chamado Player na cena");`,
+                '}',
+                '',
+                'HX_HOOK void onUpdate(double dt) {',
+                `${tab}(void)dt;`,
+                '}',
+                '',
+            ].join('\n');
+        default:
+            return [
+                '#include <string>',
+                '#include "helix.hpp"',
+                '',
+                'using namespace helix;',
+                '',
+                `struct ${name} {`,
+                `${tab}double velocidade = 1.0;`,
+                `${tab}int quadros = 0;`,
+                '};',
+                '',
+                '                                                                                   ',
+                `static ${name} estado;`,
+                '',
+                'HX_HOOK void onStart() {',
+                `${tab}print(self()["name"].str() + " acordou");`,
+                '}',
+                '',
+                'HX_HOOK void onUpdate(double dt) {',
+                `${tab}estado.quadros++;`,
+                `${tab}Value posicao = self().path("transform.position");`,
+                `${tab}posicao.set("x", posicao["x"].number() + estado.velocidade * dt);`,
+                '}',
+                '',
+                'HX_HOOK void onDestroy() {',
+                `${tab}print("tchau depois de " + std::to_string(estado.quadros) + " quadros");`,
+                '}',
+                '',
+            ].join('\n');
+    }
+}
+function rustBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'module':
+            return [
+                'use helix::prelude::*;',
+                '',
+                '                                                                               ' + name + '").',
+                'helix::exports! {',
+                `${tab}pub fn hello(who: String) -> String {`,
+                `${tab}${tab}format!("Olá, {who}")`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+        case 'game':
+            return [
+                'use helix::prelude::*;',
+                '',
+                '                                                                 ',
+                'helix::hooks! {',
+                `${tab}fn on_start() {`,
+                `${tab}${tab}let scene = root().get("scene");`,
+                `${tab}${tab}helix::print!("${name}: a partida começou com {} atores", scene.invoke("count", ()).number());`,
+                `${tab}${tab}let input = root().get("input");`,
+                `${tab}${tab}input.invoke("onKeyDown", Value::function(|args| {`,
+                `${tab}${tab}${tab}if args[0].get("code").to_string() == "KeyR" {`,
+                `${tab}${tab}${tab}${tab}root().get("play").invoke("restart", ());`,
+                `${tab}${tab}${tab}}`,
+                `${tab}${tab}}));`,
+                `${tab}}`,
+                '',
+                `${tab}fn on_update(dt: f64) {`,
+                `${tab}${tab}let _ = dt;`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+        default:
+            return [
+                'use helix::prelude::*;',
+                'use std::cell::Cell;',
+                '',
+                '                                                                                   ',
+                'thread_local! {',
+                `${tab}static QUADROS: Cell<u32> = const { Cell::new(0) };`,
+                '}',
+                '',
+                'const VELOCIDADE: f64 = 1.0;',
+                '',
+                'helix::hooks! {',
+                `${tab}fn on_start() {`,
+                `${tab}${tab}helix::print!("{} acordou", actor().get("name"));`,
+                `${tab}}`,
+                '',
+                `${tab}fn on_update(dt: f64) {`,
+                `${tab}${tab}QUADROS.with(|quadros| quadros.set(quadros.get() + 1));`,
+                `${tab}${tab}let posicao = actor().path("transform.position");`,
+                `${tab}${tab}posicao.set("x", posicao.get("x").number() + VELOCIDADE * dt);`,
+                `${tab}}`,
+                '',
+                `${tab}fn on_destroy() {`,
+                `${tab}${tab}helix::print!("tchau depois de {} quadros", QUADROS.with(|quadros| quadros.get()));`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+    }
+}
