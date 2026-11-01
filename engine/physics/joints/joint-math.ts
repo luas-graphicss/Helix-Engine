@@ -260,3 +260,115 @@ function solve2x2(k11: number, k12: number, k22: number, b1: number, b2: number,
     return true;
 }
 const scratch2 = new Float32Array(2);
+export class AxisAlignPart {
+    impulse1 = 0;
+    impulse2 = 0;
+    private readonly u1 = vec3.create();
+    private readonly u2 = vec3.create();
+    reset(): void {
+        this.impulse1 = 0;
+        this.impulse2 = 0;
+    }
+    private updateAxes(axisB: Vec3, perp1: Vec3, perp2: Vec3): void {
+        vec3.cross(this.u1, axisB, perp1);
+        vec3.cross(this.u2, axisB, perp2);
+    }
+    warmStart(pair: JointPair, axisB: Vec3, perp1: Vec3, perp2: Vec3): void {
+        this.updateAxes(axisB, perp1, perp2);
+        const { u1, u2 } = this;
+        applyAngularImpulse(pair, this.impulse1 * u1[0] + this.impulse2 * u2[0], this.impulse1 * u1[1] + this.impulse2 * u2[1], this.impulse1 * u1[2] + this.impulse2 * u2[2]);
+    }
+    solve(pair: JointPair, axisB: Vec3, perp1: Vec3, perp2: Vec3, softness: Softness, useSoftness: boolean, maxBias: number): void {
+        this.updateAxes(axisB, perp1, perp2);
+        const { u1, u2 } = this;
+        const M1 = mulMat3(scratchAxisA, pair.IA, u1[0], u1[1], u1[2]);
+        const M2 = mulMat3(scratchAxisB, pair.IB, u1[0], u1[1], u1[2]);
+        const k11 = vec3.dot(u1, M1) + vec3.dot(u1, M2);
+        const k12 = vec3.dot(u2, M1) + vec3.dot(u2, M2);
+        const k22 = quadraticForm(u2, pair.IA, u2) + quadraticForm(u2, pair.IB, u2);
+        const wA = pair.bodyA.angularVelocity;
+        const wB = pair.bodyB.angularVelocity;
+        const dwx = wB[0] - wA[0];
+        const dwy = wB[1] - wA[1];
+        const dwz = wB[2] - wA[2];
+        let cdot1 = dwx * u1[0] + dwy * u1[1] + dwz * u1[2];
+        let cdot2 = dwx * u2[0] + dwy * u2[1] + dwz * u2[2];
+        let massScale = 1;
+        let impulseScale = 0;
+        if (useSoftness) {
+            const c1 = vec3.dot(axisB, perp1);
+            const c2 = vec3.dot(axisB, perp2);
+            cdot1 += Math.max(-maxBias, Math.min(softness.biasRate * c1, maxBias));
+            cdot2 += Math.max(-maxBias, Math.min(softness.biasRate * c2, maxBias));
+            massScale = softness.massScale;
+            impulseScale = softness.impulseScale;
+        }
+        if (!solve2x2(k11, k12, k22, cdot1, cdot2, scratch2))
+            return;
+        const d1 = -massScale * scratch2[0] - impulseScale * this.impulse1;
+        const d2 = -massScale * scratch2[1] - impulseScale * this.impulse2;
+        this.impulse1 += d1;
+        this.impulse2 += d2;
+        applyAngularImpulse(pair, d1 * u1[0] + d2 * u2[0], d1 * u1[1] + d2 * u2[1], d1 * u1[2] + d2 * u2[2]);
+    }
+    accumulated(out: Vec3): Vec3 {
+        const { u1, u2 } = this;
+        out[0] = this.impulse1 * u1[0] + this.impulse2 * u2[0];
+        out[1] = this.impulse1 * u1[1] + this.impulse2 * u2[1];
+        out[2] = this.impulse1 * u1[2] + this.impulse2 * u2[2];
+        return out;
+    }
+}
+export class PerpendicularPart {
+    impulse1 = 0;
+    impulse2 = 0;
+    reset(): void {
+        this.impulse1 = 0;
+        this.impulse2 = 0;
+    }
+    warmStart(pair: JointPair, perp1: Vec3, perp2: Vec3, d: Vec3, rA: Vec3, rB: Vec3): void {
+        const armA = vec3.add(scratchArmA, rA, d);
+        applyLinearImpulse(pair, this.impulse1 * perp1[0] + this.impulse2 * perp2[0], this.impulse1 * perp1[1] + this.impulse2 * perp2[1], this.impulse1 * perp1[2] + this.impulse2 * perp2[2], armA, rB);
+    }
+    solve(pair: JointPair, perp1: Vec3, perp2: Vec3, d: Vec3, rA: Vec3, rB: Vec3, softness: Softness, useSoftness: boolean, maxBias: number): void {
+        const armA = vec3.add(scratchArmA, rA, d);
+        const { mA, mB, IA, IB } = pair;
+        const a1 = vec3.cross(scratchAxisA, armA, perp1);
+        const b1 = vec3.cross(scratchAxisB, rB, perp1);
+        const a2 = vec3.cross(scratchCross, armA, perp2);
+        const b2 = vec3.cross(scratchRhs, rB, perp2);
+        const k11 = mA + mB + quadraticForm(a1, IA, a1) + quadraticForm(b1, IB, b1);
+        const k12 = quadraticForm(a1, IA, a2) + quadraticForm(b1, IB, b2);
+        const k22 = mA + mB + quadraticForm(a2, IA, a2) + quadraticForm(b2, IB, b2);
+        const vA = pair.bodyA.linearVelocity;
+        const vB = pair.bodyB.linearVelocity;
+        const wA = pair.bodyA.angularVelocity;
+        const wB = pair.bodyB.angularVelocity;
+        const dvx = vB[0] - vA[0];
+        const dvy = vB[1] - vA[1];
+        const dvz = vB[2] - vA[2];
+        let cdot1 = perp1[0] * dvx + perp1[1] * dvy + perp1[2] * dvz + vec3.dot(wB, b1) - vec3.dot(wA, a1);
+        let cdot2 = perp2[0] * dvx + perp2[1] * dvy + perp2[2] * dvz + vec3.dot(wB, b2) - vec3.dot(wA, a2);
+        let massScale = 1;
+        let impulseScale = 0;
+        if (useSoftness) {
+            cdot1 += Math.max(-maxBias, Math.min(softness.biasRate * vec3.dot(d, perp1), maxBias));
+            cdot2 += Math.max(-maxBias, Math.min(softness.biasRate * vec3.dot(d, perp2), maxBias));
+            massScale = softness.massScale;
+            impulseScale = softness.impulseScale;
+        }
+        if (!solve2x2(k11, k12, k22, cdot1, cdot2, scratch2))
+            return;
+        const d1 = -massScale * scratch2[0] - impulseScale * this.impulse1;
+        const d2 = -massScale * scratch2[1] - impulseScale * this.impulse2;
+        this.impulse1 += d1;
+        this.impulse2 += d2;
+        applyLinearImpulse(pair, d1 * perp1[0] + d2 * perp2[0], d1 * perp1[1] + d2 * perp2[1], d1 * perp1[2] + d2 * perp2[2], armA, rB);
+    }
+    accumulated(out: Vec3, perp1: Vec3, perp2: Vec3): Vec3 {
+        out[0] = this.impulse1 * perp1[0] + this.impulse2 * perp2[0];
+        out[1] = this.impulse1 * perp1[1] + this.impulse2 * perp2[1];
+        out[2] = this.impulse1 * perp1[2] + this.impulse2 * perp2[2];
+        return out;
+    }
+}
