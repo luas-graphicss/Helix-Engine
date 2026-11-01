@@ -2051,3 +2051,223 @@ export class SceneTreeTimer extends GodotObject {
 }
 markScriptClass(SceneTreeTimer, 'SceneTreeTimer');
 setGodotBase(SceneTreeTimer, 'SceneTreeTimer');
+export class SceneTree extends GodotObject {
+    static readonly GROUP_CALL_DEFAULT = 0;
+    static readonly GROUP_CALL_REVERSE = 1;
+    static readonly GROUP_CALL_DEFERRED = 2;
+    static readonly GROUP_CALL_UNIQUE = 4;
+    private $paused = false;
+    private $previousScale = 1;
+    constructor(readonly $game: GameContext) {
+        super({ entity: null, helix: $game.helix, script: null });
+        $game.frameListeners.add(() => this.$emit('process_frame'));
+        $game.physicsListeners.add(() => this.$emit('physics_frame'));
+    }
+    get process_frame(): Signal {
+        return this.$builtinSignal('process_frame');
+    }
+    get physics_frame(): Signal {
+        this.$game.ensurePhysicsClock();
+        return this.$builtinSignal('physics_frame');
+    }
+    get node_added(): Signal {
+        return this.$builtinSignal('node_added');
+    }
+    get node_removed(): Signal {
+        return this.$builtinSignal('node_removed');
+    }
+    get tree_changed(): Signal {
+        return this.$builtinSignal('tree_changed');
+    }
+    get root(): Window {
+        return windowOf(this.$game);
+    }
+    get current_scene(): NodeBase {
+        return this.root.$rootNode();
+    }
+    set current_scene(_value: unknown) { }
+    get paused(): boolean {
+        return this.$paused;
+    }
+    set paused(value: unknown) {
+        const paused = Boolean(value);
+        if (paused === this.$paused)
+            return;
+        this.$paused = paused;
+        const time = this.$game.time;
+        if (paused) {
+            this.$previousScale = Number(time.scale ?? 1);
+            time.scale = 0;
+        }
+        else {
+            time.scale = this.$previousScale || 1;
+        }
+    }
+    get_root(): Window {
+        return this.root;
+    }
+    get_frame(): number {
+        return Number(this.$game.time.frame ?? 0);
+    }
+    get_node_count(): number {
+        return Number((this.$game.scene.count as Fn)?.() ?? 0);
+    }
+    get_nodes_in_group(group: unknown): NodeBase[] {
+        const name = str(group);
+        const result = new Set<NodeBase>();
+        for (const node of this.$game.groups.get(name) ?? [])
+            if (!(node as NodeBase).$freed)
+                result.add(node as NodeBase);
+        const byTag = this.$game.scene.byTag as Fn | undefined;
+        if (byTag)
+            for (const entity of byTag(name) as EngineEntity[])
+                result.add(wrapEntity(entity, this.$game));
+        return Array.from(result);
+    }
+    get_first_node_in_group(group: unknown): NodeBase | null {
+        return this.get_nodes_in_group(group)[0] ?? null;
+    }
+    has_group(group: unknown): boolean {
+        return this.get_nodes_in_group(group).length > 0;
+    }
+    call_group(group: unknown, method: unknown, ...args: unknown[]): void {
+        if (typeof method !== 'string')
+            fail('call_group(): o nome do método precisa ser uma String.');
+        for (const node of this.get_nodes_in_group(group))
+            if (node.has_method(method))
+                dynamicCall(node, method, args);
+    }
+    call_group_flags(flags: unknown, group: unknown, method: unknown, ...args: unknown[]): void {
+        if ((Number(flags) & 2) !== 0)
+            this.$game.defer(() => this.call_group(group, method, ...args));
+        else
+            this.call_group(group, method, ...args);
+    }
+    set_group(group: unknown, property: unknown, value: unknown): void {
+        for (const node of this.get_nodes_in_group(group))
+            node.set(property, value);
+    }
+    notify_group(group: unknown, what: unknown): void {
+        for (const node of this.get_nodes_in_group(group))
+            node._notification(Number(what));
+    }
+    create_timer(seconds: unknown, _processAlways = true, _processInPhysics = false, ignoreTimeScale = false): SceneTreeTimer {
+        return new SceneTreeTimer(this.$game, Number(seconds), Boolean(ignoreTimeScale));
+    }
+    create_tween(): Tween {
+        return new Tween(this.$game, null);
+    }
+    get_processed_tweens(): Tween[] {
+        return Array.from(this.$game.tweens).filter((tween): tween is Tween => tween instanceof Tween);
+    }
+    quit(_exitCode = 0): void {
+        const play = this.$game.helix.play as AnyRecord | undefined;
+        const stop = (play?.stop ?? play?.quit) as Fn | undefined;
+        if (typeof stop === 'function')
+            stop();
+        else
+            this.$game.warnOnce('quit', 'get_tree().quit(): nesta engine o jogo termina pelo editor; a chamada foi ignorada.');
+    }
+    reload_current_scene(): number {
+        const play = this.$game.helix.play as AnyRecord | undefined;
+        const restart = play?.restart as Fn | undefined;
+        if (typeof restart === 'function') {
+            restart();
+            return 0;
+        }
+        this.$game.warnOnce('reload', 'reload_current_scene(): não há recarga de cena nesta engine; reposicione os atores pelo script.');
+        return 1;
+    }
+    change_scene_to_file(path: unknown): number {
+        this.$game.warnOnce('change_scene', `change_scene_to_file("${str(path)}"): esta engine não tem cenas .tscn; organize fases com atores e visibilidade.`);
+        return 2;
+    }
+    change_scene_to_packed(_scene: unknown): number {
+        return this.change_scene_to_file('<PackedScene>');
+    }
+    get_multiplayer(): null {
+        return null;
+    }
+    set_auto_accept_quit(_enabled: unknown): void { }
+    set_quit_on_go_back(_enabled: unknown): void { }
+}
+markScriptClass(SceneTree, 'SceneTree');
+setGodotBase(SceneTree, 'SceneTree');
+export function sceneTreeOf(context: GameContext): SceneTree {
+    return context.service('sceneTree', () => new SceneTree(context));
+}
+export function viewportOf(context: GameContext): Viewport {
+    return windowOf(context);
+}
+export function windowOf(context: GameContext): Window {
+    return context.service('window', () => new Window(context));
+}
+export class RefCounted extends GodotObject {
+}
+markScriptClass(RefCounted, 'RefCounted');
+setGodotBase(RefCounted, 'RefCounted');
+export class Resource extends RefCounted {
+    resource_path = '';
+    resource_name = '';
+    resource_local_to_scene = false;
+    get changed(): Signal {
+        return this.$builtinSignal('changed');
+    }
+    emit_changed(): void {
+        this.$emit('changed');
+    }
+    duplicate(_subresources = false): Resource {
+        const copy = new (this.constructor as new (inject: Injection | null) => Resource)({ entity: null, helix: this.$helix, script: null });
+        for (const key of Object.keys(this))
+            if (!key.startsWith('$'))
+                (copy as unknown as AnyRecord)[key] = (this as unknown as AnyRecord)[key];
+        return copy;
+    }
+    get_rid(): number {
+        return this.$instanceId;
+    }
+    take_over_path(path: unknown): void {
+        this.resource_path = str(path);
+    }
+}
+markScriptClass(Resource, 'Resource');
+setGodotBase(Resource, 'Resource');
+export class ScriptResource extends Resource {
+    constructor(helix: HelixRoot, readonly $class: Function | null, path: string) {
+        super({ entity: null, helix, script: null });
+        this.resource_path = path;
+    }
+    new(...args: unknown[]): unknown {
+        if (!this.$class)
+            fail(`${this.resource_path}: este recurso não é um script GDScript e não pode ser instanciado.`);
+        return dynamicCall(this.$class, 'new', args);
+    }
+    instantiate(...args: unknown[]): unknown {
+        return this.new(...args);
+    }
+    can_instantiate(): boolean {
+        return this.$class !== null;
+    }
+    get_global_name(): string {
+        return this.$class ? ((this.$class as {
+            __gdName?: string;
+        }).__gdName ?? this.$class.name) : '';
+    }
+    get_instance_base_type(): string {
+        return this.$class ? godotBaseOf(this.$class) : '';
+    }
+    get_base_script(): unknown {
+        if (!this.$class)
+            return null;
+        const parent = Object.getPrototypeOf(this.$class) as Function | null;
+        return parent && scriptClassName(parent.prototype as object) ? parent : null;
+    }
+    has_source_code(): boolean {
+        return false;
+    }
+    get_source_code(): string {
+        return '';
+    }
+}
+markScriptClass(ScriptResource, 'GDScript');
+setGodotBase(ScriptResource, 'GDScript');
