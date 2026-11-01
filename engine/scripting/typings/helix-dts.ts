@@ -1196,4 +1196,284 @@ const RENDER_API = `
   }
 `;
 const PHYSICS_API = `
+  export interface PhysicsSettings {
+    gravity: Vec3
+    fixedTimestep: number
+    substeps: number
+    solverIterations: number
+    relaxIterations: number
+    contactHertz: number
+    contactDampingRatio: number
+    contactPushMaxVelocity: number
+    linearSlop: number
+    speculativeDistance: number
+    restitutionThreshold: number
+    maxLinearSpeed: number
+    sleepEnabled: boolean
+    sleepLinearThreshold: number
+    sleepAngularThreshold: number
+    timeToSleep: number
+    fallLimitY: number
+    warmStarting: boolean
+    waterDensity: number
+    waterDrag: number
+    waterAngularDrag: number
+  }
+  export interface PhysicsStats {
+    bodies: number
+    awake: number
+    manifolds: number
+    contactPoints: number
+                                                                                             
+    joints: number
+    stepMs: number
+                                                             
+    stepMsAverage: number
+                                                              
+    stepsLastAdvance: number
+                                                                                                                                     
+    catchUpSteps: number
+                                                               
+    simulatedSeconds: number
+                                                        
+    advanceMs: number
+                                                                                                                                                
+    droppedSeconds: number
+                                                                                                                                                                     
+    backend: 'local' | 'worker-shared' | 'worker-copy'
+  }
+  export interface RigidBodyHandle {
+    readonly raw: unknown
+    readonly entity: Entity | null
+    readonly id: number
+    readonly type: 'static' | 'kinematic' | 'dynamic'
+    readonly isStatic: boolean
+    readonly isKinematic: boolean
+    readonly isDynamic: boolean
+    readonly isMoving: boolean
+    readonly isResting: boolean
+    readonly isActive: boolean
+    readonly isSleeping: boolean
+    readonly motionSpeed: number
+    readonly position: Vec3
+    readonly orientation: Quat
+    readonly mass: number
+    readonly invMass: number
+    readonly aabb: Aabb
+    linearVelocity: Vec3
+    angularVelocity: Vec3
+    readonly friction: number
+    readonly restitution: number
+    gravityScale: number
+                                                                                            
+    readonly layer: string
+    applyImpulse(impulse: Vec3Like, point?: Vec3Like): void
+    applyAngularImpulse(impulse: Vec3Like): void
+    applyForce(force: Vec3Like, point?: Vec3Like): void
+    applyTorque(torque: Vec3Like): void
+    setPose(position: Vec3Like, orientation?: QuatLike): void
+    teleport(position: Vec3Like, orientation?: QuatLike): void
+    moveKinematic(position: Vec3Like, orientation?: QuatLike, step?: number): void
+    setMaterial(material: { friction?: number; restitution?: number; linearDamping?: number; angularDamping?: number; gravityScale?: number; canSleep?: boolean }): void
+    wake(): void
+    sleep(): void
+    lockRotation(x: boolean, y: boolean, z: boolean): void
+    lockPosition(x: boolean, y: boolean, z: boolean): void
+  }
+  export type JointType = 'ball' | 'hinge' | 'slider' | 'fixed' | 'distance' | 'cone-twist' | 'wheel'
+  export interface JointLimits { enabled: boolean; min: number; max: number }
+  export interface JointMotor { enabled: boolean; targetVelocity: number; maxForce: number }
+  export interface JointSpring { enabled: boolean; hertz: number; dampingRatio: number; target: number }
+                                                                                                                                                          
+  export interface JointParams {
+    enabled?: boolean
+                                                                    
+    collideConnected?: boolean
+                                                                                                                                                                                                
+    limits?: [number, number] | Partial<JointLimits> | null
+                                                                                                                                   
+    motor?: Partial<JointMotor> | null
+                                                                                                                                                    
+    spring?: Partial<JointSpring> | null
+                                                                            
+    breakForce?: number | null
+    breakTorque?: number | null
+                                                                                            
+    length?: number
+                                                                     
+    coneAngle?: number
+                                                                 
+    brakeTorque?: number
+                                                             
+    steeringAngle?: number
+  }
+                                                                              
+  export interface JointFrame {
+                                                                                           
+    anchor?: Vec3Like
+                                                                                
+    anchorA?: Vec3Like
+    anchorB?: Vec3Like
+                                                                                                         
+    axis?: Vec3Like
+                                                                                                   
+    secondaryAxis?: Vec3Like
+    axle?: Vec3Like
+  }
+  export type JointOptions = JointFrame & JointParams
+  export interface JointHandle {
+    readonly raw: unknown
+    readonly id: number
+    readonly type: JointType
+                                                                                                
+    readonly isAngular: boolean
+    readonly bodyA: RigidBodyHandle
+                                               
+    readonly bodyB: RigidBodyHandle | null
+    readonly entityA: Entity | null
+    readonly entityB: Entity | null
+                                                                        
+    readonly anchorA: Vec3
+    readonly anchorB: Vec3
+    readonly axis: Vec3
+    enabled: boolean
+    collideConnected: boolean
+    readonly isBroken: boolean
+    readonly isActive: boolean
+                                                                                                                          
+    readonly coordinate: number
+                                                                                 
+    readonly speed: number
+                                                                  
+    readonly reactionForce: Vec3
+    readonly reactionTorque: Vec3
+                                                                        
+    readonly axialForce: number
+                                                                            
+    readonly motorForce: number
+    readonly limits: JointLimits
+    setLimits(min: number, max: number): void
+    clearLimits(): void
+    readonly motor: JointMotor
+    setMotor(targetVelocity: number, maxForce?: number): void
+    stopMotor(): void
+    readonly spring: JointSpring
+    setSpring(hertz: number, dampingRatio?: number, target?: number): void
+    clearSpring(): void
+    breakForce: number
+    breakTorque: number
+    length: number
+    coneAngle: number
+    brakeTorque: number
+    steeringAngle: number
+    set(patch: JointParams): void
+                                                                                                      
+    break(): void
+    remove(): void
+  }
+  export type FieldMode = 'acceleration' | 'force'
+  export type FieldRegion = { readonly kind: 'everywhere' } | { readonly kind: 'sphere'; readonly center: Vec3; radius: number; falloff: number } | { readonly kind: 'box'; readonly center: Vec3; readonly halfExtents: Vec3; falloff: number }
+  export type FieldRegionLike = FieldRegion | { center: Vec3Like; radius: number; falloff?: number } | { center: Vec3Like; halfExtents: Vec3Like; falloff?: number }
+  export interface ForceFieldHandle {
+    readonly raw: unknown
+    readonly kind: 'directional' | 'radial' | 'vortex' | 'drag'
+    enabled: boolean
+    region: FieldRegion
+    readonly attached: boolean
+    remove(): void
+  }
+  export interface DirectionalFieldHandle extends ForceFieldHandle {
+    readonly kind: 'directional'
+    direction: Vec3
+                                                                                                        
+    strength: number
+    mode: FieldMode
+  }
+  export interface RadialFieldHandle extends ForceFieldHandle {
+    readonly kind: 'radial'
+    center: Vec3
+                                                                
+    strength: number
+                                              
+    radius: number
+                                                                                                
+    falloff: 'none' | 'linear' | 'inverse-square'
+    mode: FieldMode
+  }
+  export interface VortexFieldHandle extends ForceFieldHandle {
+    readonly kind: 'vortex'
+    center: Vec3
+    axis: Vec3
+    strength: number
+    inwardStrength: number
+    liftStrength: number
+    radius: number
+    falloff: 'none' | 'linear'
+    mode: FieldMode
+  }
+  export interface DragFieldHandle extends ForceFieldHandle {
+    readonly kind: 'drag'
+                                       
+    linear: number
+                                                                     
+    quadratic: number
+                                             
+    angular: number
+  }
+  export interface ExplosionOptions {
+    falloff?: 'none' | 'linear' | 'inverse-square'
+                                                              
+    upwardBias?: number
+                                                                                                               
+    mode?: 'impulse' | 'velocity'
+  }
+  export interface RaycastHit {
+    readonly entity: Entity | null
+    readonly body: RigidBodyHandle | null
+    readonly point: Vec3
+    readonly normal: Vec3
+    readonly distance: number
+  }
+  export interface QueryFilter {
+    exclude?: readonly Entity[]
+    tags?: readonly string[]
+    kinds?: readonly EntityKind[]
+    layers?: readonly string[]
+    includeTriggers?: boolean
+  }
+  export interface PhysicsApi {
+    readonly running: boolean
+                                                                                    
+    enabled: boolean
+    readonly stats: PhysicsStats
+    readonly fixedTimestep: number
+    readonly interpolation: number
+    readonly bodyCount: number
+    stepOnce(): void
+    discardAccumulatedTime(): void
+    onPreStep(fn: (h: number) => void): Unsubscribe
+    addForceField(field: { wakeAffected?(bodies: readonly unknown[], time: number): void; apply(bodies: readonly unknown[], h: number, time: number): void }): Unsubscribe
+    bodyOf(entity: Entity): RigidBodyHandle
+    hasBody(entity: Entity): boolean
+    bodies(): { entity: Entity; body: RigidBodyHandle }[]
+    entityOf(body: RigidBodyHandle | unknown): Entity | null
+    raycast(origin: Vec3Like, direction: Vec3Like, maxDistance?: number, filter?: QueryFilter): RaycastHit | null
+    raycastAll(origin: Vec3Like, direction: Vec3Like, maxDistance?: number, filter?: QueryFilter): RaycastHit[]
+    overlapAabb(box: Aabb | { min: Vec3Like; max: Vec3Like }, filter?: QueryFilter): Entity[]
+    overlapSphere(center: Vec3Like, radius: number, filter?: QueryFilter): Entity[]
+    overlapBox(center: Vec3Like, halfExtents: Vec3Like, rotation?: QuatLike, filter?: QueryFilter): Entity[]
+    sweep(shape: unknown, from: Vec3Like, to: Vec3Like, filter?: QueryFilter): RaycastHit | null
+    closestPoint(point: Vec3Like, target: Entity): Vec3
+    fitCollider(entity: Entity): RigidBodySettings
+    massProperties(entity: Entity): { mass: number; density: number; volume: number }
+    colliderRequiresStatic(kind: RigidBodySettings['collider']): boolean
+    colliderVolume(entity: Entity): number
+    readonly physical: {
+      presets(): { id: string; label: string; properties: PhysicalProperties }[]
+      create(overrides?: Partial<PhysicalProperties>): PhysicalProperties
+      match(properties: PhysicalProperties): string | null
+      apply(entity: Entity, presetOrProperties: string | PhysicalProperties): RigidBodySettings
+    }
+    readonly shapes: {
+      box(halfX: number, halfY: number, halfZ: number): unknown
 `;
