@@ -810,3 +810,133 @@ export interface SettingSection {
     readonly description: string;
     readonly groups: readonly SettingGroup[];
 }
+export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
+    {
+        id: 'editor',
+        title: 'Editor',
+        description: 'Câmera, estado inicial do viewport, interface do editor, console e importação.',
+        groups: [
+            { title: 'Câmera', settings: ['editor.camera.orbitSpeed', 'editor.camera.panSpeed', 'editor.camera.zoomSpeed', 'editor.camera.fov', 'editor.camera.invertZoom', 'editor.camera.invertOrbitY'] },
+            { title: 'Ao abrir um jogo', settings: ['editor.open.tool', 'editor.open.space', 'editor.open.grid', 'editor.open.shadows', 'editor.open.perfHud'] },
+            { title: 'Interface do editor', settings: ['editor.ui.scale', 'editor.ui.statusBar', 'editor.ui.menuShortcuts', 'editor.hierarchy.kindLabels', 'editor.ui.reduceMotion'] },
+            { title: 'Console', settings: ['editor.console.order', 'editor.console.limit', 'editor.console.revealOnError'] },
+            { title: 'Importação de modelos', settings: ['editor.import.placement', 'editor.import.frameAfterImport', 'editor.import.saveToLibrary', 'editor.import.convertUnits'] },
+        ],
+    },
+    {
+        id: 'project',
+        title: 'Projeto e salvamento',
+        description: 'Recuperação automática, instantâneos restauráveis e o template de um jogo novo.',
+        groups: [
+            {
+                title: 'Recuperação automática',
+                description: 'A engine grava a cena sozinha para nada se perder por fechar a aba ou por uma falha de persistência.',
+                settings: ['project.autosave.enabled', 'project.autosave.delay', 'project.autosave.maxWait'],
+            },
+            { title: 'Salvamentos automáticos restauráveis', settings: ['project.snapshots.interval', 'project.snapshots.max'] },
+            { title: 'Capa e jogo novo', settings: ['project.thumbnail.enabled', 'project.new.template'] },
+        ],
+    },
+    {
+        id: 'selection',
+        title: 'Seleção e encaixe',
+        description: 'Enquadramento, gizmo e o encaixe de transformação da cena 3D.',
+        groups: [
+            { title: 'Seleção e gizmo', settings: ['selection.focusPadding', 'editor.gizmo.size'] },
+            { title: 'Encaixe de transformação', settings: ['snap.enabled', 'snap.translate', 'snap.rotate', 'snap.scale'] },
+        ],
+    },
+    {
+        id: 'gui',
+        title: 'Interface',
+        description: 'Opções do canvas da área de trabalho Interface com que cada jogo abre.',
+        groups: [
+            { title: 'Encaixe', settings: ['gui.snapGuides', 'gui.snapGrid', 'gui.grid', 'gui.gridSize'] },
+            { title: 'Vista', settings: ['gui.rulers', 'gui.outlines', 'gui.safeArea', 'gui.checkerboard'] },
+            { title: 'Emulação de aparelho', settings: ['gui.deviceFrame', 'gui.devicePixels'] },
+        ],
+    },
+    {
+        id: 'simulation',
+        title: 'Física e simulação',
+        description: 'Comportamento do playtest e os padrões de física com que jogos novos nascem.',
+        groups: [
+            { title: 'Simulação', settings: ['simulation.pauseOnBlur', 'simulation.timeScale', 'simulation.playMaximized'] },
+            {
+                title: 'Desempenho',
+                description: 'Onde os passos da física rodam. Vale para o próximo jogo iniciado.',
+                settings: ['simulation.physics.backend'],
+            },
+            {
+                title: 'Padrões de física para jogos novos',
+                description: 'A física faz parte de cada jogo e é salva com ele; estes valores só definem como um jogo recém-criado começa.',
+                settings: ['simulation.physics.quality', 'simulation.physics.stepRate', 'simulation.physics.sleep', 'simulation.physics.warmStarting'],
+            },
+            {
+                title: 'Servidor no playtest',
+                description: 'Nos jogos com servidor autoritativo (Código ▸ Servidor do jogo), o playtest pode subir um servidor simulado dentro do editor ou conectar ao servidor que você já hospedou.',
+                settings: ['simulation.net.server', 'simulation.net.room', 'simulation.net.ticket'],
+            },
+            {
+                title: 'Ligação simulada',
+                description: 'Com o servidor simulado, estes valores degradam a ligação entre ele e o cliente para testar o jogo como se estivesse na internet. Com o servidor hospedado, a rede é a de verdade.',
+                settings: ['simulation.net.latency', 'simulation.net.jitter', 'simulation.net.loss'],
+            },
+        ],
+    },
+    {
+        id: 'render',
+        title: 'Renderização',
+        description: 'Perfil de qualidade, classificação da GPU, orçamentos por subsistema, níveis de detalhe, geometria virtual e marcadores do viewport.',
+        groups: [
+            {
+                title: 'Perfil e classificação da GPU',
+                description: 'Como a engine decide a classe da placa e o perfil que ela aplica. Valem ao reabrir o jogo: o renderer nasce com estes orçamentos.',
+                settings: ['render.profile', 'render.gpuBenchmark'],
+            },
+            { title: 'Resolução e ritmo', settings: ['render.maxPixelRatio', 'render.dynamicResolution', 'render.editorLite', 'render.fpsLimit', 'render.onDemand'] },
+            {
+                title: 'Orçamentos por subsistema',
+                description: 'Cada orçamento segue o perfil em Automático; forçado, toma os valores de outra classe só para aquele subsistema. Nenhum muda o resultado convergido, só quanto trabalho é feito por frame e em que resolução. Valem ao reabrir o jogo.',
+                settings: ['render.budget.shadows', 'render.budget.localLights', 'render.budget.clouds', 'render.budget.terrainCache', 'render.budget.post', 'render.budget.myriad', 'render.hdrFormat'],
+            },
+            { title: 'Níveis de detalhe e descarte', settings: ['render.lod.enabled', 'render.lod.bias', 'render.culling.frustum', 'render.culling.minPixelSize'] },
+            { title: 'Geometria virtual', settings: ['render.myriad.enabled', 'render.myriad.pixelError', 'render.myriad.occlusion', 'render.myriad.shadowClusters'] },
+            { title: 'Terreno e CSG', settings: ['render.terrainCache', 'render.csgGhosts'] },
+            { title: 'Marcadores do editor', settings: ['render.helpers.lights', 'render.helpers.sounds', 'render.helpers.vfx'] },
+        ],
+    },
+    {
+        id: 'code',
+        title: 'Código',
+        description: 'A linguagem do jogo aberto e as preferências do editor de código: aparência, edição, verificação ao vivo e comportamento.',
+        groups: [
+            {
+                title: 'Linguagem do jogo',
+                description: 'Cada jogo é programado numa só linguagem: todo script nasce nela e só ela compila. A escolha é do jogo aberto, salva com ele, e pode mudar a qualquer momento.',
+                settings: [],
+                panel: 'gameLanguage',
+            },
+            { title: 'Aparência', settings: ['code.fontSize', 'code.lineHeight', 'code.lineNumbers', 'code.highlightLine', 'code.indentGuides', 'code.folding', 'code.minimap', 'code.whitespace', 'code.wordWrap', 'code.cursorBlink'] },
+            {
+                title: 'Edição',
+                description: 'A indentação (tab ou espaços, e quantos) segue a convenção de cada linguagem, não uma preferência.',
+                settings: ['code.autoSuggest', 'code.autoCloseBrackets', 'code.selectionMatches'],
+            },
+            { title: 'Verificação ao vivo', settings: ['code.liveVerify', 'code.verifyDelay'] },
+            { title: 'Comportamento', settings: ['code.presentation', 'code.openOnCreate', 'code.previewTabs', 'code.commandBar', 'code.statusStrip'] },
+        ],
+    },
+    {
+        id: 'audio',
+        title: 'Áudio',
+        description: 'Como a engine toca som enquanto você edita.',
+        groups: [{ title: 'Monitoração', settings: ['audio.onlyWhenFocused', 'audio.monitorVolume'] }],
+    },
+];
+export function settingSection(id: SettingId): SettingSection {
+    const section = ENGINE_SETTING_SECTIONS.find((candidate) => candidate.groups.some((group) => group.settings.includes(id)));
+    if (!section)
+        throw new Error(`A preferência ${id} não está em nenhuma seção.`);
+    return section;
+}
