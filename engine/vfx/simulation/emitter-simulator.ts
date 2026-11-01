@@ -516,6 +516,93 @@ export class EmitterSimulator {
             let nx = px + (vx * speedMultiplier + addX) * dt;
             let ny = py + (vy * speedMultiplier + addY) * dt;
             let nz = pz + (vz * speedMultiplier + addZ) * dt;
+            for (let k = 0; k < modules.length; k++) {
+                const module = modules[k];
+                if (module.kind !== 'collision' || !module.enabled)
+                    continue;
+                const plane = module.planeHeight;
+                if (isWorld) {
+                    if (ny < plane && vy < 0) {
+                        if (module.killOnCollide) {
+                            killed = true;
+                            break;
+                        }
+                        ny = plane;
+                        velocity[p + 1] = -vy * module.bounce;
+                        velocity[p] = vx * (1 - module.friction);
+                        velocity[p + 2] = vz * (1 - module.friction);
+                        age[i] += lifetime[i] * module.lifetimeLoss;
+                    }
+                }
+                else if (inverse) {
+                    const worldY = m[1] * nx + m[5] * ny + m[9] * nz + m[13];
+                    if (worldY < plane) {
+                        scratch[0] = vx;
+                        scratch[1] = vy;
+                        scratch[2] = vz;
+                        this.rotateToWorld(scratch, scratchB);
+                        if (scratchB[1] < 0) {
+                            if (module.killOnCollide) {
+                                killed = true;
+                                break;
+                            }
+                            scratch[0] = 0;
+                            scratch[1] = plane - worldY;
+                            scratch[2] = 0;
+                            mat4.transformDirection(localDirection, inverse, scratch);
+                            nx += localDirection[0];
+                            ny += localDirection[1];
+                            nz += localDirection[2];
+                            scratchB[1] = -scratchB[1] * module.bounce;
+                            scratchB[0] *= 1 - module.friction;
+                            scratchB[2] *= 1 - module.friction;
+                            this.rotateToLocal(scratchB, scratch);
+                            velocity[p] = scratch[0];
+                            velocity[p + 1] = scratch[1];
+                            velocity[p + 2] = scratch[2];
+                            age[i] += lifetime[i] * module.lifetimeLoss;
+                        }
+                    }
+                }
+            }
+            if (killed || age[i] >= lifetime[i]) {
+                pool.kill(i);
+                continue;
+            }
+            position[p] = nx;
+            position[p + 1] = ny;
+            position[p + 2] = nz;
+            size[i * 2] = Math.max(0, sizeX);
+            size[i * 2 + 1] = Math.max(0, sizeY);
+            color[i * 4] = r;
+            color[i * 4 + 1] = g;
+            color[i * 4 + 2] = b;
+            color[i * 4 + 3] = clamp(a, 0, 1);
+            if (alignToVelocity) {
+                rotation[i] = angularVelocity[i] * nextAge;
+            }
+            else {
+                rotation[i] += spin * dt;
+            }
+            if (flipbook && frameCount > 0) {
+                const start = flipbook.randomStart ? frames[i] : 0;
+                if (flipbook.fps > 0) {
+                    const advanced = (flipbook.randomStart ? Math.floor(start) : 0) + nextAge * flipbook.fps;
+                    frames[i] = flipbook.loop ? advanced % frameCount : Math.min(advanced, frameCount - 1);
+                    if (flipbook.randomStart)
+                        frames[i] = ((frames[i] % frameCount) + frameCount) % frameCount;
+                }
+                else {
+                    frames[i] = Math.min(frameCount - 1e-3, life * frameCount);
+                }
+            }
+            i++;
         }
     }
+}
+export function countAlive(simulators: readonly EmitterSimulator[]): number {
+    let total = 0;
+    for (const simulator of simulators)
+        total += simulator.alive;
+    return total;
 }
