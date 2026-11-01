@@ -1714,3 +1714,189 @@ export class TimerNode extends NodeBase {
 }
 markScriptClass(TimerNode, 'Timer');
 setGodotBase(TimerNode, 'Timer');
+export class Camera3DNode extends NodeBase {
+    private get $camera(): AnyRecord {
+        return this.$helix.camera as AnyRecord;
+    }
+    get current(): boolean {
+        return (this.$camera.main as EngineEntity | null) === this.$entity;
+    }
+    set current(value: unknown) {
+        if (value)
+            this.make_current();
+    }
+    get fov(): number {
+        return Number(this.$camera.fov ?? 70);
+    }
+    set fov(value: unknown) {
+        this.$camera.fov = Number(value);
+    }
+    get near(): number {
+        return Number(this.$camera.near ?? 0.05);
+    }
+    set near(value: unknown) {
+        this.$camera.near = Number(value);
+    }
+    get far(): number {
+        return Number(this.$camera.far ?? 4000);
+    }
+    set far(value: unknown) {
+        this.$camera.far = Number(value);
+    }
+    make_current(): void {
+        if (this.$entity)
+            (this.$camera.setMain as Fn)(this.$entity);
+    }
+    is_current(): boolean {
+        return this.current;
+    }
+    project_ray_origin(screenPoint: unknown): Vector3 {
+        const point = toVector2(screenPoint);
+        const ray = (this.$camera.screenToRay as Fn)(point.x, point.y) as {
+            origin: Float32Array;
+        };
+        return fromEngineVec3(ray.origin);
+    }
+    project_ray_normal(screenPoint: unknown): Vector3 {
+        const point = toVector2(screenPoint);
+        const ray = (this.$camera.screenToRay as Fn)(point.x, point.y) as {
+            direction: Float32Array;
+        };
+        return fromEngineVec3(ray.direction).normalized();
+    }
+    unproject_position(worldPoint: unknown): Vector2 {
+        const screen = (this.$camera.worldToScreen as Fn)(toVector3(worldPoint)) as {
+            x: number;
+            y: number;
+        } | Float32Array | null;
+        if (!screen)
+            return new Vector2();
+        return isVecLike(screen) ? new Vector2(screen.x, screen.y) : new Vector2((screen as Float32Array)[0], (screen as Float32Array)[1]);
+    }
+    is_position_behind(worldPoint: unknown): boolean {
+        const forward = fromEngineVec3((this.$camera.forward as Float32Array | undefined) ?? new Float32Array([0, 0, -1]));
+        return vsub(toVector3(worldPoint), this.global_position).dot(forward) < 0;
+    }
+}
+markScriptClass(Camera3DNode, 'Camera3D');
+setGodotBase(Camera3DNode, 'Camera3D');
+function toVector2(value: unknown): Vector2 {
+    if (value instanceof Vector2)
+        return value;
+    if (isVecLike(value))
+        return new Vector2(value.x, value.y);
+    return fail('Esperava um Vector2.');
+}
+export class Light3DNode extends NodeBase {
+    private get $light(): AnyRecord | null {
+        return (this.$entity?.light as AnyRecord | null) ?? null;
+    }
+    get light_energy(): number {
+        return Number(this.$light?.intensity ?? 1);
+    }
+    set light_energy(value: unknown) {
+        if (this.$light)
+            this.$light.intensity = Number(value);
+    }
+    get light_color(): unknown {
+        return this.$light?.color ?? null;
+    }
+    set light_color(value: unknown) {
+        if (this.$light && isVecLike(value))
+            this.$light.color = new Float32Array([value.x, value.y, value.z ?? 0]);
+    }
+    get shadow_enabled(): boolean {
+        return Boolean(this.$light?.castShadows ?? false);
+    }
+    set shadow_enabled(value: unknown) {
+        if (this.$light)
+            this.$light.castShadows = Boolean(value);
+    }
+    get omni_range(): number {
+        return Number(this.$light?.range ?? 10);
+    }
+    set omni_range(value: unknown) {
+        if (this.$light)
+            this.$light.range = Number(value);
+    }
+    get spot_range(): number {
+        return this.omni_range;
+    }
+    set spot_range(value: unknown) {
+        this.omni_range = value;
+    }
+}
+markScriptClass(Light3DNode, 'Light3D');
+setGodotBase(Light3DNode, 'Light3D');
+export class Viewport extends GodotObject {
+    constructor(readonly $game: GameContext) {
+        super({ entity: null, helix: $game.helix, script: null });
+    }
+    private get $size(): Vector2i {
+        const camera = this.$helix.camera as AnyRecord | undefined;
+        const viewport = camera?.viewport as {
+            width?: number;
+            height?: number;
+            x?: number;
+            y?: number;
+        } | Float32Array | undefined;
+        if (viewport && 'width' in viewport)
+            return new Vector2i(Math.round(Number(viewport.width ?? 0)), Math.round(Number(viewport.height ?? 0)));
+        if (viewport && ArrayBuffer.isView(viewport))
+            return new Vector2i(Math.round(viewport[0]), Math.round(viewport[1]));
+        const win = globalThis as unknown as {
+            innerWidth?: number;
+            innerHeight?: number;
+        };
+        return new Vector2i(Math.round(win.innerWidth ?? 1280), Math.round(win.innerHeight ?? 720));
+    }
+    get size(): Vector2i {
+        return this.$size;
+    }
+    get_visible_rect(): Rect2 {
+        const size = this.$size;
+        return new Rect2(new Vector2(0, 0), new Vector2(size.x, size.y));
+    }
+    get_size(): Vector2i {
+        return this.$size;
+    }
+    get_mouse_position(): Vector2 {
+        const pointer = (this.$helix.input as AnyRecord | undefined)?.pointer as {
+            x: number;
+            y: number;
+        } | undefined;
+        return pointer ? new Vector2(pointer.x, pointer.y) : new Vector2();
+    }
+    warp_mouse(_position: unknown): void {
+        this.$game.warnOnce('warp_mouse', 'warp_mouse(): o navegador não permite mover o cursor; a chamada foi ignorada.');
+    }
+    get_camera_3d(): NodeBase | null {
+        const camera = this.$game.scene.activeCamera as EngineEntity | null | undefined;
+        return camera ? wrapEntity(camera, this.$game) : null;
+    }
+    get_camera_2d(): null {
+        return null;
+    }
+    set_input_as_handled(): void {
+        InputRouter.of(this.$game).handled = true;
+    }
+    is_input_handled(): boolean {
+        return InputRouter.of(this.$game).handled;
+    }
+    gui_get_focus_owner(): null {
+        return null;
+    }
+    gui_release_focus(): void { }
+    get_window(): Window {
+        return windowOf(this.$game);
+    }
+    get_texture(): null {
+        return null;
+    }
+    get gui_disable_input(): boolean {
+        return false;
+    }
+    set gui_disable_input(_value: unknown) { }
+}
+markScriptClass(Viewport, 'Viewport');
+setGodotBase(Viewport, 'Viewport');
