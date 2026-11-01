@@ -4,6 +4,7 @@ import { adjacentKeyTime, keysInRange } from '@/engine/core/animation/track-edit
 import { useAnimationEditor, useTimelineRows } from '@/engine/editor/animation/ui/use-animation-editor';
 import { saveAnimationEditorDocument } from '@/engine/editor/operations/animation-operations';
 import { useEditorSession } from '@/engine/editor/session/editor-session-context';
+import { shortcutBindings } from '@/engine/editor/shortcuts/shortcut-bindings';
 import { AnimationEmptyState } from './animation/animation-empty-state';
 import { AnimationToolbar } from './animation/animation-toolbar';
 import { BoneTree } from './animation/bone-tree';
@@ -11,6 +12,7 @@ import { CurveCanvas } from './animation/curve-canvas';
 import { DopesheetCanvas } from './animation/dopesheet-canvas';
 import { KeyInspector } from './animation/key-inspector';
 const TREE_WIDTH_PX = 190;
+const BIG_STEP_FRAMES = 10;
 function isTextEntry(target: EventTarget | null): boolean {
     if (!(target instanceof HTMLElement))
         return false;
@@ -37,58 +39,61 @@ export function AnimationPanel() {
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
         if (!editor.document || isTextEntry(event.target))
             return;
-        const modifier = event.ctrlKey || event.metaKey;
-        const key = event.key.toLowerCase();
-        if (modifier) {
-            if (key === 'c' && editor.selectedKeys.length > 0)
-                editor.copySelectedKeys();
-            else if (key === 'v' && editor.clipboard)
-                editor.pasteKeys();
-            else if (key === 'a')
-                editor.selectKeys(keysInRange(editor.document, -Infinity, Infinity), 'replace');
-            else if (key === 's' && !event.shiftKey)
-                void saveAnimationEditorDocument(session);
-            else
-                return;
-            event.preventDefault();
+        const action = shortcutBindings.resolve(event.nativeEvent, 'animation');
+        if (!action)
             return;
-        }
-        switch (key) {
-            case ' ':
+        const frames = event.shiftKey ? BIG_STEP_FRAMES : 1;
+        switch (action) {
+            case 'animation.togglePlay':
                 editor.togglePlay();
                 break;
-            case 'arrowleft':
-                editor.stepFrames(event.shiftKey ? -10 : -1);
+            case 'animation.stepBack':
+                editor.stepFrames(-frames);
                 break;
-            case 'arrowright':
-                editor.stepFrames(event.shiftKey ? 10 : 1);
+            case 'animation.stepForward':
+                editor.stepFrames(frames);
                 break;
-            case 'home':
+            case 'animation.goToStart':
                 editor.goToStart();
                 break;
-            case 'end':
+            case 'animation.goToEnd':
                 editor.goToEnd();
                 break;
-            case ',':
-            case '.': {
-                const next = adjacentKeyTime(editor.document, editor.time, key === ',' ? -1 : 1);
+            case 'animation.previousKey':
+            case 'animation.nextKey': {
+                const next = adjacentKeyTime(editor.document, editor.time, action === 'animation.previousKey' ? -1 : 1);
                 if (next !== null) {
                     editor.pause();
                     editor.setTime(next, false);
                 }
                 break;
             }
-            case 'k':
-                if (event.shiftKey)
-                    editor.keyAllBones();
-                else
-                    editor.keyBones();
+            case 'animation.keySelected':
+                editor.keyBones();
                 break;
-            case 'delete':
-            case 'backspace':
+            case 'animation.keyAll':
+                editor.keyAllBones();
+                break;
+            case 'animation.copyKeys':
+                if (editor.selectedKeys.length === 0)
+                    return;
+                editor.copySelectedKeys();
+                break;
+            case 'animation.pasteKeys':
+                if (!editor.clipboard)
+                    return;
+                editor.pasteKeys();
+                break;
+            case 'animation.selectAllKeys':
+                editor.selectKeys(keysInRange(editor.document, -Infinity, Infinity), 'replace');
+                break;
+            case 'animation.deleteKeys':
                 editor.deleteSelectedKeys();
                 break;
-            case 'escape':
+            case 'animation.save':
+                void saveAnimationEditorDocument(session);
+                break;
+            case 'animation.escape':
                 if (selectedEvent !== -1)
                     setSelectedEvent(-1);
                 else if (editor.selectedKeys.length > 0)
