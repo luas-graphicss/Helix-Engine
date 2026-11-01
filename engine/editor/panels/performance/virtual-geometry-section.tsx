@@ -1,11 +1,13 @@
 'use client';
 import { CollapsibleSection } from '@/engine/ui/collapsible-section';
 import { PropertyRow } from '@/engine/ui/property-row';
+import { SelectField } from '@/engine/ui/select-field';
 import { SliderField } from '@/engine/ui/slider-field';
 import { ToggleField } from '@/engine/ui/toggle-field';
-import { useEditorState, useViewportStats } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useViewportStats } from '@/engine/editor/session/editor-session-context';
 import { MAX_PIXEL_ERROR, MIN_PIXEL_ERROR, MYRIAD_DEBUG_VIEW_LABELS, MYRIAD_DEBUG_VIEWS, type MyriadDebugView } from '@/engine/renderer/myriad/runtime/myriad-settings';
 import { CLUSTER_MAX_TRIANGLES } from '@/engine/renderer/myriad/data/myriad-limits';
+const DEBUG_VIEW_OPTIONS = MYRIAD_DEBUG_VIEWS.map((view) => ({ value: view, label: MYRIAD_DEBUG_VIEW_LABELS[view] }));
 const integer = (value: number) => value.toLocaleString('pt-BR');
 const pixelError = (value: number) => `${value.toFixed(2)} px`;
 const megabytes = (bytes: number) => `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -26,7 +28,7 @@ function LevelChips({ counts }: {
     for (let level = 0; level < counts.length; level++) {
         if (counts[level] === 0)
             continue;
-        chips.push(<span key={level} className="rounded-sm bg-surface-raised px-1 font-mono text-[10px] leading-4 text-foreground/80 tabular-nums">
+        chips.push(<span key={level} className="rounded-sm bg-surface-raised px-1 font-mono text-3xs leading-4 text-foreground/80 tabular-nums">
         <span className="text-muted-foreground">L{level}</span> {integer(counts[level])}
       </span>);
     }
@@ -35,7 +37,7 @@ function LevelChips({ counts }: {
     return <div className="flex flex-wrap gap-1 py-1">{chips}</div>;
 }
 export function VirtualGeometrySection() {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { myriad } = session.render;
     const stats = useViewportStats().myriad;
     const disabled = !myriad.enabled;
@@ -48,24 +50,22 @@ export function VirtualGeometrySection() {
       <ToggleField label="Ativa" on={myriad.enabled} onToggle={() => session.updateMyriad({ enabled: !myriad.enabled })}/>
       <SliderField label="Erro em tela" value={myriad.pixelError} min={MIN_PIXEL_ERROR} max={MAX_PIXEL_ERROR} step={0.25} disabled={disabled} format={pixelError} onChange={(value) => session.updateMyriad({ pixelError: value })}/>
       <PropertyRow label="Visualização">
-        <select aria-label="Visualização da geometria virtual" value={myriad.debugView} disabled={disabled} onChange={(event) => session.updateMyriad({ debugView: event.currentTarget.value as MyriadDebugView })} className="h-6 min-w-0 flex-1 rounded-sm border border-border bg-input px-1 font-mono text-2xs text-foreground outline-none focus-visible:border-primary/70 disabled:opacity-40">
-          {MYRIAD_DEBUG_VIEWS.map((view) => (<option key={view} value={view}>
-              {MYRIAD_DEBUG_VIEW_LABELS[view]}
-            </option>))}
-        </select>
+        <SelectField<MyriadDebugView> label="Visualização do viewport" options={DEBUG_VIEW_OPTIONS} value={myriad.debugView} onChange={(debugView) => session.updateMyriad({ debugView })}/>
       </PropertyRow>
       {myriad.debugView === 'hzb' && (<SliderField label="Nível da pirâmide" value={myriad.hzbLevel} min={0} max={10} step={1} format={(value) => `mip ${value}`} onChange={(value) => session.updateMyriad({ hzbLevel: value })}/>)}
       <ToggleField label={stats.occlusionSupported ? 'Culling de oclusão' : 'Oclusão (sem suporte)'} on={myriad.occlusionCulling && stats.occlusionSupported} onToggle={disabled || !stats.occlusionSupported ? undefined : () => session.updateMyriad({ occlusionCulling: !myriad.occlusionCulling })}/>
       <ToggleField label="Sombras por cluster" on={myriad.shadowClusters} onToggle={disabled ? undefined : () => session.updateMyriad({ shadowClusters: !myriad.shadowClusters })}/>
-      <ToggleField label="Arestas" on={myriad.wireframe} onToggle={disabled ? undefined : () => session.updateMyriad({ wireframe: !myriad.wireframe })}/>
+      <ToggleField label="Arestas" on={myriad.wireframe} onToggle={() => session.updateMyriad({ wireframe: !myriad.wireframe })}/>
       <ToggleField label="Congelar" on={myriad.freeze} onToggle={disabled ? undefined : () => session.updateMyriad({ freeze: !myriad.freeze })}/>
 
       <PropertyRow label="Orçamento">
         <Value>
-          {stats.active ? 'Em uso' : 'Em espera'}{' '}
-          <Muted>
-            · {integer(stats.classicTriangles)} / {integer(stats.activationTriangles)} tris densos
-          </Muted>
+          {stats.supported ? (<>
+              {stats.active ? 'Em uso' : 'Em espera'}{' '}
+              <Muted>
+                · {integer(stats.classicTriangles)} / {integer(stats.activationTriangles)} tris densos
+              </Muted>
+            </>) : (<Muted>Sem suporte nesta GPU · {stats.unsupportedReason}</Muted>)}
         </Value>
       </PropertyRow>
       <PropertyRow label="Instâncias">
