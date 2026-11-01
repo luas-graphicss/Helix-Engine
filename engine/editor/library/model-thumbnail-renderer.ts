@@ -20,6 +20,8 @@ const RENDER_OPTIONS: Omit<RenderOptions, 'elapsedSeconds' | 'deltaSeconds'> = {
     gizmo: null,
     terrainBrush: null,
     skeletons: null,
+    lightHelpers: null,
+    soloLight: null,
     culling: { frustumCulling: true, minPixelSize: 0 },
     lod: { enabled: false, bias: 0 },
     myriad: { ...createMyriadSettings(), enabled: false },
@@ -73,7 +75,7 @@ class ModelThumbnailRenderer {
         Object.assign(canvas.style, { position: 'fixed', left: '-10000px', top: '0', width: `${THUMBNAIL_SIZE}px`, height: `${THUMBNAIL_SIZE}px`, pointerEvents: 'none' });
         document.body.append(canvas);
         try {
-            const renderer = new Renderer(canvas);
+            const renderer = new Renderer(canvas, { offscreen: true });
             const model = new ImportPreviewModel();
             model.orbit.azimuth = VIEW_AZIMUTH;
             model.orbit.polar = VIEW_POLAR;
