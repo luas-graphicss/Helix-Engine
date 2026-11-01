@@ -841,5 +841,154 @@ class DebugJogo extends Script {
 
 	                                                                                          
 
+	override function onLoad():Void {
+		info("onLoad do script de entrada");
+	}
+
+	override function onStart():Void {
+		info("Jogo de teste em " + LINGUAGEM + ": percorrendo a API…");
+		var promessa:Dynamic = helix.time.wait(0);
+		for (a in areas()) promessa = encadear(promessa, a);
+		promessa.then(function(_) finalizar());
+	}
+
+	override function onUpdate(dt:Float):Void {
+		quadros++;
+		if (torus != null) helix.transform.rotate(torus, v3(0, 40 * dt, 0));
+		var d:Dynamic = helix.debug;
+		d.line(v3(-6, 0.05, -6), v3(6, 0.05, -6), "#ff006e");
+		d.box({center: v3(0, 1, 3), size: v3(3, 2, 3)}, "#ffbe0b");
+		if (heroi != null) {
+			d.axes(heroi, 1);
+			var acima:Dynamic = helix.math.vec3.add(helix.transform.worldPosition(heroi), v3(0, 2.2, 0));
+			d.text(acima, "Heroi · " + pontos + " pts", "#ffffff");
+		}
+		d.ray(v3(0, 3, 0), v3(0, -1, 0), 3, "#06d6a0");
+		hudTimer += dt;
+		if (hudTimer >= 0.5) {
+			hudTimer = 0;
+			var g:Dynamic = helix.gui;
+			g.bind("fps", Math.round(helix.render.stats.fps));
+			g.bind("checagens", checagens);
+			g.bind("falhas", falhas);
+		}
+	}
+
+	override function onFixedUpdate(h:Float):Void {
+		passosFisica++;
+		if (passosFisica == 1) checar("onFixedUpdate recebe o passo", h > 0 && h < 1, h);
+	}
+
+	override function onLateUpdate(dt:Float):Void {
+		lateUpdates++;
+	}
+
+	                                                                               
+	override function onBeforeHotReload():Dynamic {
+		return {pontos: pontos};
+	}
+
+	override function onHotReload(anterior:Dynamic):Void {
+		pontos = anterior != null && ehNumero(anterior.pontos) ? Std.int(anterior.pontos) : 0;
+		info("Recarga a quente: " + pontos + " pontos preservados");
+	}
+
+	override function onStop():Void {
+		for (desligar in assinaturas) desligar();
+		assinaturas = [];
+		info("Parou: " + quadros + " quadros, " + passosFisica + " passos de física, " + lateUpdates + " lateUpdates, " + renders + " frames (onAfterFrame), " + colisoes + " colisões.");
+		torus = heroi = efeito = tela = null;
+	}
+}
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+import helix.Script;
+import helix.Vec3;
+
+class DebugGirador extends Script {
+	                                                                               
+	var angulo = 0.0;
+	var contatos = 0;
+	var quadros = 0;
+	var desligar:Dynamic = null;
+
+	function registrar(metodo:String, mensagem:String):Void {
+		Reflect.callMethod(helix.log, Reflect.field(helix.log, metodo), ["Girador", mensagem]);
+	}
+
+	override function onLoad():Void {
+		helix.props.define({
+			velocidade: {type: "range", "default": 90, min: 0, max: 360, step: 1, label: "Velocidade (°/s)"},
+			cor: {type: "color", "default": "#ff8800", label: "Cor"},
+			pulsar: {type: "boolean", "default": true, label: "Pulsar"}
+		});
+	}
+
+	override function onStart():Void {
+		var props:Dynamic = helix.props;
+		registrar("info", self.name + " acordou com velocidade " + props.get("velocidade") + "°/s");
+		helix.material.setColor(self, props.get("cor"));
+		desligar = props.onChanged("cor", function(cor) helix.material.setColor(self, cor));
+		helix.log.assert(helix.self != null && helix.self == self, "helix.self deveria ser o ator deste script");
+		helix.log.assert(props.has("velocidade") == true && props.definitions().length == 3, "props.define deveria registrar 3 propriedades");
+	}
+
+	override function onUpdate(dt:Float):Void {
+		var props:Dynamic = helix.props, tr:Dynamic = helix.transform;
+		quadros++;
+		angulo += props.get("velocidade") * dt;
+		tr.setRotation(self, new Vec3(0, angulo, 0));
+		if (props.get("pulsar") == true) tr.setScale(self, 1 + Math.sin(helix.time.now * 3) * 0.1);
+	}
+
+	override function onCollisionBegin(outro:Dynamic, contato:Dynamic):Void {
+		contatos++;
+		if (contatos > 3) return;
+		var impulso:Float = contato.impulse;
+		registrar("info", self.name + " tocou " + outro.name + " (impulso " + Math.round(impulso * 100) / 100 + ")");
+	}
+
+	override function onTriggerEnter(outro:Dynamic):Void {
+		registrar("info", outro.name + " entrou no gatilho de " + self.name);
+	}
+
+	override function onEnable():Void {
+		registrar("debug", self.name + " ativo");
+	}
+
+	override function onDisable():Void {
+		registrar("debug", self.name + " inativo");
+	}
+
+	override function onStop():Void {
+		registrar("info", self.name + ": " + quadros + " quadros, " + contatos + " contatos");
+	}
+
+	override function onDestroy():Void {
+		if (desligar != null) desligar();
+		desligar = null;
+	}
+}
+`;
+    const module = String.raw `                                     
+                                                                                                        
+                                                                                                     
+                              
+class DebugUtil {
+	public static function soma(a:Float, b:Float):Float {
+		return a + b;
+	}
+
+	public static function saudacao(quem:String):String {
+		return "Olá, " + quem;
+	}
+
+	public static function limitar(valor:Float, minimo:Float, maximo:Float):Float {
+		return Math.max(minimo, Math.min(maximo, valor));
+	}
+}
+`;
+    return { entry, actor, module };
 }
