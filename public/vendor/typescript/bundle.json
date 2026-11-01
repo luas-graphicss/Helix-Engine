@@ -44,7 +44,8 @@
     "lib.es2017.d.ts": "",
     "lib.es2018.asyncgenerator.d.ts": "interface AsyncGenerator<T = unknown, TReturn = any, TNext = any> extends AsyncIteratorObject<T, TReturn, TNext> {\n    next(...[value]: [\n    ] | [\n        TNext\n    ]): Promise<IteratorResult<T, TReturn>>;\n    return(value: TReturn | PromiseLike<TReturn>): Promise<IteratorResult<T, TReturn>>;\n    throw(e: any): Promise<IteratorResult<T, TReturn>>;\n    [Symbol.asyncIterator](): AsyncGenerator<T, TReturn, TNext>;\n}\ninterface AsyncGeneratorFunction {\n    new (...args: any[]): AsyncGenerator;\n    (...args: any[]): AsyncGenerator;\n    readonly length: number;\n    readonly name: string;\n    readonly prototype: AsyncGenerator;\n}\ninterface AsyncGeneratorFunctionConstructor {\n    new (...args: string[]): AsyncGeneratorFunction;\n    (...args: string[]): AsyncGeneratorFunction;\n    readonly length: number;\n    readonly name: string;\n    readonly prototype: AsyncGeneratorFunction;\n}\n",
     "lib.es2018.promise.d.ts": "interface Promise<T> {\n    finally(onfinally?: (() => void) | undefined | null): Promise<T>;\n}\n",
-    "lib.es2018.regexp.d.ts": "interface RegExpMatchArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExpExecArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExp {\n    readonly dotAll: boolean;\n}\n"
+    "lib.es2018.regexp.d.ts": "interface RegExpMatchArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExpExecArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExp {\n    readonly dotAll: boolean;\n}\n",
+    "lib.es2016.d.ts": ""
   },
   "messages": {}
 }
