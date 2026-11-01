@@ -918,3 +918,210 @@ export class HashSet {
         return 'HashSet';
     }
 }
+export class Queue {
+    private $items: unknown[] = [];
+    private $head = 0;
+    constructor(source?: unknown) {
+        if (source !== undefined && source !== null && typeof source !== 'number')
+            this.$items = toArray(iterate(source, 'new Queue')).slice();
+    }
+    get Count(): number {
+        return this.$items.length - this.$head;
+    }
+    Enqueue(item: unknown): void {
+        this.$items.push(item);
+    }
+    Dequeue(): unknown {
+        if (this.Count === 0)
+            throw new InvalidOperationException('Dequeue: a fila está vazia.');
+        const item = this.$items[this.$head++];
+        if (this.$head > 32 && this.$head * 2 > this.$items.length) {
+            this.$items = this.$items.slice(this.$head);
+            this.$head = 0;
+        }
+        return item;
+    }
+    TryDequeue(out: Ref<unknown>): boolean {
+        if (this.Count === 0) {
+            out.v = null;
+            return false;
+        }
+        out.v = this.Dequeue();
+        return true;
+    }
+    Peek(): unknown {
+        if (this.Count === 0)
+            throw new InvalidOperationException('Peek: a fila está vazia.');
+        return this.$items[this.$head];
+    }
+    TryPeek(out: Ref<unknown>): boolean {
+        out.v = this.Count === 0 ? null : this.$items[this.$head];
+        return this.Count > 0;
+    }
+    Contains(item: unknown): boolean {
+        for (let index = this.$head; index < this.$items.length; index++)
+            if (equals(this.$items[index], item))
+                return true;
+        return false;
+    }
+    Clear(): void {
+        this.$items = [];
+        this.$head = 0;
+    }
+    ToArray(): unknown[] {
+        return this.$items.slice(this.$head);
+    }
+    Equals(other: unknown): boolean {
+        return this === other;
+    }
+    [Symbol.iterator](): Iterator<unknown> {
+        return this.ToArray()[Symbol.iterator]();
+    }
+    GetEnumerator(): Iterator<unknown> {
+        return this[Symbol.iterator]();
+    }
+    ToString(): string {
+        return `Queue[${this.ToArray().map((item) => str(item)).join(', ')}]`;
+    }
+    get [TYPE_NAME](): string {
+        return 'Queue';
+    }
+}
+export class Stack {
+    private $items: unknown[] = [];
+    constructor(source?: unknown) {
+        if (source !== undefined && source !== null && typeof source !== 'number')
+            this.$items = toArray(iterate(source, 'new Stack')).slice();
+    }
+    get Count(): number {
+        return this.$items.length;
+    }
+    Push(item: unknown): void {
+        this.$items.push(item);
+    }
+    Pop(): unknown {
+        if (this.$items.length === 0)
+            throw new InvalidOperationException('Pop: a pilha está vazia.');
+        return this.$items.pop();
+    }
+    TryPop(out: Ref<unknown>): boolean {
+        if (this.$items.length === 0) {
+            out.v = null;
+            return false;
+        }
+        out.v = this.$items.pop();
+        return true;
+    }
+    Peek(): unknown {
+        if (this.$items.length === 0)
+            throw new InvalidOperationException('Peek: a pilha está vazia.');
+        return this.$items[this.$items.length - 1];
+    }
+    TryPeek(out: Ref<unknown>): boolean {
+        out.v = this.$items.length === 0 ? null : this.$items[this.$items.length - 1];
+        return this.$items.length > 0;
+    }
+    Contains(item: unknown): boolean {
+        return this.$items.some((entry) => equals(entry, item));
+    }
+    Clear(): void {
+        this.$items.length = 0;
+    }
+    ToArray(): unknown[] {
+        return this.$items.slice().reverse();
+    }
+    Equals(other: unknown): boolean {
+        return this === other;
+    }
+    [Symbol.iterator](): Iterator<unknown> {
+        return this.ToArray()[Symbol.iterator]();
+    }
+    GetEnumerator(): Iterator<unknown> {
+        return this[Symbol.iterator]();
+    }
+    ToString(): string {
+        return `Stack[${this.ToArray().map((item) => str(item)).join(', ')}]`;
+    }
+    get [TYPE_NAME](): string {
+        return 'Stack';
+    }
+}
+for (const ctor of [List, Dictionary, HashSet, Queue, Stack]) {
+    const prototype = ctor.prototype as unknown as Record<string, unknown>;
+    for (const [name, fn] of Object.entries(LINQ)) {
+        if (name in prototype)
+            continue;
+        Object.defineProperty(prototype, name, {
+            value: function linq(this: Iterable<unknown>, ...args: unknown[]) {
+                return fn(this, ...args);
+            },
+            configurable: true,
+            writable: true,
+        });
+    }
+}
+export function newArray(sizes: readonly unknown[], fill: unknown): unknown[] {
+    const [first, ...rest] = sizes;
+    const length = Number(first);
+    if (!Number.isInteger(length) || length < 0)
+        throw new OverflowExceptionLike(`O tamanho de um array precisa ser um inteiro não negativo (recebido ${str(first)}).`);
+    const array = new Array<unknown>(length);
+    for (let index = 0; index < length; index++)
+        array[index] = rest.length > 0 ? newArray(rest, fill) : fill;
+    return array;
+}
+class OverflowExceptionLike extends ArgumentOutOfRangeException {
+    constructor(message: string) {
+        super('length', message);
+    }
+}
+export function arrayAt(array: readonly unknown[], index: unknown): unknown {
+    const position = Number(index);
+    if (!Number.isInteger(position) || position < 0 || position >= array.length)
+        throw new IndexOutOfRangeException(`Índice ${str(index)} fora do array (Length = ${array.length}).`);
+    return array[position];
+}
+export function arraySet(array: unknown[], index: unknown, value: unknown): void {
+    const position = Number(index);
+    if (!Number.isInteger(position) || position < 0 || position >= array.length)
+        throw new IndexOutOfRangeException(`Índice ${str(index)} fora do array (Length = ${array.length}).`);
+    array[position] = value;
+}
+export const ARRAY_METHODS: Record<string, (array: unknown[], ...args: unknown[]) => unknown> = {
+    GetLength(array, dimension) {
+        let current: unknown = array;
+        for (let level = 0; level < Number(dimension); level++)
+            current = Array.isArray(current) ? current[0] : undefined;
+        return Array.isArray(current) ? current.length : 0;
+    },
+    GetValue(array, ...indices) {
+        let current: unknown = array;
+        for (const index of indices)
+            current = arrayAt(current as unknown[], index);
+        return current;
+    },
+    SetValue(array, value, ...indices) {
+        let current: unknown[] = array;
+        for (const index of indices.slice(0, -1))
+            current = arrayAt(current, index) as unknown[];
+        arraySet(current, indices[indices.length - 1], value);
+        return undefined;
+    },
+    Clone(array) {
+        return array.slice();
+    },
+    CopyTo(array, destination, index = 0) {
+        if (!Array.isArray(destination))
+            throw new ArgumentException('CopyTo espera um array de destino.');
+        array.forEach((item, offset) => {
+            destination[Number(index) + offset] = item;
+        });
+        return undefined;
+    },
+    GetEnumerator(array) {
+        return array[Symbol.iterator]();
+    },
+    Equals(array, other) {
+        return array === other;
+    },
+};
