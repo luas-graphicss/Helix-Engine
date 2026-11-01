@@ -547,4 +547,266 @@ export const ENGINE_SETTINGS = {
         description: 'Malhas densas são desenhadas por clusters refinados por pixel em vez de LODs fixos.',
         default: true,
     }),
+    'render.myriad.pixelError': numberSetting({
+        label: 'Erro tolerado do Myriad',
+        description: 'Erro geométrico máximo em tela; valores menores refinam mais e custam mais.',
+        default: 1,
+        min: 0.25,
+        max: 16,
+        step: 0.25,
+        unit: ' px',
+        scale: 'log',
+    }),
+    'render.myriad.occlusion': booleanSetting({
+        label: 'Culling de oclusão por cluster',
+        description: 'Clusters escondidos atrás de outros não são desenhados (dois passes contra a pirâmide de profundidade).',
+        default: true,
+    }),
+    'render.myriad.shadowClusters': booleanSetting({
+        label: 'Sombras por cluster',
+        description: 'As cascatas de sombra também usam a geometria virtual.',
+        default: true,
+    }),
+    'render.budget.shadows': selectSetting({
+        label: 'Sombras do sol',
+        description: 'Resolução das cascatas, ritmo de atualização das distantes e escala da máscara de sombra em tela. Baixo: 1024 px, cascatas distantes a cada 4 frames, máscara a meia resolução. Alto: 2048 px, tudo por frame, máscara inteira.',
+        default: 'auto',
+        requiresReopen: true,
+        options: RENDER_BUDGET_OPTIONS,
+    }),
+    'render.budget.localLights': selectSetting({
+        label: 'Luzes locais e suas sombras',
+        description: 'Quantas luzes pontuais e cônicas projetam sombra, o tamanho de cada face do atlas e quantas faces são refeitas por frame. Baixo: 16 luzes, 256 px, 2 faces por frame. Alto: 96 luzes, 1024 px, 30 faces.',
+        default: 'auto',
+        requiresReopen: true,
+        options: RENDER_BUDGET_OPTIONS,
+    }),
+    'render.budget.clouds': selectSetting({
+        label: 'Nuvens volumétricas',
+        description: 'Passos da marcha de raios por frame e entrelaçamento 2×2 (um quarto dos pixels por frame, o resto reprojetado). Menos passos convergem mais devagar, nunca com outro resultado. Baixo: 12 passos entrelaçados. Alto: 40 passos, sem entrelaçar.',
+        default: 'auto',
+        requiresReopen: true,
+        options: RENDER_BUDGET_OPTIONS,
+    }),
+    'render.budget.terrainCache': selectSetting({
+        label: 'Cache de material do terreno',
+        description: 'Níveis e tamanho do clipmap em que o material do terreno é assado, e quantos tiles são refeitos por frame. Baixo: 6 níveis de 512 px, 8 tiles. Alto: 7 níveis de 2048 px, 64 tiles.',
+        default: 'auto',
+        requiresReopen: true,
+        options: RENDER_BUDGET_OPTIONS,
+    }),
+    'render.budget.post': selectSetting({
+        label: 'Bloom, profundidade de campo e SMAA',
+        description: 'Níveis da pirâmide do bloom e a escala do primeiro, amostras do desfoque de profundidade de campo e o stencil do SMAA (o passe caro só nas bordas). Baixo: 3 níveis a um quarto, 12 amostras. Alto: 7 níveis a meia resolução, 48 amostras.',
+        default: 'auto',
+        requiresReopen: true,
+        options: RENDER_BUDGET_OPTIONS,
+    }),
+    'render.budget.myriad': selectSetting({
+        label: 'Ativação da geometria virtual',
+        description: 'A partir de quantos triângulos do caminho clássico o Myriad compensa o seu custo fixo e assume a cena. Baixo: 400 mil. Médio: 1 milhão. Alto: 1,5 milhão.',
+        default: 'auto',
+        requiresReopen: true,
+        options: RENDER_BUDGET_OPTIONS,
+    }),
+    'render.hdrFormat': selectSetting({
+        label: 'Precisão do alvo HDR',
+        description: 'Formato em que a cena é desenhada antes do pós-processo. RG11B10F move metade dos bytes de RGBA16F em toda leitura e escrita (numa GPU integrada o frame é limitado pela banda de memória); RGBA16F preserva mais gradação nas sombras profundas e no bloom. Em Automático segue o perfil: compacto no Baixo e no Médio.',
+        default: 'auto',
+        requiresReopen: true,
+        options: [
+            { value: 'auto', label: 'Automático', hint: 'Pelo perfil de qualidade' },
+            { value: 'rg11b10f', label: 'Compacto (RG11B10F)', hint: 'Metade da banda de memória' },
+            { value: 'rgba16f', label: 'Preciso (RGBA16F)', hint: 'Mais gradação em HDR' },
+        ],
+    }),
+    'render.terrainCache': booleanSetting({
+        label: 'Usar o cache de material do terreno',
+        description: 'Lê o material do terreno do clipmap em cache; desligado, avalia as camadas em todo pixel (comparação A/B).',
+        default: true,
+    }),
+    'render.csgGhosts': booleanSetting({
+        label: 'Fantasmas dos pincéis CSG',
+        description: 'Desenha os pincéis de subtração como volumes translúcidos no viewport.',
+        default: true,
+    }),
+    'render.helpers.lights': selectSetting({
+        label: 'Marcadores de luz',
+        description: 'Quais luzes ganham o desenho do emissor e do alcance no viewport.',
+        default: 'all',
+        options: [
+            { value: 'all', label: 'Todas' },
+            { value: 'selected', label: 'Só a selecionada' },
+            { value: 'off', label: 'Nenhuma' },
+        ],
+    }),
+    'render.helpers.sounds': selectSetting({
+        label: 'Marcadores de som',
+        description: 'Quais fontes e zonas de som ganham marcador e alcances no viewport.',
+        default: 'all',
+        options: [
+            { value: 'all', label: 'Todos' },
+            { value: 'selected', label: 'Só o selecionado' },
+            { value: 'off', label: 'Nenhum' },
+        ],
+    }),
+    'render.helpers.vfx': selectSetting({
+        label: 'Marcadores de efeito',
+        description: 'Quais atores de efeito ganham marcador e formas de emissão no viewport.',
+        default: 'all',
+        options: [
+            { value: 'all', label: 'Todos' },
+            { value: 'selected', label: 'Só o selecionado' },
+            { value: 'off', label: 'Nenhum' },
+        ],
+    }),
+    'code.fontSize': numberSetting({
+        label: 'Tamanho da fonte',
+        description: 'Fonte do código, em pixels. Ctrl + e Ctrl − também mudam enquanto você digita; Ctrl 0 volta ao padrão.',
+        default: 13,
+        min: 10,
+        max: 20,
+        step: 1,
+        unit: ' px',
+    }),
+    'code.lineHeight': selectSetting({
+        label: 'Altura das linhas',
+        description: 'Espaço vertical de cada linha em relação à fonte.',
+        default: 'normal',
+        options: [
+            { value: 'compact', label: 'Compacta', hint: '1,35× a fonte: mais linhas na tela' },
+            { value: 'normal', label: 'Normal', hint: '1,55× a fonte' },
+            { value: 'relaxed', label: 'Arejada', hint: '1,8× a fonte: mais confortável em sessões longas' },
+        ],
+    }),
+    'code.lineNumbers': booleanSetting({
+        label: 'Números de linha',
+        description: 'A calha à esquerda com o número de cada linha.',
+        default: true,
+    }),
+    'code.highlightLine': booleanSetting({
+        label: 'Destacar a linha do cursor',
+        description: 'Um fundo sutil na linha em que o cursor está, no texto e na calha.',
+        default: true,
+    }),
+    'code.indentGuides': booleanSetting({
+        label: 'Guias de indentação',
+        description: 'Linhas verticais finas em cada nível de indentação; a do bloco atual fica mais forte.',
+        default: true,
+    }),
+    'code.folding': booleanSetting({
+        label: 'Dobrar blocos',
+        description: 'Marcadores na calha para recolher funções, blocos e objetos (aparecem ao passar o mouse).',
+        default: true,
+    }),
+    'code.minimap': booleanSetting({
+        label: 'Minimapa',
+        description: 'Miniatura do arquivo inteiro à direita, com a janela visível marcada; clique para rolar até um ponto.',
+        default: true,
+    }),
+    'code.whitespace': booleanSetting({
+        label: 'Mostrar espaços e tabulações',
+        description: 'Pontos nos espaços e setas nas tabulações; espaços sobrando no fim da linha ficam em vermelho.',
+        default: false,
+    }),
+    'code.wordWrap': booleanSetting({
+        label: 'Quebrar linhas longas',
+        description: 'Linhas maiores que o editor continuam embaixo em vez de pedir rolagem horizontal.',
+        default: false,
+    }),
+    'code.cursorBlink': booleanSetting({
+        label: 'Cursor piscante',
+        description: 'Desligado, o cursor fica fixo: alguns preferem para não distrair.',
+        default: true,
+    }),
+    'code.autoSuggest': booleanSetting({
+        label: 'Sugestões automáticas',
+        description: 'A lista de sugestões aparece sozinha ao digitar. Desligada, só com Ctrl Espaço.',
+        default: true,
+    }),
+    'code.autoCloseBrackets': booleanSetting({
+        label: 'Fechar parênteses e aspas',
+        description: 'Digitar ( [ { " ou \' insere o par e deixa o cursor no meio; digitar o fechamento pula por cima dele.',
+        default: true,
+    }),
+    'code.selectionMatches': booleanSetting({
+        label: 'Destacar ocorrências da seleção',
+        description: 'Selecionar uma palavra marca, em cinza, todos os lugares em que ela aparece no arquivo.',
+        default: true,
+    }),
+    'code.liveVerify': booleanSetting({
+        label: 'Verificar enquanto digita',
+        description: 'O compilador da linguagem confere o texto a cada pausa e sublinha os problemas. Desligada, só Compilar e Executar apontam erros.',
+        default: true,
+    }),
+    'code.verifyDelay': selectSetting({
+        label: 'Pausa antes de verificar',
+        description: 'Quanto tempo sem digitar a engine espera antes de conferir. Cada linguagem tem a sua base (TypeScript é leve; C++ e Rust pesam); isto a multiplica.',
+        default: 'normal',
+        options: [
+            { value: 'fast', label: 'Curta', hint: 'Metade da pausa: conferências mais frequentes' },
+            { value: 'normal', label: 'Normal' },
+            { value: 'relaxed', label: 'Longa', hint: 'O dobro da pausa: menos trabalho em máquinas modestas' },
+        ],
+    }),
+    'code.presentation': selectSetting({
+        label: 'Onde o editor abre',
+        description: 'Apresentação do editor de código ao abrir um jogo. Dá para trocar a qualquer momento pelo menu da barra do editor.',
+        default: 'workspace',
+        options: [
+            { value: 'workspace', label: 'Área de trabalho', hint: 'No centro, no lugar do viewport' },
+            { value: 'window', label: 'Janela flutuante', hint: 'Sobre a cena, para programar olhando o viewport' },
+            { value: 'tab', label: 'Aba do navegador', hint: 'Para um segundo monitor' },
+        ],
+    }),
+    'code.openOnCreate': booleanSetting({
+        label: 'Abrir o script ao criar',
+        description: 'Um script recém-criado já abre numa aba fixa do editor. Desligada, ele só entra na biblioteca e na hierarquia.',
+        default: true,
+    }),
+    'code.previewTabs': booleanSetting({
+        label: 'Abas de visualização',
+        description: 'Um clique abre o script numa aba em itálico que a próxima abertura substitui; editar ou dar duplo clique a fixa. Desligada, todo script abre numa aba própria.',
+        default: true,
+    }),
+    'code.commandBar': booleanSetting({
+        label: 'Barra de comando ao abrir',
+        description: 'A linha de comando do editor de código começa visível ao abrir um jogo; o atalho de mostrar / ocultar a alterna depois.',
+        default: true,
+    }),
+    'code.statusStrip': booleanSetting({
+        label: 'Faixa de status',
+        description: 'O rodapé do editor com a posição do cursor, o tamanho do arquivo, a linguagem e o estado do compilador.',
+        default: true,
+    }),
+    'audio.onlyWhenFocused': booleanSetting({
+        label: 'Executar áudio somente com a janela em foco',
+        description: 'Silencia a engine quando a aba perde o foco e retoma ao voltar.',
+        default: false,
+    }),
+    'audio.monitorVolume': numberSetting({
+        label: 'Volume de monitoração',
+        description: 'Volume geral do áudio dentro do editor; não altera a mesa de som do jogo.',
+        default: 100,
+        min: 0,
+        max: 100,
+        step: 5,
+        unit: '%',
+    }),
 } as const;
+export type SettingId = keyof typeof ENGINE_SETTINGS;
+export type SettingValue<K extends SettingId> = (typeof ENGINE_SETTINGS)[K]['default'];
+export const SETTING_IDS = Object.keys(ENGINE_SETTINGS) as SettingId[];
+export type SettingPanelId = 'gameLanguage';
+export interface SettingGroup {
+    readonly title: string;
+    readonly description?: string;
+    readonly settings: readonly SettingId[];
+    readonly panel?: SettingPanelId;
+}
+export interface SettingSection {
+    readonly id: string;
+    readonly title: string;
+    readonly description: string;
+    readonly groups: readonly SettingGroup[];
+}
