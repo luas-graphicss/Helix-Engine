@@ -520,3 +520,80 @@ function buildHealing(): VfxDocument {
     });
     return createVfxDocument({ name: 'Cura', duration: 2.5, prewarm: 2.5, emitters: [motes, crosses, glow] });
 }
+function buildConfetti(): VfxDocument {
+    const confetti = (index: number, name: string, a: VfxRgb, b: VfxRgb) => emitter(index, {
+        name,
+        maxParticles: 200,
+        spawn: createSpawn({ rate: scalarConstant(0), bursts: [createBurst({ time: 0, count: 60, countMax: 90, cycles: 0, interval: 2.5 })] }),
+        shape: createShape({ kind: 'cone', radius: 0.1, angle: 28, thickness: 1 }),
+        initial: createInitial({
+            lifetime: scalarRandom(2.5, 4),
+            speed: scalarRandom(6, 9),
+            size: scalarRandom(0.05, 0.09),
+            aspect: 0.6,
+            rotation: scalarRandom(0, 360),
+            angularVelocity: scalarRandom(-720, 720),
+            color: colorRandom(a, b),
+        }),
+        modules: [
+            module('gravity', { scale: 1 }),
+            module('drag', { coefficient: 1.6, curve: constantCurve(1) }),
+            module('noise', { strength: 1.2, frequency: 0.8, scrollSpeed: 0.6, octaves: 1, curve: linearCurve(0, 1) }),
+            module('collision', { planeHeight: 0, bounce: 0.1, friction: 0.9, lifetimeLoss: 0.1, killOnCollide: false }),
+            module('colorOverLife', { gradient: fadeInOutGradient(WHITE, 1, 0.02, 0.85) }),
+        ],
+        renderer: createRenderer({ blend: 'alpha', texture: { kind: 'builtin', id: 'square' }, lighting: 'lit', sort: 'distance' }),
+    });
+    return createVfxDocument({
+        name: 'Confete',
+        duration: 2.5,
+        emitters: [confetti(0, 'Quentes', [1, 0.25, 0.3], [1, 0.85, 0.2]), confetti(1, 'Frias', [0.2, 0.6, 1], [0.4, 1, 0.6]), confetti(2, 'Roxos', [0.7, 0.3, 1], [1, 0.4, 0.8])],
+    });
+}
+function buildEmpty(): VfxDocument {
+    return createVfxDocument({ name: 'Novo efeito', duration: 2, emitters: [emitter(0, { name: 'Emissor' })] });
+}
+export const VFX_TEMPLATES: readonly VfxTemplate[] = [
+    { id: 'empty', label: 'Efeito em branco', description: 'Um emissor para começar do zero', category: 'basic', build: buildEmpty },
+    { id: 'campfire', label: 'Fogueira', description: 'Chamas, brasas e fumaça', category: 'fire', build: buildCampfire },
+    { id: 'torch', label: 'Tocha', description: 'Chama pequena com halo e brasas', category: 'fire', build: buildTorch },
+    { id: 'candle', label: 'Vela', description: 'Chama mínima, halo e fio de fumaça', category: 'fire', build: buildCandle },
+    { id: 'ground-fire', label: 'Fogo rasteiro', description: 'Chamas espalhadas pelo chão', category: 'fire', build: buildGroundFire },
+    { id: 'flamethrower', label: 'Lança-chamas', description: 'Jato de fogo para a frente com faíscas', category: 'fire', build: buildFlamethrower },
+    { id: 'fireball', label: 'Bola de fogo', description: 'Projétil com rastro em espaço de mundo', category: 'fire', build: buildFireballProjectile },
+    { id: 'fireworks', label: 'Fogos de artifício', description: 'Subida, explosão colorida e purpurina', category: 'fire', build: buildFireworks },
+    { id: 'lava', label: 'Lava', description: 'Brasas, bolhas estourando e calor', category: 'fire', build: buildLava },
+    { id: 'chimney-smoke', label: 'Fumaça de chaminé', description: 'Coluna densa levada pelo vento', category: 'fire', build: buildChimneySmoke },
+    { id: 'thruster', label: 'Propulsor', description: 'Jato azul esticado com núcleo', category: 'fire', build: buildThruster },
+    { id: 'sparks', label: 'Faíscas', description: 'Rajadas que quicam no chão', category: 'impact', build: buildSparks },
+    { id: 'explosion', label: 'Explosão', description: 'Clarão, bola de fogo, destroços e onda', category: 'impact', build: buildExplosion },
+    { id: 'hit', label: 'Golpe', description: 'Clarão, estilhaços de luz e anel', category: 'impact', build: buildHit },
+    { id: 'muzzle-flash', label: 'Disparo', description: 'Clarão, chama, fumaça e cartucho', category: 'impact', build: buildMuzzleFlash },
+    { id: 'electricity', label: 'Eletricidade', description: 'Arcos trêmulos e faíscas', category: 'impact', build: buildElectricity },
+    { id: 'dust-impact', label: 'Impacto de poeira', description: 'Anel de poeira com pedriscos', category: 'impact', build: buildDustImpact },
+    { id: 'confetti', label: 'Confete', description: 'Papéis coloridos em três cores', category: 'impact', build: buildConfetti },
+    { id: 'fountain', label: 'Chafariz', description: 'Jato de água, névoa e respingos', category: 'water', build: buildFountain },
+    { id: 'water-splash', label: 'Respingo', description: 'Gotas, coroa e onda no chão', category: 'water', build: buildWaterSplash },
+    { id: 'bubbles', label: 'Bolhas', description: 'Bolhas subindo com turbulência', category: 'water', build: buildBubbles },
+    { id: 'steam', label: 'Vapor', description: 'Nuvens brancas que sobem e dissipam', category: 'water', build: buildSteam },
+    { id: 'rain', label: 'Chuva', description: 'Gotas esticadas com respingos', category: 'weather', build: buildRain },
+    { id: 'snow', label: 'Neve', description: 'Flocos lentos com vento leve', category: 'weather', build: buildSnow },
+    { id: 'ash-fall', label: 'Cinzas', description: 'Flocos cinzentos e brasas no ar', category: 'weather', build: buildAshFall },
+    { id: 'leaves', label: 'Folhas ao vento', description: 'Folhas girando até pousarem', category: 'weather', build: buildLeaves },
+    { id: 'petals', label: 'Pétalas', description: 'Pétalas rosadas ao vento', category: 'weather', build: buildPetals },
+    { id: 'ground-fog', label: 'Névoa rasteira', description: 'Camadas de névoa deslizando no chão', category: 'weather', build: buildGroundFog },
+    { id: 'dust-motes', label: 'Poeira no ar', description: 'Partículas finas flutuando', category: 'weather', build: buildDustMotes },
+    { id: 'fireflies', label: 'Vagalumes', description: 'Pontos de luz que piscam', category: 'weather', build: buildFireflies },
+    { id: 'magic-aura', label: 'Aura mágica', description: 'Luzes em órbita e brilhos', category: 'magic', build: buildMagicAura },
+    { id: 'portal', label: 'Portal', description: 'Anel em vórtice com núcleo', category: 'magic', build: buildPortal },
+    { id: 'healing', label: 'Cura', description: 'Partículas verdes e cruzes', category: 'magic', build: buildHealing },
+    { id: 'frost', label: 'Gelo', description: 'Cristais, brilhos e névoa fria', category: 'magic', build: buildFrost },
+    { id: 'poison', label: 'Veneno', description: 'Névoa tóxica com bolhas', category: 'magic', build: buildPoisonCloud },
+    { id: 'level-up', label: 'Subida de nível', description: 'Coluna de luz, estrelas e anel', category: 'magic', build: buildLevelUp },
+];
+export function findVfxTemplate(id: string): VfxTemplate {
+    const template = VFX_TEMPLATES.find((candidate) => candidate.id === id);
+    if (!template)
+        throw new Error(`Modelo de efeito desconhecido: ${id}.`);
+    return template;
+}
