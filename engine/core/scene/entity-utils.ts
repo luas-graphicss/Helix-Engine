@@ -8,6 +8,11 @@ import { cloneRigidBodySettings } from '@/engine/physics/body/rigid-body-setting
 import { cloneCharacterSettings } from '@/engine/character/character-settings';
 import { cloneCsgBrushSettings, cloneCsgSettings } from '@/engine/geometry/csg/csg-settings';
 import { copyMeshData } from '@/engine/geometry/csg/csg-boolean';
+import { cloneAudioSourceSettings } from '@/engine/audio/world/audio-source-settings';
+import { cloneAudioZoneSettings } from '@/engine/audio/world/audio-zone-settings';
+import { cloneGuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings';
+import { cloneVfxSettings } from '@/engine/vfx/vfx-settings';
+import { createScriptSettings } from '@/engine/scripting/script-settings';
 const NUMERIC_SUFFIX = /_\d+$/;
 export function uniqueEntityName(scene: Scene, desired: string, ignore: Entity | null = null): string {
     const taken = new Set<string>();
@@ -49,6 +54,11 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
         character: source.character ? cloneCharacterSettings(source.character) : undefined,
         csg: source.csg ? cloneCsgSettings(source.csg) : undefined,
         csgBrush: source.csgBrush ? cloneCsgBrushSettings(source.csgBrush) : undefined,
+        audioSource: source.audioSource ? cloneAudioSourceSettings(source.audioSource) : undefined,
+        audioZone: source.audioZone ? cloneAudioZoneSettings(source.audioZone) : undefined,
+        guiSurface: source.guiSurface ? cloneGuiSurfaceSettings(source.guiSurface) : undefined,
+        vfx: source.vfx ? cloneVfxSettings(source.vfx) : undefined,
+        script: source.script ? createScriptSettings(source.script) : undefined,
         castShadows: source.castShadows,
         receiveShadows: source.receiveShadows,
         locked: source.locked,
@@ -57,6 +67,10 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
     vec3.copy(entity.transform.rotation, source.transform.rotation);
     vec3.copy(entity.transform.scale, source.transform.scale);
     entity.visible = source.visible;
+    for (const tag of source.tags)
+        entity.tags.add(tag);
+    if (Object.keys(source.meta).length > 0)
+        entity.meta = JSON.parse(JSON.stringify(source.meta)) as Entity['meta'];
     copies.set(source, entity);
     for (const child of source.children)
         cloneSubtree(scene, child, entity, copies);
