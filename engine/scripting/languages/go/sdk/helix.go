@@ -159,90 +159,369 @@ func fail() {
                                                                  
 type Kind int32
 
+const (
+	KindUndefined Kind = iota
+	KindNull
+	KindBoolean
+	KindNumber
+	KindString
+	KindArray
+	KindObject
+	KindFunction
+)
 
+func (k Kind) String() string {
+	switch k {
+	case KindNull:
+		return "null"
+	case KindBoolean:
+		return "boolean"
+	case KindNumber:
+		return "number"
+	case KindString:
+		return "string"
+	case KindArray:
+		return "array"
+	case KindObject:
+		return "object"
+	case KindFunction:
+		return "function"
+	default:
+		return "undefined"
+	}
+}
 
                                                           
+type Level int32
 
+const (
+	LevelDebug Level = iota
+	LevelInfo
+	LevelWarn
+	LevelError
+)
 
                                                                                         
+type Vec3 struct{ X, Y, Z float64 }
 
+func V3(x, y, z float64) Vec3       { return Vec3{x, y, z} }
+func (a Vec3) Add(b Vec3) Vec3      { return Vec3{a.X + b.X, a.Y + b.Y, a.Z + b.Z} }
+func (a Vec3) Sub(b Vec3) Vec3      { return Vec3{a.X - b.X, a.Y - b.Y, a.Z - b.Z} }
+func (a Vec3) Scale(k float64) Vec3 { return Vec3{a.X * k, a.Y * k, a.Z * k} }
+func (a Vec3) Dot(b Vec3) float64   { return a.X*b.X + a.Y*b.Y + a.Z*b.Z }
+func (a Vec3) Cross(b Vec3) Vec3 {
+	return Vec3{a.Y*b.Z - a.Z*b.Y, a.Z*b.X - a.X*b.Z, a.X*b.Y - a.Y*b.X}
+}
+func (a Vec3) Length() float64 { return math.Sqrt(a.Dot(a)) }
+func (a Vec3) Normalized() Vec3 {
+	length := a.Length()
+	if length == 0 {
+		return a
+	}
+	return a.Scale(1 / length)
+}
 
                                                                                             
 
                                                                                    
+type Value struct{ h *handle }
 
+type handle struct{ ref uint32 }
 
+var wrapped uint32
 
                                                                                               
+func wrap(ref uint32) Value {
+	check()
+	if ref == 0 {
+		return Value{}
+	}
+	h := &handle{ref: hxRetain(ref)}
+	runtime.AddCleanup(h, func(ref uint32) { hxRelease(ref) }, h.ref)
+	                                                                                          
+	                                                                                          
+	wrapped++
+	if wrapped%4096 == 0 {
+		runtime.GC()
+		runtime.Gosched()
+	}
+	return Value{h}
+}
 
                                                                                     
+func Wrap(handle uint32) Value { return wrap(handle) }
 
+func (v Value) ref() uint32 {
+	if v.h == nil {
+		return 0
+	}
+	return v.h.ref
+}
 
                                                                                                              
+func (v Value) Handle() uint32 {
+	if v.h == nil {
+		return 0
+	}
+	id := hxPool(v.h.ref)
+	runtime.KeepAlive(v.h)
+	return id
+}
 
                                                                                                
 
+func (v Value) Kind() Kind {
+	kind := Kind(hxType(v.ref()))
+	check()
+	return kind
+}
 
+func (v Value) IsUndefined() bool { return v.h == nil }
+func (v Value) IsNull() bool      { return v.Kind() == KindNull }
 
                                               
+func (v Value) IsNone() bool {
+	kind := v.Kind()
+	return kind == KindUndefined || kind == KindNull
+}
 
+func (v Value) IsBool() bool     { return v.Kind() == KindBoolean }
+func (v Value) IsNumber() bool   { return v.Kind() == KindNumber }
+func (v Value) IsString() bool   { return v.Kind() == KindString }
+func (v Value) IsArray() bool    { return v.Kind() == KindArray }
+func (v Value) IsObject() bool   { return v.Kind() == KindObject }
+func (v Value) IsFunction() bool { return v.Kind() == KindFunction }
 
                                                                                                 
 
                                                                     
+func (v Value) Number() float64 {
+	n := hxToNumber(v.ref())
+	check()
+	return n
+}
 
                                                       
+func (v Value) Int() int {
+	n := v.Number()
+	if math.IsNaN(n) {
+		return 0
+	}
+	return int(n)
+}
 
                                                                                                
+func (v Value) Bool() bool {
+	b := hxToBoolean(v.ref())
+	check()
+	return b != 0
+}
 
                                                                                                  
+func (v Value) String() string {
+	ref := v.ref()
+	length := hxStringBytes(ref)
+	check()
+	if length <= 0 {
+		return ""
+	}
+	buffer := make([]byte, length)
+	hxStringRead(ref, &buffer[0], length)
+	runtime.KeepAlive(v.h)
+	return string(buffer)
+}
 
                       
+func (v Value) Vec3() Vec3 {
+	return Vec3{v.Get("x").Number(), v.Get("y").Number(), v.Get("z").Number()}
+}
 
                                               
+func (v Value) Slice() []Value {
+	n := v.Len()
+	items := make([]Value, n)
+	for i := 0; i < n; i++ {
+		items[i] = v.At(i)
+	}
+	return items
+}
 
                                                                                                 
 
                                                                                    
+func (v Value) Get(key string) Value {
+	ref := hxGet(v.ref(), key)
+	runtime.KeepAlive(v.h)
+	return wrap(ref)
+}
 
                         
+func (v Value) At(index int) Value {
+	ref := hxIndex(v.ref(), int32(index))
+	runtime.KeepAlive(v.h)
+	return wrap(ref)
+}
 
                                                                                                           
+func (v Value) Set(key string, value any) {
+	converted := From(value)
+	hxSet(v.ref(), key, converted.ref())
+	runtime.KeepAlive(v.h)
+	runtime.KeepAlive(converted.h)
+	check()
+}
 
+func (v Value) SetAt(index int, value any) {
+	converted := From(value)
+	hxSetIndex(v.ref(), int32(index), converted.ref())
+	runtime.KeepAlive(v.h)
+	runtime.KeepAlive(converted.h)
+	check()
+}
 
+func (v Value) Has(key string) bool {
+	has := hxHas(v.ref(), key)
+	runtime.KeepAlive(v.h)
+	check()
+	return has != 0
+}
 
+func (v Value) Delete(key string) {
+	hxDelete(v.ref(), key)
+	runtime.KeepAlive(v.h)
+	check()
+}
 
                                                                                 
+func (v Value) Len() int {
+	n := hxLength(v.ref())
+	runtime.KeepAlive(v.h)
+	check()
+	if n < 0 {
+		return 0
+	}
+	return int(n)
+}
 
                                                                               
+func (v Value) Keys() []string {
+	keys := wrap(hxKeys(v.ref()))
+	runtime.KeepAlive(v.h)
+	items := keys.Slice()
+	out := make([]string, len(items))
+	for i, item := range items {
+		out[i] = item.String()
+	}
+	return out
+}
 
                                                                                          
+func (v Value) Path(path string) Value {
+	current := v
+	for _, part := range strings.Split(path, ".") {
+		if part == "" {
+			continue
+		}
+		current = current.Get(part)
+	}
+	return current
+}
 
                                                               
+func (v Value) Call(args ...any) Value {
+	handles, keep := convertArgs(args)
+	ref := hxCall(v.ref(), first(handles), int32(len(handles)))
+	runtime.KeepAlive(v.h)
+	runtime.KeepAlive(keep)
+	return wrap(ref)
+}
 
                                                                        
+func (v Value) Invoke(method string, args ...any) Value {
+	handles, keep := convertArgs(args)
+	ref := hxInvoke(v.ref(), method, first(handles), int32(len(handles)))
+	runtime.KeepAlive(v.h)
+	runtime.KeepAlive(keep)
+	return wrap(ref)
+}
 
                                     
+func (v Value) New(args ...any) Value {
+	handles, keep := convertArgs(args)
+	ref := hxConstruct(v.ref(), first(handles), int32(len(handles)))
+	runtime.KeepAlive(v.h)
+	runtime.KeepAlive(keep)
+	return wrap(ref)
+}
 
                                                                 
+func (v Value) Equals(other Value) bool {
+	equal := hxEquals(v.ref(), other.ref())
+	runtime.KeepAlive(v.h)
+	runtime.KeepAlive(other.h)
+	check()
+	return equal != 0
+}
 
+func convertArgs(args []any) ([]uint32, []Value) {
+	if len(args) == 0 {
+		return nil, nil
+	}
+	values := make([]Value, len(args))
+	handles := make([]uint32, len(args))
+	for i, arg := range args {
+		values[i] = From(arg)
+		handles[i] = values[i].ref()
+	}
+	return handles, values
+}
 
+func first(handles []uint32) *uint32 {
+	if len(handles) == 0 {
+		return nil
+	}
+	return &handles[0]
+}
 
                                                                                                
 
                                   
+func Undefined() Value { return Value{} }
 
                              
+func NullValue() Value { return wrap(hxNull()) }
 
                                
+func NewArray() Value { return wrap(hxArray()) }
 
                                 
+func NewObject() Value { return wrap(hxObject()) }
 
                                           
+func List(items ...any) Value {
+	array := NewArray()
+	for i, item := range items {
+		array.SetAt(i, item)
+	}
+	return array
+}
 
                                         
+func Map(fields map[string]any) Value {
+	object := NewObject()
+	for key, value := range fields {
+		object.Set(key, value)
+	}
+	return object
+}
 
                                                                                 
+func Func(fn func(args []Value) Value) Value {
+	nextCallback++
+	id := nextCallback
+	callbacks[id] = fn
+	return wrap(hxCallback(id))
+}
 
                                                                                          
                                                                             
