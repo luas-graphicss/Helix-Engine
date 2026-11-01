@@ -1,12 +1,15 @@
 import type { GL } from '@/engine/renderer/gl/context';
+import { framebufferStatus } from '@/engine/renderer/gl/framebuffer-status';
 import { ShaderProgram } from '@/engine/renderer/gl/shader-program';
 import type { FullscreenTriangle } from '@/engine/renderer/gl/fullscreen-triangle';
 import { FULLSCREEN_VERTEX_SHADER } from '@/engine/renderer/shaders/chunks/fullscreen.glsl';
 import { TERRAIN_MATERIAL_BAKE_FRAGMENT_SHADER } from '@/engine/renderer/shaders/terrain-material-bake.glsl';
 import type { RenderProfile } from '@/engine/renderer/quality/render-profile';
+import type { Frustum } from '@/engine/renderer/culling/frustum';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import * as vec3 from '@/engine/core/math/vec3';
+import * as aabb from '@/engine/core/math/aabb';
 import * as mat4 from '@/engine/core/math/mat4';
 import type { Mat4 } from '@/engine/core/math/mat4';
 import { clamp } from '@/engine/core/math/scalar';
@@ -23,6 +26,8 @@ const PAGE_EMPTY = -32768;
 const RING_FAR_DISTANCE = 0.375;
 const STATIC_FAR_DISTANCE = 0.75;
 const DEFERRED_PENALTY = 1e6;
+const OFFSCREEN_PENALTY = 1e4;
+export const TERRAIN_CACHE_BURST_FACTOR = 8;
 export interface TerrainMaterialCacheStats {
     baked: number;
     pending: number;
@@ -129,7 +134,7 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
             gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, this.albedo, 0, level);
             gl.framebufferTextureLayer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, this.normal, 0, level);
             gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
-            const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+            const status = framebufferStatus(gl, 'terrain-material-cache');
             if (status !== gl.FRAMEBUFFER_COMPLETE)
                 throw new Error(`Framebuffer do cache de material incompleto (0x${status.toString(16)}).`);
             this.framebuffers.push(framebuffer);
@@ -267,10 +272,14 @@ export class TerrainMaterialCache {
     private readonly tilesPerSide: number;
     private readonly maxLevels: number;
     private readonly budget: number;
+    burstScale = 1;
     private readonly jobs: BakeJob[] = [];
     private jobCount = 0;
+    private urgentCount = 0;
     private readonly wanted = new Int32Array(2);
     private readonly scratch = mat4.create();
+    private readonly tileBounds = aabb.create();
+    private readonly worldBounds = aabb.create();
     private frame = 0;
     constructor(private readonly gl: GL, private readonly triangle: FullscreenTriangle, private readonly resources: TerrainGpuCache, profile: RenderProfile) {
         this.program = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, TERRAIN_MATERIAL_BAKE_FRAGMENT_SHADER);
@@ -280,7 +289,7 @@ export class TerrainMaterialCache {
         this.maxLevels = Math.min(profile.terrainCacheLevels, MAX_TERRAIN_CACHE_LEVELS);
         this.budget = profile.terrainCacheTilesPerFrame;
     }
-    update(terrains: readonly Entity[], cameraPosition: Vec3, pixelScale: number, enabled: boolean): void {
+    update(terrains: readonly Entity[], cameraPosition: Vec3, frustum: Frustum, pixelScale: number, enabled: boolean): void {
         const { stats } = this;
         stats.baked = 0;
         stats.pending = 0;
@@ -289,6 +298,7 @@ export class TerrainMaterialCache {
         if (!enabled)
             return;
         this.jobCount = 0;
+        this.urgentCount = 0;
         for (const entity of terrains) {
             const { terrain } = entity;
             if (!terrain)
@@ -299,12 +309,19 @@ export class TerrainMaterialCache {
             clip.lastUsedFrame = this.frame;
             stats.levels += clip.levels.length;
             stats.memoryBytes += clip.memoryBytes;
-            this.collect(clip, pixelScale);
+            this.collect(clip, entity, frustum, pixelScale);
         }
         if (this.jobCount > 0)
-            stats.baked = this.bake();
+            stats.baked = this.bake(this.bakeCount());
         for (const clip of this.entries.values())
             clip.uploadPages();
+    }
+    private bakeCount(): number {
+        const { budget, jobCount, urgentCount } = this;
+        if (urgentCount <= budget)
+            return Math.min(jobCount, budget);
+        const burst = Math.max(budget, Math.round(budget * TERRAIN_CACHE_BURST_FACTOR * this.burstScale));
+        return Math.min(urgentCount, burst);
     }
     binding(terrain: Terrain): TerrainMaterialCacheBinding | null {
         const clip = this.entries.get(terrain);
@@ -331,14 +348,16 @@ export class TerrainMaterialCache {
         }
         return clip;
     }
-    private collect(clip: TerrainClipmap, pixelScale: number): void {
-        const { tilesPerSide, wanted, stats } = this;
+    private collect(clip: TerrainClipmap, entity: Entity, frustum: Frustum, pixelScale: number): void {
+        const { tilesPerSide, wanted, stats, tileBounds, worldBounds } = this;
         const { terrain, center } = clip;
         const half = terrain.halfSize;
         const groundX = clamp(center[0], -half, half);
         const groundZ = clamp(center[2], -half, half);
         const heightAbove = center[1] - terrain.heightAtLocal(groundX, groundZ);
         const texelsPerPixel = clip.texelsPerMeter / Math.max(pixelScale, 1);
+        tileBounds.min[1] = terrain.localBounds.min[1];
+        tileBounds.max[1] = terrain.localBounds.max[1];
         for (const level of clip.levels) {
             const { tileSize } = level;
             const halfTile = tileSize / 2;
@@ -359,17 +378,35 @@ export class TerrainMaterialCache {
                     const dz = Math.max(Math.abs(minZ + halfTile - center[2]) - halfTile, 0);
                     const distance = Math.sqrt(dx * dx + dz * dz + heightAbove * heightAbove);
                     const lodFootprint = Math.log2(Math.max(distance * texelsPerPixel, 1e-6));
-                    const score = distance + (lodFootprint - level.lodIndex > 1 ? DEFERRED_PENALTY : 0);
+                    let score = distance;
+                    if (lodFootprint - level.lodIndex > 1)
+                        score += DEFERRED_PENALTY;
+                    else {
+                        tileBounds.min[0] = minX;
+                        tileBounds.min[2] = minZ;
+                        tileBounds.max[0] = minX + tileSize;
+                        tileBounds.max[2] = minZ + tileSize;
+                        if (!frustum.intersectsAabb(aabb.transform(worldBounds, tileBounds, entity.worldMatrix)))
+                            score += OFFSCREEN_PENALTY;
+                    }
                     this.offer(clip, level, slot, tileX, tileZ, score);
                 }
             }
         }
     }
     private offer(clip: TerrainClipmap, level: CacheLevel, slot: number, tileX: number, tileZ: number, score: number): void {
-        const { jobs, budget } = this;
-        if (this.jobCount === budget && score >= jobs[budget - 1].score)
-            return;
-        let index = this.jobCount < budget ? this.jobCount++ : budget - 1;
+        const { jobs } = this;
+        const capacity = this.budget * TERRAIN_CACHE_BURST_FACTOR;
+        if (this.jobCount === capacity) {
+            const worst = jobs[capacity - 1];
+            if (score >= worst.score)
+                return;
+            if (worst.score < OFFSCREEN_PENALTY)
+                this.urgentCount--;
+        }
+        if (score < OFFSCREEN_PENALTY)
+            this.urgentCount++;
+        let index = this.jobCount < capacity ? this.jobCount++ : capacity - 1;
         let job = jobs[index];
         if (!job) {
             job = { clip, level, slot, tileX, tileZ, score };
@@ -387,8 +424,9 @@ export class TerrainMaterialCache {
         job.tileZ = tileZ;
         job.score = score;
     }
-    private bake(): number {
-        const { gl, program, triangle, jobs, jobCount, texels, tilesPerSide } = this;
+    private bake(count: number): number {
+        const { gl, program, triangle, jobs, texels, tilesPerSide } = this;
+        const jobCount = Math.min(count, this.jobCount);
         const tile = TERRAIN_CACHE_TILE_TEXELS;
         program.use();
         this.materialUniforms.bindSamplers(program);
