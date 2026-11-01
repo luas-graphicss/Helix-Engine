@@ -281,5 +281,285 @@ public class DebugJogo extends Script {
         checar("setPosition", eq3(tr.call("position", alvo), 2, 0.5, -6, 1e-6));
         tr.call("translate", alvo, v3(0, 1, 0), "world");
         checar("translate", aprox(numero(tr.call("position", alvo), "y"), 1.5, 1e-3));
+        tr.call("setRotation", alvo, v3(0, 90, 0));
+        checar("setRotation", aprox(numero(tr.call("rotation", alvo), "y"), 90, 0.01));
+        tr.call("rotate", alvo, v3(0, 45, 0));
+        double girado = api("math.scalar").call("wrapAngle", tr.call("rotation", alvo).get("y")).asDouble();
+        checar("rotate", aprox(girado, 135, 0.01) || aprox(girado, -225, 0.01), girado);
+        tr.call("setScale", alvo, 2);
+        checar("setScale", aprox(numero(tr.call("scale", alvo), "x"), 2, 1e-6));
+        tr.call("setScale", alvo, v3(1, 1, 1));
+        Vec3 mundo = tr.call("worldPosition", alvo).asVec3();
+        checar("worldPosition", eq3(tr.call("position", alvo), mundo.x, mundo.y, mundo.z, 1e-3));
+        checar("forward/up", aprox(comprimento(tr.call("forward", alvo)), 1, 1e-3) && aprox(comprimento(tr.call("up", alvo)), 1, 1e-3));
+        tr.call("lookAt", alvo, v3(0, 1.5, 0));
+        checar("distance", tr.call("distance", alvo, v3(2, 1.5, -6)).asDouble() < 0.01);
+        checar("directionTo", aprox(comprimento(tr.call("directionTo", alvo, v3(0, 1.5, 0))), 1, 1e-3));
+        Value limites = tr.call("bounds", alvo);
+        checar("bounds", !limites.isNullish() && numero(limites.get("max"), "y") > numero(limites.get("min"), "y"));
+        checar("worldMatrix", tr.call("worldMatrix", alvo).length() == 16 && tr.call("localMatrix", alvo).length() == 16);
+        Value local = tr.call("worldToLocal", alvo, tr.call("localToWorld", alvo, v3(1, 0, 0)));
+        checar("localToWorld/worldToLocal", eq3(local, 1, 0, 0, 1e-3));
+        return null;
+    }
+
+    private Object malhas() {
+        Value me = api("mesh"), s = api("scene"), csg = api("csg"), mat = api("material");
+        Value caixa = me.call("box", 1, 1, 1);
+        double triangulos = me.call("triangleCount", caixa).asDouble();
+        checar("mesh.box", me.call("vertexCount", caixa).asDouble() > 0 && triangulos == 12, triangulos);
+        Value esfera = me.call("sphere", 0.65, 16, 12);
+        Value furado = csg.call("boolean", caixa, esfera, "subtract");
+        checar("csg.boolean", me.call("triangleCount", furado).asDouble() > 12);
+        Value ator = s.call("spawn", "mesh", obj(
+            "name", "CaixaFurada",
+            "mesh", furado,
+            "material", mat.call("create", obj("baseColor", "#e63946", "roughness", 0.4, "metallic", 0.2)),
+            "position", v3(4, 0.5, 2)
+        ));
+        checar("spawn malha CSG", !ator.get("mesh").isNullish());
+        checar("csg.operations", contem(csg.call("operations"), "union"));
+        Value tri = me.call("create", obj(
+            "name", "Triangulo",
+            "positions", new double[] {-1, 0, 0, 1, 0, 0, 0, 1.5, 0},
+            "uvs", new double[] {0, 0, 1, 0, 0.5, 1},
+            "indices", new int[] {0, 1, 2}
+        ));
+        me.call("computeNormals", tri);
+        checar("mesh.create + computeBounds", numero(me.call("computeBounds", tri).get("max"), "y") >= 1.5);
+        Value dupla = me.call("merge", tri, me.call("flipWinding", me.call("clone", tri)));
+        checar("mesh.merge", me.call("triangleCount", dupla).asDouble() == 2);
+        s.call("spawn", "mesh", obj(
+            "name", "Triangulo",
+            "mesh", dupla,
+            "material", mat.call("create", obj("baseColor", "#06d6a0", "doubleSided", true)),
+            "position", v3(7, 0, -2)
+        ));
+        Value grande = me.call("scale", me.call("translate", me.call("clone", caixa), v3(0, 0.5, 0)), 2);
+        checar("mesh.translate/scale", numero(me.call("computeBounds", grande).get("max"), "y") > 1.9);
+        Value distancia = me.call("raycast", api("math.ray").call("create", v3(0, 5, 0), v3(0, -1, 0)), grande);
+        checar("mesh.raycast", distancia.isNumber() && distancia.asDouble() > 0);
+        int vertices = me.call("vertexCount", caixa).asInt();
+        checar("positions/indices", me.call("positions", caixa).length() == vertices * 3 && me.call("indices", caixa).length() == 36);
+        checar("primitivas extras", me.call("triangleCount", me.call("torusKnot")).asDouble() > 0 && me.call("triangleCount", me.call("capsule")).asDouble() > 0);
+        return null;
+    }
+
+                                                                                                  
+
+    private Object materiais() {
+        Value mat = api("material"), s = api("scene"), tex = api("texture");
+        Value base = mat.call("create", obj("name", "DebugBase", "baseColor", "#d98c2b", "roughness", 0.5, "metallic", 0.1));
+        checar("material.create", numero(base, "roughness") == 0.5);
+        Value copia = mat.call("clone", base);
+        mat.call("set", copia, obj("roughness", 1, "emissive", "#ffffff", "emissiveIntensity", 2));
+        checar("material.clone/set", numero(copia, "roughness") == 1 && numero(base, "roughness") == 0.5);
+        Value caixa = s.call("spawnPrimitive", "box", obj("name", "CaixaPintada", "position", v3(-7, 0.5, 2)));
+        mat.call("assign", caixa, base);
+        checar("material.assign/of", !mat.call("of", caixa).isNullish());
+        mat.call("own", caixa);
+        mat.call("setColor", caixa, "#d98c2b");
+        Value desenho = tex.call("canvas", 64, 64);
+        desenho.call("update");
+        mat.call("setTexture", caixa, "baseColorMap", desenho.get("texture"));
+        checar("texture.canvas + setTexture", mat.call("hasAnyTexture", mat.call("of", caixa)).asBoolean() && tex.call("isTexture", desenho.get("texture")).asBoolean());
+        checar("material.slots", mat.call("slots").length() > 0);
+        checar("materials.list", api("materials").call("list").isArray());
+        Value sombreado = mat.call("fromShader", "DebugSuperficie", obj("glow", v3(1, 0.45, 0.1), "speed", 2));
+        checar("material.fromShader", !sombreado.isNullish());
+        if (!sombreado.isNullish()) {
+            Value esfera = s.call("spawnPrimitive", "sphere", obj("name", "EsferaShader", "position", v3(0, 1, -3), "scale", 1.4));
+            mat.call("assign", esfera, sombreado);
+            mat.call("uniforms", esfera).call("set", "speed", 3);
+            checar("material.uniforms.list", mat.call("uniforms", esfera).call("list").length() >= 1);
+        }
+        return null;
+    }
+
+    private Object luzes() {
+        Value l = api("light");
+        checar("light.types", contem(l.call("types"), "point") && contem(l.call("localTypes"), "spot"));
+        Value lampada = l.call("spawn", "point", obj("name", "Lampada", "position", v3(0, 3, 0), "color", "#ffd166", "intensity", 60, "range", 14));
+        checar("light.spawn", !lampada.get("light").isNullish() && textoIgual(lampada.path("light.type"), "point"));
+        l.call("set", lampada, obj("intensity", 80));
+        checar("light.set", numero(lampada.get("light"), "intensity") == 80);
+        l.call("setTemperature", lampada, 3200);
+        checar("setTemperature", numero(lampada.get("light"), "temperature") == 3200);
+        Value foco = l.call("spawn", "spot", obj(
+            "name", "Holofote", "position", v3(4, 4, 0), "rotation", v3(-90, 0, 0), "intensity", 120, "range", 16,
+            "innerAngle", 20, "outerAngle", 35, "color", "#ffffff"
+        ));
+        checar("spot", textoIgual(foco.path("light.type"), "spot"));
+        Value convertido = l.call("convert", foco, "disc");
+        checar("light.convert", textoIgual(convertido.get("type"), "disc") && textoIgual(foco.path("light.type"), "disc"));
+        l.call("convert", foco, "spot");
+        Value presets = l.call("presets");
+        checar("light.presets", presets.length() > 0);
+        if (presets.length() > 0) {
+            Value primeiro = presets.get(0);
+            Value preset = l.call("spawn", primeiro.get("id"), obj("name", "LuzPreset", "position", v3(-4, 2.5, 4)));
+            checar("light.fromPreset", !preset.get("light").isNullish() && l.call("fromPreset", primeiro.get("id")).get("type").equals(primeiro.get("type")));
+        }
+        checar("light.all", l.call("all", obj("local", true)).length() >= 2);
+        checar("effectiveRange", l.call("effectiveRange", lampada).asDouble() > 0);
+        checar("light.isLocal", verdadeiro(l.call("isLocal", lampada)));
+        checar("temperatureToColor", !l.call("temperatureToColor", 6500).isNullish());
+        l.call("setColor", lampada, "#ffffff");
+        checar("light.setColor", eq3(lampada.path("light.color"), 1, 1, 1, 0.01));
+        return null;
+    }
+
+    private Object ceu() {
+        Value sky = api("sky"), mundo = api("world");
+        sky.call("set", obj("timeOfDay", 10.5, "haze", 0.3, "clouds", obj("enabled", true, "coverage", 0.45)));
+        checar("sky.set", aprox(numero(sky, "timeOfDay"), 10.5, 1e-3) && verdadeiro(sky.path("clouds.enabled")));
+        checar("sky.isDay", verdadeiro(sky.get("isDay")));
+        checar("sky.sunDirection", numero(sky.call("sunDirection"), "y") > 0);
+        String hora = sky.call("formatTimeOfDay", 10.5).asString();
+        checar("sky.formatTimeOfDay", hora.contains(":"), hora);
+        checar("sky.wrapTimeOfDay", sky.call("wrapTimeOfDay", 25).asDouble() == 1);
+        checar("sky.presets", sky.call("presets").length() > 0);
+        assinar(sky.call("onHourChanged", (Fn1) h -> {
+            info("Hora do céu: " + h.asString());
+            return null;
+        }));
+        sky.set("cycleSpeed", 0);
+        checar("sky.cycleSpeed", numero(sky, "cycleSpeed") == 0);
+        checar("world.gravity", numero(mundo.get("gravity"), "y") < 0);
+        mundo.get("wind").call("set", obj("speed", 2, "direction", 45));
+        checar("world.wind.set", numero(mundo.get("wind"), "speed") == 2);
+        return null;
+    }
+
+    private Object camera() {
+        Value c = api("camera");
+        checar("camera.fov", numero(c, "fov") > 0 && numero(c, "aspect") > 0);
+        checar("camera.near/far", numero(c, "near") > 0 && numero(c, "far") > numero(c, "near"));
+        Value viewport = c.get("viewport");
+        checar("viewport", numero(viewport, "width") > 0);
+        Value naTela = c.call("worldToScreen", v3(0, 0, 0));
+        checar("worldToScreen", naTela.isNullish() || naTela.get("x").isNumber());
+        Value raio = c.call("screenToRay", numero(viewport, "width") / 2, numero(viewport, "height") / 2);
+        checar("screenToRay", raio.isNullish() || aprox(comprimento(raio.get("direction")), 1, 0.01));
+        checar("viewMatrix", c.get("viewMatrix").length() == 16);
+        Value jogador = c.get("player");
+        jogador.call("set", obj("distance", 7, "pitch", 18));
+        checar("player.set", numero(jogador.get("settings"), "distance") == 7);
+        checar("distanceTo", c.call("distanceTo", v3(0, 0, 0)).asDouble() >= 0);
+        checar("camera.position", !c.get("position").isNullish() && !c.get("forward").isNullish());
+        assinar(c.call("onMainChanged", (Fn1) entidade -> {
+            info(entidade.isNullish() ? "Câmera principal: editor/jogador" : "Câmera principal: " + nomeDe(entidade));
+            return null;
+        }));
+        return null;
+    }
+
+    private Object pos() {
+        Value p = api("post");
+        checar("post.toneMappers", p.call("toneMappers").length() > 0);
+        p.call("set", obj(
+            "bloom", obj("enabled", true, "intensity", 0.5, "threshold", 1, "softKnee", 0.5, "radius", 0.6),
+            "vignette", obj("enabled", true, "intensity", 0.35, "smoothness", 0.5, "roundness", 1)
+        ));
+        checar("post.set", verdadeiro(p.path("bloom.enabled")) && verdadeiro(p.path("vignette.enabled")));
+        p.set("exposure", 1.05);
+        checar("post.exposure", aprox(numero(p, "exposure"), 1.05, 1e-3));
+        p.set("toneMapper", "agx");
+        checar("post.toneMapper", textoIgual(p.get("toneMapper"), "agx"));
+        checar("post.presets", p.call("presets").length() > 0);
+        Value custom = p.get("custom");
+        Value novo = custom.call("add", obj("fragment", "DebugPost", "name", "DebugPost", "uniforms", obj("tint", v3(0.15, 0.05, 0.3), "strength", 0.6)));
+        efeito = novo;
+        checar("post.custom.add", !novo.isNullish() && !custom.call("get", "DebugPost").isNullish());
+        novo.get("uniforms").call("set", "strength", 0.8);
+        checar("efeito.uniforms.list", novo.get("uniforms").call("list").length() >= 2);
+        return null;
+    }
+
+    private Object render() {
+        Value r = api("render");
+        checar("render.passNames", r.call("passNames").length() > 0);
+        checar("render.stats", r.path("stats.drawCalls").isNumber());
+        checar("render.frame", r.path("frame.width").isNumber());
+        assinar(r.call("onAfterFrame", (Fn0) () -> {
+            renders++;
+            return null;
+        }));
+        r.set("showGrid", false);
+        checar("render.showGrid", falso(r.get("showGrid")));
+        checar("render.pixelRatio", numero(r, "pixelRatio") > 0);
+        return null;
+    }
+
+                                                                                               
+
+    private Object fisica() {
+        Value ph = api("physics"), s = api("scene");
+        checar("physics.enabled", verdadeiro(ph.get("enabled")));
+        checar("physics.gravity", numero(ph.get("gravity"), "y") < 0);
+        checar("physics.settings", numero(ph.get("settings"), "fixedTimestep") > 0);
+        for (int i = 1; i <= 5; i++) {
+            double indice = i - 1;
+            Value caixa = s.call("spawnPrimitive", "box", obj(
+                "name", "Caixa" + i,
+                "position", v3(-2 + indice * 1.1, 3 + indice * 1.2, 3),
+                "rigidBody", obj("type", "dynamic", "collider", "box", "mass", 2, "restitution", 0.3),
+                "tags", Helix.array("caixa")
+            ));
+            api("material").call("setColor", caixa, api("math.color").call("hsl", 30 + i * 12, 0.7, 0.5));
+        }
+        Value caixas = s.call("byTag", "caixa");
+        Value primeira = caixas.get(0);
+        checar("caixas dinâmicas", caixas.length() == 5 && ph.call("hasBody", primeira).asBoolean());
+        Value corpo = ph.call("bodyOf", primeira);
+        checar("bodyOf", verdadeiro(corpo.get("isDynamic")) && numero(corpo, "mass") > 0);
+        corpo.call("applyImpulse", v3(0, 2, 0));
+        corpo.call("applyTorque", v3(0, 1, 0));
+        corpo.call("setMaterial", obj("friction", 0.8));
+        corpo.call("wake");
+        checar("body.linearVelocity", !corpo.get("linearVelocity").isNullish());
+        checar("bodies()", ph.call("bodies").length() >= 6);
+        Value hit = ph.call("raycast", v3(0, 5, 0), v3(0, -1, 0), 20);
+        checar("physics.raycast", !hit.isNullish() && !hit.get("entity").isNullish());
+        checar("raycastAll", ph.call("raycastAll", v3(0, 5, 0), v3(0, -1, 0), 20).length() >= 1);
+        checar("overlapSphere", ph.call("overlapSphere", v3(0, 3, 3), 4).isArray());
+        checar("massProperties", numero(ph.call("massProperties", primeira), "mass") > 0);
+        checar("colliderVolume", ph.call("colliderVolume", primeira).asDouble() > 0);
+        Value formas = ph.get("shapes");
+        checar("shapes.sphere volume", aprox(formas.call("volume", formas.call("sphere", 1)).asDouble(), 4.18879, 0.01));
+        assinar(ph.call("onCollisionBegin", (Fn1) e -> {
+            colisoes++;
+            if (colisoes <= 3) info("Colisão: " + nomeDe(e.get("a")) + " × " + nomeDe(e.get("b")) + " (impulso " + arred(numero(e.get("contact"), "impulse")) + ")");
+            return null;
+        }));
+        assinar(ph.call("onOutOfBounds", (Fn1) entidade -> {
+            aviso(nomeDe(entidade) + " caiu do mundo");
+            return null;
+        }));
+        Value gatilho = s.call("spawn", "group", obj("name", "Gatilho", "position", v3(0, 1, 3), "trigger", obj("shape", "box", "size", v3(3, 2, 3))));
+        checar("trigger spawn", !gatilho.isNullish() && s.call("isAttached", gatilho).asBoolean());
+        checar("physics.stats", ph.path("stats.bodies").isNumber());
+        return null;
+    }
+
+    private Object personagem() {
+        Value ch = api("character"), pl = api("player");
+        Value novo = ch.call("spawn", obj("name", "Heroi", "position", v3(0, 1.2, 8), "character", obj("walkSpeed", 4, "runSpeed", 7, "jumpHeight", 1.4)));
+        heroi = novo;
+        checar("character.spawn", !novo.get("character").isNullish() && ch.call("has", novo).asBoolean());
+        Value c = ch.call("of", novo);
+        checar("character.of", c.get("isGrounded").isBoolean());
+        checar("settingsOf", numero(ch.call("settingsOf", novo), "walkSpeed") == 4);
+        pl.call("possess", novo);
+        checar("player.possess", pl.get("possessed").equals(novo) && verdadeiro(pl.get("isPossessing")));
+        assinar(ch.call("onJumped", (Fn1) e -> {
+            info(nomeDe(e.get("entity")) + " pulou");
+            return null;
+        }));
+        assinar(pl.call("onPossessed", (Fn1) entidade -> {
+            info("Possuindo " + nomeDe(entidade));
+            return null;
+        }));
+        checar("character.all", ch.call("all").length() >= 1);
 `;
 }
