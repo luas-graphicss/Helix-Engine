@@ -561,5 +561,285 @@ final class DebugJogo: Script {
         let slot = g.invoke("element", "[data-slot=icone]")
         if !slot.isNone && !icone.isNone { slot.invoke("appendChild", icone) }
         checar("gui.bind", g.invoke("bind", "linguagem", linguagem).number >= 1)
+        g.invoke("bind", "titulo", "Helix · Debug")
+        assinar(g.invoke("onAction", "caixa", Value.function { [self] _ in soltarCaixa(); return Value.undefined }))
+        assinar(g.invoke("onAction", "reiniciar", Value.function { [self] _ in api("play").invoke("restart"); return Value.undefined }))
+        checar("gui.elements", g.invoke("elements", "[data-bind]").count >= 5)
+        checar("gui.size", numero(g["size"], "width") > 0)
+        func escala(_ scale: Double, _ offset: Double) -> Value { obj(["scale": scale, "offset": offset]) }
+        let declarativa = g.invoke("create", "DebugTela", obj(["referenceSize": obj(["x": 1280, "y": 720])]))
+        let painel = g.invoke("add", declarativa, "frame", obj([
+            "name": "Painel",
+            "rect": obj([
+                "position": obj(["x": escala(1, -236), "y": escala(0, 16)]),
+                "size": obj(["x": escala(0, 220), "y": escala(0, 48)]),
+            ]),
+        ]))
+        g.invoke("add", declarativa, "text", obj(["name": "Rotulo", "text": "Tela declarativa OK"]), painel.path("node.id"))
+        checar("gui.add/find", textoIgual(g.invoke("find", declarativa, "Rotulo")["kind"], "text"))
+        g.invoke("setText", declarativa, "Rotulo", "Tela declarativa OK · \(linguagem)")
+                                                                                           
+        return g.invoke("show", declarativa, "debug-tela").invoke("then", Value.function { [self] args in
+            let mostrada = arg(args, 0)
+            tela = mostrada
+            checar("gui.show/isShown", !mostrada.isNone && api("gui").invoke("isShown", mostrada).bool)
+            checar("gui.kinds", contem(api("gui").invoke("kinds"), "button"))
+            return Value.undefined
+        })
+    }
+
+    private func audio() -> Value {
+        let a = api("audio")
+        let s = api("scene")
+        checar("audio.supported", a["supported"].isBool)
+        let mixer = a["mixer"]
+        mixer.invoke("setVolumeDb", "sfx", -3)
+        checar("mixer.setVolumeDb", numero(mixer.invoke("bus", "sfx"), "volumeDb") == -3)
+        checar("audio.clips", a.invoke("clips").isArray)
+        let fonte = s.invoke("spawn", "sound", obj(["name": "FonteSonora", "position": v3(3, 1, 3), "audioSource": obj(["trigger": "manual", "spatial": true])]))
+        checar("spawn sound", !fonte["audioSource"].isNone)
+        let fontes = a["sources"]
+        fontes.invoke("set", fonte, obj(["volumeDb": -4]))
+        checar("sources.set", numero(fonte["audioSource"], "volumeDb") == -4)
+        checar("sources.isPlaying", falso(fontes.invoke("isPlaying", fonte)))
+        return Value.undefined
+    }
+
+    private func vfx() -> Value {
+        let v = api("vfx")
+        let ids = v["templates"].invoke("ids")
+        checar("vfx.templates", ids.count > 0)
+        checar("vfx.moduleKinds", v.invoke("moduleKinds").count > 0)
+        var doc = v.invoke("fromTemplate", ids[0], "DebugFaiscas")
+        doc = v.invoke("addEmitter", doc, obj(["name": "Extra", "maxParticles": 50]))
+        doc = v.invoke("set", doc, obj(["loop": true]))
+        checar("vfx.fromTemplate/addEmitter", doc["emitters"].count >= 2 && verdadeiro(doc["loop"]))
+        return v.invoke("save", doc, "DebugFaiscas").invoke("then", Value.function { [self] args in
+            let vfx = api("vfx")
+            let ativo = arg(args, 0)
+            checar("vfx.save", !ativo.isNone && textoIgual(ativo["kind"], "vfx"))
+            let ator = vfx.invoke("emitAt", ativo, v3(0, 1.5, -8), obj(["destroyWhenFinished": false]))
+            checar("vfx.emitAt", verdadeiro(vfx.invoke("has", ator)))
+            vfx.invoke("burst", ator, 20)
+            checar("vfx.stats", vfx.invoke("stats")["effects"].isNumber)
+            return Value.undefined
+        })
+    }
+
+                                                                                              
+
+    private func aoTeclar(_ e: Value) {
+        if e["repeat"].bool { return }
+        switch e["code"].string {
+        case "KeyR":
+            api("play").invoke("restart")
+        case "KeyB":
+            soltarCaixa()
+        case "KeyE":
+            api("events").invoke("emit", "debug.ping", obj(["origem": "teclado", "quadro": api("time")["frame"]]))
+        case "KeyF":
+            api("camera").invoke("shake", 0.4, 0.6)
+        case "KeyG":
+            if let fx = efeito {
+                let ligado = !fx["enabled"].bool
+                fx.set("enabled", ligado)
+                info(ligado ? "Efeito DebugPost ligado" : "Efeito DebugPost desligado")
+            }
+        case "KeyT":
+            let tm = api("time")
+            tm.set("scale", numero(tm, "scale") == 1 ? 0.3 : 1.0)
+            info("time.scale = \(numero(tm, "scale"))")
+        case "KeyH":
+            if let t = tela {
+                let g = api("gui")
+                if g.invoke("isShown", t).bool { g.invoke("hide", t) } else { g.invoke("show", t, "debug-tela") }
+            }
+        case "KeyL":
+            info("Luzes locais: " + api("light").invoke("all", obj(["local": true])).array.map { nomeDe($0["entity"]) }.joined(separator: ", "))
+        default:
+            break
+        }
+    }
+
+    private func cliqueNaCena(_ x: Double, _ y: Double) {
+        let c = api("camera")
+        let alvo = c.invoke("pick", x, y)
+        let ponto = c.invoke("pickPoint", x, y)
+        if !alvo.isNone { info("Clique em \(nomeDe(alvo))") }
+        if !ponto.isNone { api("debug").invoke("sphere", ponto, 0.3, "#ff006e", 2) }
+    }
+
+    private func entrada() -> Value {
+        let input = api("input")
+        let acoes = input["actions"]
+        acoes.invoke("define", "pular", lista(["Space", "Gamepad:0"]))
+        acoes.invoke("define", "soltar", lista(["KeyB"]))
+        checar("actions.define/bindings", acoes.invoke("bindings", "pular").count >= 1)
+        checar("action()", textoIgual(input.invoke("action", "pular")["name"], "pular") && acoes.invoke("down", "pular").isBool)
+        checar("isDown", falso(input.invoke("isDown", "KeyW")))
+        checar("pointer", input.path("pointer.x").isNumber)
+        checar("gamepads", input.invoke("gamepads").isArray)
+        checar("axis2d", input.invoke("axis2d", obj(["up": "KeyW", "down": "KeyS", "left": "KeyA", "right": "KeyD"]))["x"].isNumber)
+        let teclas = input.invoke("keysDown")
+        checar("keysDown", teclas.isObject || teclas.isArray)
+        assinar(input.invoke("onKeyDown", Value.function { [self] args in aoTeclar(arg(args, 0)); return Value.undefined }))
+        assinar(input.invoke("onPointerDown", Value.function { [self] args in
+            let e = arg(args, 0)
+            if numero(e, "button") == 0 { cliqueNaCena(numero(e, "x"), numero(e, "y")) }
+            return Value.undefined
+        }))
+        assinar(input.invoke("onGamepadButtonDown", Value.function { [self] args in
+            let e = arg(args, 0)
+            info("Gamepad \(numero(e, "pad")) botão \(numero(e, "button"))")
+            return Value.undefined
+        }))
+        return Value.undefined
+    }
+
+    private func eventos() -> Value {
+        let ev = api("events")
+        let play = api("play")
+                                                                                        
+        var recebido = Value.undefined
+        let desligar = ev.invoke("on", "debug.ping", Value.function { args in recebido = args.first ?? Value.undefined; return Value.undefined })
+        checar("events.emit conta ouvintes", ev.invoke("emit", "debug.ping", obj(["origem": "teste"])).number == 1)
+        checar("events.on recebe", !recebido.isNone && textoIgual(recebido["origem"], "teste"))
+        checar("listenerCount", ev.invoke("listenerCount", "debug.ping").number == 1)
+        desligar.call()
+        checar("unsubscribe", ev.invoke("listenerCount", "debug.ping").number == 0)
+        var umaVez = 0
+        ev.invoke("once", "debug.once", Value.function { _ in umaVez += 1; return Value.undefined })
+        ev.invoke("emit", "debug.once")
+        ev.invoke("emit", "debug.once")
+        checar("events.once", umaVez == 1)
+        assinar(ev.invoke("on", "debug.ping", Value.function { [self] args in info("ping de \(arg(args, 0)["origem"].string)"); return Value.undefined }))
+        assinar(ev.invoke("on", "debug.caixa", Value.function { [self] args in depurar("caixa \(arg(args, 0)["nome"].string)"); return Value.undefined }))
+        var doAtor = 0
+        let anel = torus ?? Value.undefined
+        assinar(ev.invoke("onEntity", anel, "toque", Value.function { _ in doAtor += 1; return Value.undefined }))
+        ev.invoke("emitEntity", anel, "toque")
+        checar("onEntity/emitEntity", doAtor == 1)
+        assinar(play.invoke("onStopped", Value.function { [self] _ in info("play.onStopped disparou"); return Value.undefined }))
+        assinar(play.invoke("onPaused", Value.function { [self] _ in info("pausado"); return Value.undefined }))
+        assinar(play.invoke("onResumed", Value.function { [self] _ in info("retomado"); return Value.undefined }))
+        return Value.undefined
+    }
+
+                                                                                     
+    private func tempo() -> Value {
+        let tm = api("time")
+        checar("time.now", numero(tm, "now") >= 0 && numero(tm, "frame") >= 0)
+        checar("time.delta", numero(tm, "delta") >= 0 && numero(tm, "fixedDelta") > 0)
+        let inicio = numero(tm, "now")
+        return tm.invoke("wait", 0.1).invoke("then", Value.function { [self] _ in
+            let relogio = api("time")
+            let decorrido = numero(relogio, "now") - inicio
+            checar("time.wait", decorrido >= 0.09, arred(decorrido))
+            let quadro = relogio["frame"].int
+            return relogio.invoke("waitFrames", 2).invoke("then", Value.function { [self] _ in
+                let depois = api("time")
+                let agora = depois["frame"].int
+                checar("time.waitFrames", agora >= quadro + 2, agora - quadro)
+                assinar(depois.invoke("every", 2, Value.function { [self] _ in
+                    api("gui").invoke("bind", "atores", api("scene").invoke("count"))
+                    return Value.undefined
+                }))
+                var disparou = false
+                depois.invoke("delay", 0.2, Value.function { _ in disparou = true; return Value.undefined })
+                return depois.invoke("wait", 0.3).invoke("then", Value.function { [self] _ in checar("time.delay", disparou); return Value.undefined })
+            })
+        })
+    }
+
+    private func dados() -> Value {
+        return api("storage").invoke("ready").invoke("then", Value.function { [self] _ in
+            let st = api("storage")
+            let atual = st.invoke("get", "execucoes", 0)
+            let execucoes = (atual.isNumber ? atual.int : 0) + 1
+            return st.invoke("set", "execucoes", execucoes).invoke("then", Value.function { [self] _ in
+                let storage = api("storage")
+                checar("storage.get/set", storage.invoke("get", "execucoes").int == execucoes && storage.invoke("has", "execucoes").bool, execucoes)
+                info("Execução nº \(execucoes) deste jogo de teste neste projeto.")
+                return api("assets").invoke("data", "DebugConfig").invoke("then", Value.function { [self] config in
+                    let cfg = arg(config, 0)
+                    checar("assets.data (TOML)", !cfg.isNone && !cfg["jogador"].isNone && numero(cfg["jogador"], "velocidade") == 6.5)
+                    return api("assets").invoke("text", "DebugConfig").invoke("then", Value.function { [self] resposta in
+                        checar("assets.text", arg(resposta, 0).string.contains("velocidade"))
+                        let ativos = api("assets")
+                        checar("assets.byName", !ativos.invoke("byName", "DebugJogo", "script").isNone)
+                        checar("assets.exists", ativos.invoke("exists", "DebugUtil").bool && !ativos.invoke("exists", "NaoExiste").bool)
+                        checar("assets.search", ativos.invoke("search", "Debug").count >= 5)
+                        checar("project.name", api("project")["name"].isString)
+                        checar("project.stats", numero(api("project")["stats"], "entities") > 0)
+                        checar("net.localPlayer", verdadeiro(api("net").path("localPlayer.local")))
+                        checar("play.state", textoIgual(api("play")["state"], "playing") && verdadeiro(api("play")["isRunning"]))
+                        return Value.undefined
+                    })
+                })
+            })
+        })
+    }
+
+                                                                                                            
+    private func lancar() -> Value {
+        Helix.fail("erro proposital: fatalError interrompe a área e vira ERRO na cadeia")
+    }
+
+                                                                                               
+
+    private var areas: [Area] {
+        [
+            Area(nome: "Núcleo", rodar: nucleo),
+            Area(nome: "Módulo (require)", rodar: modulo),
+            Area(nome: "Matemática", rodar: matematica),
+            Area(nome: "Cena", rodar: cena),
+            Area(nome: "Transformações", rodar: transformacao),
+            Area(nome: "Malhas e CSG", rodar: malhas),
+            Area(nome: "Materiais", rodar: materiais),
+            Area(nome: "Luzes", rodar: luzes),
+            Area(nome: "Céu e mundo", rodar: ceu),
+            Area(nome: "Câmera", rodar: camera),
+            Area(nome: "Pós-processamento", rodar: pos),
+            Area(nome: "Render", rodar: render),
+            Area(nome: "Física", rodar: fisica),
+            Area(nome: "Personagem e jogador", rodar: personagem),
+            Area(nome: "Terreno", rodar: terreno),
+            Area(nome: "Interface", rodar: interfaceGrafica),
+            Area(nome: "Áudio", rodar: audio),
+            Area(nome: "VFX", rodar: vfx),
+            Area(nome: "Entrada", rodar: entrada),
+            Area(nome: "Eventos", rodar: eventos),
+            Area(nome: "Tempo e tarefas", rodar: tempo),
+            Area(nome: "Dados, projeto e rede", rodar: dados),
+            Area(nome: "Erro proposital (fatalError)", rodar: lancar, esperaErro: true),
+        ]
+    }
+
+    private func areaOk(_ a: Area) {
+        if a.esperaErro {
+            checar("o fatalError deveria ter chegado à cadeia", false)
+            return
+        }
+        depurar("ok \(a.nome)")
+    }
+
+    private func areaErro(_ a: Area, _ causa: Value) {
+        let mensagem = causa.isObject ? causa["message"].string : causa.string
+        if a.esperaErro {
+            checar("o fatalError chega como erro da promessa", mensagem.contains("proposital"), mensagem)
+            return
+        }
+        falhas += 1
+        erro("ERRO em \(a.nome): \(mensagem)")
+    }
+
+                                                                                                   
+    private func encadear(_ promessa: Value, _ a: Area) -> Value {
+        let depois = promessa.invoke("then", Value.function { _ in a.rodar() })
+        return depois.invoke(
+            "then",
+            Value.function { [self] _ in areaOk(a); return Value.undefined },
+            Value.function { [self] args in areaErro(a, arg(args, 0)); return Value.undefined }
+        )
 `;
 }
