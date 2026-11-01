@@ -202,10 +202,280 @@ impl std::ops::Neg for Vec3 {
 #[repr(transparent)]
 pub struct Value(u32);
 
+impl Value {
+                    
+    pub const fn undefined() -> Value {
+        Value(0)
+    }
 
+    pub fn null() -> Value {
+        ready();
+        Value::acquire(unsafe { ffi::null() })
+    }
 
+    pub fn array() -> Value {
+        ready();
+        Value::acquire(unsafe { ffi::array() })
+    }
 
+    pub fn object() -> Value {
+        ready();
+        Value::acquire(unsafe { ffi::object() })
+    }
 
+                                   
+    pub fn list<I, T>(items: I) -> Value
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<Value>,
+    {
+        let array = Value::array();
+        for (index, item) in items.into_iter().enumerate() {
+            array.set_at(index, item);
+        }
+        array
+    }
+
+                                                                                                                   
+    #[track_caller]
+    pub fn function<F, R>(mut f: F) -> Value
+    where
+        F: FnMut(&[Value]) -> R + 'static,
+        R: Into<Value>,
+    {
+        ready();
+        let id = NEXT_CALLBACK.with(|next| {
+            let id = next.get();
+            next.set(id.wrapping_add(1).max(1));
+            id
+        });
+        let boxed: Box<dyn FnMut(&[Value]) -> Value> = Box::new(move |args| f(args).into());
+        CALLBACKS.with(|table| table.borrow_mut().insert(id, Some(boxed)));
+        check(Value::acquire(unsafe { ffi::callback(id) }))
+    }
+
+                                                                                                                   
+    #[track_caller]
+    pub fn from_raw(handle: u32) -> Value {
+        ready();
+        if handle == 0 {
+            return Value(0);
+        }
+        check(Value(unsafe { ffi::retain(handle) }))
+    }
+
+    #[inline]
+    fn acquire(handle: u32) -> Value {
+        Value::from_raw(handle)
+    }
+
+                                                              
+    pub fn raw(&self) -> u32 {
+        self.0
+    }
+
+                                                                                                                           
+    pub fn into_raw(self) -> u32 {
+        if self.0 == 0 {
+            return 0;
+        }
+        unsafe { ffi::pool(self.0) }
+    }
+
+                                                                                             
+
+    #[track_caller]
+    pub fn kind(&self) -> Kind {
+        Kind::from_code(check(unsafe { ffi::type_of(self.0) }))
+    }
+
+    pub fn is_undefined(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.kind() == Kind::Null
+    }
+
+                              
+    pub fn is_none(&self) -> bool {
+        matches!(self.kind(), Kind::Undefined | Kind::Null)
+    }
+
+    pub fn is_bool(&self) -> bool {
+        self.kind() == Kind::Boolean
+    }
+
+    pub fn is_number(&self) -> bool {
+        self.kind() == Kind::Number
+    }
+
+    pub fn is_string(&self) -> bool {
+        self.kind() == Kind::String
+    }
+
+    pub fn is_array(&self) -> bool {
+        self.kind() == Kind::Array
+    }
+
+    pub fn is_object(&self) -> bool {
+        self.kind() == Kind::Object
+    }
+
+    pub fn is_function(&self) -> bool {
+        self.kind() == Kind::Function
+    }
+
+                                                                                              
+
+                                                                 
+    #[track_caller]
+    pub fn number(&self) -> f64 {
+        check(unsafe { ffi::to_number(self.0) })
+    }
+
+                                                    
+    pub fn integer(&self) -> i64 {
+        let n = self.number();
+        if n.is_nan() { 0 } else { n as i64 }
+    }
+
+                                                                                                  
+    #[track_caller]
+    pub fn boolean(&self) -> bool {
+        check(unsafe { ffi::to_boolean(self.0) }) != 0
+    }
+
+                                  
+    pub fn vec3(&self) -> Vec3 {
+        Vec3::new(self.get("x").number(), self.get("y").number(), self.get("z").number())
+    }
+
+                                          
+    pub fn to_vec(&self) -> Vec<Value> {
+        self.iter().collect()
+    }
+
+                                                                                              
+
+                                                                                      
+    #[track_caller]
+    pub fn get(&self, key: &str) -> Value {
+        check(Value::acquire(unsafe { ffi::get(self.0, key.as_ptr(), key.len()) }))
+    }
+
+                        
+    #[track_caller]
+    pub fn at(&self, index: usize) -> Value {
+        check(Value::acquire(unsafe { ffi::index(self.0, index as i32) }))
+    }
+
+                                                                                                         
+    #[track_caller]
+    pub fn set<T: Into<Value>>(&self, key: &str, value: T) {
+        let value: Value = value.into();
+        check(unsafe { ffi::set(self.0, key.as_ptr(), key.len(), value.0) })
+    }
+
+    #[track_caller]
+    pub fn set_at<T: Into<Value>>(&self, index: usize, value: T) {
+        let value: Value = value.into();
+        check(unsafe { ffi::set_index(self.0, index as i32, value.0) })
+    }
+
+    #[track_caller]
+    pub fn has(&self, key: &str) -> bool {
+        check(unsafe { ffi::has(self.0, key.as_ptr(), key.len()) }) != 0
+    }
+
+    #[track_caller]
+    pub fn delete(&self, key: &str) {
+        check(unsafe { ffi::delete(self.0, key.as_ptr(), key.len()) })
+    }
+
+                                                                       
+    #[track_caller]
+    pub fn len(&self) -> usize {
+        check(unsafe { ffi::length(self.0) }).max(0) as usize
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+                                                                         
+    pub fn keys(&self) -> Vec<String> {
+        let keys = check(Value::acquire(unsafe { ffi::keys(self.0) }));
+        keys.iter().map(|key| key.to_string()).collect()
+    }
+
+                                        
+    pub fn iter(&self) -> Iter<'_> {
+        Iter { value: self, index: 0, length: self.len() }
+    }
+
+                                                                                  
+    pub fn path(&self, path: &str) -> Value {
+        let mut current = self.clone();
+        for part in path.split('.').filter(|part| !part.is_empty()) {
+            current = current.get(part);
+        }
+        current
+    }
+
+                                                                  
+    #[track_caller]
+    pub fn call<A: Args>(&self, args: A) -> Value {
+        args.with_handles(|handles| check(Value::acquire(unsafe { ffi::call(self.0, handles.as_ptr(), handles.len() as i32) })))
+    }
+
+                                                                   
+    #[track_caller]
+    pub fn invoke<A: Args>(&self, method: &str, args: A) -> Value {
+        args.with_handles(|handles| check(Value::acquire(unsafe { ffi::invoke(self.0, method.as_ptr(), method.len(), handles.as_ptr(), handles.len() as i32) })))
+    }
+
+                                   
+    #[track_caller]
+    pub fn construct<A: Args>(&self, args: A) -> Value {
+        args.with_handles(|handles| check(Value::acquire(unsafe { ffi::construct(self.0, handles.as_ptr(), handles.len() as i32) })))
+    }
+
+                                                           
+    #[track_caller]
+    pub fn equals(&self, other: &Value) -> bool {
+        check(unsafe { ffi::equals(self.0, other.0) }) != 0
+    }
+}
+
+impl Drop for Value {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            unsafe { ffi::release(self.0) }
+        }
+    }
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Value {
+        if self.0 == 0 {
+            return Value(0);
+        }
+        Value(unsafe { ffi::retain(self.0) })
+    }
+}
+
+impl Default for Value {
+    fn default() -> Value {
+        Value(0)
+    }
+}
+
+impl PartialEq for Value {
+    fn eq(&self, other: &Value) -> bool {
+        self.equals(other)
+    }
+}
 
 
 
