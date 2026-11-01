@@ -841,5 +841,215 @@ public class DebugJogo extends Script {
                     api("gui").call("bind", "atores", api("scene").call("count"));
                     return null;
                 }));
+                boolean[] disparou = {false};
+                depois.call("delay", 0.2, (Fn0) () -> {
+                    disparou[0] = true;
+                    return null;
+                });
+                return depois.call("wait", 0.3).call("then", (Fn0) () -> {
+                    checar("time.delay", disparou[0]);
+                    return null;
+                });
+            });
+        });
+    }
+
+    private Object dados() {
+        return api("storage").call("ready").call("then", (Fn0) () -> {
+            Value st = api("storage");
+            Value atual = st.call("get", "execucoes", 0);
+            int execucoes = (atual.isNumber() ? atual.asInt() : 0) + 1;
+            return st.call("set", "execucoes", execucoes).call("then", (Fn0) () -> {
+                Value storage = api("storage");
+                checar("storage.get/set", storage.call("get", "execucoes").asInt() == execucoes && storage.call("has", "execucoes").asBoolean(), execucoes);
+                info("Execução nº " + execucoes + " deste jogo de teste neste projeto.");
+                return api("assets").call("data", "DebugConfig").call("then", (Fn1) cfg -> {
+                    checar("assets.data (TOML)", !cfg.isNullish() && !cfg.get("jogador").isNullish() && numero(cfg.get("jogador"), "velocidade") == 6.5);
+                    return api("assets").call("text", "DebugConfig").call("then", (Fn1) texto -> {
+                        checar("assets.text", texto.asString().contains("velocidade"));
+                        Value ativos = api("assets");
+                        checar("assets.byName", !ativos.call("byName", "DebugJogo", "script").isNullish());
+                        checar("assets.exists", ativos.call("exists", "DebugUtil").asBoolean() && !ativos.call("exists", "NaoExiste").asBoolean());
+                        checar("assets.search", ativos.call("search", "Debug").length() >= 5);
+                        checar("project.name", api("project").get("name").isString());
+                        checar("project.stats", numero(api("project").get("stats"), "entities") > 0);
+                        checar("net.localPlayer", verdadeiro(api("net").path("localPlayer.local")));
+                        checar("play.state", textoIgual(api("play").get("state"), "playing") && verdadeiro(api("play").get("isRunning")));
+                        return null;
+                    });
+                });
+            });
+        });
+    }
+
+                                                                                                                     
+    private Object capturar() {
+        try {
+            throw new IllegalStateException("exceção proposital, capturada antes de chegar à engine");
+        } catch (IllegalStateException excecao) {
+            checar("try/catch captura a exceção", excecao.getMessage().contains("proposital"), excecao.getMessage());
+        }
+        return null;
+    }
+
+                                                                                
+    private Object rejeitar() {
+        Value promessa = api("time").call("wait", 0);
+        return promessa.get("constructor").call("reject", "erro proposital: a rejeição vira ERRO na cadeia");
+    }
+
+                                                                                               
+
+    private List<Area> areas() {
+        List<Area> lista = new ArrayList<>();
+        lista.add(new Area("Núcleo", this::nucleo));
+        lista.add(new Area("Módulo (require)", this::modulo));
+        lista.add(new Area("Matemática", this::matematica));
+        lista.add(new Area("Cena", this::cena));
+        lista.add(new Area("Transformações", this::transformacao));
+        lista.add(new Area("Malhas e CSG", this::malhas));
+        lista.add(new Area("Materiais", this::materiais));
+        lista.add(new Area("Luzes", this::luzes));
+        lista.add(new Area("Céu e mundo", this::ceu));
+        lista.add(new Area("Câmera", this::camera));
+        lista.add(new Area("Pós-processamento", this::pos));
+        lista.add(new Area("Render", this::render));
+        lista.add(new Area("Física", this::fisica));
+        lista.add(new Area("Personagem e jogador", this::personagem));
+        lista.add(new Area("Terreno", this::terreno));
+        lista.add(new Area("Interface", this::interfaceGrafica));
+        lista.add(new Area("Áudio", this::audio));
+        lista.add(new Area("VFX", this::vfx));
+        lista.add(new Area("Entrada", this::entrada));
+        lista.add(new Area("Eventos", this::eventos));
+        lista.add(new Area("Tempo e tarefas", this::tempo));
+        lista.add(new Area("Dados, projeto e rede", this::dados));
+        lista.add(new Area("Exceção capturada (try/catch)", this::capturar));
+        lista.add(new Area("Erro proposital (Promise.reject)", this::rejeitar, true));
+        return lista;
+    }
+
+    private void areaOk(Area a) {
+        if (a.esperaErro) {
+            checar("a rejeição deveria ter chegado à cadeia", false);
+            return;
+        }
+        depurar("ok " + a.nome);
+    }
+
+    private void areaErro(Area a, Value causa) {
+        String mensagem = causa.isObject() ? causa.get("message").asString() : causa.asString();
+        if (a.esperaErro) {
+            checar("a rejeição chega como erro da promessa", mensagem.contains("proposital"), mensagem);
+            return;
+        }
+        falhas++;
+        erro("ERRO em " + a.nome + ": " + mensagem);
+    }
+
+                                                                                                       
+    private Value encadear(Value promessa, Area a) {
+        Value depois = promessa.call("then", (Fn0) () -> a.rodar.get());
+        return depois.call("then", (Fn0) () -> {
+            areaOk(a);
+            return null;
+        }, (Fn1) causa -> {
+            areaErro(a, causa);
+            return null;
+        });
+    }
+
+    private void finalizar() {
+        Value girador = api("assets").call("byName", "DebugGirador", "script");
+        if (!girador.isNullish()) {
+            Value extra = api("scene").call("spawnPrimitive", "box", obj(
+                "name", "GiradorDinamico",
+                "position", v3(-2, 0.5, -3),
+                "rigidBody", obj("type", "kinematic", "collider", "box"),
+                "script", obj("assetId", girador.get("id"), "props", obj("velocidade", 180, "cor", "#00b4d8"))
+            ));
+            checar("spawn com script", !extra.get("script").isNullish() && extra.path("script.assetId").equals(girador.get("id")));
+        } else {
+            checar("ativo DebugGirador", false, "não está na biblioteca");
+        }
+        String dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.";
+        if (falhas == 0) info("API percorrida em " + LINGUAGEM + ": " + checagens + " checagens, nenhuma falha. " + dica);
+        else aviso("API percorrida em " + LINGUAGEM + ": " + checagens + " checagens, " + falhas + " falhas (veja FALHOU/ERRO acima). " + dica);
+        api("gui").call("bind", "checagens", checagens);
+        api("gui").call("bind", "falhas", falhas);
+    }
+
+                                                                                              
+
+    @Override
+    public void onLoad() {
+        info("onLoad do script de entrada");
+    }
+
+    @Override
+    public void onStart() {
+        info("Jogo de teste em " + LINGUAGEM + ": percorrendo a API…");
+        Value promessa = api("time").call("wait", 0);
+        for (Area a : areas()) promessa = encadear(promessa, a);
+        promessa.call("then", (Fn0) () -> {
+            finalizar();
+            return null;
+        });
+    }
+
+    @Override
+    public void onUpdate(double dt) {
+        quadros++;
+        if (torus != null) api("transform").call("rotate", torus, v3(0, 40 * dt, 0));
+        Value d = api("debug");
+        d.call("line", v3(-6, 0.05, -6), v3(6, 0.05, -6), "#ff006e");
+        d.call("box", obj("center", v3(0, 1, 3), "size", v3(3, 2, 3)), "#ffbe0b");
+        if (heroi != null) {
+            d.call("axes", heroi, 1);
+            Value acima = api("math.vec3").call("add", api("transform").call("worldPosition", heroi), v3(0, 2.2, 0));
+            d.call("text", acima, "Heroi · " + pontos + " pts", "#ffffff");
+        }
+        d.call("ray", v3(0, 3, 0), v3(0, -1, 0), 3, "#06d6a0");
+        hudTimer += dt;
+        if (hudTimer >= 0.5) {
+            hudTimer = 0;
+            Value g = api("gui");
+            g.call("bind", "fps", Math.round(numero(api("render").get("stats"), "fps")));
+            g.call("bind", "checagens", checagens);
+            g.call("bind", "falhas", falhas);
+        }
+    }
+
+    @Override
+    public void onFixedUpdate(double h) {
+        passosFisica++;
+        if (passosFisica == 1) checar("onFixedUpdate recebe o passo", h > 0 && h < 1, h);
+    }
+
+    @Override
+    public void onLateUpdate(double dt) {
+        lateUpdates++;
+    }
+
+                                                                                       
+    @Override
+    public Object onBeforeHotReload() {
+        return obj("pontos", pontos);
+    }
+
+    @Override
+    public void onHotReload(Value previousState) {
+        pontos = previousState.isObject() ? previousState.get("pontos").asInt(0) : 0;
+        info("Recarga a quente: " + pontos + " pontos preservados");
+    }
+
+    @Override
+    public void onStop() {
+        for (Value desligar : assinaturas) desligar.invoke();
+        assinaturas.clear();
+        info("Parou: " + quadros + " quadros, " + passosFisica + " passos de física, " + lateUpdates + " lateUpdates, " + renders + " frames (onAfterFrame), " + colisoes + " colisões.");
+        torus = heroi = efeito = tela = null;
+    }
+}
 `;
 }
