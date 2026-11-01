@@ -275,3 +275,8 @@ export function vfxAssetTexture(assetId: string, image: TextureImage): Texture {
 export function forgetVfxAssetTexture(assetId: string): void {
     assetCache.delete(assetId);
 }
+export function vfxTextureLabel(ref: VfxTextureRef, assetName: (assetId: string) => string | null): string {
+    if (ref.kind === 'builtin')
+        return vfxBuiltinTextureInfo(ref.id).label;
+    return assetName(ref.assetId) ?? 'Textura ausente';
+}
