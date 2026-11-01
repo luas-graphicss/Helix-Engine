@@ -1,18 +1,27 @@
 import * as mat4 from '@/engine/core/math/mat4';
 import * as vec3 from '@/engine/core/math/vec3';
 import { createRay, intersectRayAabb, transformRay, type Ray } from '@/engine/core/math/ray';
+import { degToRad } from '@/engine/core/math/scalar';
 import type { Scene } from '@/engine/core/scene/scene';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { getLocalBounds } from '@/engine/renderer/geometry/bounds';
 import { raycastMesh } from '@/engine/renderer/geometry/mesh-raycast';
+import type { LightHelperMode } from '@/engine/renderer/passes/light-helper-pass';
+import type { SoundHelperMode } from '@/engine/renderer/passes/sound-helper-pass';
+import type { VfxHelperMode } from '@/engine/renderer/passes/vfx-helper-pass';
 import type { TerrainHit } from '@/engine/terrain/core/terrain';
+import { computeLocalRect, createLocalRect, createSurfaceFrame, intersectSurfaceFrame, resolveSurfaceFrame } from '@/engine/gui/world/gui-surface-frame';
 const inverseWorld = mat4.create();
+const surfaceRect = createLocalRect();
+const surfaceFrame = createSurfaceFrame();
 const worldRay = createRay();
 const localRay = createRay();
 const nearPoint = vec3.create();
 const farPoint = vec3.create();
+const toLight = vec3.create();
 const terrainHit: TerrainHit = { distance: 0, point: vec3.create() };
+const LIGHT_PICK_FRACTION = 0.014;
 interface PickCandidate {
     entity: Entity;
     entry: number;
@@ -44,6 +53,29 @@ function intersectLocalRay(entity: Entity): number | null {
     }
     return entity.mesh ? intersectRayAabb(localRay, getLocalBounds(entity.mesh)) : null;
 }
+function intersectMarker(entity: Entity, camera: PerspectiveCamera): number | null {
+    const m = entity.worldMatrix;
+    vec3.set(toLight, m[12] - worldRay.origin[0], m[13] - worldRay.origin[1], m[14] - worldRay.origin[2]);
+    const along = vec3.dot(toLight, worldRay.direction);
+    if (along <= 0)
+        return null;
+    const radius = along * Math.tan(degToRad(camera.fovDegrees) * 0.5) * 2 * LIGHT_PICK_FRACTION;
+    const perpendicular2 = vec3.dot(toLight, toLight) - along * along;
+    return perpendicular2 <= radius * radius ? along : null;
+}
+function intersectSurface(entity: Entity, camera: PerspectiveCamera): number | null {
+    const settings = entity.guiSurface;
+    if (!settings)
+        return null;
+    computeLocalRect(surfaceRect, settings.mount, entity.mesh ? getLocalBounds(entity.mesh) : null);
+    resolveSurfaceFrame(surfaceFrame, surfaceRect, settings.mount, entity.worldMatrix, camera);
+    if (settings.cullDistance > 0 && surfaceFrame.distance > settings.cullDistance)
+        return null;
+    const hit = intersectSurfaceFrame(surfaceFrame, worldRay);
+    if (!hit || (!hit.front && !settings.doubleSided))
+        return null;
+    return hit.distance;
+}
 interface PickHit {
     entity: Entity;
     distance: number;
@@ -51,11 +83,39 @@ interface PickHit {
 export interface PickOptions {
     showCsgBrushes?: boolean;
     includeLocked?: boolean;
+    lightHelpers?: LightHelperMode;
+    soundHelpers?: SoundHelperMode;
+    vfxHelpers?: VfxHelperMode;
+    selection?: ReadonlySet<number> | null;
+}
+function isMarkerPickable(entity: Entity, mode: LightHelperMode | SoundHelperMode | VfxHelperMode | undefined, options: PickOptions): boolean {
+    switch (mode ?? 'off') {
+        case 'all':
+            return true;
+        case 'selected':
+            return options.selection?.has(entity.id) ?? false;
+        default:
+            return false;
+    }
+}
+function isSoundMarker(entity: Entity): boolean {
+    return entity.kind === 'sound' && !entity.mesh && !entity.terrain;
+}
+function isVfxMarker(entity: Entity): boolean {
+    return entity.kind === 'vfx' && !entity.mesh && !entity.terrain;
 }
 function isPickable(entity: Entity, options: PickOptions): boolean {
-    if (!entity.mesh && !entity.terrain)
-        return false;
     if (entity.locked && !options.includeLocked)
+        return false;
+    if (entity.light)
+        return isMarkerPickable(entity, options.lightHelpers, options);
+    if (isSoundMarker(entity))
+        return isMarkerPickable(entity, options.soundHelpers, options);
+    if (isVfxMarker(entity))
+        return isMarkerPickable(entity, options.vfxHelpers, options);
+    if (entity.guiSurface)
+        return true;
+    if (!entity.mesh && !entity.terrain)
         return false;
     if (entity.csgBrush && (options.showCsgBrushes === false || !(entity.parent?.csg?.showBrushes ?? true)))
         return false;
@@ -68,6 +128,19 @@ function closestHit(scene: Scene, camera: PerspectiveCamera, u: number, v: numbe
     scene.traverseVisible((entity) => {
         if (!isPickable(entity, options))
             return;
+        if (entity.light || isSoundMarker(entity) || isVfxMarker(entity)) {
+            const entry = intersectMarker(entity, camera);
+            if (entry !== null)
+                candidates.push({ entity, entry, exact: true });
+            return;
+        }
+        if (entity.guiSurface) {
+            const entry = intersectSurface(entity, camera);
+            if (entry !== null)
+                candidates.push({ entity, entry, exact: true });
+            if (!entity.mesh && !entity.terrain)
+                return;
+        }
         if (!mat4.invert(inverseWorld, entity.worldMatrix))
             return;
         transformRay(localRay, worldRay, inverseWorld);
