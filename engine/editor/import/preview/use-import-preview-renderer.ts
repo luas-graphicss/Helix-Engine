@@ -43,6 +43,8 @@ export function useImportPreviewRenderer(canvasRef: React.RefObject<HTMLCanvasEl
                 gizmo: null,
                 terrainBrush: null,
                 skeletons: null,
+                lightHelpers: null,
+                soloLight: null,
                 elapsedSeconds: now / 1000,
                 deltaSeconds,
                 culling: PREVIEW_CULLING,
