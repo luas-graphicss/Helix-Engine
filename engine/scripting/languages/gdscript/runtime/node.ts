@@ -1240,3 +1240,224 @@ interface CharacterApi {
     jump(): void;
     stop(): void;
 }
+export class CharacterBody3DNode extends PhysicsBody3DNode {
+    velocity = new Vector3();
+    up_direction = new Vector3(0, 1, 0);
+    floor_max_angle = (45 * Math.PI) / 180;
+    floor_snap_length = 0.1;
+    floor_stop_on_slope = true;
+    motion_mode = 0;
+    private $onFloor = false;
+    private $onWall = false;
+    private $onCeiling = false;
+    private $floorNormal = new Vector3(0, 1, 0);
+    private $slideCount = 0;
+    private $realVelocity = new Vector3();
+    private $gravityDisabled = false;
+    private $character(): CharacterApi | null {
+        const entity = this.$entity;
+        if (!entity || !entity.character)
+            return null;
+        const api = this.$helix.character as AnyRecord | undefined;
+        const has = api?.has as Fn | undefined;
+        if (has && !has(entity))
+            return null;
+        try {
+            return (api?.of as Fn)(entity) as CharacterApi;
+        }
+        catch {
+            return null;
+        }
+    }
+    protected $beforePhysics(): void {
+        const body = this.$body();
+        if (body && body.isDynamic && !this.$gravityDisabled) {
+            body.gravityScale = 0;
+            this.$gravityDisabled = true;
+        }
+        if (body && body.isDynamic)
+            this.velocity = fromEngineVec3(body.linearVelocity);
+    }
+    move_and_slide(): boolean {
+        const step = this.get_physics_process_delta_time();
+        const velocity = this.velocity;
+        const character = this.$character();
+        this.$slideCount = 0;
+        this.$onWall = false;
+        this.$onCeiling = false;
+        if (character) {
+            const horizontal = new Vector2(velocity.x, velocity.z);
+            const length = horizontal.length();
+            if (length > 1e-4)
+                character.move(horizontal.x / Math.max(1, length), horizontal.y / Math.max(1, length));
+            else
+                character.stop();
+            if (velocity.y > 0.01 && character.isGrounded)
+                character.jump();
+            this.$onFloor = character.isGrounded;
+            this.$floorNormal = fromEngineVec3(character.groundNormal ?? new Float32Array([0, 1, 0]));
+            this.$realVelocity = fromEngineVec3(character.velocity);
+            return this.$onFloor;
+        }
+        const body = this.$body();
+        if (body && body.isDynamic) {
+            body.linearVelocity = new Float32Array([velocity.x, velocity.y, velocity.z]);
+            body.wake();
+            this.$probeFloor(velocity, step);
+            this.$realVelocity = velocity;
+            return this.$slideCount > 0;
+        }
+        let remaining = vscale(velocity, step);
+        let collided = false;
+        for (let pass = 0; pass < 4 && remaining.length() > 1e-6; pass++) {
+            const from = this.global_position;
+            const direction = remaining.normalized();
+            const hit = this.$raycast(from, direction, remaining.length() + 0.05);
+            if (!hit) {
+                this.$applyMotion(remaining, body);
+                break;
+            }
+            collided = true;
+            this.$slideCount++;
+            const normal = fromEngineVec3(hit.normal);
+            const travel = vscale(direction, Math.max(0, hit.distance - 0.05));
+            this.$applyMotion(travel, body);
+            const angle = Math.acos(Math.max(-1, Math.min(1, normal.dot(this.up_direction))));
+            if (angle <= this.floor_max_angle) {
+                this.$onFloor = true;
+                this.$floorNormal = normal;
+            }
+            else if (angle >= Math.PI - this.floor_max_angle)
+                this.$onCeiling = true;
+            else
+                this.$onWall = true;
+            remaining = vsub(remaining, travel).slide(normal);
+            this.velocity = this.velocity.slide(normal);
+        }
+        if (!collided)
+            this.$probeFloor(velocity, step);
+        this.$realVelocity = this.velocity;
+        return collided || this.$onFloor;
+    }
+    private $applyMotion(motion: Vector3, body: BodyApi | null): void {
+        const target = vadd(this.global_position, motion);
+        if (body && body.isKinematic)
+            body.moveKinematic(target);
+        else
+            this.global_position = target;
+    }
+    private $probeFloor(velocity: Vector3, step: number): void {
+        const half = this.$halfHeight();
+        const origin = this.global_position;
+        const down = vscale(this.up_direction, -1);
+        const reach = half + Math.max(this.floor_snap_length, Math.abs(Math.min(0, velocity.y)) * step) + 0.05;
+        const hit = this.$raycast(origin, down, reach);
+        if (!hit) {
+            this.$onFloor = false;
+            return;
+        }
+        const normal = fromEngineVec3(hit.normal);
+        const angle = Math.acos(Math.max(-1, Math.min(1, normal.dot(this.up_direction))));
+        if (angle > this.floor_max_angle) {
+            this.$onFloor = false;
+            return;
+        }
+        this.$onFloor = true;
+        this.$floorNormal = normal;
+        const body = this.$body();
+        if (velocity.y <= 0 && !(body && body.isDynamic)) {
+            const feet = vadd(fromEngineVec3(hit.point), vscale(this.up_direction, half));
+            this.global_position = feet;
+            if (this.floor_stop_on_slope)
+                this.velocity = new Vector3(this.velocity.x, 0, this.velocity.z);
+        }
+    }
+    is_on_floor(): boolean {
+        return this.$onFloor;
+    }
+    is_on_floor_only(): boolean {
+        return this.$onFloor && !this.$onWall && !this.$onCeiling;
+    }
+    is_on_wall(): boolean {
+        return this.$onWall;
+    }
+    is_on_ceiling(): boolean {
+        return this.$onCeiling;
+    }
+    get_floor_normal(): Vector3 {
+        return this.$floorNormal;
+    }
+    get_floor_angle(upDirection: unknown = Vector3.UP): number {
+        return Math.acos(Math.max(-1, Math.min(1, this.$floorNormal.dot(toVector3(upDirection)))));
+    }
+    get_real_velocity(): Vector3 {
+        return this.$realVelocity;
+    }
+    get_slide_collision_count(): number {
+        return this.$slideCount;
+    }
+    get_last_motion(): Vector3 {
+        return vscale(this.$realVelocity, this.get_physics_process_delta_time());
+    }
+    get_position_delta(): Vector3 {
+        return this.get_last_motion();
+    }
+}
+markScriptClass(CharacterBody3DNode, 'CharacterBody3D');
+setGodotBase(CharacterBody3DNode, 'CharacterBody3D');
+export class Area3DNode extends CollisionObject3DNode {
+    private readonly $overlapping = new Set<EngineEntity>();
+    monitoring = true;
+    monitorable = true;
+    gravity = 9.8;
+    gravity_direction = new Vector3(0, -1, 0);
+    priority = 0;
+    private $isArea(entity: EngineEntity): boolean {
+        const node = this.$context.nodesByEntity.get(entity.id) as NodeBase | undefined;
+        if (node)
+            return node.is_class('Area3D');
+        return entity.rigidBody === null && entity.character === null;
+    }
+    protected $contact(phase: 'begin' | 'end' | 'enter' | 'exit', other: unknown, _contact: unknown): void {
+        if (!isEngineEntity(other))
+            return;
+        const node = wrapEntity(other, this.$context);
+        const entering = phase === 'begin' || phase === 'enter';
+        if (entering)
+            this.$overlapping.add(other);
+        else
+            this.$overlapping.delete(other);
+        if (!this.monitoring)
+            return;
+        const area = this.$isArea(other);
+        if (entering)
+            this.$emit(area ? 'area_entered' : 'body_entered', node);
+        else
+            this.$emit(area ? 'area_exited' : 'body_exited', node);
+    }
+    get_overlapping_bodies(): NodeBase[] {
+        return Array.from(this.$overlapping)
+            .filter((entity) => !this.$isArea(entity))
+            .map((entity) => wrapEntity(entity, this.$context));
+    }
+    get_overlapping_areas(): NodeBase[] {
+        return Array.from(this.$overlapping)
+            .filter((entity) => this.$isArea(entity))
+            .map((entity) => wrapEntity(entity, this.$context));
+    }
+    overlaps_body(body: unknown): boolean {
+        const node = requireNode(body, 'overlaps_body');
+        return node.$entity !== null && this.$overlapping.has(node.$entity);
+    }
+    overlaps_area(area: unknown): boolean {
+        return this.overlaps_body(area);
+    }
+    has_overlapping_bodies(): boolean {
+        return this.get_overlapping_bodies().length > 0;
+    }
+    has_overlapping_areas(): boolean {
+        return this.get_overlapping_areas().length > 0;
+    }
+}
+markScriptClass(Area3DNode, 'Area3D');
+setGodotBase(Area3DNode, 'Area3D');
