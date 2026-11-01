@@ -1,6 +1,7 @@
 import type { Vec3 } from './vec3';
 import type { Mat4 } from './mat4';
-import { clamp, DEG_TO_RAD, RAD_TO_DEG } from './scalar';
+import { eulerDegreesFromRotation, nearestEquivalentEuler } from './euler';
+import { DEG_TO_RAD } from './scalar';
 export type Quat = Float32Array;
 export function create(): Quat {
     const out = new Float32Array(4);
@@ -89,22 +90,11 @@ export function toEulerDegrees(out: Vec3, q: Quat): Vec3 {
     const m22 = 1 - 2 * (x * x + y * y);
     const m11 = 1 - 2 * (x * x + z * z);
     const m12 = 2 * (y * z - w * x);
-    const sinY = clamp(-m20, -1, 1);
-    const ey = Math.asin(sinY);
-    let ex: number;
-    let ez: number;
-    if (Math.abs(sinY) < 0.9999999) {
-        ex = Math.atan2(m21, m22);
-        ez = Math.atan2(m10, m00);
-    }
-    else {
-        ex = Math.atan2(-m12, m11);
-        ez = 0;
-    }
-    out[0] = ex * RAD_TO_DEG;
-    out[1] = ey * RAD_TO_DEG;
-    out[2] = ez * RAD_TO_DEG;
-    return out;
+    return eulerDegreesFromRotation(out, m00, m10, m20, m11, m21, m12, m22);
+}
+const scratchEuler = new Float32Array(3);
+export function toEulerDegreesNear(out: Vec3, q: Quat, reference: Vec3): Vec3 {
+    return nearestEquivalentEuler(out, toEulerDegrees(scratchEuler, q), reference);
 }
 export function fromMat4Rotation(out: Quat, m: Mat4): Quat {
     const sx = Math.hypot(m[0], m[1], m[2]) || 1;
