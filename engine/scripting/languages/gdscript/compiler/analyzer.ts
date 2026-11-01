@@ -2492,4 +2492,226 @@ class Analyzer {
             }
         }
     }
+    private lambda(e: LambdaExpression): StaticType {
+        const outer = this.fn!;
+        const returnType = e.returnType ? this.resolveTypeRef(e.returnType, outer.cls) : null;
+        const fn: FunctionContext = {
+            cls: outer.cls,
+            isStatic: outer.isStatic,
+            name: null,
+            returnType,
+            isLambda: true,
+            parent: outer,
+            captures: new Set(),
+            assigned: new Set(),
+            accessorOf: null,
+            isInitializer: false,
+            loopDepth: 0,
+            hasAwait: false,
+        };
+        collectAssigned(e.body, fn.assigned);
+        this.withFunction(fn, () => {
+            this.declareParams(e.params);
+            this.block(e.body, false);
+            this.popScopeWarnings();
+        });
+        e.captures = [...fn.captures];
+        e.isAsync = containsAwait(e.body);
+        return 'Callable';
+    }
+    private binaryResult(operator: BinaryOperator, left: StaticType, right: StaticType, span: SourceSpan): StaticType | null {
+        switch (operator) {
+            case 'and':
+            case 'or':
+                return 'bool';
+            case '==':
+            case '!=':
+                return 'bool';
+            case 'in':
+            case 'not in': {
+                if (isNumeric(right) || right === 'bool' || right === 'null' || VALUE_TYPES.has(right) || right === 'Callable' || right === 'Signal') {
+                    this.error(span, `O operador "in" precisa de uma coleção à direita (Array, Dictionary, String ou objeto), não ${right}.`);
+                    return 'bool';
+                }
+                return 'bool';
+            }
+            default:
+                break;
+        }
+        const unknown = left === 'Variant' || right === 'Variant' || isMeta(left) || isMeta(right);
+        switch (operator) {
+            case '<':
+            case '>':
+            case '<=':
+            case '>=': {
+                if (unknown)
+                    return 'bool';
+                if ((isNumeric(left) && isNumeric(right)) || (STRING_TYPES.has(left) && STRING_TYPES.has(right)) || left === right)
+                    return 'bool';
+                this.error(span, `Operandos inválidos ${describeType(left)} e ${describeType(right)} para o operador "${operator}".`);
+                return 'bool';
+            }
+            case '&':
+            case '|':
+            case '^':
+            case '<<':
+            case '>>': {
+                if (unknown)
+                    return 'int';
+                if (left === 'int' && right === 'int')
+                    return 'int';
+                this.error(span, `O operador "${operator}" só se aplica a int, não a ${describeType(left)} e ${describeType(right)}.`);
+                return 'int';
+            }
+            default:
+                break;
+        }
+        if (unknown) {
+            if (operator === '%' && STRING_TYPES.has(left))
+                return 'String';
+            return 'Variant';
+        }
+        const result = this.arithmetic(operator, left, right);
+        if (result === null) {
+            const hint = operator === '+' && (STRING_TYPES.has(left) || STRING_TYPES.has(right)) ? ' Para juntar texto com números use str(): "Vida: " + str(vida), ou "Vida: %d" % vida.' : operator === '%' && isNumeric(left) && isNumeric(right) ? ' Para floats use fmod(a, b).' : '';
+            this.error(span, `Operandos inválidos ${describeType(left)} e ${describeType(right)} para o operador "${operator}".${hint}`);
+            return null;
+        }
+        if (operator === '/' && left === 'int' && right === 'int')
+            this.warn(span, 'Divisão inteira: o resultado descarta a parte decimal. Use float(a) / b (ou 2.0 em vez de 2) para obter decimais.');
+        return result;
+    }
+    private arithmetic(operator: BinaryOperator, left: StaticType, right: StaticType): StaticType | null {
+        if (isNumeric(left) && isNumeric(right)) {
+            if (operator === '%')
+                return left === 'int' && right === 'int' ? 'int' : null;
+            return left === 'int' && right === 'int' ? 'int' : 'float';
+        }
+        if (operator === '%') {
+            if (STRING_TYPES.has(left))
+                return 'String';
+            if (VECTOR_TYPES.has(left) && (right === left || isNumeric(right)))
+                return left;
+            return null;
+        }
+        if (operator === '**')
+            return null;
+        if (STRING_TYPES.has(left) && STRING_TYPES.has(right))
+            return operator === '+' ? 'String' : null;
+        if (isArrayType(left) && isArrayType(right))
+            return operator === '+' ? (left === right ? left : 'Array') : null;
+        if (VECTOR_TYPES.has(left)) {
+            if (right === left)
+                return left;
+            if (isNumeric(right) && (operator === '*' || operator === '/'))
+                return left.endsWith('i') && right === 'float' ? left.slice(0, -1) : left;
+            if ((left === 'Vector2' && right === 'Vector2i') || (left === 'Vector3' && right === 'Vector3i'))
+                return left;
+            if ((left === 'Vector2i' && right === 'Vector2') || (left === 'Vector3i' && right === 'Vector3'))
+                return right;
+            return null;
+        }
+        if (VECTOR_TYPES.has(right)) {
+            if (isNumeric(left) && operator === '*')
+                return right.endsWith('i') && left === 'float' ? right.slice(0, -1) : right;
+            if (operator === '*' && (left === 'Quaternion' || left === 'Basis' || left === 'Transform3D') && right === 'Vector3')
+                return 'Vector3';
+            return null;
+        }
+        if (left === 'Color') {
+            if (right === 'Color')
+                return 'Color';
+            if (isNumeric(right) && (operator === '*' || operator === '/'))
+                return 'Color';
+            return null;
+        }
+        if (right === 'Color' && isNumeric(left) && operator === '*')
+            return 'Color';
+        if (left === 'Quaternion') {
+            if (right === 'Quaternion' && (operator === '*' || operator === '+' || operator === '-'))
+                return 'Quaternion';
+            if (isNumeric(right) && (operator === '*' || operator === '/'))
+                return 'Quaternion';
+            return null;
+        }
+        if (left === 'Basis') {
+            if (right === 'Basis' && operator === '*')
+                return 'Basis';
+            if (isNumeric(right) && (operator === '*' || operator === '/'))
+                return 'Basis';
+            return null;
+        }
+        if (left === 'Transform3D' && operator === '*') {
+            if (right === 'Transform3D')
+                return 'Transform3D';
+            if (right === 'AABB')
+                return 'AABB';
+            return null;
+        }
+        return null;
+    }
+    private isConstantExpression(e: Expression): boolean {
+        switch (e.kind) {
+            case 'literal':
+            case 'string':
+            case 'preload':
+            case 'type_name':
+                return true;
+            case 'array':
+                return e.elements.every((element) => this.isConstantExpression(element));
+            case 'dictionary':
+                return e.entries.every((entry) => this.isConstantExpression(entry.key) && this.isConstantExpression(entry.value));
+            case 'unary':
+                return this.isConstantExpression(e.operand);
+            case 'binary':
+                return this.isConstantExpression(e.left) && this.isConstantExpression(e.right);
+            case 'ternary':
+                return this.isConstantExpression(e.condition) && this.isConstantExpression(e.whenTrue) && this.isConstantExpression(e.whenFalse);
+            case 'identifier': {
+                const resolution = e.resolved;
+                if (!resolution)
+                    return false;
+                switch (resolution.kind) {
+                    case 'constant':
+                    case 'key':
+                    case 'builtin_type':
+                    case 'class':
+                    case 'sibling':
+                        return true;
+                    case 'member':
+                        return resolution.memberKind === 'const' || resolution.memberKind === 'enum' || resolution.memberKind === 'enum_value' || resolution.memberKind === 'class';
+                    case 'local': {
+                        const local = this.lookupLocal(e.name);
+                        return local?.isConst ?? false;
+                    }
+                    default:
+                        return false;
+                }
+            }
+            case 'member': {
+                if (!this.isConstantExpression(e.object))
+                    return false;
+                const type = e.object.type ?? 'Variant';
+                if (type.startsWith('@type:') || type.startsWith('@enum:'))
+                    return true;
+                const resolution = e.memberResolution;
+                return resolution?.kind === 'member' ? resolution.memberKind === 'const' || resolution.memberKind === 'enum' || resolution.memberKind === 'enum_value' || resolution.memberKind === 'class' : false;
+            }
+            case 'call': {
+                const callee = e.callee;
+                if (callee.kind === 'identifier' && callee.resolved?.kind === 'builtin_type')
+                    return e.args.every((arg) => this.isConstantExpression(arg));
+                if (callee.kind === 'member' && this.isConstantExpression(callee.object) && (callee.object.type ?? '').startsWith('@type:'))
+                    return e.args.every((arg) => this.isConstantExpression(arg));
+                return false;
+            }
+            case 'index':
+                return this.isConstantExpression(e.object) && this.isConstantExpression(e.index);
+            case 'is':
+            case 'as':
+                return this.isConstantExpression(e.value);
+            default:
+                return false;
+        }
+    }
 }
