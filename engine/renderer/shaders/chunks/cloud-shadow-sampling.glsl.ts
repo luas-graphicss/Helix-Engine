@@ -1,6 +1,6 @@
 export const CLOUD_SHADOW_CHUNK = `
 uniform sampler2D u_cloudShadowMap;
-
+                                                                                                    
 uniform vec4 u_cloudShadowRegion;
 uniform float u_cloudShadowEnabled;
 
