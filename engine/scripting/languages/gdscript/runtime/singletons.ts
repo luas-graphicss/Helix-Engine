@@ -653,3 +653,249 @@ function heapUsed(): number {
     }).memory : undefined) ?? undefined;
     return memory?.usedJSHeapSize ?? 0;
 }
+function createOS(context: GameContext): Singleton {
+    let peak = 0;
+    const stored = { low_processor_usage_mode: false, low_processor_usage_mode_sleep_usec: 6900, delta_smoothing: true };
+    const locale = () => (typeof navigator !== 'undefined' && navigator.language ? navigator.language.replace('-', '_') : 'en_US');
+    function keycodeString(keycode: unknown): string {
+        const name = keyName(keycode);
+        const constant = Object.entries(KEY_CODES).find(([, code]) => code === name)?.[0];
+        if (constant)
+            return constant.slice(4).charAt(0) + constant.slice(5).toLowerCase();
+        return name.replace(/^Key/, '');
+    }
+    const os: Singleton = {
+        get_name: () => 'Web',
+        get_distribution_name: () => 'Web',
+        get_version: () => (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
+        get_model_name: () => 'GenericDevice',
+        get_locale: () => locale(),
+        get_locale_language: () => locale().split('_')[0],
+        get_processor_count: () => (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency || 1 : 1),
+        get_processor_name: () => '',
+        get_unique_id: () => '',
+        get_environment: (_name: unknown) => '',
+        has_environment: (_name: unknown) => false,
+        set_environment: (_name: unknown, _value: unknown) => undefined,
+        get_cmdline_args: () => [],
+        get_cmdline_user_args: () => [],
+        get_executable_path: () => (hasWindow() ? window.location.href : ''),
+        get_user_data_dir: () => 'user://',
+        get_data_dir: () => 'user://',
+        get_config_dir: () => 'user://',
+        get_cache_dir: () => 'user://',
+        get_temp_dir: () => 'user://',
+        get_system_dir: (_dir: unknown, _shared: unknown = true) => '',
+        is_debug_build: () => true,
+        has_feature: (tag: unknown) => typeof tag === 'string' && WEB_FEATURES.has(tag),
+        is_sandboxed: () => true,
+        is_userfs_persistent: () => true,
+        get_static_memory_usage: () => {
+            const used = heapUsed();
+            peak = Math.max(peak, used);
+            return used;
+        },
+        get_static_memory_peak_usage: () => {
+            peak = Math.max(peak, heapUsed());
+            return peak;
+        },
+        get_memory_info: () => {
+            const memory = (typeof performance !== 'undefined' ? (performance as unknown as {
+                memory?: {
+                    totalJSHeapSize?: number;
+                    jsHeapSizeLimit?: number;
+                    usedJSHeapSize?: number;
+                };
+            }).memory : undefined) ?? {};
+            const limit = memory.jsHeapSizeLimit ?? 0;
+            const used = memory.usedJSHeapSize ?? 0;
+            return new Dictionary({ physical: limit, free: Math.max(0, limit - used), available: Math.max(0, limit - used), stack: 0 });
+        },
+        delay_msec: (_msec: unknown) => context.warnOnce('delay', 'OS.delay_msec(): travar a thread congelaria a página; use await get_tree().create_timer(segundos).timeout.'),
+        delay_usec: (_usec: unknown) => context.warnOnce('delay', 'OS.delay_usec(): travar a thread congelaria a página; use await get_tree().create_timer(segundos).timeout.'),
+        shell_open: (uri: unknown) => {
+            const target = text(uri, 'OS.shell_open()');
+            if (!hasWindow() || !/^(https?:|mailto:)/i.test(target))
+                return ERR_UNAVAILABLE;
+            const opened = window.open(target, '_blank', 'noopener,noreferrer');
+            return opened ? OK : FAILED;
+        },
+        shell_show_in_file_manager: (_path: unknown, _open: unknown = true) => ERR_UNAVAILABLE,
+        alert: (message: unknown, title: unknown = 'Alert!') => context.log('warn', `${str(title)}: ${str(message)}`),
+        crash: (message: unknown) => fail(`OS.crash(): ${str(message)}`),
+        request_permission: (_name: unknown) => false,
+        request_permissions: () => false,
+        get_granted_permissions: () => [],
+        get_main_thread_id: () => 1,
+        get_thread_caller_id: () => 1,
+        get_process_id: () => 1,
+        get_keycode_string: (keycode: unknown) => keycodeString(keycode),
+        find_keycode_from_string: (value: unknown) => {
+            const name = text(value, 'OS.find_keycode_from_string()');
+            const constant = `KEY_${name.toUpperCase().replace(/\s+/g, '_')}`;
+            return KEY_CODES[constant] ?? (name.length === 1 ? `Key${name.toUpperCase()}` : name);
+        },
+        is_keycode_unicode: (keycode: unknown) => {
+            const name = keyName(keycode);
+            return name.length === 1 || /^(Key[A-Z]|Digit\d|Space)$/.test(name);
+        },
+        get_video_adapter_driver_info: () => [],
+        get low_processor_usage_mode() {
+            return stored.low_processor_usage_mode;
+        },
+        set low_processor_usage_mode(value: unknown) {
+            stored.low_processor_usage_mode = Boolean(value);
+        },
+        get low_processor_usage_mode_sleep_usec() {
+            return stored.low_processor_usage_mode_sleep_usec;
+        },
+        set low_processor_usage_mode_sleep_usec(value: unknown) {
+            stored.low_processor_usage_mode_sleep_usec = Math.max(0, int(value, 6900));
+        },
+        get delta_smoothing() {
+            return stored.delta_smoothing;
+        },
+        set delta_smoothing(value: unknown) {
+            stored.delta_smoothing = Boolean(value);
+        },
+    };
+    return withConstants('OS', os);
+}
+function createPerformance(context: GameContext): Singleton {
+    let modifiedAt = 0;
+    function renderStat(key: string): number {
+        const stats = (context.helix.render as AnyRecord | undefined)?.stats as AnyRecord | undefined;
+        const value = stats?.[key];
+        return typeof value === 'number' ? value : 0;
+    }
+    function physicsStat(key: string): number {
+        const stats = context.physics.stats as AnyRecord | undefined;
+        const value = stats?.[key];
+        return typeof value === 'number' ? value : 0;
+    }
+    function sceneCount(): number {
+        const all = context.scene.all;
+        if (Array.isArray(all))
+            return all.length;
+        if (typeof all === 'function') {
+            try {
+                const list = (all as Fn)();
+                return Array.isArray(list) ? list.length : 0;
+            }
+            catch {
+                return 0;
+            }
+        }
+        return 0;
+    }
+    const monitors: Record<number, () => number> = {
+        0: () => context.fps,
+        1: () => Number(context.time.delta ?? 0),
+        2: () => Number(context.time.fixedDelta ?? 0),
+        3: () => 0,
+        4: () => heapUsed(),
+        5: () => heapUsed(),
+        6: () => 0,
+        7: () => context.nodesByEntity.size + context.manualNodes.size,
+        8: () => 0,
+        9: () => sceneCount(),
+        10: () => context.manualNodes.size,
+        11: () => renderStat('objects') || renderStat('visibleObjects') || renderStat('drawn'),
+        12: () => renderStat('triangles') || renderStat('primitives'),
+        13: () => renderStat('drawCalls') || renderStat('calls'),
+        21: () => physicsStat('awake') || physicsStat('bodies'),
+        22: () => physicsStat('manifolds') || physicsStat('contactPoints'),
+        23: () => physicsStat('islands'),
+    };
+    function monitorName(id: unknown): string {
+        return text(id, 'Performance: o nome do monitor personalizado precisa ser uma String.');
+    }
+    const perf: Singleton = {
+        get_monitor: (monitor: unknown) => {
+            const id = int(monitor, -1);
+            const read = monitors[id];
+            if (!read)
+                fail(`Performance.get_monitor(): ${str(monitor)} não é um monitor conhecido.`);
+            return read();
+        },
+        add_custom_monitor: (id: unknown, callable: unknown, args: unknown = []) => {
+            const name = monitorName(id);
+            if (typeof callable !== 'function')
+                fail(`Performance.add_custom_monitor(): "${name}" precisa de um Callable.`);
+            const bound = Array.isArray(args) ? args : [];
+            if (context.customMonitors.has(name))
+                fail(`Performance.add_custom_monitor(): já existe um monitor chamado "${name}".`);
+            context.customMonitors.set(name, () => (callable as Fn)(...bound));
+            modifiedAt = int(context.time.frame);
+        },
+        remove_custom_monitor: (id: unknown) => {
+            const name = monitorName(id);
+            if (!context.customMonitors.delete(name))
+                fail(`Performance.remove_custom_monitor(): não existe um monitor chamado "${name}".`);
+            modifiedAt = int(context.time.frame);
+        },
+        has_custom_monitor: (id: unknown) => typeof id === 'string' && context.customMonitors.has(id),
+        get_custom_monitor: (id: unknown) => {
+            const name = monitorName(id);
+            const monitor = context.customMonitors.get(name);
+            if (!monitor)
+                fail(`Performance.get_custom_monitor(): não existe um monitor chamado "${name}".`);
+            return monitor();
+        },
+        get_custom_monitor_names: () => Array.from(context.customMonitors.keys()),
+        get_monitor_modification_time: () => modifiedAt,
+    };
+    return withConstants('Performance', perf);
+}
+export class JSONParser extends RefCounted {
+    data: unknown = null;
+    private errorMessage = '';
+    private errorLine = -1;
+    private parsedText = '';
+    constructor(helix: HelixRoot) {
+        super({ entity: null, helix, script: null });
+    }
+    parse(source: unknown, keepText: unknown = false): number {
+        const input = text(source, 'JSON.parse()');
+        this.parsedText = keepText ? input : '';
+        try {
+            this.data = JSON_CLASS.to_native(JSON.parse(input));
+            this.errorMessage = '';
+            this.errorLine = -1;
+            return OK;
+        }
+        catch (cause) {
+            this.data = null;
+            this.errorMessage = cause instanceof Error ? cause.message : String(cause);
+            const position = /position (\d+)/.exec(this.errorMessage);
+            this.errorLine = position ? input.slice(0, Number(position[1])).split('\n').length - 1 : 0;
+            return ERR_PARSE_ERROR;
+        }
+    }
+    get_data(): unknown {
+        return this.data;
+    }
+    set_data(value: unknown): void {
+        this.data = value;
+    }
+    get_error_message(): string {
+        return this.errorMessage;
+    }
+    get_error_line(): number {
+        return this.errorLine;
+    }
+    get_parsed_text(): string {
+        return this.parsedText;
+    }
+}
+markScriptClass(JSONParser, 'JSON');
+setGodotBase(JSONParser, 'JSON');
+function createJSON(context: GameContext): Singleton {
+    return {
+        stringify: JSON_CLASS.stringify,
+        parse_string: JSON_CLASS.parse_string,
+        from_native: (value: unknown, _fullObjects: unknown = false) => JSON_CLASS.from_native(value),
+        to_native: (value: unknown, _allowObjects: unknown = false) => JSON_CLASS.to_native(value),
+        new: () => new JSONParser(context.helix),
+    };
+}
