@@ -844,4 +844,227 @@ module Helix
 
     def entry
       @depth += 1
+      Helix.activate(self)
+      begin
+        yield
+      rescue ::Exception => e
+        [:error, failure(e)]
+      end
+    ensure
+      Helix.deactivate
+      @depth -= 1
+    end
+
+    def start_fiber(fiber)
+      previous = @active_fiber
+      @active_fiber = fiber
+      drive(fiber, fiber.resume)
+    ensure
+      @active_fiber = previous
+    end
+
+    def drive(fiber, result)
+      if ::Array === result && result[0] == :await
+        @fibers[result[1]] = fiber
+        [:await, result[1]]
+      else
+        result
+      end
+    end
+
+    def host_result(js_value)
+      envelope = ::JSON.parse(js_value.to_s)
+      decode(envelope["v"])
+    end
+
+    def key_argument(key)
+      ::Symbol === key ? key.to_s : key
+    end
+
+    def callback_id(callable)
+      @callback_ids[callable] ||= begin
+        id = @next_callback
+        @next_callback += 1
+        @callbacks[id] = callable
+        id
+      end
+    end
+
+    def call_callable(callable, args)
+      arity = callable.arity
+      if arity >= 0
+        args = args.first(arity)
+        args += [nil] * (arity - args.size) if args.size < arity
+      else
+        required = -arity - 1
+        args += [nil] * (required - args.size) if args.size < required
+      end
+      callable.call(*args)
+    end
+
+    def source_of(key)
+      envelope = ::JSON.parse(@host.call(:code, key).to_s)
+      raise EngineError.new(envelope["e"].to_s) if envelope.key?("e")
+      envelope["v"].to_s
+    end
+
+    def require_module(key, file)
+      return @modules[key][:value] if @modules.key?(key)
+      if @loading.any? { |entry| entry[:key] == key }
+        chain = (@loading.map { |entry| entry[:file] } + [file]).join(" -> ")
+        raise EngineError.new("require circular: #{chain}.")
+      end
+      @loading.push({ key: key, file: file })
+      begin
+        object = ScriptObject.new(self, key, file, @root, nil)
+        object.__hx_run(source_of(key))
+        value = module_value(object, file)
+        @modules[key] = { value: value, file: file, object: object }
+        value
+      ensure
+        @loading.pop
+      end
+    end
+
+                                                                                                                                              
+    def module_value(object, file)
+      constant = named_constant(object, file)
+      constant.nil? ? object : constant
+    end
+
+                                                                                              
+    def script_class(object, file)
+      constant = named_constant(object, file)
+      ::Class === constant ? constant : nil
+    end
+
+    def named_constant(object, file)
+      base = ::File.basename(file, ".*")
+      singleton = object.singleton_class
+      return nil unless base.match?(/\A[A-Z]\w*\z/) && singleton.const_defined?(base, false)
+      singleton.const_get(base, false)
+    end
+
+                                                                                             
+    def collect_hooks(target, method_names)
+      names = method_names.map(&:to_s)
+      hooks = {}
+      HOOKS.each do |hook|
+        name = [hook, Helix.camelize(hook)].find { |candidate| names.include?(candidate) }
+        hooks[hook] = callback_id(target.method(name.to_sym)) if name
+      end
+      hooks
+    end
+
+                                                                                                  
+    def failure(error)
+      frames = []
+      (error.backtrace || []).each do |entry|
+        next unless entry =~ /\A(.+?):(\d+):in [\x60'](.*)'\z/
+        file = ::Regexp.last_match(1)
+        next unless Helix.project_file?(file)
+        frames << [file, ::Regexp.last_match(2).to_i, Helix.clean_label(::Regexp.last_match(3))]
+      end
+      name = EngineError === error ? error.kind : error.class.name.to_s
+      { "message" => error.message.to_s, "name" => name, "frames" => frames }
+    end
+  end
+
+  def self.clean_label(label)
+    label = label.sub(/\Ablock (\(\d+ levels\) )?in /, "")
+    label = label.split("#").last.to_s if label.include?("#")
+    label = label.split(".").last.to_s if label.include?(".")
+    label.start_with?("<") ? "" : label
+  end
+
+                                                                                               
+
+  def self.create_game(id, host)
+    GAMES[id.to_s] = Game.new(id.to_s, host)
+    "ok"
+  end
+
+  def self.dispose_game(id)
+    game = GAMES.delete(id.to_s)
+    game&.dispose
+    "ok"
+  end
+
+                                                                                              
+  def self.dispatch(payload)
+    request = ::JSON.parse(payload.to_s)
+    game = GAMES[request["id"].to_s]
+    op = request["op"].to_s
+    return ::JSON.generate([:error, { "message" => "o jogo ##{request["id"]} não existe mais.", "name" => "HelixError", "frames" => [] }]) unless game
+    return ::JSON.generate([:error, { "message" => "operação desconhecida (#{op}).", "name" => "HelixError", "frames" => [] }]) unless OPERATIONS.include?(op)
+    ::JSON.generate(game.public_send(op, *request["args"]))
+  rescue ::Exception => e
+    ::JSON.generate([:error, { "message" => e.message.to_s, "name" => e.class.name.to_s, "frames" => [] }])
+  end
+
+                                                                                                                        
+  def self.where
+    location = script_location
+    return "" unless location
+    ::JSON.generate([location.path, location.lineno, clean_label(location.label.to_s)])
+  rescue ::Exception
+    ""
+  end
+
+                                                                                                                         
+  def self.compile_script(source, file)
+    source = source.to_s
+    file = file.to_s
+    diagnostics = []
+    begin
+      ::RubyVM::InstructionSequence.compile(source, file, file, 1)
+    rescue ::SyntaxError => e
+      diagnostics.concat(syntax_diagnostics(e.message))
+      diagnostics << { "severity" => "error", "message" => e.message.lines.first.to_s.strip, "line" => 1, "column" => 1, "code" => "syntax" } if diagnostics.empty?
+    rescue ::Exception => e
+      diagnostics << { "severity" => "error", "message" => e.message.to_s, "line" => 1, "column" => 1 }
+    end
+    ::JSON.generate({ "diagnostics" => diagnostics, "dependencies" => scan_requires(source) })
+  rescue ::Exception => e
+    ::JSON.generate({ "diagnostics" => [{ "severity" => "error", "message" => e.message.to_s, "line" => 1, "column" => 1 }], "dependencies" => [] })
+  end
+
+                                                                                                    
+  def self.syntax_diagnostics(message)
+    out = []
+    line = 1
+    message.each_line do |text|
+      text = text.chomp
+      if text =~ /\A>?\s*(\d+) \| /
+        line = ::Regexp.last_match(1).to_i
+      elsif text =~ /\A\s*\|( *)\^[\^~]* ?(.*)\z/
+        detail = ::Regexp.last_match(2).strip
+        next if detail.empty?
+        out << { "severity" => "error", "message" => detail, "line" => line, "column" => [::Regexp.last_match(1).length, 1].max, "code" => "syntax" }
+      end
+    end
+    out.uniq { |entry| [entry["line"], entry["message"]] }.first(6)
+  end
+
+  def self.scan_requires(source)
+    dependencies = []
+    source.each_line do |line|
+      next if line.lstrip.start_with?("#")
+      next unless line =~ /\A\s*(?:helix_)?require(_relative)?\s*\(?\s*["']([^"']+)["']/
+      name = ::Regexp.last_match(2)
+      name = ::File.basename(name, ".*") if ::Regexp.last_match(1)
+      next if stdlib?(name) || dependencies.include?(name)
+      dependencies << name
+    end
+    dependencies
+  end
+
+  def self.stdlib?(name)
+    return true if %w[js json set fiber].include?(name)
+    return true if $LOADED_FEATURES.any? { |feature| feature.end_with?("/#{name}.rb", "/#{name}.so") }
+    $LOAD_PATH.any? { |dir| ::File.exist?(::File.join(dir, "#{name}.rb")) || ::File.exist?(::File.join(dir, "#{name}.so")) }
+  rescue ::Exception
+    false
+  end
+end
 `;
