@@ -1401,5 +1401,177 @@ pub fn onStop() void {
         desligar.deinit();
     }
     n_assinaturas = 0;
+    info("Parou: {d} quadros, {d} passos de física, {d} lateUpdates, {d} frames (onAfterFrame), {d} colisões.", .{ quadros, passos_fisica, late_updates, renders, colisoes });
+    torus.deinit();
+    heroi.deinit();
+    efeito.deinit();
+    tela.deinit();
+    torus = Value.none;
+    heroi = Value.none;
+    efeito = Value.none;
+    tela = Value.none;
+}
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+const std = @import("std");
+const helix = @import("helix");
+const Value = helix.Value;
+
+                                                                                        
+var angulo: f64 = 0;
+var contatos: u32 = 0;
+var quadros: u32 = 0;
+var desligar: Value = Value.none;
+
+fn registrar(metodo: []const u8, comptime fmt: []const u8, args: anytype) void {
+    var caminho_buf: [32]u8 = undefined;
+    const caminho = std.fmt.bufPrint(&caminho_buf, "log.{s}", .{metodo}) catch "log.info";
+    var buffer: [256]u8 = undefined;
+    const mensagem = std.fmt.bufPrint(&buffer, fmt, args) catch "(mensagem longa demais)";
+    helix.call(caminho, .{ "Girador", mensagem }).deinit();
+}
+
+fn nomeDe(entidade: Value, buffer: []u8) []const u8 {
+    const nome = entidade.get("name");
+    defer nome.deinit();
+    return nome.stringBuf(buffer);
+}
+
+fn corMudou(args: []const Value) Value {
+    if (args.len == 0) return Value.none;
+    const ator = helix.actor();
+    defer ator.deinit();
+    helix.call("material.setColor", .{ ator, args[0] }).deinit();
+    return Value.none;
+}
+
+pub fn onLoad() void {
+    helix.call("props.define", .{.{
+        .velocidade = .{ .@"type" = "range", .default = 90, .min = 0, .max = 360, .step = 1, .label = "Velocidade (°/s)" },
+        .cor = .{ .@"type" = "color", .default = "#ff8800", .label = "Cor" },
+        .pulsar = .{ .@"type" = "boolean", .default = true, .label = "Pulsar" },
+    }}).deinit();
+}
+
+                                                                               
+fn api(caminho: []const u8) Value {
+    const raiz = helix.root();
+    defer raiz.deinit();
+    return raiz.path(caminho);
+}
+
+pub fn onStart() void {
+    const ator = helix.actor();
+    defer ator.deinit();
+    const props = api("props");
+    defer props.deinit();
+    var nome_buf: [64]u8 = undefined;
+    const velocidade = props.invoke("get", .{"velocidade"});
+    defer velocidade.deinit();
+    registrar("info", "{s} acordou com velocidade {d}°/s", .{ nomeDe(ator, &nome_buf), velocidade.number() });
+    const cor = props.invoke("get", .{"cor"});
+    defer cor.deinit();
+    helix.call("material.setColor", .{ ator, cor }).deinit();
+    desligar = props.invoke("onChanged", .{ "cor", &corMudou });
+    const proprio = api("self");
+    defer proprio.deinit();
+    helix.call("log.assert", .{ !proprio.isNone() and proprio.equals(ator), "helix.self deveria ser o ator deste script" }).deinit();
+    helix.call("log.assert", .{ props.invoke("has", .{"velocidade"}).boolean() and props.invoke("definitions", .{}).len() == 3, "props.define deveria registrar 3 propriedades" }).deinit();
+}
+
+pub fn onUpdate(dt: f64) void {
+    const ator = helix.actor();
+    defer ator.deinit();
+    const velocidade = helix.call("props.get", .{"velocidade"});
+    defer velocidade.deinit();
+    quadros += 1;
+    angulo += velocidade.number() * dt;
+    helix.call("transform.setRotation", .{ ator, helix.Vec3.init(0, angulo, 0) }).deinit();
+    const pulsar = helix.call("props.get", .{"pulsar"});
+    defer pulsar.deinit();
+    if (pulsar.boolean()) {
+        const agora = api("time.now");
+        defer agora.deinit();
+        helix.call("transform.setScale", .{ ator, 1 + @sin(agora.number() * 3) * 0.1 }).deinit();
+    }
+}
+
+pub fn onCollisionBegin(outro: Value, contato: Value) void {
+    defer outro.deinit();
+    defer contato.deinit();
+    contatos += 1;
+    if (contatos > 3) return;
+    const ator = helix.actor();
+    defer ator.deinit();
+    const impulso = contato.get("impulse");
+    defer impulso.deinit();
+    var eu_buf: [64]u8 = undefined;
+    var ele_buf: [64]u8 = undefined;
+    registrar("info", "{s} tocou {s} (impulso {d:.2})", .{ nomeDe(ator, &eu_buf), nomeDe(outro, &ele_buf), impulso.number() });
+}
+
+pub fn onTriggerEnter(outro: Value) void {
+    defer outro.deinit();
+    const ator = helix.actor();
+    defer ator.deinit();
+    var eu_buf: [64]u8 = undefined;
+    var ele_buf: [64]u8 = undefined;
+    registrar("info", "{s} entrou no gatilho de {s}", .{ nomeDe(outro, &ele_buf), nomeDe(ator, &eu_buf) });
+}
+
+pub fn onEnable() void {
+    const ator = helix.actor();
+    defer ator.deinit();
+    var eu_buf: [64]u8 = undefined;
+    registrar("debug", "{s} ativo", .{nomeDe(ator, &eu_buf)});
+}
+
+pub fn onDisable() void {
+    const ator = helix.actor();
+    defer ator.deinit();
+    var eu_buf: [64]u8 = undefined;
+    registrar("debug", "{s} inativo", .{nomeDe(ator, &eu_buf)});
+}
+
+pub fn onStop() void {
+    const ator = helix.actor();
+    defer ator.deinit();
+    var eu_buf: [64]u8 = undefined;
+    registrar("info", "{s}: {d} quadros, {d} contatos", .{ nomeDe(ator, &eu_buf), quadros, contatos });
+}
+
+pub fn onDestroy() void {
+    if (desligar.isFunction()) desligar.call(.{}).deinit();
+    desligar.deinit();
+    desligar = Value.none;
+}
+`;
+    const module = String.raw `                                     
+                                                                                                   
+                                                                                                        
+const std = @import("std");
+const helix = @import("helix");
+
+pub fn soma(a: f64, b: f64) f64 {
+    return a + b;
+}
+
+                                                                                                
+pub fn saudacao(quem: helix.Value) []const u8 {
+    defer quem.deinit();
+    var nome_buf: [64]u8 = undefined;
+    const nome = quem.stringBuf(&nome_buf);
+    const Texto = struct {
+        var buffer: [96]u8 = undefined;
+    };
+    return std.fmt.bufPrint(&Texto.buffer, "Olá, {s}", .{nome}) catch "Olá";
+}
+
+pub fn limitar(valor: f64, minimo: f64, maximo: f64) f64 {
+    return @min(maximo, @max(minimo, valor));
+}
+`;
+    return { entry, actor, module };
 }
