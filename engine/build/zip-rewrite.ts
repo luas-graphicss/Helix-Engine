@@ -213,3 +213,79 @@ export interface WrittenZip {
     readonly bytes: Uint8Array;
     readonly entryCount: number;
 }
+export function writeZip(entries: readonly ZipWriteEntry[]): WrittenZip {
+    if (entries.length >= 0xffff)
+        throw new Error('O pacote tem entradas demais para um zip simples.');
+    const names = entries.map((entry) => encoder.encode(entry.name));
+    const seen = new Set<string>();
+    for (const entry of entries) {
+        if (seen.has(entry.name))
+            throw new Error(`Entrada duplicada no pacote: ${entry.name}`);
+        seen.add(entry.name);
+    }
+    let localTotal = 0;
+    let centralTotal = 0;
+    entries.forEach((entry, index) => {
+        localTotal += 30 + names[index].length + entry.data.length;
+        centralTotal += 46 + names[index].length;
+    });
+    const total = localTotal + centralTotal + 22;
+    if (total >= 0xffffffff)
+        throw new Error('O pacote passa de 4 GB; o zip simples não comporta esse tamanho.');
+    const bytes = new Uint8Array(total);
+    const view = new DataView(bytes.buffer);
+    const offsets = new Array<number>(entries.length);
+    let cursor = 0;
+    entries.forEach((entry, index) => {
+        const name = names[index];
+        const flags = (entry.flags & ~FLAG_DATA_DESCRIPTOR) | (isAscii(entry.name) ? 0 : FLAG_UTF8);
+        offsets[index] = cursor;
+        view.setUint32(cursor, LOCAL_SIGNATURE, true);
+        view.setUint16(cursor + 4, VERSION_NEEDED, true);
+        view.setUint16(cursor + 6, flags, true);
+        view.setUint16(cursor + 8, entry.method, true);
+        view.setUint16(cursor + 10, entry.time, true);
+        view.setUint16(cursor + 12, entry.date, true);
+        view.setUint32(cursor + 14, entry.crc, true);
+        view.setUint32(cursor + 18, entry.data.length, true);
+        view.setUint32(cursor + 22, entry.uncompressedSize, true);
+        view.setUint16(cursor + 26, name.length, true);
+        view.setUint16(cursor + 28, 0, true);
+        bytes.set(name, cursor + 30);
+        bytes.set(entry.data, cursor + 30 + name.length);
+        cursor += 30 + name.length + entry.data.length;
+    });
+    const directoryOffset = cursor;
+    entries.forEach((entry, index) => {
+        const name = names[index];
+        const flags = (entry.flags & ~FLAG_DATA_DESCRIPTOR) | (isAscii(entry.name) ? 0 : FLAG_UTF8);
+        view.setUint32(cursor, CENTRAL_SIGNATURE, true);
+        view.setUint16(cursor + 4, entry.versionMadeBy, true);
+        view.setUint16(cursor + 6, VERSION_NEEDED, true);
+        view.setUint16(cursor + 8, flags, true);
+        view.setUint16(cursor + 10, entry.method, true);
+        view.setUint16(cursor + 12, entry.time, true);
+        view.setUint16(cursor + 14, entry.date, true);
+        view.setUint32(cursor + 16, entry.crc, true);
+        view.setUint32(cursor + 20, entry.data.length, true);
+        view.setUint32(cursor + 24, entry.uncompressedSize, true);
+        view.setUint16(cursor + 28, name.length, true);
+        view.setUint16(cursor + 30, 0, true);
+        view.setUint16(cursor + 32, 0, true);
+        view.setUint16(cursor + 34, 0, true);
+        view.setUint16(cursor + 36, entry.internalAttributes, true);
+        view.setUint32(cursor + 38, entry.externalAttributes >>> 0, true);
+        view.setUint32(cursor + 42, offsets[index], true);
+        bytes.set(name, cursor + 46);
+        cursor += 46 + name.length;
+    });
+    view.setUint32(cursor, EOCD_SIGNATURE, true);
+    view.setUint16(cursor + 4, 0, true);
+    view.setUint16(cursor + 6, 0, true);
+    view.setUint16(cursor + 8, entries.length, true);
+    view.setUint16(cursor + 10, entries.length, true);
+    view.setUint32(cursor + 12, cursor - directoryOffset, true);
+    view.setUint32(cursor + 16, directoryOffset, true);
+    view.setUint16(cursor + 20, 0, true);
+    return { bytes, entryCount: entries.length };
+}
