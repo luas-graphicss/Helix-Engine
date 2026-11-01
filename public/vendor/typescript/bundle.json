@@ -37,7 +37,8 @@
     "lib.es2018.d.ts": "",
     "lib.es2019.array.d.ts": "type FlatArray<Arr, Depth extends number> = {\n    done: Arr;\n    recur: Arr extends ReadonlyArray<infer InnerArr> ? FlatArray<InnerArr, [\n        -1,\n        0,\n        1,\n        2,\n        3,\n        4,\n        5,\n        6,\n        7,\n        8,\n        9,\n        10,\n        11,\n        12,\n        13,\n        14,\n        15,\n        16,\n        17,\n        18,\n        19,\n        20\n    ][Depth]> : Arr;\n}[Depth extends -1 ? \"done\" : \"recur\"];\ninterface ReadonlyArray<T> {\n    flatMap<U, This = undefined>(callback: (this: This, value: T, index: number, array: T[]) => U | ReadonlyArray<U>, thisArg?: This): U[];\n    flat<A, D extends number = 1>(this: A, depth?: D): FlatArray<A, D>[];\n}\ninterface Array<T> {\n    flatMap<U, This = undefined>(callback: (this: This, value: T, index: number, array: T[]) => U | ReadonlyArray<U>, thisArg?: This): U[];\n    flat<A, D extends number = 1>(this: A, depth?: D): FlatArray<A, D>[];\n}\n",
     "lib.es2019.object.d.ts": "interface ObjectConstructor {\n    fromEntries<T = any>(entries: Iterable<readonly [\n        PropertyKey,\n        T\n    ]>): {\n        [k: string]: T;\n    };\n    fromEntries(entries: Iterable<readonly any[]>): any;\n}\n",
-    "lib.es2019.string.d.ts": "interface String {\n    trimEnd(): string;\n    trimStart(): string;\n    trimLeft(): string;\n    trimRight(): string;\n}\n"
+    "lib.es2019.string.d.ts": "interface String {\n    trimEnd(): string;\n    trimStart(): string;\n    trimLeft(): string;\n    trimRight(): string;\n}\n",
+    "lib.es2019.symbol.d.ts": "interface Symbol {\n    readonly description: string | undefined;\n}\n"
   },
   "messages": {}
 }
