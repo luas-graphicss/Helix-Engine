@@ -766,3 +766,43 @@ export const TYPE_CONSTANTS: Record<string, number> = {
     TYPE_PACKED_VECTOR4_ARRAY: 38,
     TYPE_MAX: 39,
 };
+const TYPE_NAME_TO_CONSTANT: Record<string, number> = {
+    Nil: 0,
+    bool: 1,
+    int: 2,
+    float: 3,
+    String: 4,
+    Vector2: 5,
+    Vector2i: 6,
+    Rect2: 7,
+    Vector3: 9,
+    Vector3i: 10,
+    Vector4: 12,
+    Quaternion: 15,
+    AABB: 16,
+    Basis: 17,
+    Transform3D: 18,
+    Color: 20,
+    Object: 24,
+    Callable: 25,
+    Signal: 26,
+    Dictionary: 27,
+    Array: 28,
+    PackedByteArray: 29,
+    PackedInt32Array: 30,
+    PackedFloat32Array: 32,
+    Coroutine: 24,
+};
+export function typeOf(value: unknown): number {
+    const name = describeTypeOf(value);
+    if (name.startsWith('classe '))
+        return 24;
+    return TYPE_NAME_TO_CONSTANT[name] ?? 24;
+}
+export function typeString(code: unknown): string {
+    for (const [name, constant] of Object.entries(TYPE_NAME_TO_CONSTANT))
+        if (constant === code && name !== 'Coroutine')
+            return name;
+    return fail(`type_string(): ${str(code)} não é um código de tipo (TYPE_*).`);
+}
+export { GDScriptError };
