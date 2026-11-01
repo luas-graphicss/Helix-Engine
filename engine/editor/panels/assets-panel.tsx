@@ -1,5 +1,5 @@
 'use client';
-import { useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useDeferredValue, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { Box, ChevronRight, FolderPlus, LoaderCircle, Plus, TriangleAlert } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ASSET_KINDS, LIBRARY_FORMAT_SUMMARY } from '@/engine/assets/library/asset-kinds';
@@ -12,7 +12,7 @@ import { activateLibraryAsset, addFilesToLibrary, pickFilesForLibrary, removeLib
 import { addMeshInstance, addPrimitive } from '@/engine/editor/operations/entity-operations';
 import { applyLibraryMaterialToEntity, describeApplyTarget, materialTargetKind } from '@/engine/editor/operations/material-library-operations';
 import { PRIMITIVES } from '@/engine/editor/primitives/primitive-catalog';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { useFileDrop } from '@/engine/editor/viewport/use-file-drop';
 import type { MaterialDocument } from '@/engine/materials/material-document';
 import { getTriangleCount } from '@/engine/renderer/geometry/mesh-data';
@@ -24,6 +24,8 @@ import { findCategory, isLibraryCategory, LIBRARY_CATEGORIES, SCENE_CATEGORIES, 
 import { AssetDetailsPane } from './assets/asset-details-pane';
 import { AssetTile } from './assets/asset-tile';
 import { LibraryAssetTile } from './assets/library-asset-tile';
+import { GHOST_ACTION_CLASS } from '@/engine/ui/surface-styles';
+import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
 type SortMode = 'recent' | 'name' | 'size' | 'kind';
 const SORT_OPTIONS: ReadonlyArray<{
     value: SortMode;
@@ -34,7 +36,7 @@ const SORT_OPTIONS: ReadonlyArray<{
     { value: 'size', label: 'Tamanho' },
     { value: 'kind', label: 'Tipo' },
 ];
-const KIND_ORDER: Record<LibraryAsset['kind'], number> = { model: 0, animation: 1, texture: 2, audio: 3 };
+const KIND_ORDER: Record<LibraryAsset['kind'], number> = { model: 0, prefab: 1, animation: 2, texture: 3, audio: 4, video: 5, gui: 6, vfx: 7, script: 8, font: 9 };
 function sortAssets(assets: LibraryAsset[], mode: SortMode): LibraryAsset[] {
     const byName = (a: LibraryAsset, b: LibraryAsset) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' });
     switch (mode) {
@@ -58,16 +60,19 @@ function CategoryButton({ category, count, active, onSelect }: {
     onSelect: () => void;
 }) {
     const Icon = category.icon;
-    return (<button type="button" onClick={onSelect} aria-pressed={active} className={cn('flex h-6 w-full items-center gap-1.5 pr-2 pl-2 text-left text-2xs transition-colors', active ? 'bg-primary/15 text-foreground' : 'text-foreground/90 hover:bg-highlight')}>
-      <Icon className={cn('size-3.5', active ? 'text-primary' : 'text-muted-foreground')} aria-hidden/>
-      <span className="truncate">{category.label}</span>
-      <span className="ml-auto font-mono text-[10px] text-muted-foreground">{count}</span>
+    return (<button type="button" onClick={onSelect} aria-pressed={active} title={`${category.label} (${count})`} className={cn('flex h-6 w-full items-center justify-center gap-1.5 px-2 text-left text-2xs transition-colors @3xl/panel:justify-start', active ? 'bg-primary/15 text-foreground' : 'text-foreground/90 hover:bg-highlight')}>
+      <Icon className={cn('size-3.5 shrink-0', active ? 'text-primary' : 'text-muted-foreground')} aria-hidden/>
+      <span className="hidden min-w-0 truncate @3xl/panel:inline">{category.label}</span>
+      <span className="ml-auto hidden shrink-0 font-mono text-3xs text-muted-foreground @3xl/panel:inline">{count}</span>
     </button>);
 }
 function SidebarHeading({ children }: {
     children: ReactNode;
 }) {
-    return <div className="px-2 pt-2 pb-1 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">{children}</div>;
+    return (<>
+      <div className="mx-2 mt-2 mb-1 border-t border-border @3xl/panel:hidden" aria-hidden/>
+      <div className="hidden truncate px-2 pt-2 pb-1 text-3xs font-medium tracking-wider text-muted-foreground uppercase @3xl/panel:block">{children}</div>
+    </>);
 }
 function EmptyState({ icon: Icon, title, hint }: {
     icon: typeof Box;
@@ -77,11 +82,12 @@ function EmptyState({ icon: Icon, title, hint }: {
     return (<div className="flex flex-1 flex-col items-center justify-center gap-1.5 p-6 text-center">
       <Icon className="size-6 text-muted-foreground/60" strokeWidth={1.5} aria-hidden/>
       <p className="text-2xs text-foreground/80">{title}</p>
-      {hint && <p className="max-w-xs text-[10px] leading-4 text-muted-foreground">{hint}</p>}
+      {hint && <p className="max-w-xs text-3xs leading-4 text-muted-foreground">{hint}</p>}
     </div>);
 }
 export function AssetsPanel() {
-    const session = useEditorState();
+    const session = useSessionTopic('assets', 'resources', 'selection', 'scene');
+    const hint = useShortcutHint();
     const { library, materials, resources } = session;
     const [category, setCategory] = useState<AssetCategoryId>('all');
     const [query, setQuery] = useState('');
@@ -89,7 +95,8 @@ export function AssetsPanel() {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
     const drop = useFileDrop((files) => void addFilesToLibrary(session, files));
-    const normalizedQuery = query.trim().toLowerCase();
+    const deferredQuery = useDeferredValue(query);
+    const normalizedQuery = deferredQuery.trim().toLowerCase();
     const matches = (name: string) => normalizedQuery === '' || name.toLowerCase().includes(normalizedQuery);
     const activeCategory = findCategory(category);
     const inLibrary = isLibraryCategory(category);
@@ -97,9 +104,15 @@ export function AssetsPanel() {
     const counts: Record<AssetCategoryId, number> = {
         all: library.size,
         model: library.byKind('model').length,
+        prefab: library.byKind('prefab').length,
         animation: library.byKind('animation').length,
         texture: library.byKind('texture').length,
         audio: library.byKind('audio').length,
+        gui: library.byKind('gui').length,
+        vfx: library.byKind('vfx').length,
+        script: library.byKind('script').length,
+        font: library.byKind('font').length,
+        video: library.byKind('video').length,
         material: materials.size,
         primitives: PRIMITIVES.length,
         'scene-mesh': resources.byKind('mesh').length,
@@ -172,9 +185,15 @@ export function AssetsPanel() {
         switch (category) {
             case 'all':
             case 'model':
+            case 'prefab':
             case 'animation':
             case 'texture':
             case 'audio':
+            case 'gui':
+            case 'vfx':
+            case 'font':
+            case 'video':
+            case 'script':
                 return visibleAssets.map((asset) => (<LibraryAssetTile key={asset.id} asset={asset} selected={asset.id === selectedId} rename={renamingId === asset.id
                         ? {
                             onCommit: (name) => {
@@ -225,16 +244,20 @@ export function AssetsPanel() {
         if (normalizedQuery)
             return <EmptyState icon={Box} title="Nenhum ativo corresponde ao filtro."/>;
         if (inLibrary && category !== 'material') {
-            return <EmptyState icon={FolderPlus} title="Sua biblioteca está vazia nesta categoria." hint={`Arraste ${LIBRARY_FORMAT_SUMMARY} para cá ou use Adicionar… (Ctrl+B). Os ativos ficam guardados neste navegador e podem ser reutilizados em qualquer cena.`}/>;
+            return <EmptyState icon={FolderPlus} title="Sua biblioteca está vazia nesta categoria." hint={`Arraste ${LIBRARY_FORMAT_SUMMARY} para cá ou use ${hint('Adicionar…', 'file.addToLibrary')}. Os ativos ficam guardados neste navegador e podem ser reutilizados em qualquer cena.`}/>;
         }
         if (category === 'material')
-            return <EmptyState icon={activeCategory.icon} title="Nenhum material na biblioteca." hint="Crie um no editor de materiais (M) ou salve o material de um ator pelo menu de contexto."/>;
-        return <EmptyState icon={activeCategory.icon} title="Nada nesta categoria ainda." hint="Importe um modelo (Ctrl+I) ou coloque um ativo da biblioteca na cena."/>;
+            return <EmptyState icon={activeCategory.icon} title="Nenhum material na biblioteca." hint={`Crie um no ${hint('editor de materiais', 'view.materialEditor')} ou salve o material de um ator pelo menu de contexto.`}/>;
+        return <EmptyState icon={activeCategory.icon} title="Nada nesta categoria ainda." hint={`${hint('Importe um modelo', 'file.import')} ou coloque um ativo da biblioteca na cena.`}/>;
     })();
-    return (<div className="flex h-full">
-      <aside className="flex w-44 shrink-0 flex-col border-r border-border">
-        <div className="flex h-8 shrink-0 items-center border-b border-border px-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Ativos</div>
-        <div className="flex-1 overflow-auto pb-1">
+    return (<div className="flex h-full min-w-0">
+      
+      <aside className="flex w-9 shrink-0 flex-col border-r border-border @3xl/panel:w-44">
+        <div className="flex h-panelbar shrink-0 items-center justify-center border-b border-border px-2 text-3xs font-medium tracking-wider text-muted-foreground uppercase @3xl/panel:justify-start">
+          <span className="hidden @3xl/panel:inline">Ativos</span>
+          <Box className="size-3.5 @3xl/panel:hidden" aria-hidden/>
+        </div>
+        <div className="flex-1 overflow-x-hidden overflow-y-auto pb-1">
           <SidebarHeading>Biblioteca</SidebarHeading>
           {LIBRARY_CATEGORIES.map((item) => (<CategoryButton key={item.id} category={item} count={counts[item.id]} active={item.id === category} onSelect={() => selectCategory(item.id)}/>))}
           <SidebarHeading>Cena</SidebarHeading>
@@ -243,36 +266,37 @@ export function AssetsPanel() {
       </aside>
 
       <div className="relative flex min-w-0 flex-1 flex-col" {...drop.handlers}>
-        <div className="flex h-8 shrink-0 items-center gap-1 border-b border-border px-2">
-          <nav aria-label="Caminho" className="flex items-center gap-0.5 font-mono text-2xs text-muted-foreground">
+        <div className="flex min-h-panelbar shrink-0 flex-wrap items-center gap-x-1 gap-y-0.5 border-b border-border px-2 py-0.5">
+          <nav aria-label="Caminho" className="flex shrink-0 items-center gap-0.5 font-mono text-2xs whitespace-nowrap text-muted-foreground">
             <span>{inLibrary ? 'Biblioteca' : 'Cena'}</span>
-            <ChevronRight className="size-3" aria-hidden/>
+            <ChevronRight className="size-3 shrink-0" aria-hidden/>
             <span className="text-foreground">{activeCategory.label}</span>
           </nav>
           <ToolbarSeparator />
-          <SearchField placeholder="Buscar por nome, etiqueta ou formato" value={query} onChange={setQuery} className="max-w-64"/>
+          <SearchField placeholder="Buscar por nome, etiqueta ou formato" value={query} onChange={setQuery} className="max-w-64 basis-32"/>
           {inLibrary && category !== 'material' && (<>
               <div className="w-28 shrink-0">
                 <SelectField label="Ordenar por" options={SORT_OPTIONS} value={sort} onChange={setSort}/>
               </div>
-              <button type="button" onClick={() => pickFilesForLibrary(session)} title="Adicionar arquivos à biblioteca (Ctrl+B)" className="flex h-6 shrink-0 items-center gap-1 rounded-sm border border-dashed border-border-strong px-2 text-2xs text-foreground transition-colors hover:border-primary/60 hover:bg-highlight focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-primary">
+              <button type="button" onClick={() => pickFilesForLibrary(session)} title={hint('Adicionar arquivos à biblioteca', 'file.addToLibrary')} className={cn('flex h-6 shrink-0 items-center gap-1 px-2 text-2xs text-foreground', GHOST_ACTION_CLASS)}>
                 <Plus className="size-3.5 text-primary" aria-hidden/>
                 Adicionar…
               </button>
             </>)}
-          <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">
+          <span className="ml-auto shrink-0 font-mono text-3xs text-muted-foreground">
             {tiles.length} {tiles.length === 1 ? 'item' : 'itens'}
           </span>
         </div>
 
-        <div className="flex min-h-0 flex-1">
-          <div role="listbox" aria-label={`${activeCategory.label} em ${inLibrary ? 'Biblioteca' : 'Cena'}`} onKeyDown={onGridKeyDown} className="flex min-w-0 flex-1 flex-wrap content-start gap-1 overflow-auto p-2">
+        
+        <div className="flex min-h-0 flex-1 flex-col @2xl/panel:flex-row">
+          <div role="listbox" aria-label={`${activeCategory.label} em ${inLibrary ? 'Biblioteca' : 'Cena'}`} onKeyDown={onGridKeyDown} className="flex min-h-0 min-w-0 flex-1 flex-wrap content-start gap-1 overflow-auto p-2">
             {emptyState ?? tiles}
           </div>
           {selectedAsset && inLibrary && (<AssetDetailsPane asset={selectedAsset} onClose={() => setSelectedId(null)} onRename={() => setRenamingId(selectedAsset.id)}/>)}
         </div>
 
-        <footer className="flex h-6 shrink-0 items-center gap-1.5 border-t border-border px-2 font-mono text-[10px] text-muted-foreground">
+        <footer className="flex h-statusbar shrink-0 items-center gap-1.5 border-t border-border px-2 font-mono text-3xs text-muted-foreground">
           {library.busy ? (<>
               <LoaderCircle className="size-3 shrink-0 animate-spin text-primary" aria-hidden/>
               <span className="truncate text-foreground">{library.busy}</span>
@@ -287,8 +311,8 @@ export function AssetsPanel() {
           <span className="ml-auto shrink-0">{library.status === 'unavailable' ? 'Sem persistência' : 'Guardado neste navegador'}</span>
         </footer>
 
-        {drop.active && (<div className="pointer-events-none absolute inset-1 flex items-center justify-center rounded-sm border border-dashed border-primary bg-background/60">
-            <span className="rounded-sm border border-border bg-surface-raised px-3 py-1.5 font-mono text-2xs text-foreground">Solte para guardar na biblioteca</span>
+        {drop.active && (<div className="pointer-events-none absolute inset-1 flex items-center justify-center rounded-sm border border-primary bg-background/60 shadow-[inset_0_0_0_1px_var(--primary)]">
+            <span className="rounded-sm bg-surface-overlay px-3 py-1.5 font-mono text-2xs text-foreground shadow-overlay">Solte para guardar na biblioteca</span>
           </div>)}
       </div>
     </div>);
