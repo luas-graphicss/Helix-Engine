@@ -841,5 +841,285 @@ fn interfaceGrafica() Value {
         },
     } });
     defer painel.deinit();
+    const painel_id = painel.path("node.id");
+    defer painel_id.deinit();
+    descartar(g.invoke("add", .{ declarativa, "text", .{ .name = "Rotulo", .text = "Tela declarativa OK" }, painel_id }));
+    checar("gui.add/find", textoIgual(g.invoke("find", .{ declarativa, "Rotulo" }).get("kind"), "text"));
+    descartar(g.invoke("setText", .{ declarativa, "Rotulo", "Tela declarativa OK · " ++ LINGUAGEM }));
+                                                                                       
+    const mostrar = g.invoke("show", .{ declarativa, "debug-tela" });
+    defer mostrar.deinit();
+    return mostrar.invoke("then", .{&telaMostrada});
+}
+
+fn audio() Value {
+    const a = api("audio");
+    defer a.deinit();
+    checar("audio.supported", a.get("supported").isBool());
+    const mixer = a.get("mixer");
+    defer mixer.deinit();
+    descartar(mixer.invoke("setVolumeDb", .{ "sfx", -3 }));
+    checar("mixer.setVolumeDb", numero(mixer.invoke("bus", .{"sfx"}), "volumeDb") == -3);
+    checar("audio.clips", a.invoke("clips", .{}).isArray());
+    const fonte = helix.call("scene.spawn", .{ "sound", .{ .name = "FonteSonora", .position = V.init(3, 1, 3), .audioSource = .{ .trigger = "manual", .spatial = true } } });
+    defer fonte.deinit();
+    checar("spawn sound", !fonte.get("audioSource").isNone());
+    const fontes = a.get("sources");
+    defer fontes.deinit();
+    descartar(fontes.invoke("set", .{ fonte, .{ .volumeDb = -4 } }));
+    checar("sources.set", numero(fonte.get("audioSource"), "volumeDb") == -4);
+    checar("sources.isPlaying", falso(fontes.invoke("isPlaying", .{fonte})));
+    return Value.none;
+}
+
+fn vfxSalvo(args: []const Value) Value {
+    const v = api("vfx");
+    defer v.deinit();
+    const ativo = arg(args, 0);
+    checar("vfx.save", !ativo.isNone() and textoIgual(ativo.get("kind"), "vfx"));
+    const ator = v.invoke("emitAt", .{ ativo, V.init(0, 1.5, -8), .{ .destroyWhenFinished = false } });
+    defer ator.deinit();
+    checar("vfx.emitAt", verdadeiro(v.invoke("has", .{ator})));
+    descartar(v.invoke("burst", .{ ator, 20 }));
+    checar("vfx.stats", v.invoke("stats", .{}).get("effects").isNumber());
+    return Value.none;
+}
+
+fn vfx() Value {
+    const v = api("vfx");
+    defer v.deinit();
+    const ids = helix.call("vfx.templates.ids", .{});
+    defer ids.deinit();
+    checar("vfx.templates", ids.len() > 0);
+    checar("vfx.moduleKinds", v.invoke("moduleKinds", .{}).len() > 0);
+    const primeiro = ids.at(0);
+    defer primeiro.deinit();
+    const base = v.invoke("fromTemplate", .{ primeiro, "DebugFaiscas" });
+    defer base.deinit();
+    const com_emissor = v.invoke("addEmitter", .{ base, .{ .name = "Extra", .maxParticles = 50 } });
+    defer com_emissor.deinit();
+    const doc = v.invoke("set", .{ com_emissor, .{ .loop = true } });
+    defer doc.deinit();
+    checar("vfx.fromTemplate/addEmitter", doc.get("emitters").len() >= 2 and verdadeiro(doc.get("loop")));
+    const salvar = v.invoke("save", .{ doc, "DebugFaiscas" });
+    defer salvar.deinit();
+    return salvar.invoke("then", .{&vfxSalvo});
+}
+
+                                                                                         
+
+const Tecla = enum { KeyR, KeyB, KeyE, KeyF, KeyG, KeyT, KeyH, KeyL };
+
+fn aoTeclar(e: Value) void {
+    const repetida = e.get("repeat");
+    defer repetida.deinit();
+    if (repetida.boolean()) return;
+    const code = e.get("code");
+    defer code.deinit();
+    var code_buf: [32]u8 = undefined;
+    const tecla = std.meta.stringToEnum(Tecla, code.stringBuf(&code_buf)) orelse return;
+    switch (tecla) {
+        .KeyR => exec("play.restart", .{}),
+        .KeyB => soltarCaixa(),
+        .KeyE => {
+            const quadro = api("time.frame");
+            defer quadro.deinit();
+            exec("events.emit", .{ "debug.ping", .{ .origem = "teclado", .quadro = quadro } });
+        },
+        .KeyF => exec("camera.shake", .{ 0.4, 0.6 }),
+        .KeyG => {
+            if (efeito.isUndefined()) return;
+            const ligado = !efeito.get("enabled").boolean();
+            efeito.set("enabled", ligado);
+            info("Efeito DebugPost {s}", .{if (ligado) "ligado" else "desligado"});
+        },
+        .KeyT => {
+            const tm = api("time");
+            defer tm.deinit();
+            tm.set("scale", if (numero(tm, "scale") == 1) @as(f64, 0.3) else @as(f64, 1));
+            info("time.scale = {d}", .{numero(tm, "scale")});
+        },
+        .KeyH => {
+            if (tela.isUndefined()) return;
+            const g = api("gui");
+            defer g.deinit();
+            if (g.invoke("isShown", .{tela}).boolean()) descartar(g.invoke("hide", .{tela})) else descartar(g.invoke("show", .{ tela, "debug-tela" }));
+        },
+        .KeyL => {
+            const luzes_locais = helix.call("light.all", .{.{ .local = true }});
+            defer luzes_locais.deinit();
+            var lista: [512]u8 = undefined;
+            var usado: usize = 0;
+            var it = luzes_locais.iterator();
+            while (it.next()) |luz| {
+                defer luz.deinit();
+                const entidade = luz.get("entity");
+                defer entidade.deinit();
+                var nome_buf: [64]u8 = undefined;
+                const nome = nomeDe(entidade, &nome_buf);
+                if (usado + nome.len + 2 >= lista.len) break;
+                if (usado > 0) {
+                    @memcpy(lista[usado .. usado + 2], ", ");
+                    usado += 2;
+                }
+                @memcpy(lista[usado .. usado + nome.len], nome);
+                usado += nome.len;
+            }
+            info("Luzes locais: {s}", .{lista[0..usado]});
+        },
+    }
+}
+
+fn aoTeclarCb(args: []const Value) Value {
+    aoTeclar(arg(args, 0));
+    return Value.none;
+}
+
+fn cliqueNaCena(x: f64, y: f64) void {
+    const alvo = helix.call("camera.pick", .{ x, y });
+    defer alvo.deinit();
+    const ponto = helix.call("camera.pickPoint", .{ x, y });
+    defer ponto.deinit();
+    if (!alvo.isNone()) {
+        var nome_buf: [64]u8 = undefined;
+        info("Clique em {s}", .{nomeDe(alvo, &nome_buf)});
+    }
+    if (!ponto.isNone()) exec("debug.sphere", .{ ponto, 0.3, "#ff006e", 2 });
+}
+
+fn aoApontar(args: []const Value) Value {
+    const e = arg(args, 0);
+    if (numero(e, "button") == 0) cliqueNaCena(numero(e, "x"), numero(e, "y"));
+    return Value.none;
+}
+
+fn aoGamepad(args: []const Value) Value {
+    const e = arg(args, 0);
+    info("Gamepad {d} botão {d}", .{ numero(e, "pad"), numero(e, "button") });
+    return Value.none;
+}
+
+fn entrada() Value {
+    const in = api("input");
+    defer in.deinit();
+    const acoes = in.get("actions");
+    defer acoes.deinit();
+    descartar(acoes.invoke("define", .{ "pular", .{ "Space", "Gamepad:0" } }));
+    descartar(acoes.invoke("define", .{ "soltar", .{"KeyB"} }));
+    checar("actions.define/bindings", acoes.invoke("bindings", .{"pular"}).len() >= 1);
+    checar("action()", textoIgual(in.invoke("action", .{"pular"}).get("name"), "pular") and acoes.invoke("down", .{"pular"}).isBool());
+    checar("isDown", falso(in.invoke("isDown", .{"KeyW"})));
+    checar("pointer", in.path("pointer.x").isNumber());
+    checar("gamepads", in.invoke("gamepads", .{}).isArray());
+    checar("axis2d", in.invoke("axis2d", .{.{ .up = "KeyW", .down = "KeyS", .left = "KeyA", .right = "KeyD" }}).get("x").isNumber());
+    const teclas = in.invoke("keysDown", .{});
+    defer teclas.deinit();
+    checar("keysDown", teclas.isObject() or teclas.isArray());
+    assinar(in.invoke("onKeyDown", .{&aoTeclarCb}));
+    assinar(in.invoke("onPointerDown", .{&aoApontar}));
+    assinar(in.invoke("onGamepadButtonDown", .{&aoGamepad}));
+    return Value.none;
+}
+
+                                                                          
+var recebido: Value = Value.none;
+var uma_vez: u32 = 0;
+var do_ator: u32 = 0;
+
+fn guardarPing(args: []const Value) Value {
+    recebido.deinit();
+    recebido = arg(args, 0).clone();
+    return Value.none;
+}
+
+fn contarUmaVez(args: []const Value) Value {
+    _ = args;
+    uma_vez += 1;
+    return Value.none;
+}
+
+fn contarToque(args: []const Value) Value {
+    _ = args;
+    do_ator += 1;
+    return Value.none;
+}
+
+fn logarPing(args: []const Value) Value {
+    const origem = arg(args, 0).get("origem");
+    defer origem.deinit();
+    info("ping de {f}", .{origem});
+    return Value.none;
+}
+
+fn logarCaixa(args: []const Value) Value {
+    const nome = arg(args, 0).get("nome");
+    defer nome.deinit();
+    depurar("caixa {f}", .{nome});
+    return Value.none;
+}
+
+fn logarParou(args: []const Value) Value {
+    _ = args;
+    info("play.onStopped disparou", .{});
+    return Value.none;
+}
+
+fn logarPausado(args: []const Value) Value {
+    _ = args;
+    info("pausado", .{});
+    return Value.none;
+}
+
+fn logarRetomado(args: []const Value) Value {
+    _ = args;
+    info("retomado", .{});
+    return Value.none;
+}
+
+fn eventos() Value {
+    const ev = api("events");
+    defer ev.deinit();
+    const play = api("play");
+    defer play.deinit();
+    const desligar = ev.invoke("on", .{ "debug.ping", &guardarPing });
+    defer desligar.deinit();
+    checar("events.emit conta ouvintes", ev.invoke("emit", .{ "debug.ping", .{ .origem = "teste" } }).number() == 1);
+    checar("events.on recebe", !recebido.isUndefined() and textoIgual(recebido.get("origem"), "teste"));
+    recebido.deinit();
+    recebido = Value.none;
+    checar("listenerCount", ev.invoke("listenerCount", .{"debug.ping"}).number() == 1);
+    descartar(desligar.call(.{}));
+    checar("unsubscribe", ev.invoke("listenerCount", .{"debug.ping"}).number() == 0);
+    uma_vez = 0;
+    descartar(ev.invoke("once", .{ "debug.once", &contarUmaVez }));
+    descartar(ev.invoke("emit", .{"debug.once"}));
+    descartar(ev.invoke("emit", .{"debug.once"}));
+    checar("events.once", uma_vez == 1);
+    assinar(ev.invoke("on", .{ "debug.ping", &logarPing }));
+    assinar(ev.invoke("on", .{ "debug.caixa", &logarCaixa }));
+    do_ator = 0;
+    assinar(ev.invoke("onEntity", .{ torus, "toque", &contarToque }));
+    descartar(ev.invoke("emitEntity", .{ torus, "toque" }));
+    checar("onEntity/emitEntity", do_ator == 1);
+    assinar(play.invoke("onStopped", .{&logarParou}));
+    assinar(play.invoke("onPaused", .{&logarPausado}));
+    assinar(play.invoke("onResumed", .{&logarRetomado}));
+    return Value.none;
+}
+
+                                                                                 
+var tempo_inicio: f64 = 0;
+var tempo_quadro: f64 = 0;
+var atraso_disparou = false;
+
+fn aCada2s(args: []const Value) Value {
+    _ = args;
+    exec("gui.bind", .{ "atores", helix.call("scene.count", .{}) });
+    return Value.none;
+}
+
+fn marcarAtraso(args: []const Value) Value {
+    _ = args;
+    atraso_disparou = true;
 `;
 }
