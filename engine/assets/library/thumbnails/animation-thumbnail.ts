@@ -1,6 +1,6 @@
 import type { AnimationDocument, AnimationTrack } from '@/engine/core/animation/animation-document';
 import { sampleTrack, trackComponents } from '@/engine/core/animation/track-sampling';
-import { encodeCanvasToBlob, THUMBNAIL_SIZE } from './image-thumbnail';
+import { createThumbnailCanvas, encodeCanvasToBlob, THUMBNAIL_SIZE } from './image-thumbnail';
 const BACKGROUND = '#17191d';
 const GRID = 'rgba(255, 255, 255, 0.06)';
 const BASELINE = 'rgba(255, 255, 255, 0.14)';
@@ -44,15 +44,11 @@ function drawTrack(context: CanvasRenderingContext2D, track: AnimationTrack, dur
     }
 }
 export async function renderAnimationThumbnail(document: AnimationDocument, size = THUMBNAIL_SIZE): Promise<Blob | null> {
-    if (typeof window === 'undefined')
+    const target = createThumbnailCanvas(size);
+    if (!target)
         return null;
+    const { canvas, context } = target;
     const tracks = pickTracks(document);
-    const canvas = window.document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    const context = canvas.getContext('2d');
-    if (!context)
-        return null;
     context.fillStyle = BACKGROUND;
     context.fillRect(0, 0, size, size);
     context.strokeStyle = GRID;
