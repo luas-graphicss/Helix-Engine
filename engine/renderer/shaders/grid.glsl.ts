@@ -1,35 +1,33 @@
+export const GRID_FADE_START_FRACTION = 0.08;
+export const GRID_FADE_END_FRACTION = 0.35;
 export const GRID_VERTEX_SHADER = `#version 300 es
 precision highp float;
 
+const float GRID_DEPTH_BIAS_METERS = 0.004;
+
 layout(location = 0) in vec2 a_position;
 
-uniform mat4 u_inverseViewProjection;
+uniform mat4 u_viewProjection;
+uniform vec3 u_cameraPosition;
+uniform float u_extent;
 
-out vec3 v_nearPoint;
-out vec3 v_farPoint;
-
-vec3 unproject(vec2 ndc, float depth) {
-  vec4 point = u_inverseViewProjection * vec4(ndc, depth, 1.0);
-  return point.xyz / point.w;
-}
+out vec3 v_worldPos;
 
 void main() {
-  v_nearPoint = unproject(a_position, -1.0);
-  v_farPoint = unproject(a_position, 1.0);
-  gl_Position = vec4(a_position, 0.0, 1.0);
+  vec3 worldPos = vec3(u_cameraPosition.x + a_position.x * u_extent, GRID_DEPTH_BIAS_METERS, u_cameraPosition.z + a_position.y * u_extent);
+  v_worldPos = worldPos;
+  gl_Position = u_viewProjection * vec4(worldPos, 1.0);
 }
 `;
 export const GRID_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
-const float GRID_DEPTH_BIAS_METERS = 0.004;
+const float FADE_START = ${GRID_FADE_START_FRACTION.toFixed(3)};
+const float FADE_END = ${GRID_FADE_END_FRACTION.toFixed(3)};
 
-in vec3 v_nearPoint;
-in vec3 v_farPoint;
+in vec3 v_worldPos;
 
-uniform mat4 u_viewProjection;
 uniform vec3 u_cameraPosition;
-uniform float u_near;
 uniform float u_far;
 
 out vec4 fragColor;
@@ -47,16 +45,7 @@ float axisLine(float coord, float width) {
 }
 
 void main() {
-  float t = -v_nearPoint.y / (v_farPoint.y - v_nearPoint.y);
-  if (t < 0.0) discard;
-
-  vec3 worldPos = v_nearPoint + t * (v_farPoint - v_nearPoint);
-
-
-
-  vec4 clip = u_viewProjection * vec4(worldPos + vec3(0.0, GRID_DEPTH_BIAS_METERS, 0.0), 1.0);
-  float ndcDepth = clip.z / clip.w;
-  gl_FragDepth = ndcDepth * 0.5 + 0.5;
+  vec3 worldPos = v_worldPos;
 
   float minorCell = 1.0;
   float majorCell = 10.0;
@@ -80,11 +69,12 @@ void main() {
   color = mix(color, axisZColor, zAxis);
   alpha = max(alpha, max(xAxis, zAxis) * 0.95);
 
-  float distanceToCamera = length(worldPos - u_cameraPosition);
-  float fade = 1.0 - smoothstep(u_far * 0.08, u_far * 0.35, distanceToCamera);
+  vec3 toPixel = worldPos - u_cameraPosition;
+  float distanceToCamera = length(toPixel);
+  float fade = 1.0 - smoothstep(u_far * FADE_START, u_far * FADE_END, distanceToCamera);
 
-
-  float grazing = clamp(abs(normalize(v_farPoint - v_nearPoint).y) * 3.0, 0.0, 1.0);
+                                                     
+  float grazing = clamp(abs(toPixel.y / max(distanceToCamera, 1e-4)) * 3.0, 0.0, 1.0);
 
   fragColor = vec4(color, alpha * fade * grazing);
 }
