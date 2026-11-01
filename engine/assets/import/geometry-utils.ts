@@ -298,7 +298,7 @@ export function flipUvV(mesh: MeshData): MeshData {
     const uvs = new Float32Array(mesh.uvs);
     for (let i = 1; i < uvs.length; i += 2)
         uvs[i] = 1 - uvs[i];
-    return { ...mesh, uvs };
+    return { ...mesh, uvs, tangents: undefined };
 }
 export function flipWinding(mesh: MeshData): MeshData {
     const indices = mesh.indices.slice();
@@ -310,7 +310,7 @@ export function flipWinding(mesh: MeshData): MeshData {
     const normals = new Float32Array(mesh.normals);
     for (let i = 0; i < normals.length; i++)
         normals[i] = -normals[i];
-    return { ...mesh, indices, normals };
+    return { ...mesh, indices, normals, tangents: undefined };
 }
 export function stripOrFanToTriangles(indices: ArrayLike<number>, mode: 'strip' | 'fan'): Uint32Array {
     const count = Math.max(indices.length - 2, 0);
