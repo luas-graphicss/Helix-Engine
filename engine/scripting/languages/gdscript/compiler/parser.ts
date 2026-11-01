@@ -975,4 +975,258 @@ export class Parser {
         const whenFalse = this.parseTernary();
         return { kind: 'ternary', span: span(whenTrue.span, whenFalse.span), condition, whenTrue, whenFalse };
     }
+    private parseOr(): Expression {
+        let left = this.parseAnd();
+        while (this.checkKeyword('or') || this.checkOperator('||')) {
+            this.next();
+            const right = this.parseAnd();
+            left = { kind: 'binary', span: span(left.span, right.span), operator: 'or', left, right };
+        }
+        return left;
+    }
+    private parseAnd(): Expression {
+        let left = this.parseNot();
+        while (this.checkKeyword('and') || this.checkOperator('&&')) {
+            this.next();
+            const right = this.parseNot();
+            left = { kind: 'binary', span: span(left.span, right.span), operator: 'and', left, right };
+        }
+        return left;
+    }
+    private parseNot(): Expression {
+        if (this.checkKeyword('not') || this.checkOperator('!')) {
+            const token = this.next();
+            const operand = this.parseNot();
+            return { kind: 'unary', span: span(token, operand.span), operator: 'not', operand };
+        }
+        return this.parseIn();
+    }
+    private parseIn(): Expression {
+        let left = this.parseComparison();
+        for (;;) {
+            if (this.checkKeyword('in')) {
+                this.next();
+                const right = this.parseComparison();
+                left = { kind: 'binary', span: span(left.span, right.span), operator: 'in', left, right };
+            }
+            else if (this.checkKeyword('not') && this.checkKeyword('in', 1)) {
+                this.next();
+                this.next();
+                const right = this.parseComparison();
+                left = { kind: 'binary', span: span(left.span, right.span), operator: 'not in', left, right };
+            }
+            else
+                return left;
+        }
+    }
+    private parseComparison(): Expression {
+        let left = this.parseBitOr();
+        while (this.peek().kind === 'operator' && COMPARISON_OPERATORS.has(this.peek().value)) {
+            const operator = this.next().value as BinaryOperator;
+            const right = this.parseBitOr();
+            left = { kind: 'binary', span: span(left.span, right.span), operator, left, right };
+        }
+        return left;
+    }
+    private parseBitOr(): Expression {
+        let left = this.parseBitXor();
+        while (this.checkOperator('|')) {
+            this.next();
+            const right = this.parseBitXor();
+            left = { kind: 'binary', span: span(left.span, right.span), operator: '|', left, right };
+        }
+        return left;
+    }
+    private parseBitXor(): Expression {
+        let left = this.parseBitAnd();
+        while (this.checkOperator('^')) {
+            this.next();
+            const right = this.parseBitAnd();
+            left = { kind: 'binary', span: span(left.span, right.span), operator: '^', left, right };
+        }
+        return left;
+    }
+    private parseBitAnd(): Expression {
+        let left = this.parseShift();
+        while (this.checkOperator('&')) {
+            this.next();
+            const right = this.parseShift();
+            left = { kind: 'binary', span: span(left.span, right.span), operator: '&', left, right };
+        }
+        return left;
+    }
+    private parseShift(): Expression {
+        let left = this.parseAdditive();
+        while (this.checkOperator('<<') || this.checkOperator('>>')) {
+            const operator = this.next().value as BinaryOperator;
+            const right = this.parseAdditive();
+            left = { kind: 'binary', span: span(left.span, right.span), operator, left, right };
+        }
+        return left;
+    }
+    private parseAdditive(): Expression {
+        let left = this.parseMultiplicative();
+        while (this.checkOperator('+') || this.checkOperator('-')) {
+            const operator = this.next().value as BinaryOperator;
+            const right = this.parseMultiplicative();
+            left = { kind: 'binary', span: span(left.span, right.span), operator, left, right };
+        }
+        return left;
+    }
+    private parseMultiplicative(): Expression {
+        let left = this.parseUnary();
+        while (this.checkOperator('*') || this.checkOperator('/') || this.checkOperator('%')) {
+            const operator = this.next().value as BinaryOperator;
+            const right = this.parseUnary();
+            left = { kind: 'binary', span: span(left.span, right.span), operator, left, right };
+        }
+        return left;
+    }
+    private parseUnary(): Expression {
+        if (this.checkOperator('-') || this.checkOperator('+') || this.checkOperator('~')) {
+            const token = this.next();
+            const operand = this.parseUnary();
+            return { kind: 'unary', span: span(token, operand.span), operator: token.value as '-' | '+' | '~', operand };
+        }
+        return this.parsePower();
+    }
+    private parsePower(): Expression {
+        const base = this.parseIs();
+        if (!this.checkOperator('**'))
+            return base;
+        this.next();
+        const exponent = this.parseUnary();
+        return { kind: 'binary', span: span(base.span, exponent.span), operator: '**', left: base, right: exponent };
+    }
+    private parseIs(): Expression {
+        let expression = this.parseAwait();
+        while (this.checkKeyword('is')) {
+            this.next();
+            const negated = this.matchKeyword('not') !== null;
+            const target = this.parseType('o tipo depois de "is"');
+            expression = { kind: 'is', span: span(expression.span, target.span), value: expression, target, negated };
+        }
+        return expression;
+    }
+    private parseAwait(): Expression {
+        if (this.checkKeyword('await')) {
+            const token = this.next();
+            const value = this.parseAwait();
+            return { kind: 'await', span: span(token, value.span), value };
+        }
+        return this.parsePostfix();
+    }
+    private parsePostfix(): Expression {
+        let expression = this.parsePrimary();
+        for (;;) {
+            if (this.checkOperator('.')) {
+                this.next();
+                const name = this.peek();
+                if (name.kind !== 'identifier' && name.kind !== 'keyword')
+                    throw this.failure(`Esperava o nome de um membro depois de ".", mas encontrou ${describeToken(name)}.`, name);
+                this.next();
+                expression = { kind: 'member', span: span(expression.span, name), object: expression, name: name.value, nameSpan: name };
+                continue;
+            }
+            if (this.checkOperator('[')) {
+                this.next();
+                const index = this.parseExpression();
+                const end = this.expectOperator(']');
+                expression = { kind: 'index', span: span(expression.span, end), object: expression, index };
+                continue;
+            }
+            if (this.checkOperator('(')) {
+                this.next();
+                const args: Expression[] = [];
+                while (!this.checkOperator(')')) {
+                    args.push(this.parseExpression());
+                    if (!this.matchOperator(','))
+                        break;
+                }
+                const end = this.expectOperator(')');
+                expression = { kind: 'call', span: span(expression.span, end), callee: expression, args };
+                continue;
+            }
+            return expression;
+        }
+    }
+    private parsePrimary(): Expression {
+        const token = this.peek();
+        switch (token.kind) {
+            case 'int':
+                this.next();
+                return { kind: 'literal', span: token, value: token.number ?? 0, literalType: 'int' };
+            case 'float':
+                this.next();
+                return { kind: 'literal', span: token, value: token.number ?? 0, literalType: 'float' };
+            case 'string':
+                this.next();
+                return { kind: 'string', span: token, value: token.value, flavor: 'string' };
+            case 'string_name':
+                this.next();
+                return { kind: 'string', span: token, value: token.value, flavor: 'string_name' };
+            case 'node_path':
+                this.next();
+                return { kind: 'string', span: token, value: token.value, flavor: 'node_path' };
+            case 'get_node':
+                this.next();
+                return { kind: 'get_node', span: token, path: token.value, unique: false };
+            case 'unique_node':
+                this.next();
+                return { kind: 'get_node', span: token, path: token.value, unique: true };
+            case 'identifier':
+                this.next();
+                return { kind: 'identifier', span: token, name: token.value };
+            case 'keyword':
+                return this.parseKeywordPrimary(token);
+            case 'operator':
+                return this.parseOperatorPrimary(token);
+            case 'annotation':
+                throw this.failure(`A anotação @${token.value} não pode aparecer numa expressão.`, token);
+            case 'newline':
+            case 'indent':
+            case 'dedent':
+            case 'eof':
+                throw this.failure(`Expressão incompleta: encontrou ${describeToken(token)}.`, token);
+            default:
+                throw this.failure(`Token inesperado ${describeToken(token)}.`, token);
+        }
+    }
+    private parseKeywordPrimary(token: Token): Expression {
+        switch (token.value) {
+            case 'true':
+            case 'false':
+                this.next();
+                return { kind: 'literal', span: token, value: token.value === 'true', literalType: 'bool' };
+            case 'null':
+                this.next();
+                return { kind: 'literal', span: token, value: null, literalType: 'null' };
+            case 'self':
+                this.next();
+                return { kind: 'self', span: token };
+            case 'super':
+                this.next();
+                return { kind: 'super', span: token };
+            case 'func':
+                return this.parseLambda();
+            case 'preload': {
+                this.next();
+                this.expectOperator('(', '"(" depois de preload');
+                const path = this.peek();
+                if (path.kind !== 'string')
+                    throw this.failure('preload() precisa de um caminho fixo entre aspas (preload("res://Inimigo.gd")).', path);
+                this.next();
+                const end = this.expectOperator(')');
+                return { kind: 'preload', span: span(token, end), path: path.value };
+            }
+            case 'await':
+                return this.parseAwait();
+            case 'not':
+                return this.parseNot();
+            case 'yield':
+                throw this.failure('"yield" foi removido no GDScript 2: use "await".', token);
+            default:
+                throw this.failure(`"${token.value}" não pode começar uma expressão.`, token);
+        }
+    }
 }
