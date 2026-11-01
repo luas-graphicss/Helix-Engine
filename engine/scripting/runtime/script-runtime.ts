@@ -549,4 +549,278 @@ export class ScriptRuntime implements RuntimeHost {
                 this.callHook(instance, 'onFixedUpdate', [fixedDelta]);
         this.locks.apply();
     }
+    afterPhysics(delta: number): void {
+        if (!this.running || this.starting)
+            return;
+        const physics = this.session.playtest.physics;
+        if (physics && this.mode === 'play') {
+            this.contacts.collect(physics.world, (body) => this.entityOfBody(physics, body), (entity, hook, other, contact) => {
+                for (const instance of this.scriptsOf(entity)) {
+                    if (!instance.wasActive || !instance.has(hook))
+                        continue;
+                    this.callHook(instance, hook, hook === 'onCollisionEnd' ? [other] : [other, contact]);
+                }
+            });
+            const broken = physics.world.drainBrokenJoints();
+            if (broken.length > 0) {
+                const physicsApi = this.helixRoot.physics as {
+                    _jointBroken(joint: Joint): void;
+                };
+                for (const joint of broken)
+                    physicsApi._jointBroken(joint);
+            }
+        }
+        for (const instance of this.instances)
+            if (instance.wasActive && instance.has('onLateUpdate'))
+                this.callHook(instance, 'onLateUpdate', [delta]);
+        for (const updater of Array.from(this.updaters)) {
+            try {
+                updater(delta);
+            }
+            catch (cause) {
+                this.reportError(null, 'passo interno', cause);
+            }
+        }
+        if (this.mode === 'play')
+            this.cameraEffects.apply(delta, this.session.camera, this.time.now);
+        this.input.endFrame();
+        this.scriptDebugger.frameEnd(this.instances);
+        if (this.mode === 'editor' && this.idle) {
+            if (this.entryName)
+                this.say('info', `${this.entryName} concluído.`);
+            this.entryName = null;
+            this.stop();
+        }
+    }
+    tickTool(delta: number): void {
+        if (!this.running || this.mode !== 'editor')
+            return;
+        this.beforePhysics(delta, delta);
+        this.afterPhysics(delta);
+    }
+    get renderRequest(): ScriptRenderRequest | null {
+        return this.running ? this.renderBridge : null;
+    }
+    attachViewport(canvas: HTMLCanvasElement | null): void {
+        if (!this.running)
+            return;
+        this.input.attach(canvas);
+        this.web.attach(canvas?.parentElement ?? null);
+    }
+    invoke<T>(owner: ScriptOwner | null, phase: string, fn: () => T): T | undefined {
+        const instance = owner instanceof ScriptInstance ? owner : null;
+        const previous = this.current;
+        const { scriptDebugger } = this;
+        this.current = instance;
+        this.lastInvokeFailed = false;
+        scriptDebugger.enter(instance, owner, phase);
+        const startedAt = performance.now();
+        try {
+            const result = this.scheduler.runInTask(owner, fn);
+            if (result instanceof Promise) {
+                result.catch((cause: unknown) => {
+                    if (isTaskCancelled(cause))
+                        return;
+                    this.reportError(owner, phase, cause);
+                    this.noteFailure(instance, phase);
+                    scriptDebugger.recordAsyncFailure(instance, phase, cause);
+                });
+            }
+            scriptDebugger.recordCall(instance, phase, performance.now() - startedAt, false, undefined);
+            return result;
+        }
+        catch (cause) {
+            this.lastInvokeFailed = true;
+            scriptDebugger.recordCall(instance, phase, performance.now() - startedAt, true, cause);
+            this.reportError(owner, phase, cause);
+            this.noteFailure(instance, phase);
+            return undefined;
+        }
+        finally {
+            scriptDebugger.exit();
+            this.current = previous;
+        }
+    }
+    log(level: LogLevel, message: string, extras: LogEntryExtras & {
+        source?: string;
+    } = {}): void {
+        const { source, ...rest } = extras;
+        const location = rest.location ?? this.callerLocation();
+        this.session.log[level](source ?? this.current?.name ?? LOG_SOURCE, message, { ...rest, location: location ?? undefined });
+    }
+    private callerLocation(): LogLocation | null {
+        const frame = this.stacks.callerLocation();
+        if (frame?.assetId)
+            return { assetId: frame.assetId, file: frame.file, line: frame.line, column: frame.column ?? undefined };
+        return toLogLocation(this.foreign.callerLocation());
+    }
+    private reportError(owner: ScriptOwner | null, phase: string, cause: unknown): void {
+        if (isTaskCancelled(cause))
+            return;
+        const source = owner?.name ?? this.current?.name ?? LOG_SOURCE;
+        const instance = owner instanceof ScriptInstance ? owner : this.current;
+        if (cause instanceof ForeignScriptError) {
+            const prefix = isGenericErrorName(cause.name) ? '' : `${cause.name}: `;
+            const location = toLogLocation(cause.location);
+            this.session.log.error(source, `${phase}: ${prefix}${cause.message}`, { details: cause.traceback ?? undefined, location: location ?? undefined });
+            this.scriptDebugger.errorReported(instance, phase, cause, location);
+            return;
+        }
+        const mapped = this.stacks.map(cause instanceof Error ? cause : null);
+        const origin = mapped.origin;
+        const details = this.stacks.format(mapped);
+        const prefix = cause instanceof HelixError ? '' : `${cause instanceof Error ? cause.name : 'Erro'}: `;
+        const location = origin && origin.assetId ? { assetId: origin.assetId, file: origin.file, line: origin.line, column: origin.column ?? undefined } : null;
+        this.session.log.error(source, `${phase}: ${prefix}${describeThrown(cause)}`, { details: details || undefined, location: location ?? undefined });
+        this.scriptDebugger.errorReported(instance, phase, cause, location);
+    }
+    private noteFailure(instance: ScriptInstance | null, phase: string): void {
+        if (!instance || instance.faulted || instance.destroyed)
+            return;
+        if (SETUP_PHASES.has(phase)) {
+            this.fault(instance, `erro em ${phase}`);
+            return;
+        }
+        if (FRAME_HOOKS.has(phase) && ++instance.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES)
+            this.fault(instance, `${MAX_CONSECUTIVE_FAILURES} frames seguidos com erro em ${phase}`);
+    }
+    private fault(instance: ScriptInstance, why: string): void {
+        instance.faulted = true;
+        instance.wasActive = false;
+        this.say('warn', `${instance.file}${instance.self ? ` em ${instance.self.name}` : ''} desligado (${why}); salve o script para recarregá-lo.`);
+        this.session.notify();
+    }
+    private say(level: LogLevel, message: string, extras?: LogEntryExtras): void {
+        this.session.log[level](LOG_SOURCE, message, extras);
+    }
+    scriptsOf(entity: Entity): readonly ScriptInstance[] {
+        return this.instances.filter((instance) => instance.self === entity || instance.actor === entity);
+    }
+    scriptsOfAsset(assetId: string): readonly ScriptContext[] {
+        return this.instances.filter((instance) => instance.assetId === assetId);
+    }
+    destroyScriptsOf(entity: Entity): void {
+        for (const instance of this.instances.slice()) {
+            const actor = instance.actor ?? instance.self;
+            if (actor && (actor === entity || entity.contains(actor)))
+                this.removeInstance(instance, { destroy: true });
+        }
+        for (const actor of Array.from(this.pendingActors))
+            if (actor === entity || entity.contains(actor))
+                this.pendingActors.delete(actor);
+    }
+    requestActorSync(): void {
+        this.actorSyncRequested = true;
+    }
+    trackSpawned(entity: Entity): void {
+        if (this.mode === 'play')
+            this.spawned.add(entity);
+    }
+    trackDestroyed(entity: Entity): void {
+        if (this.mode !== 'play' || this.spawned.has(entity) || !entity.parent)
+            return;
+        this.removed.push({ entity, parent: entity.parent, index: entity.parent.children.indexOf(entity) });
+    }
+    private restoreScene(): void {
+        const { session } = this;
+        for (const entity of this.spawned) {
+            if (session.selectedEntity && entity.contains(session.selectedEntity))
+                session.select(null);
+            entity.parent?.remove(entity);
+        }
+        this.spawned.clear();
+        for (const record of this.removed.slice().reverse()) {
+            if (record.entity.parent)
+                continue;
+            record.parent.insert(record.entity, Math.min(record.index, record.parent.children.length));
+        }
+        this.removed.length = 0;
+    }
+    boundsOf(entity: Entity): Aabb {
+        this.session.scene.updateWorldMatrices();
+        return computeWorldBounds(this.session.scene, entity, aabb.create());
+    }
+    cameraEntity(): Entity | null {
+        return this.cameraEffects.main;
+    }
+    resolveAsset(value: unknown, member: string, kind?: AssetKind): LibraryAsset {
+        const { library } = this.session;
+        let asset: LibraryAsset | null = null;
+        if (isLibraryAsset(value))
+            asset = library.get(value.id) ?? value;
+        else if (typeof value === 'string' && value.length > 0) {
+            asset = library.get(value);
+            if (!asset) {
+                const lower = value.toLowerCase();
+                const candidates = library.all.filter((candidate) => candidate.name.toLowerCase() === lower && (!kind || candidate.kind === kind));
+                if (candidates.length > 1)
+                    throw new HelixArgumentError(member, `há ${candidates.length} ativos chamados "${value}" (${candidates.map((candidate) => candidate.kind).join(', ')}); passe o id ou renomeie um deles.`);
+                asset = candidates[0] ?? null;
+            }
+        }
+        else {
+            throw new HelixArgumentError(member, 'esperava o nome ou o id de um ativo da biblioteca (ou o próprio ativo).');
+        }
+        if (!asset)
+            throw new HelixArgumentError(member, `o ativo "${String(isLibraryAsset(value) ? value.name : value)}" não existe na biblioteca${kind ? ` (procurado entre os de tipo ${kind})` : ''}.`);
+        if (kind && asset.kind !== kind)
+            throw new HelixArgumentError(member, `${asset.name} é um ativo de tipo ${asset.kind}, não ${kind}.`);
+        return asset;
+    }
+    scriptSource(asset: LibraryAsset, member: string): string {
+        const compiled = this.compiled.get(asset.id);
+        if (compiled)
+            return compiled.source;
+        if (asset.kind !== 'script')
+            throw new HelixArgumentError(member, `${asset.name} não é um script.`);
+        throw new HelixError(`${member}: ${asset.name} não foi lido nesta execução (foi criado depois de o jogo começar?). Pare e inicie de novo, ou passe o texto direto.`);
+    }
+    async savePrefab(entity: Entity, name: string): Promise<LibraryAsset> {
+        const member = 'helix.scene.saveAsPrefab';
+        if (entity === this.session.scene.root)
+            throw new HelixArgumentError(member, 'a raiz da cena não pode virar prefab; passe um ator.');
+        const asset = await savePrefabToLibrary(this.session, entity, name);
+        if (!asset)
+            throw new HelixError(`${member}: "${name}" não foi salvo na biblioteca (veja o registro do editor).`);
+        return asset;
+    }
+    instantiatePrefab(asset: unknown): Promise<Entity> {
+        return buildPrefabInstance(this.session, this.resolveAsset(asset, 'helix.scene.instantiatePrefab', 'prefab'));
+    }
+    async saveMeshAsset(mesh: MeshData, name: string): Promise<LibraryAsset> {
+        try {
+            return await saveMeshToLibrary(this.session, mesh, name);
+        }
+        catch (cause) {
+            throw new HelixError(`helix.mesh.toModelAsset: "${name}" não foi salvo na biblioteca: ${describeThrown(cause)}`);
+        }
+    }
+    meshLod(entity: Entity, settings: unknown): EntityLodOverride | null {
+        if (settings === undefined)
+            return entityLodOverride(entity);
+        if (settings === null) {
+            setEntityLodOverride(entity, null);
+            return null;
+        }
+        const patch = requireObject(settings, 'helix.mesh.lod', 'as configurações de LOD');
+        if ('forceLevel' in patch && patch.forceLevel !== undefined && patch.forceLevel !== null)
+            throw new HelixNotImplementedError('helix.mesh.lod({ forceLevel })', 'Forçar um nível fixo ainda não existe; use bias para empurrar a escolha.');
+        const current = entityLodOverride(entity) ?? { enabled: true, bias: 0 };
+        const next: EntityLodOverride = {
+            enabled: typeof patch.enabled === 'boolean' ? patch.enabled : current.enabled,
+            bias: typeof patch.bias === 'number' && Number.isFinite(patch.bias) ? patch.bias : current.bias,
+        };
+        setEntityLodOverride(entity, next);
+        return next;
+    }
+    meshMyriad(entity: Entity, enabled: unknown): boolean {
+        if (enabled === undefined)
+            return isEntityMyriadEnabled(entity);
+        setEntityMyriadEnabled(entity, Boolean(enabled));
+        return Boolean(enabled);
+    }
+    materialFromShader(asset: unknown, uniforms: unknown): ShaderMaterial {
+        const binding = this.shaders.bind(asset, 'surface', uniforms, 'helix.material.fromShader');
+        return this.shaders.materialFor(binding, createMaterial({ name: binding.bundle.name }));
+    }
 }
