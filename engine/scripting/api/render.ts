@@ -302,3 +302,225 @@ function createCustomPostApi(host: RuntimeHost) {
         },
     };
 }
+export function createRenderApi(host: RuntimeHost, state: RenderState) {
+    const { session } = host;
+    function renderer(member: string): Renderer {
+        const current = session.viewportRenderer;
+        if (!current)
+            throw new HelixError(`${member}: o renderizador do viewport ainda não existe neste momento.`);
+        return current;
+    }
+    function hook(list: Array<{
+        owner: ScriptOwner | null;
+        fn: FrameHookFn;
+    }>, fnValue: unknown, member: string): () => void {
+        const fn = requireFunction<FrameHookFn>(fnValue, member);
+        const entry = { owner: host.current, fn };
+        list.push(entry);
+        const remove = () => {
+            const index = list.indexOf(entry);
+            if (index >= 0)
+                list.splice(index, 1);
+        };
+        host.current?.track(remove);
+        return remove;
+    }
+    function passHook(map: Map<string, Array<{
+        owner: ScriptOwner | null;
+        fn: FrameHookFn;
+    }>>, nameValue: unknown, fnValue: unknown, member: string): () => void {
+        const name = requireOneOf(nameValue, RENDER_PASSES, member, 'o passe');
+        let list = map.get(name);
+        if (!list) {
+            list = [];
+            map.set(name, list);
+        }
+        return hook(list, fnValue, member);
+    }
+    const passes = Object.fromEntries(RENDER_PASSES.map((name) => [
+        name,
+        {
+            get enabled() {
+                return !state.disabledPasses.has(name);
+            },
+            set enabled(value: boolean) {
+                if (value)
+                    state.disabledPasses.delete(name);
+                else
+                    state.disabledPasses.add(name);
+            },
+        },
+    ])) as Record<RenderPassName, {
+        enabled: boolean;
+    }>;
+    const helperMode = (value: unknown, member: string) => requireOneOf(value, HELPER_MODES, member, 'o modo');
+    return {
+        get enabled() {
+            return state.enabled;
+        },
+        set enabled(value: boolean) {
+            state.enabled = Boolean(value);
+        },
+        passes,
+        passNames: () => RENDER_PASSES.slice(),
+        get showGrid() {
+            return session.showGrid;
+        },
+        set showGrid(value: boolean) {
+            if (session.showGrid !== Boolean(value))
+                session.toggleGrid();
+        },
+        get shadows() {
+            return session.shadowsEnabled;
+        },
+        set shadows(value: boolean) {
+            if (session.shadowsEnabled !== Boolean(value))
+                session.toggleShadows();
+        },
+        get showCsgBrushes() {
+            return session.render.showCsgBrushes;
+        },
+        set showCsgBrushes(value: boolean) {
+            if (session.render.showCsgBrushes !== Boolean(value))
+                session.toggleCsgBrushes();
+        },
+        get lightHelpers() {
+            return session.render.lightHelpers;
+        },
+        set lightHelpers(value: LightHelperMode) {
+            session.setLightHelpers(helperMode(value, 'helix.render.lightHelpers') as LightHelperMode);
+        },
+        get soundHelpers() {
+            return session.render.soundHelpers;
+        },
+        set soundHelpers(value: SoundHelperMode) {
+            session.setSoundHelpers(helperMode(value, 'helix.render.soundHelpers') as SoundHelperMode);
+        },
+        get vfxHelpers() {
+            return session.render.vfxHelpers;
+        },
+        set vfxHelpers(value: VfxHelperMode) {
+            session.setVfxHelpers(helperMode(value, 'helix.render.vfxHelpers') as VfxHelperMode);
+        },
+        get culling() {
+            return session.render.culling;
+        },
+        get lod() {
+            return session.render.lod;
+        },
+        get myriad() {
+            return session.render.myriad;
+        },
+        get terrainMaterialCache() {
+            return session.render.terrain.materialCache;
+        },
+        set terrainMaterialCache(value: boolean) {
+            if (session.render.terrain.materialCache !== Boolean(value))
+                session.toggleTerrainMaterialCache();
+        },
+        get profileGpu() {
+            return session.render.profileGpu;
+        },
+        set profileGpu(value: boolean) {
+            session.setGpuProfiling(Boolean(value));
+        },
+        get renderOnDemand() {
+            return session.render.renderOnDemand;
+        },
+        set renderOnDemand(value: boolean) {
+            session.setRenderOnDemand(Boolean(value));
+        },
+        get pixelRatio() {
+            return renderer('helix.render.pixelRatio').maxPixelRatio;
+        },
+        set pixelRatio(value: number) {
+            renderer('helix.render.pixelRatio').maxPixelRatio = Math.min(4, Math.max(0.25, requireNumber(value, 'helix.render.pixelRatio', 'a razão de pixels')));
+            session.notify();
+        },
+        get profile() {
+            return renderer('helix.render.profile').profile;
+        },
+        setProfile: (patch: unknown) => {
+            assignSettings(renderer('helix.render.setProfile').profile as unknown as Record<string, unknown>, patch, 'helix.render.setProfile');
+        },
+        get stats() {
+            return session.stats;
+        },
+        get frame() {
+            return state.frame;
+        },
+        onBeforeFrame: (fn: unknown) => hook(host.frameHooks.before, fn, 'helix.render.onBeforeFrame'),
+        onAfterFrame: (fn: unknown) => hook(host.frameHooks.after, fn, 'helix.render.onAfterFrame'),
+        onBeforePass: (name: unknown, fn: unknown) => passHook(host.frameHooks.beforePass, name, fn, 'helix.render.onBeforePass'),
+        onAfterPass: (name: unknown, fn: unknown) => passHook(host.frameHooks.afterPass, name, fn, 'helix.render.onAfterPass'),
+        custom: {
+            add: (pass: unknown) => {
+                const options = requireObject(pass, 'helix.render.custom.add', 'o passe');
+                const name = requireString(options.name, 'helix.render.custom.add', 'o nome do passe');
+                const after = requireOneOf(options.after ?? 'post', RENDER_PASSES, 'helix.render.custom.add', 'o passe de referência (after)');
+                const render = requireFunction<FrameHookFn>(options.render, 'helix.render.custom.add', 'render(gl, frame)');
+                const entry = { owner: host.current, name, after, render };
+                host.frameHooks.custom.push(entry);
+                const remove = () => {
+                    const index = host.frameHooks.custom.indexOf(entry);
+                    if (index >= 0)
+                        host.frameHooks.custom.splice(index, 1);
+                };
+                host.current?.track(remove);
+                return remove;
+            },
+            list: () => host.frameHooks.custom.map((entry) => ({ name: entry.name, after: entry.after })),
+        },
+        get gl() {
+            return renderer('helix.render.gl').gl;
+        },
+        get canvas() {
+            return session.viewportCanvas;
+        },
+        get capabilities() {
+            return renderer('helix.render.capabilities').capabilities;
+        },
+        createProgram: (vertexSource: unknown, fragmentSource: unknown, defines?: unknown) => {
+            const gl = renderer('helix.render.createProgram').gl;
+            let prefix = '';
+            if (defines !== undefined) {
+                for (const [key, value] of Object.entries(requireObject(defines, 'helix.render.createProgram', 'os defines')))
+                    prefix += `#define ${key} ${value === true ? '1' : String(value)}\n`;
+            }
+            const withDefines = (source: string) => {
+                const text = requireString(source, 'helix.render.createProgram', 'o código do shader');
+                if (!prefix)
+                    return text;
+                const versionEnd = text.startsWith('#version') ? text.indexOf('\n') + 1 : 0;
+                return text.slice(0, versionEnd) + prefix + text.slice(versionEnd);
+            };
+            const program = new ShaderProgram(gl, withDefines(vertexSource as string), withDefines(fragmentSource as string));
+            state.programs.add(program);
+            host.current?.track(() => {
+                program.dispose();
+                state.programs.delete(program);
+            });
+            return program;
+        },
+        createTexture: () => {
+            throw new HelixNotImplementedError('helix.render.createTexture', 'use helix.render.gl.createTexture() diretamente por enquanto.');
+        },
+        createRenderTarget: () => {
+            throw new HelixNotImplementedError('helix.render.createRenderTarget', 'alvos de render próprios ainda não têm fábrica; monte um framebuffer com helix.render.gl.');
+        },
+        createMesh: () => {
+            throw new HelixNotImplementedError('helix.render.createMesh', 'malhas de GPU soltas ainda não são expostas; use helix.mesh em um ator.');
+        },
+        fullscreenTriangle: () => {
+            throw new HelixNotImplementedError('helix.render.fullscreenTriangle');
+        },
+        shaders: {
+            override: () => {
+                throw new HelixNotImplementedError('helix.render.shaders.override', 'a troca dos shaders da engine por ativos ainda não está ligada.');
+            },
+        },
+        skybox: () => {
+            throw new HelixNotImplementedError('helix.render.skybox', 'skybox por textura ainda não é suportado; desligue helix.sky.enabled e desenhe em onBeforePass("sky").');
+        },
+    };
+}
