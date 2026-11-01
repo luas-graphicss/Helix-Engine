@@ -810,3 +810,99 @@ function defineEnum(name: string, members: Record<string, number>, flags = false
     Object.defineProperty(enumObject, '$names', { value: names });
     return Object.freeze(enumObject);
 }
+function installRecord(ctor: Function, fields: readonly string[], name: string): void {
+    const prototype = ctor.prototype as AnyRecord;
+    Object.defineProperty(ctor, RECORD_FIELDS, { value: fields });
+    if (!Object.prototype.hasOwnProperty.call(prototype, 'Equals')) {
+        Object.defineProperty(prototype, 'Equals', {
+            value: function Equals(this: AnyRecord, other: unknown) {
+                if (other === null || typeof other !== 'object' || (other as object).constructor !== ctor)
+                    return false;
+                return fields.every((field) => equals(this[field], (other as AnyRecord)[field]));
+            },
+            configurable: true,
+            writable: true,
+        });
+    }
+    if (!Object.prototype.hasOwnProperty.call(prototype, 'GetHashKey')) {
+        Object.defineProperty(prototype, 'GetHashKey', {
+            value: function GetHashKey(this: AnyRecord) {
+                return `record:${name}:${fields.map((field) => String(hashKey(this[field]))).join('\u0000')}`;
+            },
+            configurable: true,
+            writable: true,
+        });
+    }
+    if (!Object.prototype.hasOwnProperty.call(prototype, 'ToString')) {
+        Object.defineProperty(prototype, 'ToString', {
+            value: function ToString(this: AnyRecord) {
+                return `${name} { ${fields.map((field) => `${field} = ${str(this[field])}`).join(', ')} }`;
+            },
+            configurable: true,
+            writable: true,
+        });
+    }
+    if (!Object.prototype.hasOwnProperty.call(prototype, 'Deconstruct')) {
+        Object.defineProperty(prototype, 'Deconstruct', {
+            value: function Deconstruct(this: AnyRecord, ...refs: Ref<unknown>[]) {
+                refs.forEach((ref, index) => {
+                    if (ref && typeof ref === 'object')
+                        ref.v = this[fields[index]];
+                });
+            },
+            configurable: true,
+            writable: true,
+        });
+    }
+    if (!(Symbol.iterator in prototype)) {
+        Object.defineProperty(prototype, Symbol.iterator, {
+            value: function* iterator(this: AnyRecord) {
+                for (const field of fields)
+                    yield this[field];
+            },
+            configurable: true,
+            writable: true,
+        });
+    }
+}
+export function dispose(resource: unknown): void {
+    if (isNullish(resource))
+        return;
+    const object = resource as AnyRecord;
+    for (const name of ['Dispose', 'dispose', 'destroy', 'close', 'Close']) {
+        if (typeof object[name] === 'function') {
+            ;
+            (object[name] as Fn).call(object);
+            return;
+        }
+    }
+}
+export function defaultOf(type: unknown): unknown {
+    if (typeof type === 'string') {
+        switch (type) {
+            case 'int':
+            case 'long':
+            case 'short':
+            case 'byte':
+            case 'sbyte':
+            case 'uint':
+            case 'ulong':
+            case 'ushort':
+            case 'float':
+            case 'double':
+            case 'decimal':
+                return 0;
+            case 'bool':
+                return false;
+            case 'char':
+                return '\u0000';
+            default:
+                return null;
+        }
+    }
+    if (type !== null && typeof type === 'object' && ENUM_INFO in type)
+        return 0;
+    return null;
+}
+export interface HelixRoot extends Record<string, unknown> {
+}
