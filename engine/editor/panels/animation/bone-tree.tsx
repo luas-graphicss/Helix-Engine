@@ -23,7 +23,7 @@ export function BoneTree({ editor, rows, scrollRef, onScroll }: BoneTreeProps) {
         </IconButton>
       </div>
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-width:thin]" onMouseLeave={() => editor.setHoveredBone(null)}>
-        {rows.length === 0 ? (<p className="px-2 py-2 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+        {rows.length === 0 ? (<p className="px-2 py-2 text-3xs leading-relaxed text-pretty text-muted-foreground">
             {editor.boneFilter ? 'Nenhum osso com esse nome.' : editor.onlyAnimated ? 'Nenhum osso tem chaves ainda. Pose o personagem no viewport para gravar as primeiras.' : 'O ator não tem esqueleto.'}
           </p>) : (rows.map((row) => (row.kind === 'bone' ? <BoneRowView key={row.id} editor={editor} row={row}/> : <TrackRowView key={row.id} row={row}/>)))}
       </div>
@@ -52,7 +52,7 @@ function TrackRowView({ row }: {
         kind: 'track';
     }>;
 }) {
-    return (<div className="flex w-full min-w-0 items-center gap-1 border-b border-border-strong/60 pr-2 text-[10px] text-muted-foreground select-none" style={{ height: ROW_HEIGHT, paddingLeft: 8 + row.depth * INDENT_PX }} title={`${PATH_LABELS[row.path]} · ${INTERPOLATION_LABELS[row.interpolation]}`}>
+    return (<div className="flex w-full min-w-0 items-center gap-1 border-b border-border-strong/60 pr-2 text-3xs text-muted-foreground select-none" style={{ height: ROW_HEIGHT, paddingLeft: 8 + row.depth * INDENT_PX }} title={`${PATH_LABELS[row.path]} · ${INTERPOLATION_LABELS[row.interpolation]}`}>
       <span className="min-w-0 flex-1 truncate">{PATH_LABELS[row.path]}</span>
       <span className="shrink-0 font-mono text-[9px] text-muted-foreground/70">{INTERPOLATION_LABELS[row.interpolation]}</span>
     </div>);
