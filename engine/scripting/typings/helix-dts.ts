@@ -2098,3 +2098,280 @@ const VFX_API = `
     particles(entity: Entity, emitter?: EmitterRef): VfxParticles | null
   }
 `;
+const INPUT_API = `
+  export interface PointerState { x: number; y: number; dx: number; dy: number; buttons: number; wheel: number; inside: boolean; u: number; v: number }
+  export interface TouchState { id: number; x: number; y: number; dx: number; dy: number }
+  export interface KeyEvent { code: string; key: string; repeat: boolean; shift: boolean; ctrl: boolean; alt: boolean; meta: boolean }
+  export interface PointerInputEvent { x: number; y: number; button: number; buttons: number; dx: number; dy: number }
+  export interface GamepadSnapshot { index: number; id: string; axes: number[]; buttons: { pressed: boolean; value: number }[] }
+  export type Cursor = 'default' | 'none' | 'text' | 'crosshair' | 'pointer' | 'grab' | 'grabbing' | 'move' | 'wait' | 'not-allowed' | 'help' | 'cell' | 'zoom-in' | 'zoom-out'
+  export interface InputApi {
+                                                                             
+    isDown(key: string): boolean
+    wasPressed(key: string): boolean
+    wasReleased(key: string): boolean
+    keysDown(): string[]
+    onKeyDown(handler: (event: KeyEvent) => void): Unsubscribe
+    onKeyUp(handler: (event: KeyEvent) => void): Unsubscribe
+    onTextInput(handler: (text: string) => void): Unsubscribe
+    readonly pointer: PointerState
+    readonly pointerLocked: boolean
+    lockPointer(): void
+    unlockPointer(): void
+    onPointerDown(handler: (event: PointerInputEvent) => void): Unsubscribe
+    onPointerUp(handler: (event: PointerInputEvent) => void): Unsubscribe
+    onPointerMove(handler: (event: PointerInputEvent) => void): Unsubscribe
+    onWheel(handler: (event: { deltaX: number; deltaY: number }) => void): Unsubscribe
+    cursor: Cursor
+    cursors(): Cursor[]
+    readonly touches: TouchState[]
+    gamepads(): GamepadSnapshot[]
+    axis(pad: number, index: number): number
+    button(pad: number, index: number): boolean
+    rumble(pad: number, strong: number, weak: number, ms: number): void
+    onGamepadButtonDown(handler: (event: { pad: number; button: number }) => void): Unsubscribe
+    onGamepadButtonUp(handler: (event: { pad: number; button: number }) => void): Unsubscribe
+    readonly actions: {
+                                                    
+      define(name: string, bindings: readonly string[]): void
+      bindings(name: string): string[]
+      names(): string[]
+      down(name: string): boolean
+      pressed(name: string): boolean
+      released(name: string): boolean
+    }
+    action(name: string): { readonly name: string; readonly down: boolean; readonly pressed: boolean; readonly released: boolean; readonly bindings: string[] }
+    axis2d(config: { up?: string | readonly string[]; down?: string | readonly string[]; left?: string | readonly string[]; right?: string | readonly string[]; stick?: number | { pad?: number; x: number; y: number }; deadzone?: number }): { x: number; y: number }
+    characterFrame(): { x: number; z: number; run: boolean; jump: boolean; crouchToggles: number; lookX: number; lookY: number; wheel: number } | null
+                                                                           
+    capture: 'game' | 'gui' | 'both'
+    readonly guiHasFocus: boolean
+    readonly shortcuts: { resolve(event: KeyboardEvent | KeyEvent, scope?: string): string | null; chordsFor(id: string): readonly string[]; bind(id: string, chord: string): void; unbind(id: string, chord: string): void; conflicts(): unknown[] }
+  }
+`;
+const ASSETS_API = `
+  export interface ImportOptions { convertUnits?: boolean; placement?: 'origin' | 'target' | 'keep'; saveToLibrary?: boolean; name?: string }
+  export interface AssetsApi {
+    kinds(): AssetKind[]
+    get(id: string): LibraryAsset | null
+    byName(name: string, kind?: AssetKind): LibraryAsset | null
+    list(kind?: AssetKind): LibraryAsset[]
+    byTag(tag: string): LibraryAsset[]
+    search(query: string, kind?: AssetKind): LibraryAsset[]
+    exists(asset: AssetRef): boolean
+    tags(asset: AssetRef): string[]
+    setTags(asset: AssetRef, tags: readonly string[]): void
+    rename(asset: AssetRef, name: string): void
+    remove(asset: AssetRef): Promise<void>
+    file(asset: AssetRef): Promise<File>
+    files(asset: AssetRef): Promise<File[]>
+                                                                   
+    url(asset: AssetRef): Promise<string>
+    text(asset: AssetRef): Promise<string>
+    bytes(asset: AssetRef): Promise<Uint8Array>
+                                                                                         
+    data<T = unknown>(asset: AssetRef, format?: 'json' | 'yaml' | 'toml' | 'xml' | 'csv' | 'markdown' | 'text'): Promise<T>
+    model(asset: AssetRef): Promise<unknown>
+    image(asset: AssetRef): Promise<ImageBitmap | HTMLImageElement | ImageData>
+    audio(asset: AssetRef): Promise<AudioBuffer>
+    animation(asset: AssetRef): Promise<AnimationDocument>
+    gui(asset: AssetRef): Promise<GuiDocument>
+    vfx(asset: AssetRef): Promise<VfxDocument>
+    script(asset: AssetRef): Promise<{ name: string; language: string; source: string; runContext: RunContext; entry: boolean }>
+    font(asset: AssetRef): Promise<string>
+    video(asset: AssetRef): Promise<HTMLVideoElement>
+    import(source: File | Blob | string | readonly (File | Blob)[], options?: ImportOptions): Promise<LibraryAsset[]>
+    pickFiles(accept?: string, multiple?: boolean): Promise<File[]>
+    thumbnail(asset: AssetRef): Blob | null
+    onChange(handler: (event: { type: 'added' | 'changed' | 'removed'; asset: LibraryAsset }) => void): Unsubscribe
+    readonly count: number
+    readonly busy: string | null
+    readonly status: 'idle' | 'loading' | 'ready' | 'unavailable'
+  }
+`;
+const PROJECT_API = `
+  export interface SceneSnapshotInfo { key: string; label: string; savedAt: number; size: number; [key: string]: unknown }
+  export interface ProjectApi {
+    readonly id: string
+    readonly name: string
+    readonly template: 'empty' | 'baseplate' | 'occlusion' | 'terrain' | 'reflections'
+    readonly formatVersion: number
+    readonly createdAt: number
+    readonly openedAt: number
+    readonly updatedAt: number
+    readonly stats: { entities: number; assets: number; materials: number }
+    info(): { id: string; name: string; template: string; formatVersion: number; createdAt: number; openedAt: number; updatedAt: number; stats: { entities: number; assets: number; materials: number } }
+    rename(name: string): void
+    readonly settings: { readonly sky: SkySettings; readonly postProcessing: PostProcessSettings; readonly physics: PhysicsSettings; readonly player: PlayerSettings; readonly audio: MixerSettings; readonly scripting: ScriptingSettings }
+    serialize(): Promise<unknown>
+    save(): Promise<boolean>
+    readonly autosave: { readonly state: 'clean' | 'dirty' | 'saving' | 'error'; readonly dirty: boolean; readonly lastSavedAt: number | null; readonly error: string | null; markDirty(): void; flush(): void }
+    snapshots(): Promise<SceneSnapshotInfo[]>
+    loadSnapshot(key: string): Promise<unknown | null>
+    restore(key: string): Promise<void>
+    snapshotNow(): Promise<SceneSnapshotInfo>
+    exportProject(): Promise<Blob>
+    download(blob?: Blob, name?: string): Promise<void>
+    importProject(file: File | Blob): Promise<unknown[]>
+    pickFiles(accept?: string, multiple?: boolean): Promise<File[]>
+    quota(): Promise<{ used: number; total: number; persisted: boolean }>
+    persisted(): Promise<boolean>
+    requestPersistence(): Promise<boolean>
+  }
+  export interface StorageSlot {
+    readonly name: string
+    get<T extends JsonValue = JsonValue>(key: string, fallback?: T): T | null
+    has(key: string): boolean
+    set(key: string, value: JsonValue): Promise<void>
+    remove(key: string): Promise<boolean>
+    keys(): string[]
+    clear(): Promise<void>
+    snapshot(): Record<string, JsonValue>
+    export(): Blob
+    import(source: Blob | string | Record<string, JsonValue>): Promise<void>
+  }
+                                                                                        
+  export interface StorageApi extends StorageSlot {
+    ready(): Promise<void>
+    slot(name: string): StorageSlot
+    slots(): string[]
+    readonly session: { get<T extends JsonValue = JsonValue>(key: string, fallback?: T): T | null; has(key: string): boolean; set(key: string, value: JsonValue): void; remove(key: string): boolean; keys(): string[]; clear(): void }
+  }
+  export interface PlayApi {
+    readonly state: 'stopped' | 'playing' | 'paused'
+    readonly isRunning: boolean
+    readonly isPossessing: boolean
+    readonly pointerLocked: boolean
+    timeScale: number
+    readonly elapsed: number
+    readonly standalone: boolean
+    play(): void
+    pause(): void
+    togglePlayPause(): void
+    stop(): void
+    stepOnce(): void
+    setTimeScale(value: number): void
+    restart(): void
+    reloadScene(): void
+    onStarted(handler: () => void): Unsubscribe
+    onPaused(handler: () => void): Unsubscribe
+    onResumed(handler: () => void): Unsubscribe
+    onStopped(handler: () => void): Unsubscribe
+    export(options?: { target: 'web' }): never
+  }
+                                                                                                                   
+  export interface NetPlayer { readonly id: number; readonly name: string; readonly local: boolean; readonly isHost: boolean; readonly joinedAt: number }
+                                                                                         
+  export interface NetState {
+    get<T extends JsonValue = JsonValue>(key: string, fallback?: T): T | null
+    has(key: string): boolean
+                           
+    set(key: string, value: JsonValue): void
+                           
+    remove(key: string): boolean
+    keys(): string[]
+    snapshot(): Record<string, JsonValue>
+                                                                                                    
+    onChanged(key: string, handler: (value: JsonValue, key: string) => void): Unsubscribe
+  }
+     
+                                                                                    
+                                                                           
+                                                                               
+                                                                       
+                                                                                   
+     
+  export interface NetApi {
+    readonly isServer: boolean
+    readonly isClient: boolean
+    readonly mode: 'none' | 'authoritative'
+    readonly connected: boolean
+                                                                                                 
+    readonly connecting: boolean
+                                                                                                                    
+    readonly transport: 'none' | 'local' | 'websocket'
+                                                                                            
+    readonly room: string
+    readonly tickRate: number
+                                                                         
+    readonly latency: number
+    readonly localPlayer: NetPlayer | null
+    players(): NetPlayer[]
+    player(id: number): NetPlayer | null
+                                                                                                                                                      
+    rpc(name: string, handler: (...args: any[]) => unknown, options?: { perSecond?: number }): Unsubscribe
+    hasRpc(name: string): boolean
+    rpcs(): string[]
+                                                                          
+    call<T = unknown>(name: string, ...args: JsonValue[]): Promise<T>
+                                                                                 
+    call<T = unknown>(player: NetPlayer | number, name: string, ...args: JsonValue[]): Promise<T>
+                                                                                                          
+    emit(name: string, ...args: JsonValue[]): void
+                                                                                                    
+    send(player: NetPlayer | number, name: string, ...args: JsonValue[]): void
+                                           
+    broadcast(name: string, ...args: JsonValue[]): void
+    on(name: string, handler: (...args: any[]) => void): Unsubscribe
+    readonly state: NetState
+                                                                                                                   
+    replicate(entity: Entity, fields: readonly string[]): string[]
+    replicatedFields(entity: Entity): string[]
+                                                               
+    onReplicated(handler: (entityId: number, fields: Record<string, JsonValue>, name: string) => void): Unsubscribe
+                                                                                                                                                                                        
+    authenticate(handler: (ticket: JsonValue | null, request: { name: string; protocol: number }) => boolean | string | { name: string } | Promise<boolean | string | { name: string }>): Unsubscribe
+                                             
+    kick(player: NetPlayer | number, reason?: string): void
+    onPlayerJoined(handler: (player: NetPlayer) => void): Unsubscribe
+    onPlayerLeft(handler: (player: NetPlayer & { reason: string }) => void): Unsubscribe
+    onConnected(handler: (info: { player: NetPlayer; tickRate: number; room: string }) => void): Unsubscribe
+                                                                                           
+    onDisconnected(handler: (info: { reason: string; wasConnected: boolean }) => void): Unsubscribe
+                                                                                                    
+    onConnecting(handler: (info: { address: string; room: string }) => void): Unsubscribe
+                                                                                                                                                
+    connect(options?: string | { url?: string; room?: string; ticket?: JsonValue | null }): void
+                                                                                      
+    disconnect(reason?: string): void
+  }
+`;
+const EDITOR_API = `
+  export interface EditorApi {
+    readonly selection: Entity[]
+    readonly selected: Entity | null
+    select(value: Entity | readonly Entity[] | null): void
+    toggleSelect(entity: Entity): void
+    selectAll(): void
+    clearSelection(): void
+    onSelectionChanged(handler: (selection: Entity[]) => void): Unsubscribe
+    readonly history: {
+      undo(): void
+      redo(): void
+      readonly canUndo: boolean
+      readonly canRedo: boolean
+      readonly undoLabel: string | null
+      readonly redoLabel: string | null
+      readonly revision: number
+      execute(command: { label: string; execute(): void; undo(): void }): void
+      set<T>(label: string, apply: (value: T) => void, before: T, after: T): void
+      beginGroup(label: string): void
+      endGroup(): void
+    }
+    undo(): void
+    redo(): void
+    execute(command: { label: string; execute(): void; undo(): void }): void
+    beginGroup(label: string): void
+    endGroup(): void
+    readonly revision: number
+    readonly panels: { ids(): string[]; areas(): string[]; open(id: string, area?: string): void; close(id: string): void; toggle(id: string): void; reveal(id: string): void; isOpen(id: string): boolean; area(id: string): string | null; move(id: string, area: string, index?: number): void; maximizeViewport(): void; restore(): void }
+    readonly dialogs: { ids(): string[]; open(id: string): void; close(): void; confirm(message: string): boolean; prompt(message: string, fallback?: string): string | null; alert(message: string): void; pickAsset(kind: AssetKind): LibraryAsset | null }
+    readonly settings: { keys(): string[]; get(key: string): string | number | boolean; set(key: string, value: string | number | boolean): void; isDefault(key: string): boolean; reset(key: string): void; describe(key: string): Record<string, unknown>; onChanged(handler: (key: string, value: unknown) => void): Unsubscribe }
+    readonly gizmo: { mode: 'translate' | 'rotate' | 'scale' | null; tool: 'select' | 'translate' | 'rotate' | 'scale' | 'terrain'; tools(): string[]; space: 'global' | 'local'; toggleSpace(): void; readonly snap: { enabled: boolean; translate: number; rotate: number; scale: number } }
+    readonly viewport: { capture(): Promise<Blob | null>; frame(entity: Entity): void; frameSelected(): void; readonly camera: unknown }
+    readonly code: { open(asset: AssetRef, line?: number): Promise<boolean>; readonly tabs: { assetId: string; name: string; language: string; dirty: boolean; active: boolean }[]; readonly active: { assetId: string; name: string; language: string } | null; save(asset?: AssetRef): Promise<LibraryAsset | null>; saveAll(): Promise<number>; run(asset?: AssetRef): Promise<void>; compile(): Promise<void>; readonly compileState: { state: string; message: string } }
+    readonly console: { clear(): void; readonly entries: { id: number; elapsedMs: number; level: 'debug' | 'info' | 'warn' | 'error'; source: string; message: string; repeat: number }[]; readonly count: number }
+    readonly tools: { register(id: string, options: { label: string; shortcut?: string; run: () => void }): Unsubscribe; unregister(id: string): boolean; list(): { id: string; label: string; shortcut: string | null }[]; run(id: string): void }
+    notify(): void
+  }
+`;
