@@ -1,43 +1,102 @@
+import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
+import * as quat from '@/engine/core/math/quat';
 import type { Quat } from '@/engine/core/math/quat';
 import * as aabb from '@/engine/core/math/aabb';
 import type { Aabb } from '@/engine/core/math/aabb';
 import { clamp } from '@/engine/core/math/scalar';
 import { RigidBody, type RigidBodyOptions } from '@/engine/physics/body/rigid-body';
-import { computeShapeAabb } from '@/engine/physics/shapes/collider-shape';
+import { computeShapeAabb, createSphereShape } from '@/engine/physics/shapes/collider-shape';
 import { Broadphase } from '@/engine/physics/collision/broadphase';
 import { ContactCache } from '@/engine/physics/collision/contact-cache';
-import { ContactResult, type Manifold } from '@/engine/physics/collision/manifold';
+import { ContactResult, pairKey, type Manifold } from '@/engine/physics/collision/manifold';
 import { collideBodies } from '@/engine/physics/collision/narrowphase';
 import { integratePositions, integrateVelocities } from '@/engine/physics/solver/integrator';
 import { computeSoftness, createSoftness } from '@/engine/physics/solver/soft-constraint';
 import { applyRestitution, prepareContacts, solveContacts, warmStartContacts, type ContactSolverContext, } from '@/engine/physics/solver/contact-solver';
+import type { Joint } from '@/engine/physics/joints/joint';
+import type { JointSolverContext } from '@/engine/physics/joints/joint-math';
+import { instantiateJoint } from '@/engine/physics/joints/joint-factory';
+import { finalizeJoints, prepareJoints, solveJoints, warmStartJoints } from '@/engine/physics/joints/joint-solver';
+import { cloneJointDefinition, type JointDefinition } from '@/engine/physics/joints/joint-settings';
 import { IslandSleeper, accumulateSleepTime, wakeTouchingBodies } from './island-sleep';
+import { CollisionLayers } from './collision-layers';
 import type { ForceField } from './force-field';
 import type { PhysicsSettings } from './physics-settings';
 const MAX_STEPS_PER_ADVANCE = 4;
+const MAX_BACKLOG_STEPS = 4;
+export const MAX_CATCH_UP_TIMESTEP = 1 / 30;
 const MIN_FIXED_TIMESTEP = 1 / 1000;
 const MAX_FIXED_TIMESTEP = 1 / 10;
 const MAX_SUBSTEPS = 32;
 const MAX_ITERATIONS = 16;
+export type PhysicsBackend = 'local' | 'worker-shared' | 'worker-copy';
+export const PHYSICS_BACKEND_LABELS: Record<PhysicsBackend, string> = {
+    local: 'local',
+    'worker-shared': 'worker (memória compartilhada)',
+    'worker-copy': 'worker (cópia por frame)',
+};
 export interface PhysicsStats {
     bodies: number;
     awake: number;
     manifolds: number;
     contactPoints: number;
+    joints: number;
     stepMs: number;
+    stepMsAverage: number;
     stepsLastAdvance: number;
+    catchUpSteps: number;
+    simulatedSeconds: number;
+    advanceMs: number;
+    droppedSeconds: number;
+    backend: PhysicsBackend;
 }
+const STEP_EMA_ALPHA = 0.2;
 export interface PhysicsWorldEvents {
     onOutOfBounds?(body: RigidBody): void;
     onUnstable?(body: RigidBody): void;
+    onJointBreak?(joint: Joint): void;
+    onBackendFallback?(message: string): void;
+}
+export interface PhysicsRemote {
+    readonly backend: PhysicsBackend;
+    readonly interpolation: number;
+    bodyCreated(body: RigidBody): void;
+    bodyRemoved(body: RigidBody): void;
+    teleported(body: RigidBody): void;
+    jointCreated(joint: Joint): void;
+    jointRemoved(joint: Joint): void;
+    cleared(): void;
+    advance(deltaSeconds: number): number;
+    stepOnce(): void;
+    discardAccumulatedTime(): void;
+    onceFrame(listener: () => void): void;
+    dispose(): void;
 }
 export type PreStepHook = (fixedTimestep: number) => void;
 export type BodyVisitor = (body: RigidBody) => void;
 export class PhysicsWorld {
     readonly bodies: RigidBody[] = [];
-    readonly stats: PhysicsStats = { bodies: 0, awake: 0, manifolds: 0, contactPoints: 0, stepMs: 0, stepsLastAdvance: 0 };
+    readonly joints: Joint[] = [];
+    readonly ground: RigidBody;
+    readonly stats: PhysicsStats = {
+        bodies: 0,
+        awake: 0,
+        manifolds: 0,
+        contactPoints: 0,
+        joints: 0,
+        stepMs: 0,
+        stepMsAverage: 0,
+        stepsLastAdvance: 0,
+        catchUpSteps: 0,
+        simulatedSeconds: 0,
+        advanceMs: 0,
+        droppedSeconds: 0,
+        backend: 'local',
+    };
+    stepBudgetMs = Infinity;
     time = 0;
+    readonly layers = new CollisionLayers();
     private readonly broadphase = new Broadphase();
     private readonly forceFields = new Set<ForceField>();
     private readonly contactCache = new ContactCache();
@@ -54,6 +113,19 @@ export class PhysicsWorld {
     };
     private readonly pairVisitor = (a: RigidBody, b: RigidBody) => this.collidePair(a, b);
     private readonly preStepHooks = new Set<PreStepHook>();
+    private readonly remoteFields = new WeakSet<ForceField>();
+    private readonly linkedJoints: Joint[] = [];
+    private readonly activeJoints: Joint[] = [];
+    private readonly brokenJoints: Joint[] = [];
+    private readonly excludedPairs = new Set<number>();
+    private readonly jointContext: JointSolverContext = {
+        softness: createSoftness(),
+        h: 1 / 240,
+        invH: 240,
+        maxBiasVelocity: 0,
+        warmStarting: true,
+    };
+    private remote: PhysicsRemote | null = null;
     private nextBodyId = 1;
     private nextJointId = 1;
     private accumulator = 0;
