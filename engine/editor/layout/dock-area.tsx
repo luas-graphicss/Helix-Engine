@@ -1,15 +1,20 @@
 'use client';
-import type { DragEvent } from 'react';
+import { useRef, type DragEvent } from 'react';
 import { ArrowDownToLine, ArrowLeftToLine, ArrowRightToLine, Maximize2, PanelTopClose, RotateCcw, X } from 'lucide-react';
-import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut } from '@/components/ui/dropdown-menu';
+import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import type { TabDefinition } from '@/engine/ui/tab-strip';
-import { MENU_ITEM_CLASS, MENU_SHORTCUT_CLASS } from '@/engine/editor/menus/menu-styles';
+import { MenuShortcut } from '@/engine/editor/menus/menu-shortcut';
+import { MENU_ITEM_CLASS } from '@/engine/editor/menus/menu-styles';
 import { ResizeHandle } from './resize-handle';
 import { useResizableSize } from './use-resizable-size';
 import { PanelFrame } from './panel-frame';
 import { DOCK_AREA_LABELS, DOCK_AREA_LIMITS, DOCK_AREAS, type DockArea, type DockPanelId } from './dock-layout';
 import { useDockLayout } from './dock-layout-context';
-import { DOCK_PANELS } from './dock-panels';
+import { DOCK_PANELS, panelLabel } from './dock-panels';
+import { useEditorSession, useSessionSelector } from '@/engine/editor/session/editor-session-context';
+import type { EditorSession } from '@/engine/editor/session/editor-session';
+const WORKSPACE_TOPICS = ['workspace'] as const;
+const selectWorkspace = (session: EditorSession) => session.workspace;
 export const DOCK_DRAG_TYPE = 'application/x-helix-dock-panel';
 export function readDraggedPanel(event: DragEvent<HTMLElement>): DockPanelId | null {
     const id = event.dataTransfer.getData(DOCK_DRAG_TYPE);
@@ -28,12 +33,25 @@ type DockAreaViewProps = {
 };
 export function DockAreaView({ area, axis, inverted = false, handleSide, className }: DockAreaViewProps) {
     const [layout, dock] = useDockLayout();
+    const session = useEditorSession();
+    const workspace = useSessionSelector(selectWorkspace, { topics: WORKSPACE_TOPICS });
     const state = layout.areas[area];
     const limits = DOCK_AREA_LIMITS[area];
-    const resize = useResizableSize({ ...limits, axis, inverted, size: state.size, onSizeChange: (size) => dock.setSize(area, size) });
+    const asideRef = useRef<HTMLElement>(null);
+    const { viewportGovernor } = session;
+    const resize = useResizableSize({
+        ...limits,
+        axis,
+        inverted,
+        size: state.size,
+        onSizeChange: (size) => dock.setSize(area, size),
+        measure: () => (asideRef.current ? (axis === 'horizontal' ? asideRef.current.offsetWidth : asideRef.current.offsetHeight) : undefined),
+        onResizingChange: (resizing) => viewportGovernor.setResizing(resizing),
+    });
+    const markUiActivity = () => viewportGovernor.markUiActivity();
     if (state.panels.length === 0)
         return null;
-    const tabs: TabDefinition[] = state.panels.map((id) => ({ id, label: DOCK_PANELS[id].label, icon: DOCK_PANELS[id].icon }));
+    const tabs: TabDefinition[] = state.panels.map((id) => ({ id, label: panelLabel(id, workspace), icon: DOCK_PANELS[id].icon }));
     const active = state.active ?? state.panels[0];
     const activePanel = DOCK_PANELS[active];
     const otherAreas = DOCK_AREAS.filter((candidate) => candidate !== area);
@@ -42,8 +60,8 @@ export function DockAreaView({ area, axis, inverted = false, handleSide, classNa
       <DropdownMenuGroup>
         <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.close(active)}>
           <X aria-hidden/>
-          Fechar {activePanel.label}
-          {activePanel.shortcut && <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>{activePanel.shortcut}</DropdownMenuShortcut>}
+          Fechar {panelLabel(active, workspace)}
+          {activePanel.shortcut && <MenuShortcut action={activePanel.shortcut}/>}
         </DropdownMenuItem>
         {state.panels.length > 1 && (<DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.closeArea(area)}>
             <PanelTopClose aria-hidden/>
@@ -65,7 +83,7 @@ export function DockAreaView({ area, axis, inverted = false, handleSide, classNa
         <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.maximizeViewport()}>
           <Maximize2 aria-hidden/>
           Maximizar viewport
-          <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+Shift+Espaço</DropdownMenuShortcut>
+          <MenuShortcut action="panel.maximize"/>
         </DropdownMenuItem>
         <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.reset()}>
           <RotateCcw aria-hidden/>
@@ -83,10 +101,10 @@ export function DockAreaView({ area, axis, inverted = false, handleSide, classNa
                 dock.move(id, area);
             dock.setDragging(null);
         }}/>);
-    const sizeStyle = axis === 'horizontal' ? { width: resize.size } : { height: resize.size };
+    const sizeStyle = axis === 'horizontal' ? { width: resize.size, maxWidth: '30%' } : { height: resize.size, maxHeight: '45%' };
     return (<>
       {handleSide === 'before' && handle}
-      <aside className={className ?? 'flex shrink-0 flex-col'} style={sizeStyle} aria-label={`Painéis à ${DOCK_AREA_LABELS[area].toLowerCase()}`}>
+      <aside ref={asideRef} className={className ?? 'flex shrink-0 flex-col'} style={sizeStyle} aria-label={`Painéis à ${DOCK_AREA_LABELS[area].toLowerCase()}`} onPointerMoveCapture={markUiActivity} onWheelCapture={markUiActivity} onKeyDownCapture={markUiActivity}>
         {frame}
       </aside>
       {handleSide === 'after' && handle}
