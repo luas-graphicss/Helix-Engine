@@ -1121,5 +1121,196 @@ HX_HOOK void onUpdate(double dt) {
   if (torus) hx_invoke2(api("transform"), "rotate", torus, v3(0, 40 * dt, 0));
   hx_ref d = api("debug");
   hx_invoke3(d, "line", v3(-6, 0.05, -6), v3(6, 0.05, -6), str("#ff006e"));
+  hx_invoke2(d, "box", opts("center", v3(0, 1, 3), "size", v3(3, 2, 3), NULL), str("#ffbe0b"));
+  if (heroi) {
+    hx_invoke2(d, "axes", heroi, num(1));
+    char rotulo[48];
+    snprintf(rotulo, sizeof rotulo, "Heroi · %d pts", pontos);
+    hx_ref acima = hx_invoke2(api("math.vec3"), "add", hx_invoke1(api("transform"), "worldPosition", heroi), v3(0, 2.2, 0));
+    hx_invoke3(d, "text", acima, str(rotulo), str("#ffffff"));
+  }
+  hx_invoke4(d, "ray", v3(0, 3, 0), v3(0, -1, 0), num(3), str("#06d6a0"));
+  hud_timer += dt;
+  if (hud_timer >= 0.5) {
+    hud_timer = 0;
+    hx_ref g = api("gui");
+    hx_invoke2(g, "bind", str("fps"), num(round(numero(hx_get(api("render"), "stats"), "fps"))));
+    hx_invoke2(g, "bind", str("checagens"), num(checagens));
+    hx_invoke2(g, "bind", str("falhas"), num(falhas));
+  }
+}
+
+HX_HOOK void onFixedUpdate(double h) {
+  passos_fisica++;
+  if (passos_fisica == 1) checarf("onFixedUpdate recebe o passo", h > 0 && h < 1, "%g", h);
+}
+
+HX_HOOK void onLateUpdate(void) {
+  late_updates++;
+}
+
+                                                                             
+HX_HOOK double onBeforeHotReload(void) {
+  return pontos;
+}
+
+HX_HOOK void onHotReload(double anterior) {
+  pontos = anterior > 0 ? (int)anterior : 0;
+  info("Recarga a quente: %d pontos preservados", pontos);
+}
+
+HX_HOOK void onStop(void) {
+  for (int i = 0; i < n_assinaturas; i++) {
+    hx_call0(assinaturas[i]);
+    hx_release(assinaturas[i]);
+  }
+  n_assinaturas = 0;
+  info("Parou: %d quadros, %d passos de física, %d lateUpdates, %d frames (onAfterFrame), %d colisões.", quadros, passos_fisica, late_updates, renders, colisoes);
+  drop(&torus);
+  drop(&heroi);
+  drop(&efeito);
+  drop(&tela);
+  drop(&util);
+  drop(&recebido);
+}
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+#include "helix.h"
+#include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
+
+static double angulo;
+static int contatos, quadros;
+static hx_ref desligar = HX_NONE;
+
+static hx_ref str(const char* texto) { return hx_string(texto); }
+static hx_ref num(double valor) { return hx_number(valor); }
+
+static hx_ref opts(const char* chave, ...) {
+  hx_ref objeto = hx_object();
+  va_list ap;
+  va_start(ap, chave);
+  for (const char* atual = chave; atual != NULL; atual = va_arg(ap, const char*)) {
+    hx_ref valor = va_arg(ap, hx_ref);
+    hx_set(objeto, atual, valor);
+  }
+  va_end(ap);
+  return objeto;
+}
+
+static void registrar(const char* metodo, const char* fmt, ...) {
+  char mensagem[256];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(mensagem, sizeof mensagem, fmt, ap);
+  va_end(ap);
+  hx_invoke2(hx_path("log"), metodo, str("Girador"), str(mensagem));
+}
+
+static const char* nome_de(hx_ref entidade, char* buffer, size_t capacidade) {
+  hx_string_copy(hx_get(entidade, "name"), buffer, capacidade);
+  return buffer;
+}
+
+HX_HOOK void onLoad(void) {
+  hx_invoke1(hx_path("props"), "define",
+    opts("velocidade", opts("type", str("range"), "default", num(90), "min", num(0), "max", num(360), "step", num(1), "label", str("Velocidade (°/s)"), NULL),
+      "cor", opts("type", str("color"), "default", str("#ff8800"), "label", str("Cor"), NULL),
+      "pulsar", opts("type", str("boolean"), "default", hx_boolean(1), "label", str("Pulsar"), NULL),
+      NULL));
+}
+
+static hx_ref cor_mudou(void* userdata, hx_ref args) {
+  (void)userdata;
+  hx_invoke2(hx_path("material"), "setColor", hx_self(), hx_index(args, 0));
+  return HX_NONE;
+}
+
+HX_HOOK void onStart(void) {
+  hx_ref props = hx_path("props"), ator = hx_self(), lg = hx_path("log");
+  char nome[64];
+  registrar("info", "%s acordou com velocidade %g°/s", nome_de(ator, nome, sizeof nome), hx_to_number(hx_invoke1(props, "get", str("velocidade"))));
+  hx_invoke2(hx_path("material"), "setColor", ator, hx_invoke1(props, "get", str("cor")));
+  desligar = hx_retain(hx_invoke2(props, "onChanged", str("cor"), hx_function(cor_mudou, NULL, NULL)));
+  hx_invoke2(lg, "assert", hx_boolean(!hx_is_none(hx_get(hx_root(), "self")) && hx_equals(hx_get(hx_root(), "self"), ator)), str("helix.self deveria ser o ator deste script"));
+  hx_invoke2(lg, "assert", hx_boolean(hx_to_boolean(hx_invoke1(props, "has", str("velocidade"))) && hx_length(hx_invoke0(props, "definitions")) == 3), str("props.define deveria registrar 3 propriedades"));
+}
+
+HX_HOOK void onUpdate(double dt) {
+  hx_ref props = hx_path("props"), tr = hx_path("transform");
+  quadros++;
+  angulo += hx_to_number(hx_invoke1(props, "get", str("velocidade"))) * dt;
+  hx_invoke2(tr, "setRotation", hx_self(), hx_vec3_new(0, angulo, 0));
+  if (hx_to_boolean(hx_invoke1(props, "get", str("pulsar")))) {
+    hx_invoke2(tr, "setScale", hx_self(), num(1 + sin(hx_get_number(hx_path("time"), "now") * 3) * 0.1));
+  }
+}
+
+HX_HOOK void onCollisionBegin(hx_ref outro, hx_ref contato) {
+  contatos++;
+  if (contatos > 3) return;
+  char eu[64], ele[64];
+  registrar("info", "%s tocou %s (impulso %.2f)", nome_de(hx_self(), eu, sizeof eu), nome_de(outro, ele, sizeof ele), hx_get_number(contato, "impulse"));
+}
+
+HX_HOOK void onTriggerEnter(hx_ref outro) {
+  char eu[64], ele[64];
+  registrar("info", "%s entrou no gatilho de %s", nome_de(outro, ele, sizeof ele), nome_de(hx_self(), eu, sizeof eu));
+}
+
+HX_HOOK void onEnable(void) {
+  char eu[64];
+  registrar("debug", "%s ativo", nome_de(hx_self(), eu, sizeof eu));
+}
+
+HX_HOOK void onDisable(void) {
+  char eu[64];
+  registrar("debug", "%s inativo", nome_de(hx_self(), eu, sizeof eu));
+}
+
+HX_HOOK void onStop(void) {
+  char eu[64];
+  registrar("info", "%s: %d quadros, %d contatos", nome_de(hx_self(), eu, sizeof eu), quadros, contatos);
+}
+
+HX_HOOK void onDestroy(void) {
+  if (desligar) {
+    hx_call0(desligar);
+    hx_release(desligar);
+    desligar = HX_NONE;
+  }
+}
+`;
+    const module = String.raw `                                     
+                                                                                                     
+                                                                                                
+                                                             
+#ifndef DEBUG_UTIL_H
+#define DEBUG_UTIL_H
+
+#include "helix.h"
+#include <stdio.h>
+
+HX_EXPORT double soma(double a, double b) {
+  return a + b;
+}
+
+                                                                                            
+HX_EXPORT hx_ref saudacao(hx_ref quem) {
+  char nome[64], texto[80];
+  hx_string_copy(quem, nome, sizeof nome);
+  snprintf(texto, sizeof texto, "Olá, %s", nome);
+  return hx_string(texto);
+}
+
+HX_EXPORT double limitar(double valor, double minimo, double maximo) {
+  return valor > maximo ? maximo : valor < minimo ? minimo : valor;
+}
+
+#endif                   
+`;
+    return { entry, actor, module };
 }
