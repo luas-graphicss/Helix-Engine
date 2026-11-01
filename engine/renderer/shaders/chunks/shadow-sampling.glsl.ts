@@ -1,19 +1,48 @@
 import { MAX_SHADOW_CASCADES } from '@/engine/renderer/shadows/shadow-cascades';
 export const SHADOW_SAMPLING_CHUNK = `
 uniform highp sampler2DArrayShadow u_shadowMap;
+                                                                                                           
+uniform float u_shadowEnabled;
 uniform mat4 u_shadowMatrix[${MAX_SHADOW_CASCADES}];
 uniform float u_shadowTexelWorld[${MAX_SHADOW_CASCADES}];
-uniform int u_shadowCascadeCount;
+                                                                                                                     
+uniform highp int u_shadowCascadeCount;
 uniform float u_shadowMapSize;
 
 const int MAX_SHADOW_CASCADES = ${MAX_SHADOW_CASCADES};
 const float SHADOW_NORMAL_OFFSET_TEXELS = 1.0;
 const float SHADOW_DEPTH_BIAS_TEXELS = 0.75;
 const float SHADOW_MAX_PLANE_BIAS = 8.0;
- 
+                                                                                                  
 const float CASCADE_FADE_START = 0.8;
- 
+                                                                             
 const float CASCADE_BORDER_TEXELS = 3.0;
+                                                                                                           
+const float TENT_HALF_WIDTH = 2.5;
+                                                                                                                    
+const int MAX_FOOTPRINT_PROBES = 6;
+const float MAX_FOOTPRINT_TEXELS = float(MAX_FOOTPRINT_PROBES) * TENT_HALF_WIDTH;
+                                                                                       
+const float FOOTPRINT_FADE_START = 0.7;
+   
+                                                                               
+                                                                              
+                                                                           
+   
+const float PENUMBRA_MIN_PIXELS = 1.25;
+   
+                                                                           
+                                                                              
+                           
+   
+const float PENUMBRA_MIN_TEXELS = 1.0;
+   
+                                                                              
+                                                                             
+                                                                               
+                                    
+   
+const float PROBE_RAMP_FACTOR = 0.4;
 
    
                                                                              
