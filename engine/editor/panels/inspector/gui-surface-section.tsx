@@ -276,3 +276,16 @@ function BehaviorSection({ entity, settings }: {
         </>)}
     </CollapsibleSection>);
 }
+export function GuiSurfaceSection({ entity }: {
+    entity: Entity;
+}) {
+    const settings = entity.guiSurface;
+    if (!settings)
+        return null;
+    return (<>
+      <MainSection entity={entity} settings={settings}/>
+      <MountSection entity={entity} settings={settings}/>
+      <LookSection entity={entity} settings={settings}/>
+      <BehaviorSection entity={entity} settings={settings}/>
+    </>);
+}
