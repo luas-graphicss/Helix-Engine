@@ -14,7 +14,7 @@ import { SelectField } from '@/engine/ui/select-field';
 import { SliderField } from '@/engine/ui/slider-field';
 import { TextureImageThumbnail } from '@/engine/ui/texture-image-thumbnail';
 import { ToggleField } from '@/engine/ui/toggle-field';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { applyLibraryMaterialToEntity, describeApplyTarget, importPbrFiles, materialTargetKind } from '@/engine/editor/operations/material-library-operations';
 import { isGeneratedMapKind, mapOrigin, MATERIAL_MAP_KINDS, resolveMap, type MaterialDocument, type MaterialMapInfo, } from '@/engine/materials/material-document';
 import type { PipelineResolution } from '@/engine/materials/map-generation';
@@ -47,7 +47,7 @@ type SectionProps = {
 function MapRow({ document, info }: SectionProps & {
     info: MaterialMapInfo;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const fileInputRef = useRef<HTMLInputElement>(null);
     const image = resolveMap(document, info.kind);
     const origin = mapOrigin(document, info.kind);
@@ -62,39 +62,39 @@ function MapRow({ document, info }: SectionProps & {
         {generating ? (<span className="flex items-center gap-1 text-muted-foreground">
             <LoaderCircle className="size-3 animate-spin" aria-hidden/> gerando…
           </span>) : image ? (<>
-            <span className={cn('rounded-xs px-1 text-[10px] uppercase', origin === 'generated' ? 'bg-primary/15 text-primary' : 'bg-surface-sunken text-muted-foreground')}>{ORIGIN_LABEL[origin]}</span>
+            <span className={cn('rounded-xs px-1 text-3xs uppercase', origin === 'generated' ? 'bg-primary/15 text-primary' : 'bg-surface-sunken text-muted-foreground')}>{ORIGIN_LABEL[origin]}</span>
             <span className="text-muted-foreground">{` ${image.width}×${image.height}`}</span>
           </>) : (<span className="text-muted-foreground">Nenhum</span>)}
       </span>
-      <input ref={fileInputRef} type="file" accept={ACCEPTED_IMAGES} className="sr-only" tabIndex={-1} aria-label={`Arquivo para o mapa ${info.label}`} onChange={(event) => {
+      <input ref={fileInputRef} type="file" accept={ACCEPTED_IMAGES} className="hidden" tabIndex={-1} aria-label={`Arquivo para o mapa ${info.label}`} onChange={(event) => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = '';
             if (file)
                 void session.materials.setSourceFile(document, info.kind, file);
         }}/>
-      <IconButton label={`Carregar ${info.label} de arquivo`} size="sm" className="size-5 [&_svg]:size-3" onClick={() => fileInputRef.current?.click()}>
+      <IconButton label={`Carregar ${info.label} de arquivo`} size="xs" onClick={() => fileInputRef.current?.click()}>
         <FolderOpen />
       </IconButton>
-      {source ? (<IconButton label={`Remover ${info.label}`} size="sm" className="size-5 [&_svg]:size-3" onClick={() => session.materials.clearSource(document, info.kind)}>
+      {source ? (<IconButton label={`Remover ${info.label}`} size="xs" onClick={() => session.materials.clearSource(document, info.kind)}>
           <X />
         </IconButton>) : (<span className="size-5" aria-hidden/>)}
     </div>);
 }
 function MapsSection({ document }: SectionProps) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const setInputRef = useRef<HTMLInputElement>(null);
     const hasSources = MATERIAL_MAP_KINDS.some(({ kind }) => document.sources[kind] !== null);
-    return (<CollapsibleSection title="Mapas" trailing={<IconButton label="Importar conjunto PBR (várias imagens)" size="sm" className="size-5 [&_svg]:size-3" onClick={() => setInputRef.current?.click()}>
+    return (<CollapsibleSection title="Mapas" trailing={<IconButton label="Importar conjunto PBR (várias imagens)" size="xs" onClick={() => setInputRef.current?.click()}>
           <Images />
         </IconButton>}>
-      <input ref={setInputRef} type="file" accept={ACCEPTED_IMAGES} multiple className="sr-only" tabIndex={-1} aria-label="Imagens do conjunto PBR" onChange={(event) => {
+      <input ref={setInputRef} type="file" accept={ACCEPTED_IMAGES} multiple className="hidden" tabIndex={-1} aria-label="Imagens do conjunto PBR" onChange={(event) => {
             const files = Array.from(event.currentTarget.files ?? []);
             event.currentTarget.value = '';
             if (files.length > 0)
                 void importPbrFiles(session, files, document);
         }}/>
       {MATERIAL_MAP_KINDS.map((info) => (<MapRow key={info.kind} document={document} info={info}/>))}
-      <p className="px-2 pt-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pt-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
         Mapas marcados como <span className="text-primary">gerado</span> vêm do pipeline a partir do albedo; carregue um arquivo no slot para substituí-los.
       </p>
       <ActionRow>
@@ -112,11 +112,11 @@ function PipelineGroup({ document, kind, title, children }: SectionProps & {
     title: string;
     children: React.ReactNode;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const overridden = document.sources[kind] !== null;
     const enabled = document.pipeline[kind].enabled;
     return (<div className="flex flex-col gap-0.5 border-t border-border/60 pt-1 first:border-t-0 first:pt-0">
-      <div className="flex items-center gap-2 px-2 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+      <div className="flex items-center gap-2 px-2 text-3xs font-medium tracking-wider text-muted-foreground uppercase">
         <span className="flex-1">{title}</span>
         {overridden && <span className="font-normal normal-case tracking-normal">usando arquivo</span>}
       </div>
@@ -125,12 +125,12 @@ function PipelineGroup({ document, kind, title, children }: SectionProps & {
     </div>);
 }
 function PipelineSection({ document }: SectionProps) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { pipeline } = document;
     const hasAlbedo = document.sources.albedo !== null;
     const update = session.materials.updatePipeline.bind(session.materials);
     return (<CollapsibleSection title="Pipeline do albedo" trailing={document.generating ? <LoaderCircle className="size-3 animate-spin text-primary" aria-label="Gerando mapas"/> : undefined}>
-      {!hasAlbedo ? (<p className="px-2 py-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      {!hasAlbedo ? (<p className="px-2 py-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
           Carregue um albedo para derivar altura, normal, rugosidade e oclusão dele. Um único mapa de cor basta para montar o material PBR inteiro.
         </p>) : (<>
           <SelectField label="Resolução" options={RESOLUTIONS} value={pipeline.resolution} onChange={(resolution) => update(document, { resolution })}/>
@@ -157,7 +157,7 @@ function PipelineSection({ document }: SectionProps) {
     </CollapsibleSection>);
 }
 function SurfaceSection({ document }: SectionProps) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { material } = document;
     const edit = (mutate: (m: typeof material) => void) => session.materials.updateMaterial(document, mutate);
     const hasRoughnessMap = resolveMap(document, 'roughness') !== null;
@@ -178,7 +178,7 @@ function SurfaceSection({ document }: SectionProps) {
     </CollapsibleSection>);
 }
 function PhysicsSection({ document }: SectionProps) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { physics } = document;
     const preset = matchPhysicalPreset(physics) ?? 'custom';
     const options = [...PHYSICAL_PRESETS.map(({ id, label }) => ({ value: id, label })), { value: 'custom', label: 'Personalizado' }];
@@ -200,7 +200,7 @@ function PhysicsSection({ document }: SectionProps) {
           {body && entity ? `${entity.name}: ${formatMass(massForMaterial(physics, body, entity.transform.scale))}` : `1 m³ = ${formatMass(physics.density)}`}
         </span>
       </PropertyRow>
-      <p className="px-2 pt-0.5 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pt-0.5 text-3xs leading-relaxed text-pretty text-muted-foreground">
         Ao aplicar o material a um ator com corpo rígido, a massa é recalculada pela densidade e pelo volume do colisor; atrito, restituição e arrasto entram junto.
       </p>
     </CollapsibleSection>);
@@ -211,11 +211,11 @@ type MaterialPropertiesProps = {
     onRemove: () => void;
 };
 export function MaterialProperties({ document, onDuplicate, onRemove }: MaterialPropertiesProps) {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection');
     const entity = session.selectedEntity;
     const targetKind = materialTargetKind(entity);
     const alreadyApplied = targetKind === 'mesh' && entity?.material === document.material;
-    return (<aside className="flex w-[22.5rem] shrink-0 flex-col border-l border-border">
+    return (<aside className="flex w-[clamp(15rem,34%,22.5rem)] shrink-0 flex-col border-l border-border">
       <div className="min-h-0 flex-1 overflow-y-auto">
         <MapsSection document={document}/>
         <PipelineSection document={document}/>
