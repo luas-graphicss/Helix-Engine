@@ -2024,4 +2024,208 @@ class Analyzer {
         this.error(span, `A classe pai não tem o método "${name}".`);
         return null;
     }
+    private memberOf(objectType: StaticType, object: Expression, name: string, span: SourceSpan, mode: 'read' | 'call' | 'assign'): MemberLookup | null {
+        const resolution = object.kind === 'identifier' ? object.resolved : undefined;
+        if (objectType.startsWith('@class:')) {
+            const cls = this.classesByTypeName.get(objectType.slice(7));
+            if (!cls)
+                return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
+            if (name === 'new') {
+                const init = this.findMember(cls, '_init');
+                const params = init?.func?.params ?? [];
+                return { type: cls.typeName, callable: true, min: init ? params.filter((p) => !p.defaultValue).length : 0, max: init ? params.length : 0, readonly: true, what: 'construtor' };
+            }
+            const member = this.findMember(cls, name);
+            if (!member) {
+                if (name === 'get_script' || name === 'get_class' || name === 'instantiate' || name === 'can_instantiate' || name === 'get_base_script' || name === 'get_instance_base_type' || name === 'resource_path' || name === 'get_global_name')
+                    return { type: name === 'can_instantiate' ? 'bool' : 'Variant', callable: name !== 'resource_path', min: 0, max: 0, readonly: true, what: 'membro do script' };
+                const candidates = new Set<string>(['new']);
+                for (let c: ClassInfo | null = cls; c; c = c.parent)
+                    for (const key of c.members.keys())
+                        if (c.members.get(key)!.isStatic)
+                            candidates.add(key);
+                this.error(span, `A classe ${cls.typeName} não tem o membro estático "${name}".${this.suggest(name, candidates)}`);
+                return null;
+            }
+            if (!member.isStatic) {
+                this.error(span, `"${name}" é ${this.describeMemberKind(member.kind)} de instância: acesse por um objeto (${cls.name}.new().${name}), não pela classe.`);
+                return null;
+            }
+            this.touchStatic(member);
+            return this.lookupFromMember(member);
+        }
+        if (objectType.startsWith('@enum:')) {
+            const dot = objectType.lastIndexOf('.');
+            const owner = this.classesByTypeName.get(objectType.slice(6, dot));
+            const enumMember = owner ? this.findMember(owner, objectType.slice(dot + 1)) : null;
+            if (enumMember?.enumValues) {
+                if (enumMember.enumValues.has(name))
+                    return { type: 'int', callable: false, readonly: true, what: 'valor de enum' };
+                const dictReturn = DICT_RETURNS[name];
+                if (dictReturn && Object.prototype.hasOwnProperty.call(DICT_METHODS, name))
+                    return { type: dictReturn, callable: true, readonly: true, what: 'método de enum' };
+                this.error(span, `O enum ${enumMember.name} não tem o valor "${name}".${this.suggest(name, [...enumMember.enumValues.keys(), 'keys', 'values', 'size', 'has'])}`);
+                return null;
+            }
+            return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
+        }
+        if (objectType.startsWith('@type:'))
+            return this.staticOfType(objectType.slice(6), name, span, mode);
+        if (objectType.startsWith('@singleton:'))
+            return this.singletonMember(objectType.slice(11), name, span);
+        if (resolution?.kind === 'helix')
+            return { type: 'Variant', callable: true, readonly: false, what: 'membro de helix' };
+        if (objectType === 'Variant' || objectType === 'Object' || objectType === 'Resource' || objectType === 'RefCounted')
+            return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
+        if (objectType === 'JSON') {
+            const entry = JSON_INSTANCE_MEMBERS[name];
+            if (!entry) {
+                this.error(span, `JSON não tem o membro "${name}".${this.suggest(name, Object.keys(JSON_INSTANCE_MEMBERS))}`);
+                return null;
+            }
+            return this.lookupFromSingletonEntry(entry, name);
+        }
+        if (VALUE_TYPES.has(objectType))
+            return this.valueMember(objectType, name, span);
+        if (STRING_TYPES.has(objectType)) {
+            if (objectType === 'NodePath' && !Object.prototype.hasOwnProperty.call(STRING_METHODS, name))
+                return { type: 'Variant', callable: true, readonly: true, what: 'método de NodePath' };
+            if (!Object.prototype.hasOwnProperty.call(STRING_METHODS, name)) {
+                this.error(span, `String não tem o método "${name}".${this.suggest(name, Object.keys(STRING_METHODS))}`);
+                return null;
+            }
+            const type = STRING_INT_METHODS.has(name) ? 'int' : STRING_FLOAT_METHODS.has(name) ? 'float' : STRING_ARRAY_METHODS.has(name) ? 'Array' : STRING_BOOL_METHODS.has(name) || name.startsWith('is_') ? 'bool' : 'String';
+            return { type, callable: true, readonly: true, what: 'método de String' };
+        }
+        if (isArrayType(objectType)) {
+            if (!Object.prototype.hasOwnProperty.call(ARRAY_METHODS, name)) {
+                this.error(span, `Array não tem o método "${name}".${this.suggest(name, Object.keys(ARRAY_METHODS))}`);
+                return null;
+            }
+            const element = arrayElement(objectType);
+            const type = ARRAY_INT_METHODS.has(name) ? 'int' : ARRAY_BOOL_METHODS.has(name) ? 'bool' : ARRAY_ELEMENT_METHODS.has(name) ? element : ARRAY_ARRAY_METHODS.has(name) ? (name === 'map' ? 'Array' : objectType.startsWith('Array') ? objectType : 'Array') : ARRAY_VOID_METHODS.has(name) ? 'void' : 'Variant';
+            return { type, callable: true, readonly: true, what: 'método de Array' };
+        }
+        if (objectType === 'Dictionary') {
+            if (!Object.prototype.hasOwnProperty.call(DICT_METHODS, name)) {
+                this.error(span, `Dictionary não tem o método "${name}".${this.suggest(name, Object.keys(DICT_METHODS))}`);
+                return null;
+            }
+            return { type: DICT_RETURNS[name] ?? 'Variant', callable: true, readonly: true, what: 'método de Dictionary' };
+        }
+        if (objectType === 'Callable') {
+            if (!Object.prototype.hasOwnProperty.call(CALLABLE_METHODS, name)) {
+                this.error(span, `Callable não tem o método "${name}".${this.suggest(name, Object.keys(CALLABLE_METHODS))}`);
+                return null;
+            }
+            return { type: CALLABLE_RETURNS[name] ?? 'Variant', callable: true, readonly: true, what: 'método de Callable' };
+        }
+        if (objectType === 'Signal') {
+            if (!SIGNAL_METHOD_NAMES.includes(name)) {
+                this.error(span, `Signal não tem o método "${name}".${this.suggest(name, SIGNAL_METHOD_NAMES)}`);
+                return null;
+            }
+            return { type: SIGNAL_RETURNS[name] ?? 'Variant', callable: true, readonly: true, what: 'método de Signal' };
+        }
+        if (isNumeric(objectType) || objectType === 'bool' || objectType === 'null' || objectType === 'void') {
+            this.error(span, objectType === 'void' ? 'Esta chamada não devolve valor (void): não há membro para acessar.' : `Um valor do tipo ${objectType} não tem o membro "${name}".`);
+            return null;
+        }
+        const cls = this.classesByTypeName.get(objectType);
+        if (cls) {
+            const member = this.findMember(cls, name);
+            if (member) {
+                this.touchStatic(member);
+                return this.lookupFromMember(member);
+            }
+            const base = this.baseMember(name, cls.godotBase);
+            if (base)
+                return { type: base.type, callable: base.kind === 'method', min: base.min, max: base.max, readonly: base.readonly, what: base.what };
+            if (name === 'new') {
+                this.error(span, `"new" cria instâncias a partir da classe (${cls.name}.new()), não de um objeto.`);
+                return null;
+            }
+            const candidates = new Set<string>();
+            for (let c: ClassInfo | null = cls; c; c = c.parent)
+                for (const key of c.members.keys())
+                    candidates.add(key);
+            for (const key of Object.keys(NODE_PROPERTIES))
+                if (baseMemberVisible(key, cls.godotBase))
+                    candidates.add(key);
+            for (const key of Object.keys(NODE_METHODS))
+                if (baseMemberVisible(key, cls.godotBase))
+                    candidates.add(key);
+            this.error(span, `${cls.typeName} não tem o membro "${name}".${this.suggest(name, candidates)}`);
+            return null;
+        }
+        if (isGodotNodeClass(objectType) || objectType === 'Node') {
+            const base = this.baseMember(name, objectType);
+            if (base)
+                return { type: base.type, callable: base.kind === 'method', min: base.min, max: base.max, readonly: base.readonly, what: base.what };
+            return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
+        }
+        return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
+    }
+    private lookupFromSingletonEntry(entry: (typeof SINGLETON_MEMBERS)[string][string], name: string): MemberLookup {
+        switch (entry.kind) {
+            case 'method':
+                return { type: entry.returns, callable: true, min: entry.min, max: entry.max, readonly: true, what: `método ${name}` };
+            case 'property':
+                return { type: entry.type, callable: false, readonly: entry.readonly, what: 'propriedade' };
+            case 'constant':
+                return { type: 'int', callable: false, readonly: true, what: 'constante' };
+        }
+    }
+    private singletonMember(singleton: string, name: string, span: SourceSpan): MemberLookup | null {
+        const table = SINGLETON_MEMBERS[singleton];
+        if (!table)
+            return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
+        const entry = table[name];
+        if (!entry) {
+            this.error(span, `${singleton} não tem "${name}".${this.suggest(name, Object.keys(table))}`);
+            return null;
+        }
+        return this.lookupFromSingletonEntry(entry, name);
+    }
+    private staticOfType(typeName: string, name: string, span: SourceSpan, mode: 'read' | 'call' | 'assign'): MemberLookup | null {
+        const valueClass = VALUE_CLASSES[typeName];
+        if (valueClass) {
+            if (!(name in valueClass.ctor)) {
+                const candidates = Object.getOwnPropertyNames(valueClass.ctor).filter((key) => !['length', 'name', 'prototype'].includes(key));
+                this.error(span, `${typeName} não tem o membro estático "${name}".${this.suggest(name, candidates)}`);
+                return null;
+            }
+            const isMethod = typeof (valueClass.ctor as Record<string, unknown>)[name] === 'function';
+            const type = /^AXIS_/.test(name) ? 'int' : name === 'html_is_valid' ? 'bool' : typeName === 'Color' && (name === 'to_rgba32' || name === 'to_abgr32') ? 'int' : typeName;
+            return { type, callable: isMethod, readonly: true, what: isMethod ? 'método estático' : 'constante' };
+        }
+        if (typeName === 'String' || typeName === 'StringName') {
+            if (!Object.prototype.hasOwnProperty.call(STRING_STATICS, name)) {
+                this.error(span, `String não tem o método estático "${name}".${this.suggest(name, Object.keys(STRING_STATICS))}`);
+                return null;
+            }
+            return { type: 'String', callable: true, readonly: true, what: 'método estático de String' };
+        }
+        if (isGodotClass(typeName) || typeName === 'Object' || typeName === 'Node') {
+            if (name === 'new') {
+                if (isGodotNodeClass(typeName))
+                    return { type: typeName, callable: true, min: 0, max: 0, readonly: true, what: 'construtor' };
+                if (CONSTRUCTIBLE_OBJECT_CLASSES.has(typeName))
+                    return { type: typeName, callable: true, min: 0, max: 0, readonly: true, what: 'construtor' };
+                this.error(span, `${typeName} não pode ser criado com new() nesta engine.`);
+                return null;
+            }
+            if (/^[A-Z][A-Z0-9_]*$/.test(name))
+                return { type: 'int', callable: false, readonly: true, what: 'constante' };
+            if (mode === 'call')
+                return { type: 'Variant', callable: true, readonly: true, what: 'método estático' };
+            this.error(span, `${typeName} não tem o membro estático "${name}".`);
+            return null;
+        }
+        if (typeName === 'Array' || typeName === 'Dictionary' || isNumeric(typeName) || typeName === 'bool' || typeName === 'Callable' || typeName === 'Signal' || typeName in PACKED_ELEMENTS) {
+            this.error(span, `${typeName} não tem membros estáticos; use ${typeName}(...) para construir um valor.`);
+            return null;
+        }
+        return { type: 'Variant', callable: true, readonly: false, what: 'membro' };
+    }
 }
