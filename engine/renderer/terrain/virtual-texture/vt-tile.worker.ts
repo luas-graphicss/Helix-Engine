@@ -273,3 +273,23 @@ async function serve(request: Extract<VtWorkerRequest, {
     }
     scope.postMessage({ type: 'tile', requestId, sourceId, level, px, py, bitmap }, bitmap ? [bitmap] : []);
 }
+scope.onmessage = (event) => {
+    const message = event.data;
+    switch (message.type) {
+        case 'open': {
+            const source: SourceState = { id: message.sourceId, key: message.key, size: message.size, levels: 0, ready: false, memory: null };
+            sources.set(message.sourceId, source);
+            prepare(source, message.url).catch((cause: unknown) => {
+                sources.delete(message.sourceId);
+                scope.postMessage({ type: 'error', sourceId: message.sourceId, message: cause instanceof Error ? cause.message : String(cause) });
+            });
+            break;
+        }
+        case 'tile':
+            void serve(message);
+            break;
+        case 'close':
+            sources.delete(message.sourceId);
+            break;
+    }
+};
