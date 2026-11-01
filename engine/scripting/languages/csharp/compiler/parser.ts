@@ -537,4 +537,213 @@ class Parser {
         this.expect('}', 'fechando os acessores');
         return { getter, setter };
     }
+    private indexerMember(start: Token, modifiers: readonly string[], type: TypeRef): Member {
+        this.expect('this');
+        this.expect('[', 'depois de this no indexador');
+        const parameters: Parameter[] = [];
+        if (!this.at(']')) {
+            do
+                parameters.push(this.parameter());
+            while (this.match(','));
+        }
+        this.expect(']', 'fechando os parâmetros do indexador');
+        if (this.match('=>')) {
+            const expressionBody = this.expression();
+            this.expect(';');
+            return { kind: 'indexer', modifiers, type, parameters, getter: null, setter: null, expressionBody, span: this.spanFrom(start) };
+        }
+        const { getter, setter } = this.accessors();
+        return { kind: 'indexer', modifiers, type, parameters, getter, setter, expressionBody: null, span: this.spanFrom(start) };
+    }
+    private fieldMember(start: Token, modifiers: readonly string[], type: TypeRef, nameToken: Token): Member {
+        const declarators: Declarator[] = [this.declaratorFrom(nameToken)];
+        while (this.match(','))
+            declarators.push(this.declarator('do campo'));
+        this.expect(';', 'depois do campo');
+        return { kind: 'field', modifiers, type, declarators, span: this.spanFrom(start) };
+    }
+    private declarators(context: string): Declarator[] {
+        const declarators: Declarator[] = [this.declarator(context)];
+        while (this.match(','))
+            declarators.push(this.declarator(context));
+        return declarators;
+    }
+    private declarator(context: string): Declarator {
+        return this.declaratorFrom(this.expectIdentifier(context));
+    }
+    private declaratorFrom(nameToken: Token): Declarator {
+        const initializer = this.match('=') ? this.variableInitializer() : null;
+        return { name: String(nameToken.value), initializer, span: spanBetween(nameToken.span, this.previous().span) };
+    }
+    private variableInitializer(): Expression {
+        if (this.at('{')) {
+            const start = this.current;
+            const elements = this.collectionElements();
+            return { kind: 'array', elementType: null, sizes: [], elements: elements.map((element) => (Array.isArray(element) ? this.fail('Inicializador de array não aceita pares { a, b }.', start.span) : (element as Expression))), span: this.spanFrom(start) };
+        }
+        return this.expression();
+    }
+    private parameterList(): Parameter[] {
+        this.expect('(', 'abrindo os parâmetros');
+        const parameters: Parameter[] = [];
+        if (!this.at(')')) {
+            do
+                parameters.push(this.parameter());
+            while (this.match(','));
+        }
+        this.expect(')', 'fechando os parâmetros');
+        return parameters;
+    }
+    private parameter(): Parameter {
+        this.skipAttributes();
+        const start = this.current;
+        let modifier: ParameterModifier = 'none';
+        if (this.at('ref') || this.at('out') || this.at('in') || this.at('params'))
+            modifier = this.advance().text as ParameterModifier;
+        else if (this.atIdentifier('scoped'))
+            this.advance();
+        if (this.at('this'))
+            this.advance();
+        const type = this.type();
+        const nameToken = this.expectIdentifier('do parâmetro');
+        const defaultValue = this.match('=') ? this.expression() : null;
+        return { name: String(nameToken.value), type, modifier, defaultValue, span: this.spanFrom(start) };
+    }
+    private argumentList(): Argument[] {
+        this.expect('(', 'abrindo os argumentos');
+        const args = this.argumentsUntil(')');
+        this.expect(')', 'fechando os argumentos');
+        return args;
+    }
+    private argumentsUntil(close: string): Argument[] {
+        const args: Argument[] = [];
+        if (this.at(close))
+            return args;
+        do
+            args.push(this.argument());
+        while (this.match(','));
+        return args;
+    }
+    private argument(): Argument {
+        const start = this.current;
+        let name: string | null = null;
+        if (this.current.kind === 'identifier' && this.at(':', this.peek()) && !this.at(':', this.peek(2))) {
+            name = String(this.advance().value);
+            this.advance();
+        }
+        let modifier: Argument['modifier'] = 'none';
+        if (this.at('ref') || this.at('out') || this.at('in'))
+            modifier = this.advance().text as Argument['modifier'];
+        if (modifier === 'out') {
+            const declaration = this.attempt(() => {
+                const type = this.atIdentifier('var') ? (this.advance(), null) : this.type();
+                const variable = this.expectIdentifier('da variável out');
+                if (!this.at(',') && !this.at(')') && !this.at(']'))
+                    this.fail('Esperado o fim do argumento out.');
+                return { type, name: String(variable.value), span: variable.span };
+            });
+            if (declaration) {
+                const expression: Expression = { kind: 'identifier', name: declaration.name, typeArguments: null, span: declaration.span };
+                return { name, modifier, expression, declaration: { type: declaration.type, name: declaration.name }, span: this.spanFrom(start) };
+            }
+        }
+        const expression = this.expression();
+        return { name, modifier, expression, declaration: null, span: this.spanFrom(start) };
+    }
+    type(allowNullable = true): TypeRef {
+        const start = this.current;
+        let name: string;
+        let typeArguments: TypeRef[] = [];
+        let tupleElements: TypeRef[] | null = null;
+        if (this.at('(')) {
+            this.advance();
+            tupleElements = [];
+            do {
+                tupleElements.push(this.type());
+                if (this.current.kind === 'identifier' && !this.at(',', this.peek()) && !this.at(')', this.peek()))
+                    this.fail('Esperado "," ou ")" no tipo tupla.');
+                if (this.current.kind === 'identifier')
+                    this.advance();
+            } while (this.match(','));
+            this.expect(')', 'fechando o tipo tupla');
+            if (tupleElements.length < 2)
+                this.fail('Um tipo tupla precisa de ao menos dois elementos.', start.span);
+            name = '';
+        }
+        else if (this.current.kind === 'keyword' && PRIMITIVE_TYPE_KEYWORDS.has(this.current.text)) {
+            name = this.advance().text;
+        }
+        else if (this.current.kind === 'identifier') {
+            if (this.atIdentifier('global') && this.at('::', this.peek())) {
+                this.advance();
+                this.advance();
+            }
+            name = String(this.advance().value);
+            if (this.at('<'))
+                typeArguments = this.typeArguments();
+            while (this.at('.') && this.peek().kind === 'identifier') {
+                this.advance();
+                name = String(this.advance().value);
+                typeArguments = this.at('<') ? this.typeArguments() : [];
+            }
+        }
+        else {
+            this.fail(`Esperado um tipo, encontrado ${this.describe(this.current)}.`);
+        }
+        let nullable = false;
+        if (allowNullable && this.at('?') && this.nullableFollows()) {
+            this.advance();
+            nullable = true;
+        }
+        let arrayRank = 0;
+        while (this.at('[') && (this.at(']', this.peek()) || this.at(',', this.peek()))) {
+            this.advance();
+            let rank = 1;
+            while (this.match(','))
+                rank++;
+            this.expect(']', 'fechando o tipo array');
+            arrayRank = Math.max(arrayRank, rank);
+            if (allowNullable && this.at('?')) {
+                this.advance();
+                nullable = true;
+            }
+        }
+        return { name, typeArguments, arrayRank, nullable, tupleElements, span: this.spanFrom(start) };
+    }
+    private nullableFollows(): boolean {
+        const next = this.peek();
+        return next.kind === 'identifier' || this.at(')', next) || this.at(',', next) || this.at('>', next) || this.at('[', next) || this.at('(', next) || this.at('=', next) || this.at(';', next) || this.at('{', next) || this.at('this', next) || this.at('.', next);
+    }
+    private typeArguments(): TypeRef[] {
+        this.expect('<');
+        const args: TypeRef[] = [];
+        if (this.at('>')) {
+            this.advance();
+            return args;
+        }
+        do
+            args.push(this.type());
+        while (this.match(','));
+        this.expect('>', 'fechando os argumentos de tipo');
+        return args;
+    }
+    block(): Block {
+        const start = this.expect('{', 'abrindo o bloco');
+        const statements: Statement[] = [];
+        while (!this.at('}') && !this.atEnd()) {
+            try {
+                statements.push(this.statement());
+            }
+            catch (error) {
+                if (!(error instanceof ParseError))
+                    throw error;
+                this.report(error.message, error.span);
+                if (this.diagnostics.length >= MAX_DIAGNOSTICS)
+                    break;
+                this.recover();
+            }
+        }
+        this.expect('}', 'fechando o bloco');
+        return { kind: 'block', statements, span: this.spanFrom(start) };
+    }
 }
