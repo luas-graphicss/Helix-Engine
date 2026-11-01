@@ -3,7 +3,7 @@ import { framebufferStatus } from '@/engine/renderer/gl/framebuffer-status';
 import { ShaderProgram } from '@/engine/renderer/gl/shader-program';
 import type { FullscreenTriangle } from '@/engine/renderer/gl/fullscreen-triangle';
 import { FULLSCREEN_VERTEX_SHADER } from '@/engine/renderer/shaders/chunks/fullscreen.glsl';
-import { TERRAIN_MATERIAL_BAKE_FRAGMENT_SHADER } from '@/engine/renderer/shaders/terrain-material-bake.glsl';
+import { terrainMaterialBakeFragmentShader } from '@/engine/renderer/shaders/terrain-material-bake.glsl';
 import type { RenderProfile } from '@/engine/renderer/quality/render-profile';
 import type { Frustum } from '@/engine/renderer/culling/frustum';
 import type { Entity } from '@/engine/core/scene/entity';
@@ -16,11 +16,11 @@ import { clamp } from '@/engine/core/math/scalar';
 import type { Terrain } from '@/engine/terrain/core/terrain';
 import { createRegion, isRegionEmpty } from '@/engine/terrain/core/heightfield';
 import type { RegionChangeLog } from '@/engine/terrain/chunks/region-change-log';
-import { terrainMaterialSignature } from '@/engine/terrain/materials/terrain-material';
+import { terrainMaterialSignature, TERRAIN_COLOR_TEXTURE_SIZE } from '@/engine/terrain/materials/terrain-material';
 import { materialSupportsGrass } from '@/engine/terrain/foliage/grass-placement';
 import type { TerrainGpuCache } from './terrain-gpu-cache';
 import { TerrainMaterialUniforms } from './terrain-material-uniforms';
-import { MAX_TERRAIN_CACHE_LEVELS, TERRAIN_CACHE_TEXELS_PER_METER, TERRAIN_CACHE_TILE_TEXELS, terrainCacheBaseCoverage, terrainCacheUsableRadius, } from './terrain-cache-layout';
+import { MAX_TERRAIN_CACHE_LEVELS, TERRAIN_CACHE_TILE_TEXELS, terrainCacheBaseCoverage, terrainCacheUsableRadius, } from './terrain-cache-layout';
 const RETENTION_FRAMES = 300;
 const PAGE_EMPTY = -32768;
 const RING_FAR_DISTANCE = 0.375;
@@ -102,7 +102,7 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     readonly center = vec3.create();
     readonly ringCount: number;
     readonly usableRadius: number;
-    readonly texelsPerMeter = TERRAIN_CACHE_TEXELS_PER_METER;
+    readonly texelsPerMeter = TERRAIN_COLOR_TEXTURE_SIZE;
     readonly size: number;
     readonly memoryBytes: number;
     lastUsedFrame = 0;
@@ -113,7 +113,7 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     private readonly region = createRegion();
     constructor(private readonly gl: GL, readonly terrain: Terrain, readonly texels: number, readonly tilesPerSide: number, maxLevels: number) {
         this.size = terrain.size;
-        const base = terrainCacheBaseCoverage(texels);
+        const base = terrainCacheBaseCoverage(texels, this.texelsPerMeter);
         this.ringCount = Math.max(0, Math.min(maxLevels - 1, Math.ceil(Math.log2(terrain.size / base))));
         this.usableRadius = terrainCacheUsableRadius(base, tilesPerSide);
         for (let k = 0; k < this.ringCount; k++) {
@@ -282,7 +282,7 @@ export class TerrainMaterialCache {
     private readonly worldBounds = aabb.create();
     private frame = 0;
     constructor(private readonly gl: GL, private readonly triangle: FullscreenTriangle, private readonly resources: TerrainGpuCache, profile: RenderProfile) {
-        this.program = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, TERRAIN_MATERIAL_BAKE_FRAGMENT_SHADER);
+        this.program = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, terrainMaterialBakeFragmentShader(false));
         this.materialUniforms = new TerrainMaterialUniforms(gl);
         this.texels = profile.terrainCacheSize;
         this.tilesPerSide = profile.terrainCacheSize / TERRAIN_CACHE_TILE_TEXELS;
