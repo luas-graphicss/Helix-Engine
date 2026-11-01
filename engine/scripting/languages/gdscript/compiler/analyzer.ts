@@ -553,3 +553,248 @@ interface FunctionContext {
     loopDepth: number;
     hasAwait: boolean;
 }
+interface MemberLookup {
+    readonly type: StaticType;
+    readonly callable: boolean;
+    readonly min?: number;
+    readonly max?: number;
+    readonly resolution?: Resolution;
+    readonly readonly: boolean;
+    readonly func?: FunctionMember | null;
+    readonly what: string;
+}
+const siblingParseCache = new Map<string, ScriptFile | null>();
+function parseSibling(sibling: ForeignSibling): ScriptFile | null {
+    const key = `${sibling.name}\u0000${sibling.source}`;
+    const cached = siblingParseCache.get(key);
+    if (cached !== undefined)
+        return cached;
+    if (siblingParseCache.size > 96)
+        siblingParseCache.clear();
+    let parsed: ScriptFile | null = null;
+    try {
+        const result = parse(sibling.source);
+        parsed = result.diagnostics.length === 0 ? result.file : result.file;
+    }
+    catch {
+        parsed = null;
+    }
+    siblingParseCache.set(key, parsed);
+    return parsed;
+}
+class Analyzer {
+    private readonly diagnostics: CompileDiagnostic[] = [];
+    private silent = 0;
+    private readonly classes: ClassInfo[] = [];
+    private readonly classesByTypeName = new Map<string, ClassInfo>();
+    private readonly siblingsByClassName = new Map<string, ClassInfo>();
+    private readonly siblingsByScript = new Map<string, ClassInfo>();
+    private readonly siblingsByFile = new Map<string, ClassInfo>();
+    private readonly dependencies = new Set<string>();
+    private readonly staticInits: StaticInit[] = [];
+    private readonly staticState = new Map<MemberInfo, 'doing' | 'done'>();
+    private readonly usedClassJsNames = new Set<string>();
+    private fn: FunctionContext | null = null;
+    private scope: Scope | null = null;
+    private main: ClassInfo | null = null;
+    constructor(private readonly input: AnalyzeInput) { }
+    run(): AnalysisResult {
+        this.indexSiblings();
+        const main = this.collectClass(this.input.file, null, true, null);
+        this.main = main;
+        for (const cls of this.classes)
+            this.resolveHierarchy(cls, new Set());
+        for (const cls of this.classes)
+            this.declareMemberTypes(cls);
+        for (const cls of this.classes)
+            this.checkMembersAgainstBase(cls);
+        for (const cls of this.classes)
+            for (const member of cls.members.values())
+                if (member.isStatic && (member.kind === 'const' || member.kind === 'enum' || member.kind === 'enum_value' || member.kind === 'var'))
+                    this.ensureStaticInit(member);
+        for (const cls of this.classes)
+            this.analyzeInstanceInitializers(cls);
+        for (const cls of this.classes)
+            this.analyzeFunctions(cls);
+        const hasErrors = this.diagnostics.some((d) => d.severity === 'error');
+        return {
+            diagnostics: this.diagnostics,
+            program: hasErrors ? null : { main, classes: this.classes, staticInits: this.staticInits, dependencies: [...this.dependencies] },
+        };
+    }
+    private report(severity: CompileSeverity, span: SourceSpan, message: string): void {
+        if (this.silent > 0)
+            return;
+        this.diagnostics.push({ severity, message, source: SOURCE, ...spanOf(span) });
+    }
+    private error(span: SourceSpan, message: string): void {
+        this.report('error', span, message);
+    }
+    private warn(span: SourceSpan, message: string): void {
+        this.report('warning', span, message);
+    }
+    private suggest(name: string, candidates: Iterable<string>): string {
+        const hint = closest(name, candidates);
+        return hint && hint !== name ? ` Você quis dizer "${hint}"?` : '';
+    }
+    private indexSiblings(): void {
+        this.silent++;
+        try {
+            for (const sibling of this.input.siblings) {
+                if (sibling.name === this.input.scriptName)
+                    continue;
+                const parsed = parseSibling(sibling);
+                if (!parsed)
+                    continue;
+                const info = this.collectClass(parsed, null, false, sibling);
+                this.siblingsByScript.set(sibling.name, info);
+                this.siblingsByFile.set(sibling.file, info);
+                if (parsed.className)
+                    this.siblingsByClassName.set(parsed.className, info);
+            }
+            for (const info of this.siblingsByScript.values()) {
+                this.resolveHierarchy(info, new Set());
+                this.declareMemberTypes(info);
+                for (const member of info.members.values())
+                    if (member.kind === 'enum' || member.kind === 'enum_value' || member.kind === 'const')
+                        this.ensureStaticInit(member);
+                for (const inner of this.allInner(info)) {
+                    this.resolveHierarchy(inner, new Set());
+                    this.declareMemberTypes(inner);
+                    for (const member of inner.members.values())
+                        if (member.kind === 'enum' || member.kind === 'enum_value' || member.kind === 'const')
+                            this.ensureStaticInit(member);
+                }
+            }
+        }
+        finally {
+            this.silent--;
+        }
+    }
+    private *allInner(cls: ClassInfo): Iterable<ClassInfo> {
+        for (const inner of cls.inner.values()) {
+            yield inner;
+            yield* this.allInner(inner);
+        }
+    }
+    private siblingByPath(path: string): ClassInfo | null {
+        const clean = path.replace(/^res:\/\//, '').replace(/^user:\/\//, '');
+        const file = clean.slice(clean.lastIndexOf('/') + 1);
+        const direct = this.siblingsByFile.get(file);
+        if (direct)
+            return direct;
+        const stem = file.replace(/\.(gd|gdscript)$/i, '');
+        return this.siblingsByScript.get(stem) ?? null;
+    }
+    private useClass(cls: ClassInfo): void {
+        if (this.silent === 0 && cls.isSibling && cls.scriptName)
+            this.dependencies.add(cls.scriptName);
+    }
+    private classJsName(name: string, outer: ClassInfo | null, sibling: ForeignSibling | null): string {
+        if (sibling)
+            return siblingAccess(sibling.name);
+        let candidate = jsIdentifier(name);
+        if (this.usedClassJsNames.has(candidate) && outer)
+            candidate = `${outer.jsName}_${candidate}`;
+        while (this.usedClassJsNames.has(candidate))
+            candidate += '_';
+        this.usedClassJsNames.add(candidate);
+        return candidate;
+    }
+    private collectClass(decl: ScriptFile | ClassDeclaration, outer: ClassInfo | null, isMain: boolean, sibling: ForeignSibling | null): ClassInfo {
+        const name = 'kind' in decl ? decl.name : (decl.className ?? (sibling ? sibling.name : this.input.scriptName));
+        const typeName = outer ? `${outer.typeName}.${name}` : name;
+        const cls: ClassInfo = {
+            name,
+            typeName,
+            jsName: sibling && !outer ? this.classJsName(name, null, sibling) : outer?.isSibling ? `${outer.jsName}.${name}` : this.classJsName(name, outer, null),
+            decl,
+            isMain,
+            isSibling: sibling !== null || (outer?.isSibling ?? false),
+            scriptName: sibling ? sibling.name : (outer?.scriptName ?? null),
+            outer,
+            parent: null,
+            godotBase: 'kind' in decl ? 'RefCounted' : 'Node3D',
+            members: new Map(),
+            inner: new Map(),
+        };
+        if ('kind' in decl)
+            decl.jsName = cls.jsName;
+        if (!cls.isSibling) {
+            if (BUILTIN_TYPE_NAMES.includes(name) || isGodotClass(name) || SINGLETON_NAMES.includes(name)) {
+                this.error('kind' in decl ? decl.nameSpan : (decl.classNameSpan ?? decl.span), `"${name}" já é um tipo do Godot; escolha outro nome para a classe.`);
+            }
+            if (outer && this.lookupClassLexical(name, outer))
+                this.warn('kind' in decl ? decl.nameSpan : decl.span, `A classe interna "${name}" esconde outra classe de mesmo nome.`);
+        }
+        const add = (member: MemberInfo): void => {
+            const existing = cls.members.get(member.name);
+            if (existing) {
+                this.error(member.span, `Já existe um membro chamado "${member.name}" nesta classe (declarado na linha ${existing.span.line}).`);
+                return;
+            }
+            if (member.name === 'constructor' || member.name === '__proto__' || (member.isStatic && member.name === 'prototype')) {
+                this.error(member.span, `"${member.name}" é um nome reservado pela engine; escolha outro.`);
+                return;
+            }
+            cls.members.set(member.name, member);
+        };
+        for (const member of decl.members) {
+            switch (member.kind) {
+                case 'variable':
+                    add({
+                        name: member.name,
+                        kind: 'var',
+                        isStatic: member.isStatic,
+                        type: 'Variant',
+                        backingField: member.accessors ? `${member.name}$` : null,
+                        owner: cls,
+                        span: member.nameSpan,
+                        decl: member,
+                        func: null,
+                        enumValues: null,
+                        inner: null,
+                    });
+                    break;
+                case 'constant':
+                    add({ name: member.name, kind: 'const', isStatic: true, type: 'Variant', backingField: null, owner: cls, span: member.nameSpan, decl: member, func: null, enumValues: null, inner: null });
+                    break;
+                case 'enum':
+                    if (member.name) {
+                        add({ name: member.name, kind: 'enum', isStatic: true, type: 'Dictionary', backingField: null, owner: cls, span: member.span, decl: member, func: null, enumValues: new Map(), inner: null });
+                    }
+                    else {
+                        for (const value of member.values) {
+                            add({ name: value.name, kind: 'enum_value', isStatic: true, type: 'int', backingField: null, owner: cls, span: value.span, decl: member, func: null, enumValues: null, inner: null });
+                        }
+                    }
+                    break;
+                case 'signal':
+                    add({ name: member.name, kind: 'signal', isStatic: false, type: 'Signal', backingField: null, owner: cls, span: member.span, decl: member, func: null, enumValues: null, inner: null });
+                    break;
+                case 'function':
+                    add({ name: member.name, kind: 'func', isStatic: member.isStatic, type: 'Variant', backingField: null, owner: cls, span: member.nameSpan, decl: member, func: member, enumValues: null, inner: null });
+                    break;
+                case 'class': {
+                    const inner = this.collectClass(member, cls, false, null);
+                    cls.inner.set(member.name, inner);
+                    add({ name: member.name, kind: 'class', isStatic: true, type: `@class:${inner.typeName}`, backingField: null, owner: cls, span: member.nameSpan, decl: member, func: null, enumValues: null, inner });
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+        if (!cls.isSibling) {
+            this.classes.push(cls);
+            this.classesByTypeName.set(typeName, cls);
+            if (!outer)
+                this.classesByTypeName.set(name, cls);
+        }
+        else {
+            this.classesByTypeName.set(typeName, cls);
+        }
+        return cls;
+    }
+    private readonly hierarchyResolved = new Set<ClassInfo>();
+}
