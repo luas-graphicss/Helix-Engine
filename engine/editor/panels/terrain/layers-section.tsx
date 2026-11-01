@@ -11,7 +11,7 @@ import { FieldInput } from '@/engine/ui/field-input';
 import { IconButton } from '@/engine/ui/icon-button';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
 import { linearRgbToCss } from '@/engine/core/color/srgb';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS } from '@/engine/editor/menus/menu-styles';
 import { openMaterialEditor } from '@/engine/editor/materials/material-editor-requests';
 import { materialCaption, MaterialSwatch as LibraryMaterialSwatch } from '@/engine/editor/materials/material-swatch';
@@ -36,12 +36,12 @@ function MaterialSwatch({ thumbnailUrl, color, className }: {
 function AddLayerMenu({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const library = session.materials.all;
     const materials = session.terrain.materials.list().filter((material) => !isTerrainMaterialFromLibrary(material.id));
     const groups = CATEGORY_ORDER.map((category) => ({ category, entries: materials.filter((material) => material.category === category) })).filter((group) => group.entries.length > 0);
     return (<DropdownMenu>
-      <DropdownMenuTrigger render={<IconButton label="Adicionar camada de material" size="sm" className="size-5 [&_svg]:size-3" disabled={!target.terrain.canAddLayer}/>}>
+      <DropdownMenuTrigger render={<IconButton label="Adicionar camada de material" size="xs" disabled={!target.terrain.canAddLayer}/>}>
         <Plus />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className={cn(MENU_CONTENT_CLASS, 'max-h-96 overflow-auto')}>
@@ -54,7 +54,7 @@ function AddLayerMenu({ target }: {
               <LibraryMaterialSwatch document={document} className="size-4" resolution={32}/>
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate">{document.name}</span>
-                <span className="truncate text-[10px] text-muted-foreground">{materialCaption(document)}</span>
+                <span className="truncate text-3xs text-muted-foreground">{materialCaption(document)}</span>
               </span>
             </DropdownMenuItem>))}
           <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => openMaterialEditor({ materialId: session.materials.create().id })}>
@@ -69,7 +69,7 @@ function AddLayerMenu({ target }: {
                 <MaterialSwatch thumbnailUrl={material.thumbnailUrl} color={material.averageColor} className="size-4"/>
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{material.name}</span>
-                  <span className="truncate text-[10px] text-muted-foreground">{material.description}</span>
+                  <span className="truncate text-3xs text-muted-foreground">{material.description}</span>
                 </span>
                 {material.foliage && <Sprout className="ml-auto" aria-label="Faz crescer grama"/>}
               </DropdownMenuItem>))}
@@ -83,7 +83,7 @@ function LayerRow({ target, layer, index, active }: {
     index: number;
     active: boolean;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { entity, terrain } = target;
     const last = terrain.layers.length - 1;
     const libraryDocument = libraryDocumentForTerrainMaterial(session, layer.material.id);
@@ -95,13 +95,13 @@ function LayerRow({ target, layer, index, active }: {
         {layer.auto.enabled && <WandSparkles className="size-3 shrink-0 text-primary/80" aria-label="Pintura automática ativa"/>}
         {materialSupportsGrass(layer.material) && <Sprout className="size-3 shrink-0 text-muted-foreground/70" aria-label="Aceita grama"/>}
       </button>
-      <IconButton label="Mover camada para cima" size="sm" className="size-5 [&_svg]:size-3" disabled={index === 0} onClick={() => moveTerrainLayer(session, entity, layer, -1)}>
+      <IconButton label="Mover camada para cima" size="xs" disabled={index === 0} onClick={() => moveTerrainLayer(session, entity, layer, -1)}>
         <ChevronUp />
       </IconButton>
-      <IconButton label="Mover camada para baixo" size="sm" className="size-5 [&_svg]:size-3" disabled={index === last} onClick={() => moveTerrainLayer(session, entity, layer, 1)}>
+      <IconButton label="Mover camada para baixo" size="xs" disabled={index === last} onClick={() => moveTerrainLayer(session, entity, layer, 1)}>
         <ChevronDown />
       </IconButton>
-      <IconButton label="Remover camada" size="sm" className="size-5 hover:text-destructive [&_svg]:size-3" onClick={() => removeTerrainLayer(session, entity, layer)}>
+      <IconButton label="Remover camada" size="xs" className="hover:text-destructive" onClick={() => removeTerrainLayer(session, entity, layer)}>
         <Trash2 />
       </IconButton>
     </li>);
@@ -110,7 +110,7 @@ function LayerDetails({ target, layer }: {
     target: TerrainTarget;
     layer: TerrainLayer;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { entity } = target;
     const { auto } = layer;
     return (<div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1.5">
@@ -147,12 +147,12 @@ function LayerDetails({ target, layer }: {
 export function LayersSection({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { terrain } = target;
     const activeIndex = session.terrain.activeLayerIndex;
     const activeLayer = activeIndex >= 0 ? terrain.layers[activeIndex] : null;
     return (<CollapsibleSection title="Camadas" trailing={<AddLayerMenu target={target}/>}>
-      {terrain.layers.length === 0 ? (<p className="px-2 py-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">Sem camadas: o terreno é desenhado com um material neutro. Adicione a primeira com o botão +.</p>) : (<ul className="flex flex-col gap-px px-2">
+      {terrain.layers.length === 0 ? (<p className="px-2 py-1 text-3xs leading-relaxed text-pretty text-muted-foreground">Sem camadas: o terreno é desenhado com um material neutro. Adicione a primeira com o botão +.</p>) : (<ul className="flex flex-col gap-px px-2">
           {terrain.layers.map((layer, index) => (<LayerRow key={layer.id} target={target} layer={layer} index={index} active={index === activeIndex}/>))}
         </ul>)}
       {activeLayer && <LayerDetails target={target} layer={activeLayer}/>}
