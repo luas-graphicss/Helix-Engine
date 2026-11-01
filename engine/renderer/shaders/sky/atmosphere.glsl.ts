@@ -1,12 +1,13 @@
 export const TRANSMITTANCE_LUT_SIZE = [256, 64] as const;
 export const MULTI_SCATTERING_LUT_SIZE = [32, 32] as const;
 export const SKY_VIEW_LUT_SIZE = [256, 128] as const;
-export const SKY_LIGHTING_LUT_SIZE = [4, 1] as const;
+export const SKY_LIGHTING_LUT_SIZE = [5, 1] as const;
 export const SKY_LIGHTING_TEXEL = {
     skyIrradiance: 0,
     groundIrradiance: 1,
     sunTransmittance: 2,
     moonTransmittance: 3,
+    shadedGroundIrradiance: 4,
 } as const;
 export const ATMOSPHERE_CHUNK = `
 const float PI = 3.14159265359;
@@ -48,7 +49,7 @@ Medium sampleMedium(float altitudeKm) {
   return m;
 }
 
- 
+                                                                                              
 float raySphere(vec3 origin, vec3 dir, float radius) {
   float b = dot(origin, dir);
   float c = dot(origin, origin) - radius * radius;
@@ -65,7 +66,7 @@ float phaseRayleigh(float cosTheta) {
   return 3.0 / (16.0 * PI) * (1.0 + cosTheta * cosTheta);
 }
 
- 
+                                                                              
 float phaseMie(float cosTheta, float g) {
   float g2 = g * g;
   float numerator = 3.0 * (1.0 - g2) * (1.0 + cosTheta * cosTheta);
@@ -74,12 +75,12 @@ float phaseMie(float cosTheta, float g) {
   return numerator / denominator;
 }
 
- 
+                                                                                         
 float unitToTexel(float x, float size) {
   return 0.5 / size + x * (1.0 - 1.0 / size);
 }
 
- 
+                                                                                                
 vec2 transmittanceLutUv(float r, float mu) {
   float H = sqrt(ATMOSPHERE_RADIUS_KM * ATMOSPHERE_RADIUS_KM - PLANET_RADIUS_KM * PLANET_RADIUS_KM);
   float rho = sqrt(max(r * r - PLANET_RADIUS_KM * PLANET_RADIUS_KM, 0.0));
@@ -92,7 +93,7 @@ vec2 transmittanceLutUv(float r, float mu) {
   return vec2(unitToTexel(xMu, TRANSMITTANCE_LUT_SIZE.x), unitToTexel(xR, TRANSMITTANCE_LUT_SIZE.y));
 }
 
- 
+                                                                        
 void transmittanceLutParams(vec2 unit, out float r, out float mu) {
   float H = sqrt(ATMOSPHERE_RADIUS_KM * ATMOSPHERE_RADIUS_KM - PLANET_RADIUS_KM * PLANET_RADIUS_KM);
   float rho = H * unit.y;
@@ -104,7 +105,7 @@ void transmittanceLutParams(vec2 unit, out float r, out float mu) {
   mu = clamp(mu, -1.0, 1.0);
 }
 
- 
+                                                                                                     
 vec3 transmittanceToLight(sampler2D lut, vec3 p, vec3 lightDir) {
   float r = length(p);
   float mu = dot(p, lightDir) / r;
@@ -120,10 +121,10 @@ vec2 multiScatteringLutUv(float r, float muLight) {
   );
 }
 
-
-
-
-
+   
+                                                                              
+                                                                        
+   
 vec2 skyViewUv(vec3 dir) {
   float elevation = asin(clamp(dir.y, -1.0, 1.0));
   float u = atan(dir.x, dir.z) / (2.0 * PI) + 0.5;
@@ -131,7 +132,7 @@ vec2 skyViewUv(vec3 dir) {
   return vec2(u, unitToTexel(v, SKY_VIEW_LUT_SIZE.y));
 }
 
- 
+                                                                 
 vec3 skyViewDirection(float u, float vUnit) {
   float l = (vUnit - 0.5) * 2.0;
   float elevation = sign(l) * l * l * 0.5 * PI;
