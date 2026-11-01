@@ -570,5 +570,108 @@ class Game:
                 self.next_token += 1
                 token = self.next_token
             self.pending[token] = coro
+            return _jsobj(["await", token, yielded._promise])
+        self._forget(token)
+        coro.close()
+        return _jsobj(["error", {KIND: "err", "message": AWAIT_OUTSIDE_ENGINE, "name": "RuntimeError", "frames": []}])
+
+    def _forget(self, token):
+        if token is not None:
+            self.pending.pop(token, None)
+
+    def resume(self, token, ok, value):
+        coro = self.pending.pop(token, None)
+        if coro is None:
+            return _jsobj(["error", {KIND: "err", "message": "a corrotina desta espera já foi encerrada", "name": "RuntimeError", "frames": []}])
+        return self._drive(token, coro, ok, self.materialize(value) if ok else value)
+
+    def drop(self, token):
+        coro = self.pending.pop(token, None)
+        if coro is not None:
+            try:
+                coro.close()
+            except BaseException:
+                pass
+
+    def dispose(self):
+        self.disposed = True
+        for coro in list(self.pending.values()):
+            try:
+                coro.close()
+            except BaseException:
+                pass
+        self.pending.clear()
+        self.callbacks.clear()
+        self.callback_ids.clear()
+        self.arities.clear()
+        self.modules.clear()
+        self.root_helix = None
+
+
+def create_game(host):
+    return Game(host)
+
+
+def compile_script(source, file):
+    """
+    Verifica a sintaxe, serializa o código compilado e lista os imports que
+    apontam para scripts da biblioteca (a biblioteca padrão fica de fora; os
+    módulos bloqueados viram erro já aqui, com a linha).
+    """
+    diagnostics = []
+    dependencies = []
+    artifact = None
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        try:
+            tree = ast.parse(source, file)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        _note_import(alias.name, node, diagnostics, dependencies)
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    _note_import(node.module, node, diagnostics, dependencies)
+            artifact = to_js(marshal.dumps(compile(tree, file, "exec", dont_inherit=True)))
+        except SyntaxError as exc:
+            diagnostics.append({
+                "severity": "error",
+                "message": exc.msg or "sintaxe inválida",
+                "line": exc.lineno or 1,
+                "column": exc.offset or 1,
+                "endLine": exc.end_lineno or exc.lineno or 1,
+                "endColumn": exc.end_offset or (exc.offset or 1),
+                "code": type(exc).__name__,
+            })
+        except (ValueError, RecursionError, MemoryError) as exc:
+            diagnostics.append({"severity": "error", "message": str(exc), "line": 1, "column": 1, "code": type(exc).__name__})
+    for warning in caught:
+        diagnostics.append({
+            "severity": "warning",
+            "message": str(warning.message),
+            "line": getattr(warning, "lineno", 1) or 1,
+            "column": 1,
+            "code": warning.category.__name__,
+        })
+    return _jsobj({"artifact": artifact, "diagnostics": diagnostics, "dependencies": dependencies})
+
+
+def _note_import(dotted, node, diagnostics, dependencies):
+    name = dotted.partition(".")[0]
+    if not name or name == "helix":
+        return
+    if name in BLOCKED_MODULES:
+        diagnostics.append({
+            "severity": "error",
+            "message": "O módulo %s não está disponível para scripts da engine." % name,
+            "line": node.lineno,
+            "column": node.col_offset + 1,
+            "endLine": node.end_lineno or node.lineno,
+            "endColumn": (node.end_col_offset or node.col_offset) + 1,
+            "code": "blocked-module",
+        })
+        return
+    if name in sys.stdlib_module_names or name in dependencies:
+        return
+    dependencies.append(name)
 `;
 }
