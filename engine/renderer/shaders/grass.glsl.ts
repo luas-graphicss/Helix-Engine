@@ -1,3 +1,4 @@
+import { HDR_RANGE_SCENE } from './chunks/hdr-encoding.glsl';
 import { SCENE_LIGHTING_CHUNK } from './chunks/scene-lighting.glsl';
 import { SKY_LIGHTING_TEXEL } from './sky/atmosphere.glsl';
 export const GRASS_VERTEX_SHADER = `#version 300 es
@@ -5,40 +6,42 @@ precision highp float;
 #define SCENE_LIGHTING_VERTEX_STAGE
 
 layout(location = 0) in vec2 a_blade;
-
+                                                                   
 layout(location = 1) in vec4 a_root;
-
+                                                                                                         
 layout(location = 2) in vec4 a_shape;
-
+                                                                                       
 layout(location = 3) in vec4 a_ground;
 
 uniform mat4 u_viewProjection;
 uniform mat4 u_model;
-
+                                                                                
 uniform vec4 u_blade;
-
+                                                                                                                           
 uniform vec4 u_lod;
-
+                                                                    
 uniform vec4 u_wind;
-
+                                                                                                            
 uniform sampler2D u_trample;
-
+                                                                                                            
 uniform vec4 u_trampleParams;
 uniform vec3 u_baseColor;
 uniform vec3 u_tipColor;
-
+                                                                                                               
 uniform vec4 u_look;
 
 ${SCENE_LIGHTING_CHUNK}
 
-
+                                                                               
 out vec3 v_litOpen;
-
+                                                                       
 out vec3 v_litShadowed;
-
+                                                                         
 out vec3 v_translucent;
-
+                                     
 out vec4 v_fog;
+                                                                                                        
+out vec2 v_shadow;
 
 const float TWO_PI = 6.28318530718;
 
@@ -52,7 +55,7 @@ void main() {
   vec3 forward = vec3(s, 0.0, c);
   vec3 lateral = vec3(c, 0.0, -s);
 
-
+                                                                                                
   vec2 trampleLocal = textureLod(u_trample, a_root.xz * u_trampleParams.x + 0.5, 0.0).xy * 2.0 - 1.0;
   float trampled = min(length(trampleLocal), 1.0) * u_trampleParams.w;
   vec3 trampleWorld = mat3(u_model) * vec3(trampleLocal.x, 0.0, trampleLocal.y);
@@ -65,12 +68,12 @@ void main() {
   float presence = cutoffFade * distanceFade;
   float height = u_blade.x * (a_shape.x * 1.4 + 0.3) * presence * (1.0 - u_trampleParams.z * trampled);
 
-
+                                                                                                          
   float widthScale = a_ground.a * 0.6 + 0.7;
   float halfWidth = max(u_blade.y * 0.5 * widthScale * u_lod.x, dist * u_lod.z * u_lod.w * 0.5);
   halfWidth *= (1.0 - smoothstep(0.3, 1.0, t)) * step(1e-4, height);
 
-
+                                                                                            
   float phase = a_shape.w * TWO_PI;
   vec2 windDir = u_wind.xy;
   float along = dot(root.xz, windDir);
@@ -81,12 +84,12 @@ void main() {
   float flutter = sin(u_wind.w * 5.0 + phase) * 0.5 + 0.5;
   float sway = u_wind.z * (0.12 + gust * 0.55 + ripple * 0.25 + flutter * 0.08);
   vec2 windLean = windDir * sway + vec2(-windDir.y, windDir.x) * (sin(u_wind.w * 2.3 + phase * 3.0) * 0.1 * u_wind.z);
-
+                                                                                  
   windLean *= 1.0 - 0.85 * trampled;
 
-
-
-
+                                                                                                
+                                                                                     
+                                                                                      
   float bend = u_blade.w * (0.3 + a_shape.y * 0.9) * (1.0 - trampled);
   vec2 lean = forward.xz * bend + windLean + trampleLean;
   float tipY = sqrt(max(1.0 - 0.75 * dot(lean, lean), 0.15));
@@ -96,20 +99,20 @@ void main() {
   vec3 spine = (2.0 * u * t) * p1 + (t * t) * p2;
   vec3 tangent = normalize(2.0 * u * p1 + 2.0 * t * (p2 - p1));
 
-
+                                                                                        
   float twist = (fract(a_shape.w * 13.7) - 0.5) * 1.2 * t;
   vec3 sideDir = lateral * cos(twist) + forward * sin(twist);
 
   vec3 world = root + spine * height + sideDir * (side * halfWidth);
-
-
+                                                                                      
+                                      
   vec3 bladeNormal = normalize(cross(sideDir, tangent));
   bladeNormal = normalize(bladeNormal + sideDir * (side * 0.45));
   if (dot(bladeNormal, u_cameraPosition - world) < 0.0) bladeNormal = -bladeNormal;
-
+                                                                                                                        
   vec3 N = normalize(mix(bladeNormal, vec3(0.0, 1.0, 0.0), 0.55));
 
-
+                                                                                                             
   vec3 ground = srgbToLinear(a_ground.rgb);
   float variation = a_shape.z;
   vec3 dry = u_tipColor * vec3(1.35, 1.05, 0.55);
@@ -125,28 +128,46 @@ void main() {
   vec3 moonRadiance = u_moonRadiance;
   vec3 skyIrradiance = u_skyIrradiance;
   vec3 groundIrradiance = u_groundIrradiance;
+  vec3 shadedGroundIrradiance = groundIrradiance;
   if (u_skyLightingEnabled > 0.5) {
     sunRadiance *= skyLightingTexel(${SKY_LIGHTING_TEXEL.sunTransmittance});
     moonRadiance *= skyLightingTexel(${SKY_LIGHTING_TEXEL.moonTransmittance});
     skyIrradiance = skyLightingTexel(${SKY_LIGHTING_TEXEL.skyIrradiance});
     groundIrradiance = skyLightingTexel(${SKY_LIGHTING_TEXEL.groundIrradiance});
+    shadedGroundIrradiance = skyLightingTexel(${SKY_LIGHTING_TEXEL.shadedGroundIrradiance});
   }
   bool shadowOnMoon = u_shadowOnMoon > 0.5;
+                                                                                                   
+                                                                                      
+  vec3 shadowLight = shadowOnMoon ? u_moonDirection : u_sunDirection;
+  float shadowNdotL = dot(N, shadowLight);
+  vec3 bladeDx = sideDir * (u_blade.y * widthScale);
+  vec3 bladeDy = tangent * (u_blade.x * 0.25);
+  vec3 shadow = surfaceShadow(world, N, shadowLight, shadowNdotL, bladeDx, bladeDy);
+  v_shadow = shadow.xy;
+
   vec3 sun = directLight(surf, u_sunDirection, sunRadiance, 1.0);
   vec3 moon = directLight(surf, u_moonDirection, moonRadiance, 1.0);
   float hemisphere = N.y * 0.5 + 0.5;
-  vec3 ambientIrradiance = mix(groundIrradiance, skyIrradiance, hemisphere) * occlusion;
-  vec3 ambient = surf.diffuseColor * ambientIrradiance + environmentBrdf(surf.f0, surf.roughness, surf.NdotV) * ambientIrradiance;
+                                                                                                                    
+                                                                 
+  float castVisibility = mix(1.0, shadow.x, u_look.w);
+  float ambientShadow = shadowAmbientOcclusion(castVisibility, shadowNdotL);
+  vec3 groundBounce = mix(shadedGroundIrradiance, groundIrradiance, sunlitGroundFraction(castVisibility * shadow.y, shadowNdotL));
+  vec3 ambientIrradiance = mix(groundBounce, skyIrradiance, hemisphere) * (occlusion * ambientShadow);
+  vec3 ambient = surf.diffuseColor * ambientIrradiance + environmentBrdf(surf.f0, surf.dfg) * ambientIrradiance;
   v_litShadowed = shadowOnMoon ? moon : sun;
-  v_litOpen = (shadowOnMoon ? sun : moon) + ambient;
+  vec4 clipPosition = u_viewProjection * vec4(world, 1.0);
+                                                                                             
+  v_litOpen = (shadowOnMoon ? sun : moon) + ambient + localLightsContributionClip(surf, world, clipPosition);
 
-
+                                                                                   
   float backlight = pow(clamp(dot(-surf.V, u_sunDirection), 0.0, 1.0), 3.0) * clamp(u_sunDirection.y * 4.0, 0.0, 1.0);
   float translucency = backlight * smoothstep(0.15, 1.0, t) * u_look.z * distanceFade;
   v_translucent = tip * sunRadiance * (translucency * 1.5 / PI);
 
   v_fog = aerialFog(world, skyIrradiance, sunRadiance);
-  gl_Position = u_viewProjection * vec4(world, 1.0);
+  gl_Position = clipPosition;
 }
 `;
 export const GRASS_FRAGMENT_SHADER = `#version 300 es
@@ -156,8 +177,9 @@ in vec3 v_litOpen;
 in vec3 v_litShadowed;
 in vec3 v_translucent;
 in vec4 v_fog;
+in vec2 v_shadow;
 
-
+                                                                                                               
 uniform vec4 u_look;
 
 ${SCENE_LIGHTING_CHUNK}
@@ -165,13 +187,11 @@ ${SCENE_LIGHTING_CHUNK}
 out vec4 fragColor;
 
 void main() {
-  vec2 mask = shadowMaskSample();
-  float visibility = mix(1.0, mask.r, u_look.w) * mask.g;
-
-  float sunVisibility = u_shadowOnMoon > 0.5 ? mask.g : visibility;
+  float visibility = mix(1.0, v_shadow.x, u_look.w) * v_shadow.y;
+                                                                                      
+  float sunVisibility = u_shadowOnMoon > 0.5 ? v_shadow.y : visibility;
   vec3 hdr = v_litOpen + v_litShadowed * visibility + v_translucent * sunVisibility;
   hdr = mix(hdr, v_fog.rgb, v_fog.a);
-  vec3 color = linearToSrgb(tonemapAces(hdr * u_exposure));
-  fragColor = vec4(color, 1.0);
+  fragColor = encodeHdr(hdr * u_exposure, 1.0, ${HDR_RANGE_SCENE}.0);
 }
 `;
