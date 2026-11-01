@@ -31,15 +31,15 @@ export function ImportMaterialsTab({ draft }: ImportMaterialsTabProps) {
             <div className="flex items-center gap-2">
               <span className="size-5 shrink-0 rounded-sm border border-border" style={{ backgroundColor: linearRgbToCss(material.baseColor), opacity: Math.max(material.opacity, 0.25) }} aria-hidden/>
               <span className="min-w-0 flex-1 truncate text-2xs text-foreground">{material.name}</span>
-              <span className="font-mono text-[10px] text-muted-foreground">{usedBy[index]} {usedBy[index] === 1 ? 'malha' : 'malhas'}</span>
+              <span className="font-mono text-3xs text-muted-foreground">{usedBy[index]} {usedBy[index] === 1 ? 'malha' : 'malhas'}</span>
             </div>
-            <div className="flex flex-wrap items-center gap-1 pl-7 font-mono text-[10px] text-muted-foreground">
+            <div className="flex flex-wrap items-center gap-1 pl-7 font-mono text-3xs text-muted-foreground">
               <StatusBadge>rug {material.roughness.toFixed(2)}</StatusBadge>
               <StatusBadge>met {material.metallic.toFixed(2)}</StatusBadge>
               <StatusBadge tone={material.alphaMode === 'opaque' ? 'neutral' : 'primary'}>{ALPHA_LABEL[material.alphaMode]}</StatusBadge>
               {(material.emissive[0] > 0 || material.emissive[1] > 0 || material.emissive[2] > 0) && <StatusBadge tone="primary">emissivo</StatusBadge>}
             </div>
-            <label className="flex items-center justify-between gap-2 pl-7 text-[10px] text-muted-foreground">
+            <label className="flex items-center justify-between gap-2 pl-7 text-3xs text-muted-foreground">
               Dupla face
               <ToggleSwitch label={`Dupla face em ${material.name}`} on={material.doubleSided} onToggle={() => setMaterialDoubleSided(index, !material.doubleSided)}/>
             </label>
@@ -47,7 +47,7 @@ export function ImportMaterialsTab({ draft }: ImportMaterialsTabProps) {
                 {maps.map(({ slot, texture }) => {
                         const definition = scene.textures[texture];
                         const status = definition ? textureStatus(definition) : 'missing';
-                        return (<li key={`${slot}-${texture}`} className="flex items-center gap-1.5 text-[10px]">
+                        return (<li key={`${slot}-${texture}`} className="flex items-center gap-1.5 text-3xs">
                       <span className="w-[6.5rem] shrink-0 truncate text-muted-foreground">{slot}</span>
                       <span className="min-w-0 flex-1 truncate font-mono text-foreground/85">{definition?.name ?? '—'}</span>
                       {status === 'missing' && <StatusBadge tone="warning">ausente</StatusBadge>}
