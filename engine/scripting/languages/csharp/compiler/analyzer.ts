@@ -1606,4 +1606,267 @@ class Analyzer {
     private methodGroupType(member: MemberInfo): StaticType {
         return { kind: 'delegate', params: member.params.map((parameter) => parameter.type), returns: member.type };
     }
+    private member(e: Expression & {
+        kind: 'member';
+    }, scope: Scope, inCall: boolean): StaticType {
+        const { target, name } = e;
+        const targetType = target.kind === 'identifier' ? this.identifier(target, scope, false) : target.kind === 'member' ? this.member(target, scope, false) : this.expression(target, scope, null);
+        target.staticType = targetType;
+        const resolution = target.kind === 'identifier' || target.kind === 'member' ? target.resolution : undefined;
+        if (resolution?.kind === 'type') {
+            const type = this.lookupTypeByResolution(resolution);
+            if (type?.kind === 'enum') {
+                if (!type.values.has(name)) {
+                    this.error(e.nameSpan, `O enum "${type.name}" não tem o valor "${name}".${hint(name, type.values.keys())}`);
+                    e.resolution = { kind: 'dynamic' };
+                    return STATIC_TYPES.dynamic;
+                }
+                e.resolution = { kind: 'enumMember', enumName: type.jsName, sibling: type.script };
+                return { kind: 'enum', name: type.name, script: type.script };
+            }
+            if (type?.kind === 'class') {
+                const nested = type.nested.get(name);
+                if (nested) {
+                    this.useType(nested);
+                    e.resolution = { kind: 'type', name: nested.name, jsName: nested.jsName, sibling: nested.script };
+                    return this.typeRefOf(nested);
+                }
+                const member = this.findMember(type, name);
+                if (!member) {
+                    this.error(e.nameSpan, `"${type.name}" não tem o membro estático "${name}".${hint(name, this.memberNames(type))}`);
+                    e.resolution = { kind: 'dynamic' };
+                    return STATIC_TYPES.dynamic;
+                }
+                if (!member.isStatic)
+                    this.error(e.nameSpan, `"${name}" é um membro de instância de "${type.name}"; use uma instância (new ${type.name}(…)).`);
+                if (member.owner.script !== null)
+                    this.useType(member.owner);
+                e.resolution = { kind: 'member', owner: member.owner.jsName, jsName: member.jsName, isStatic: true, ownerIsSibling: member.owner.script, memberKind: member.kind };
+                return member.kind === 'method' ? this.methodGroupType(member) : member.type;
+            }
+        }
+        if (resolution?.kind === 'runtimeStatic') {
+            const table = RUNTIME_STATICS.get(resolution.name);
+            if (table && !(name in table)) {
+                this.error(e.nameSpan, `"${this.displayStaticName(resolution.name)}" não tem o membro "${name}".${hint(name, Object.keys(table))}`);
+            }
+            e.resolution = { kind: 'direct', jsName: name };
+            return this.runtimeStaticType(resolution.name, name);
+        }
+        if (resolution?.kind === 'runtimeType') {
+            const ctor = RUNTIME_CLASSES.get(resolution.name) ?? COLLECTION_CLASSES.get(resolution.name as CollectionName);
+            if (ctor && !(name in ctor))
+                this.error(e.nameSpan, `"${resolution.name}" não tem o membro estático "${name}".`);
+            e.resolution = { kind: 'direct', jsName: name };
+            return STATIC_TYPES.dynamic;
+        }
+        if (target.kind === 'base') {
+            const base = scope.fn.cls?.base;
+            if (base) {
+                const member = this.findMember(base, name);
+                if (!member) {
+                    this.error(e.nameSpan, `A classe base "${base.name}" não tem o membro "${name}".${hint(name, this.memberNames(base))}`);
+                    e.resolution = { kind: 'dynamic' };
+                    return STATIC_TYPES.dynamic;
+                }
+                e.resolution = { kind: 'direct', jsName: member.jsName };
+                return member.kind === 'method' ? this.methodGroupType(member) : member.type;
+            }
+            e.resolution = { kind: 'direct', jsName: name };
+            return STATIC_TYPES.dynamic;
+        }
+        return this.instanceMember(e, targetType, scope, inCall);
+    }
+    private displayStaticName(name: string): string {
+        for (const [primitive, statics] of PRIMITIVE_STATICS)
+            if (statics === name)
+                return primitive;
+        return name;
+    }
+    private runtimeStaticType(owner: string, name: string): StaticType {
+        switch (owner) {
+            case 'Math':
+            case 'MathF':
+                return name === 'PI' || name === 'E' || name === 'Tau' || name === 'Sqrt' || name === 'Pow' || name === 'Exp' || name === 'Log' || name === 'Log10' || name === 'Log2' || name === 'Sin' || name === 'Cos' || name === 'Tan' || name === 'Asin' || name === 'Acos' || name === 'Atan' || name === 'Atan2' || name === 'Sinh' || name === 'Cosh' || name === 'Tanh' || name === 'Cbrt' || name === 'IEEERemainder'
+                    ? { kind: 'delegate', params: null, returns: STATIC_TYPES.float }
+                    : name === 'Sign' || name === 'DivRem' || name === 'BigMul'
+                        ? { kind: 'delegate', params: null, returns: STATIC_TYPES.int }
+                        : STATIC_TYPES.dynamic;
+            case 'Int':
+            case 'Long':
+            case 'Short':
+            case 'Byte':
+            case 'SByte':
+            case 'UInt':
+            case 'ULong':
+            case 'UShort':
+                return name === 'Parse' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.int } : name === 'MaxValue' || name === 'MinValue' ? STATIC_TYPES.int : name === 'TryParse' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : STATIC_TYPES.dynamic;
+            case 'Float':
+            case 'Double':
+            case 'Decimal':
+                return name === 'Parse' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.float } : name === 'TryParse' || name === 'IsNaN' || name === 'IsInfinity' || name === 'IsFinite' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : name.endsWith('Value') || name === 'Epsilon' || name === 'NaN' || name.endsWith('Infinity') ? STATIC_TYPES.float : STATIC_TYPES.dynamic;
+            case 'String':
+                return name === 'Empty' ? STATIC_TYPES.string : name === 'IsNullOrEmpty' || name === 'IsNullOrWhiteSpace' || name === 'Equals' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : name === 'Compare' || name === 'CompareOrdinal' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.int } : { kind: 'delegate', params: null, returns: STATIC_TYPES.string };
+            case 'Char':
+                return name.startsWith('Is') ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : name === 'ToUpper' || name === 'ToLower' || name === 'Parse' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.char } : STATIC_TYPES.dynamic;
+            case 'Bool':
+                return name === 'Parse' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : STATIC_TYPES.dynamic;
+            case 'Convert':
+                return name === 'ToInt32' || name === 'ToInt64' || name === 'ToInt16' || name === 'ToByte' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.int } : name === 'ToDouble' || name === 'ToSingle' || name === 'ToDecimal' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.float } : name === 'ToString' || name === 'ToBase64String' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.string } : name === 'ToBoolean' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : STATIC_TYPES.dynamic;
+            case 'Task':
+                return name === 'CompletedTask' ? STATIC_TYPES.task : { kind: 'delegate', params: null, returns: STATIC_TYPES.task };
+            case 'Environment':
+                return name === 'TickCount' || name === 'ProcessorCount' ? STATIC_TYPES.int : name === 'NewLine' ? STATIC_TYPES.string : STATIC_TYPES.dynamic;
+            default:
+                return STATIC_TYPES.dynamic;
+        }
+    }
+    private lookupTypeByResolution(resolution: Resolution & {
+        kind: 'type';
+    }): TypeInfo | null {
+        const roots = resolution.sibling === null ? this.fileTypes : this.siblingTypes;
+        return roots.get(resolution.name) ?? this.nestedByName(resolution.name, roots);
+    }
+    private instanceMember(e: Expression & {
+        kind: 'member';
+    }, targetType: StaticType, scope: Scope, inCall: boolean): StaticType {
+        const { name } = e;
+        switch (targetType.kind) {
+            case 'class': {
+                if (targetType.runtime) {
+                    const ctor = RUNTIME_CLASSES.get(targetType.name);
+                    const prototype = ctor ? (ctor.prototype as object) : null;
+                    if (prototype && !(name in prototype) && !UNIVERSAL_MEMBERS.has(name) && !(targetType.name === 'KeyValuePair' && (name === 'Key' || name === 'Value'))) {
+                        this.error(e.nameSpan, `"${targetType.name}" não tem o membro "${name}".${hint(name, Object.getOwnPropertyNames(prototype).filter((key) => !key.startsWith('$') && key !== 'constructor'))}`);
+                    }
+                    e.resolution = { kind: 'direct', jsName: name };
+                    if (name === 'Message' || name === 'StackTrace' || name === 'Name' || name === 'FullName')
+                        return STATIC_TYPES.string;
+                    if (name === 'Length' || name === 'Count' || name === 'Capacity' || name === 'Year' || name === 'Month' || name === 'Day' || name === 'Hour' || name === 'Minute' || name === 'Second' || name === 'Millisecond')
+                        return STATIC_TYPES.int;
+                    if (name === 'TotalSeconds' || name === 'TotalMilliseconds' || name === 'TotalMinutes' || name === 'TotalHours' || name === 'TotalDays')
+                        return STATIC_TYPES.float;
+                    return STATIC_TYPES.dynamic;
+                }
+                const cls = this.classOf(targetType);
+                if (!cls) {
+                    e.resolution = { kind: 'dynamic' };
+                    return STATIC_TYPES.dynamic;
+                }
+                const member = this.findMember(cls, name);
+                if (member) {
+                    if (member.isStatic)
+                        this.error(e.nameSpan, `"${name}" é estático em "${cls.name}": acesse por ${cls.name}.${name}.`);
+                    if (member.owner.script !== null)
+                        this.useType(member.owner);
+                    e.resolution = { kind: 'direct', jsName: member.jsName };
+                    if (member.kind === 'method' && !inCall)
+                        e.bindThis = true;
+                    return member.kind === 'method' ? this.methodGroupType(member) : member.type;
+                }
+                if (this.isActorClass(cls) && ACTOR_SCRIPT_MEMBERS.has(name)) {
+                    e.resolution = { kind: 'direct', jsName: name };
+                    return STATIC_TYPES.engine;
+                }
+                if (UNIVERSAL_MEMBERS.has(name) || (cls.recordFields && (name === 'Deconstruct' || name === 'Equals'))) {
+                    e.resolution = { kind: 'dynamic' };
+                    return name === 'ToString' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.string } : name === 'Equals' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : name === 'GetHashCode' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.int } : STATIC_TYPES.dynamic;
+                }
+                if (cls.baseRuntime && cls.baseRuntime !== 'ActorScript') {
+                    e.resolution = { kind: 'direct', jsName: name };
+                    return STATIC_TYPES.dynamic;
+                }
+                this.error(e.nameSpan, `"${cls.name}" não tem o membro "${name}".${hint(name, this.memberNames(cls))}`);
+                e.resolution = { kind: 'dynamic' };
+                return STATIC_TYPES.dynamic;
+            }
+            case 'collection': {
+                const ctor = COLLECTION_CLASSES.get(targetType.name);
+                const prototype = ctor ? (ctor.prototype as object) : null;
+                const isLinq = name in LINQ;
+                if (prototype && !(name in prototype) && !isLinq && !UNIVERSAL_MEMBERS.has(name)) {
+                    this.error(e.nameSpan, `"${targetType.name}" não tem o membro "${name}".${hint(name, [...Object.getOwnPropertyNames(prototype).filter((key) => !key.startsWith('$') && key !== 'constructor'), ...Object.keys(LINQ)])}`);
+                }
+                e.resolution = prototype && name in prototype ? { kind: 'direct', jsName: name } : { kind: 'dynamic' };
+                return this.sequenceMemberType(targetType, name, inCall);
+            }
+            case 'array': {
+                if (name === 'Length' || name === 'LongLength') {
+                    e.resolution = { kind: 'direct', jsName: 'length' };
+                    return STATIC_TYPES.int;
+                }
+                if (name === 'Rank') {
+                    e.resolution = { kind: 'dynamic' };
+                    return STATIC_TYPES.int;
+                }
+                if (!(name in LINQ) && !(name in ARRAY_METHODS) && !UNIVERSAL_MEMBERS.has(name))
+                    this.error(e.nameSpan, `Arrays não têm o membro "${name}".${hint(name, ['Length', ...Object.keys(LINQ), ...Object.keys(ARRAY_METHODS)])}`);
+                e.resolution = { kind: 'dynamic' };
+                return this.sequenceMemberType(targetType, name, inCall);
+            }
+            case 'string': {
+                if (name === 'Length') {
+                    e.resolution = { kind: 'direct', jsName: 'length' };
+                    return STATIC_TYPES.int;
+                }
+                if (!(name in STRING_METHODS) && !(name in LINQ) && !UNIVERSAL_MEMBERS.has(name))
+                    this.error(e.nameSpan, `string não tem o membro "${name}".${hint(name, ['Length', ...Object.keys(STRING_METHODS)])}`);
+                e.resolution = { kind: 'dynamic' };
+                return this.shapeType(STRING_METHOD_SHAPES.get(name) ?? (name in LINQ ? SEQUENCE_METHOD_SHAPES.get(name) : undefined), targetType, STATIC_TYPES.char, inCall);
+            }
+            case 'int':
+            case 'float':
+                if (!(name in NUMBER_METHODS) && !UNIVERSAL_MEMBERS.has(name))
+                    this.error(e.nameSpan, `Números não têm o membro "${name}".${hint(name, Object.keys(NUMBER_METHODS))}`);
+                e.resolution = { kind: 'dynamic' };
+                return name === 'ToString' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.string } : name === 'CompareTo' || name === 'GetHashCode' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.int } : name === 'Equals' || name === 'HasFlag' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : STATIC_TYPES.dynamic;
+            case 'bool':
+                if (!(name in BOOL_METHODS) && !UNIVERSAL_MEMBERS.has(name))
+                    this.error(e.nameSpan, `bool não tem o membro "${name}".`);
+                e.resolution = { kind: 'dynamic' };
+                return name === 'ToString' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.string } : STATIC_TYPES.dynamic;
+            case 'char':
+                e.resolution = { kind: 'dynamic' };
+                return name === 'ToString' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.string } : STATIC_TYPES.dynamic;
+            case 'enum':
+                e.resolution = { kind: 'dynamic' };
+                return name === 'ToString' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.string } : name === 'HasFlag' ? { kind: 'delegate', params: null, returns: STATIC_TYPES.bool } : STATIC_TYPES.dynamic;
+            case 'delegate':
+                if (!(name in DELEGATE_METHODS) && !UNIVERSAL_MEMBERS.has(name))
+                    this.error(e.nameSpan, `Um delegate não tem o membro "${name}".${hint(name, Object.keys(DELEGATE_METHODS))}`);
+                e.resolution = { kind: 'dynamic' };
+                return name === 'Invoke' ? { kind: 'delegate', params: targetType.params, returns: targetType.returns } : STATIC_TYPES.dynamic;
+            case 'task':
+                if (!(name in TASK_METHODS) && name !== 'Result' && name !== 'IsCompleted' && !UNIVERSAL_MEMBERS.has(name))
+                    this.error(e.nameSpan, `Task não tem o membro "${name}".${hint(name, Object.keys(TASK_METHODS))}`);
+                e.resolution = { kind: 'dynamic' };
+                return STATIC_TYPES.dynamic;
+            case 'tuple': {
+                const match = /^Item(\d+)$/.exec(name);
+                const index = match ? Number(match[1]) - 1 : targetType.elements.findIndex((element) => element.name === name);
+                if (index < 0 || index >= targetType.elements.length) {
+                    if (!UNIVERSAL_MEMBERS.has(name) && name !== 'Length')
+                        this.error(e.nameSpan, `A tupla não tem o elemento "${name}".`);
+                    e.resolution = { kind: 'dynamic' };
+                    return STATIC_TYPES.dynamic;
+                }
+                e.resolution = { kind: 'direct', jsName: `Item${index + 1}` };
+                return targetType.elements[index].type;
+            }
+            case 'null':
+                this.error(e.nameSpan, `Acesso a "${name}" num valor que é sempre null.`);
+                e.resolution = { kind: 'dynamic' };
+                return STATIC_TYPES.dynamic;
+            case 'void':
+                this.error(e.nameSpan, `Acesso a "${name}" no resultado de um método void.`);
+                e.resolution = { kind: 'dynamic' };
+                return STATIC_TYPES.dynamic;
+            case 'engine':
+                e.resolution = { kind: 'dynamic' };
+                return STATIC_TYPES.engine;
+            case 'dynamic':
+                e.resolution = { kind: 'dynamic' };
+                return STATIC_TYPES.dynamic;
+        }
+    }
 }
