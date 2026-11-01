@@ -759,5 +759,247 @@ ${helpers(mem, $)}
     (if (i32.eq (local.get $id) (i32.const ${CB.teclar})) (then (call $ao_teclar (call $hx_index (local.get $args) (i32.const 0))) (return (i32.const 0))))
     (if (i32.eq (local.get $id) (i32.const ${CB.acaoCaixa})) (then (call $soltar_caixa) (return (i32.const 0))))
     (if (i32.eq (local.get $id) (i32.const ${CB.acaoReiniciar})) (then (drop (call $invoke0 (call $api ${$.play}) ${$.restart})) (return (i32.const 0))))
+    (if (i32.eq (local.get $id) (i32.const ${CB.ping})) (then (call $ao_ping (call $hx_index (local.get $args) (i32.const 0))) (return (i32.const 0))))
+    (if (i32.eq (local.get $id) (i32.const ${CB.finalizar})) (then (call $finalizar) (return (i32.const 0))))
+    (if (i32.eq (local.get $id) (i32.const ${CB.colisao})) (then (call $ao_colidir (call $hx_index (local.get $args) (i32.const 0))) (return (i32.const 0))))
+    (if (i32.eq (local.get $id) (i32.const ${CB.dadosProntos})) (then (return (call $dados_prontos))))
+    (if (i32.eq (local.get $id) (i32.const ${CB.dadosGravados})) (then (call $dados_gravados) (return (i32.const 0))))
+    (if (i32.eq (local.get $id) (i32.const ${CB.visita})) (then (global.set $visitados (i32.add (global.get $visitados) (i32.const 1)))))
+    (i32.const 0))
+
+  ;; --- Hooks ------------------------------------------------------------------------------------
+  (func (export "onLoad")
+    (call $hx_log (i32.const 1) ${$.onLoadMsg}))
+
+  (func (export "onStart")
+    (local $p i32) (local $i i32)
+    (call $hx_log (i32.const 1) ${$.inicio})
+    (local.set $p (call $invoke1 (call $api ${$.time}) ${$.wait} (call $num (f64.const 0))))
+    (local.set $i (i32.const 1))
+    (loop $areas
+      (local.set $p (call $invoke1 (local.get $p) ${$.then} (call $hx_callback (local.get $i))))
+      (local.set $p (call $invoke2 (local.get $p) ${$.then} (call $hx_callback (i32.add (local.get $i) (i32.const 100))) (call $hx_callback (i32.add (local.get $i) (i32.const 200)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $areas (i32.le_u (local.get $i) (i32.const ${N}))))
+    (drop (call $invoke1 (local.get $p) ${$.then} (call $hx_callback (i32.const ${CB.finalizar})))))
+
+  (func (export "onUpdate") (param $dt f64)
+    (local $d i32) (local $fim i32)
+    (global.set $quadros (i32.add (global.get $quadros) (i32.const 1)))
+    (if (global.get $torus)
+      (then (drop (call $invoke2 (call $api ${$.transform}) ${$.rotate} (global.get $torus) (call $vec3 (f64.const 0) (f64.mul (f64.const 40) (local.get $dt)) (f64.const 0))))))
+    (local.set $d (call $api ${$.debug}))
+    (drop (call $invoke3 (local.get $d) ${$.line} (call $vec3 (f64.const -6) (f64.const 0.05) (f64.const -6)) (call $vec3 (f64.const 6) (f64.const 0.05) (f64.const -6)) (call $str ${$.rosa})))
+    (if (global.get $heroi)
+      (then
+        (drop (call $invoke2 (local.get $d) ${$.axes} (global.get $heroi) (call $num (f64.const 1))))
+        ;; "Heroi · <pontos> pts" acima do herói
+        (local.set $fim (call $anexar (i32.const ${BUF}) ${$.heroiRotulo}))
+        (local.set $fim (call $anexar_int (local.get $fim) (global.get $pontos)))
+        (local.set $fim (call $anexar (local.get $fim) ${$.pts}))
+        (drop (call $invoke3 (local.get $d) ${$.text}
+          (call $invoke2 (call $hx_get (call $api ${$.math}) ${$.vec3}) ${$.add} (call $invoke1 (call $api ${$.transform}) ${$.worldPosition} (global.get $heroi)) (call $vec3 (f64.const 0) (f64.const 2.2) (f64.const 0)))
+          (call $hx_string (i32.const ${BUF}) (i32.sub (local.get $fim) (i32.const ${BUF})))
+          (call $str ${$.branco})))))
+    (global.set $hud (f64.add (global.get $hud) (local.get $dt)))
+    (if (f64.ge (global.get $hud) (f64.const 0.5))
+      (then (global.set $hud (f64.const 0)) (call $atualizar_hud))))
+
+  (func (export "onFixedUpdate") (param $h f64)
+    (global.set $passos (i32.add (global.get $passos) (i32.const 1)))
+    (if (i32.eq (global.get $passos) (i32.const 1))
+      (then (call $checar ${$.cFixedUpdate} (i32.and (f64.gt (local.get $h) (f64.const 0)) (f64.lt (local.get $h) (f64.const 1)))))))
+
+  (func (export "onLateUpdate") (param $dt f64)
+    (global.set $late (i32.add (global.get $late) (i32.const 1))))
+
+  (func (export "onStop")
+    (local $fim i32)
+    (call $desligar_tudo)
+    (local.set $fim (call $anexar (i32.const ${BUF}) ${$.parou}))
+    (local.set $fim (call $anexar_int (local.get $fim) (global.get $quadros)))
+    (local.set $fim (call $anexar (local.get $fim) ${$.quadrosTxt}))
+    (local.set $fim (call $anexar_int (local.get $fim) (global.get $passos)))
+    (local.set $fim (call $anexar (local.get $fim) ${$.passosTxt}))
+    (local.set $fim (call $anexar_int (local.get $fim) (global.get $late)))
+    (local.set $fim (call $anexar (local.get $fim) ${$.lateTxt}))
+    (local.set $fim (call $anexar_int (local.get $fim) (global.get $colisoes)))
+    (local.set $fim (call $anexar (local.get $fim) ${$.colisoesTxt}))
+    (call $log_buf (i32.const 1) (local.get $fim))
+    (if (global.get $torus) (then (call $hx_release (global.get $torus)) (global.set $torus (i32.const 0))))
+    (if (global.get $heroi) (then (call $hx_release (global.get $heroi)) (global.set $heroi (i32.const 0)))))
+)
+`;
+}
+function actorModule(): string {
+    const strings = watStrings({
+        name: 'name', props: 'props', define: 'define', get: 'get', velocidade: 'velocidade', cor: 'cor', pulsar: 'pulsar',
+        type: 'type', range: 'range', default: 'default', min: 'min', max: 'max', step: 'step', label: 'label', rotuloVelocidade: 'Velocidade (°/s)',
+        color: 'color', laranja: '#ff8800', Cor: 'Cor', boolean: 'boolean', Pulsar: 'Pulsar',
+        material: 'material', setColor: 'setColor', onChanged: 'onChanged', log: 'log', assert: 'assert', self: 'self',
+        transform: 'transform', setRotation: 'setRotation', setScale: 'setScale', time: 'time', now: 'now', has: 'has', definitions: 'definitions',
+        x: 'x', y: 'y', z: 'z',
+        acordouCom: ' acordou com velocidade ', grausPorSegundo: '°/s', tocou: ' tocou ', entrouNoGatilho: ' entrou no gatilho de ',
+        ativo: ' ativo', inativo: ' inativo', doisPontos: ': ', quadrosTxt: ' quadros, ', contatosTxt: ' contatos',
+        msgSelf: 'helix.self deveria ser o ator deste script', msgDefine: 'props.define deveria registrar 3 propriedades',
+    });
+    const $ = refs(strings.at);
+    const mem = scratch(strings.next, 512);
+    const BUF = mem.buf;
+    return `;; DebugGirador · Script de ator
+;; Helix Engine — modo debug: ciclo de vida de um ator, propriedades no inspetor e contatos.
+;; Um ator vem da hierarquia (Caixa giratória); outro nasce no jogo por spawnPrimitive(..., script).
+;; Cada ator com este script recebe uma instância própria do módulo: memória e globais são o estado daquele ator.
+(module
+${IMPORTS.map((line) => `  ${line}`).join('\n')}
+
+  (memory (export "memory") 1)
+${strings.data.map((line) => `  ${line}`).join('\n')}
+
+  (global $angulo (mut f64) (f64.const 0))
+  (global $contatos (mut i32) (i32.const 0))
+  (global $quadros (mut i32) (i32.const 0))
+  (global $desligar (mut i32) (i32.const 0))
+
+${helpers(mem, $)}
+  ;; "<nome do ator><sufixo>" no console.
+  (func $log_nome (param $nivel i32) (param $p i32) (param $n i32)
+    (local $fim i32)
+    (local.set $fim (call $anexar_valor (i32.const ${BUF}) (call $hx_get (call $hx_self) ${$.name})))
+    (local.set $fim (call $anexar (local.get $fim) (local.get $p) (local.get $n)))
+    (call $log_buf (local.get $nivel) (local.get $fim)))
+
+  ;; props.define({ velocidade: range, cor: color, pulsar: boolean })
+  (func (export "onLoad")
+    (local $defs i32) (local $p i32)
+    (local.set $defs (call $hx_object))
+    (local.set $p (call $hx_object))
+    (call $set_str (local.get $p) ${$.type} ${$.range})
+    (call $set_num (local.get $p) ${$.default} (f64.const 90))
+    (call $set_num (local.get $p) ${$.min} (f64.const 0))
+    (call $set_num (local.get $p) ${$.max} (f64.const 360))
+    (call $set_num (local.get $p) ${$.step} (f64.const 1))
+    (call $set_str (local.get $p) ${$.label} ${$.rotuloVelocidade})
+    (call $hx_set (local.get $defs) ${$.velocidade} (local.get $p))
+    (local.set $p (call $hx_object))
+    (call $set_str (local.get $p) ${$.type} ${$.color})
+    (call $set_str (local.get $p) ${$.default} ${$.laranja})
+    (call $set_str (local.get $p) ${$.label} ${$.Cor})
+    (call $hx_set (local.get $defs) ${$.cor} (local.get $p))
+    (local.set $p (call $hx_object))
+    (call $set_str (local.get $p) ${$.type} ${$.boolean})
+    (call $set_bool (local.get $p) ${$.default} (i32.const 1))
+    (call $set_str (local.get $p) ${$.label} ${$.Pulsar})
+    (call $hx_set (local.get $defs) ${$.pulsar} (local.get $p))
+    (drop (call $invoke1 (call $hx_get (call $hx_root) ${$.props}) ${$.define} (local.get $defs))))
+
+  (func (export "onStart")
+    (local $props i32) (local $lg i32) (local $fim i32)
+    (local.set $props (call $hx_get (call $hx_root) ${$.props}))
+    (local.set $lg (call $hx_get (call $hx_root) ${$.log}))
+    ;; "<nome> acordou com velocidade <v>°/s"
+    (local.set $fim (call $anexar_valor (i32.const ${BUF}) (call $hx_get (call $hx_self) ${$.name})))
+    (local.set $fim (call $anexar (local.get $fim) ${$.acordouCom}))
+    (local.set $fim (call $anexar_valor (local.get $fim) (call $invoke1 (local.get $props) ${$.get} (call $str ${$.velocidade}))))
+    (local.set $fim (call $anexar (local.get $fim) ${$.grausPorSegundo}))
+    (call $log_buf (i32.const 1) (local.get $fim))
+    (drop (call $invoke2 (call $hx_get (call $hx_root) ${$.material}) ${$.setColor} (call $hx_self) (call $invoke1 (local.get $props) ${$.get} (call $str ${$.cor}))))
+    ;; props.onChanged("cor", callback 1) devolve a função de desligar, retida até onDestroy
+    (global.set $desligar (call $hx_retain (call $invoke2 (local.get $props) ${$.onChanged} (call $str ${$.cor}) (call $hx_callback (i32.const 1)))))
+    (drop (call $invoke2 (local.get $lg) ${$.assert}
+      (call $hx_boolean (call $hx_equals (call $hx_get (call $hx_root) ${$.self}) (call $hx_self)))
+      (call $str ${$.msgSelf})))
+    (drop (call $invoke2 (local.get $lg) ${$.assert}
+      (call $hx_boolean (i32.and
+        (call $hx_to_boolean (call $invoke1 (local.get $props) ${$.has} (call $str ${$.velocidade})))
+        (i32.eq (call $hx_length (call $invoke0 (local.get $props) ${$.definitions})) (i32.const 3))))
+      (call $str ${$.msgDefine}))))
+
+  ;; Callback 1: a cor mudou no inspetor → material.setColor(self, nova cor).
+  (func (export "__hx_invoke_callback") (param $id i32) (param $args i32) (result i32)
+    (if (i32.eq (local.get $id) (i32.const 1))
+      (then (drop (call $invoke2 (call $hx_get (call $hx_root) ${$.material}) ${$.setColor} (call $hx_self) (call $hx_index (local.get $args) (i32.const 0))))))
+    (i32.const 0))
+
+  (func (export "onUpdate") (param $dt f64)
+    (local $props i32) (local $tr i32) (local $t f64) (local $onda f64)
+    (local.set $props (call $hx_get (call $hx_root) ${$.props}))
+    (local.set $tr (call $hx_get (call $hx_root) ${$.transform}))
+    (global.set $quadros (i32.add (global.get $quadros) (i32.const 1)))
+    (global.set $angulo (f64.add (global.get $angulo) (f64.mul (call $hx_to_number (call $invoke1 (local.get $props) ${$.get} (call $str ${$.velocidade}))) (local.get $dt))))
+    (drop (call $invoke2 (local.get $tr) ${$.setRotation} (call $hx_self) (call $vec3 (f64.const 0) (global.get $angulo) (f64.const 0))))
+    (if (call $hx_to_boolean (call $invoke1 (local.get $props) ${$.get} (call $str ${$.pulsar})))
+      (then
+        ;; onda triangular entre 0 e 1 a partir de time.now (não há seno na ABI): escala entre 0.9 e 1.1
+        (local.set $t (f64.mul (call $numero (call $hx_get (call $hx_root) ${$.time}) ${$.now}) (f64.const 1.5)))
+        (local.set $onda (f64.abs (f64.sub (f64.mul (f64.sub (local.get $t) (f64.floor (local.get $t))) (f64.const 2)) (f64.const 1))))
+        (drop (call $invoke2 (local.get $tr) ${$.setScale} (call $hx_self) (call $num (f64.add (f64.const 0.9) (f64.mul (local.get $onda) (f64.const 0.2)))))))))
+
+  (func (export "onCollisionBegin") (param $outro i32) (param $contato i32)
+    (local $fim i32)
+    (global.set $contatos (i32.add (global.get $contatos) (i32.const 1)))
+    (if (i32.gt_u (global.get $contatos) (i32.const 3)) (then (return)))
+    (local.set $fim (call $anexar_valor (i32.const ${BUF}) (call $hx_get (call $hx_self) ${$.name})))
+    (local.set $fim (call $anexar (local.get $fim) ${$.tocou}))
+    (local.set $fim (call $anexar_valor (local.get $fim) (call $hx_get (local.get $outro) ${$.name})))
+    (call $log_buf (i32.const 1) (local.get $fim)))
+
+  (func (export "onTriggerEnter") (param $outro i32)
+    (local $fim i32)
+    (local.set $fim (call $anexar_valor (i32.const ${BUF}) (call $hx_get (local.get $outro) ${$.name})))
+    (local.set $fim (call $anexar (local.get $fim) ${$.entrouNoGatilho}))
+    (local.set $fim (call $anexar_valor (local.get $fim) (call $hx_get (call $hx_self) ${$.name})))
+    (call $log_buf (i32.const 1) (local.get $fim)))
+
+  (func (export "onEnable") (call $log_nome (i32.const 0) ${$.ativo}))
+  (func (export "onDisable") (call $log_nome (i32.const 0) ${$.inativo}))
+
+  (func (export "onStop")
+    (local $fim i32)
+    (local.set $fim (call $anexar_valor (i32.const ${BUF}) (call $hx_get (call $hx_self) ${$.name})))
+    (local.set $fim (call $anexar (local.get $fim) ${$.doisPontos}))
+    (local.set $fim (call $anexar_int (local.get $fim) (global.get $quadros)))
+    (local.set $fim (call $anexar (local.get $fim) ${$.quadrosTxt}))
+    (local.set $fim (call $anexar_int (local.get $fim) (global.get $contatos)))
+    (local.set $fim (call $anexar (local.get $fim) ${$.contatosTxt}))
+    (call $log_buf (i32.const 1) (local.get $fim)))
+
+  (func (export "onDestroy")
+    (if (global.get $desligar)
+      (then
+        (drop (call $hx_call (global.get $desligar) (i32.const ${mem.args}) (i32.const 0)))
+        (call $hx_release (global.get $desligar))
+        (global.set $desligar (i32.const 0)))))
+)
+`;
+}
+function utilModule(): string {
+    const strings = watStrings({ prefixo: 'Olá, ' });
+    const buffer = strings.next;
+    const capacidade = 200;
+    return `;; DebugUtil · Módulo compartilhado
+;; Helix Engine — modo debug: as funções exportadas são as exportações do módulo (require("DebugUtil")
+;; de qualquer linguagem). Números passam como f64; textos chegam e voltam como handles (i32) da engine.
+(module
+  (import "helix" "string" (func $hx_string (param i32 i32) (result i32)))
+  (import "helix" "string_read" (func $hx_string_read (param i32 i32 i32) (result i32)))
+
+  (memory (export "memory") 1)
+${strings.data.map((line) => `  ${line}`).join('\n')}
+
+  (func (export "soma") (param $a f64) (param $b f64) (result f64)
+    (f64.add (local.get $a) (local.get $b)))
+
+  ;; saudacao("Helix") devolve "Olá, Helix": monta o texto num buffer e cria uma String da engine.
+  (func (export "saudacao") (param $quem i32) (result i32)
+    (local $tamanho i32)
+    (memory.copy (i32.const ${buffer}) (i32.const ${strings.at.prefixo.offset}) (i32.const ${strings.at.prefixo.length}))
+    (local.set $tamanho (call $hx_string_read (local.get $quem) (i32.const ${buffer + strings.at.prefixo.length}) (i32.const ${capacidade})))
+    (if (i32.gt_u (local.get $tamanho) (i32.const ${capacidade})) (then (local.set $tamanho (i32.const ${capacidade}))))
+    (call $hx_string (i32.const ${buffer}) (i32.add (i32.const ${strings.at.prefixo.length}) (local.get $tamanho))))
+
+  (func (export "limitar") (param $valor f64) (param $minimo f64) (param $maximo f64) (result f64)
+    (f64.max (local.get $minimo) (f64.min (local.get $maximo) (local.get $valor))))
+)
 `;
 }
