@@ -13,6 +13,9 @@ export interface PhysicsSettings {
     linearSlop: number;
     speculativeDistance: number;
     restitutionThreshold: number;
+    jointHertz: number;
+    jointDampingRatio: number;
+    jointPushMaxVelocity: number;
     maxLinearSpeed: number;
     sleepEnabled: boolean;
     sleepLinearThreshold: number;
@@ -43,6 +46,9 @@ export function createPhysicsSettings(overrides: Partial<PhysicsSettings> = {}):
         linearSlop,
         speculativeDistance: 4 * linearSlop,
         restitutionThreshold: 1,
+        jointHertz: 60,
+        jointDampingRatio: 2,
+        jointPushMaxVelocity: 20,
         maxLinearSpeed: 100,
         sleepEnabled: true,
         sleepLinearThreshold: 0.05,
