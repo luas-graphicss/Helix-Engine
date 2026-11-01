@@ -442,4 +442,226 @@ export class LocalShadowPass {
         mat4.multiply(viewProjection, projection, view);
         mat4.multiply(shadowMatrix, BIAS_MATRIX, viewProjection);
     }
+    private planFaces(light: CollectedLocalLight, entry: CacheEntry, casters: readonly ShadowCasterCandidate[]): void {
+        const { faceFrustum, inRangeStatic, inRangeDynamic } = this;
+        this.collectInRange(light, casters);
+        this.lightParams(light);
+        const lightHash = this.lightHash(light);
+        for (let face = 0; face < entry.faces; face++) {
+            const state = entry.states[face];
+            this.faceViewProjection(light, face);
+            faceFrustum.setFromViewProjection(viewProjection);
+            let staticSignature = lightHash;
+            for (const caster of inRangeStatic) {
+                if (!faceFrustum.intersectsSphere(caster.bounds.center, caster.bounds.radius))
+                    continue;
+                staticSignature = hashFloat(staticSignature, caster.entity.id);
+                staticSignature = hashFloat(staticSignature, caster.bounds.version);
+            }
+            let dynamicSignature = 0;
+            let hasDynamics = false;
+            for (const caster of inRangeDynamic) {
+                if (!faceFrustum.intersectsSphere(caster.bounds.center, caster.bounds.radius))
+                    continue;
+                if (!hasDynamics) {
+                    hasDynamics = true;
+                    dynamicSignature = 0x811c9dc5 | 0;
+                }
+                dynamicSignature = hashFloat(dynamicSignature, caster.entity.id);
+                dynamicSignature = hashFloat(dynamicSignature, caster.bounds.version);
+                dynamicSignature = hashFloat(dynamicSignature, caster.entity.skin?.version ?? 0);
+            }
+            const needsStatic = !state.drawn || state.staticSignature !== staticSignature;
+            const needsDynamic = hasDynamics !== state.finalHasDynamics || (hasDynamics && dynamicSignature !== state.dynamicSignature);
+            if (!needsStatic && !needsDynamic)
+                continue;
+            const job = this.acquireJob();
+            job.light = light;
+            job.entry = entry;
+            job.face = face;
+            job.kind = needsStatic ? 'static' : 'dynamic';
+            job.staticSignature = staticSignature;
+            job.dynamicSignature = dynamicSignature;
+            job.hasDynamics = hasDynamics;
+            job.mandatory = !state.drawn;
+            job.priority = light.importance * (1 + (this.frame - state.frame));
+            this.jobs.push(job);
+        }
+    }
+    private acquireJob(): FaceJob {
+        const index = this.jobs.length;
+        let job = this.jobPool[index];
+        if (!job) {
+            job = {
+                light: null as unknown as CollectedLocalLight,
+                entry: null as unknown as CacheEntry,
+                face: 0,
+                kind: 'static',
+                staticSignature: 0,
+                dynamicSignature: 0,
+                hasDynamics: false,
+                mandatory: false,
+                priority: 0,
+            };
+            this.jobPool[index] = job;
+        }
+        return job;
+    }
+    private executeJob(job: FaceJob, atlas: DepthArrayRenderTarget, input: LocalShadowPassInput): void {
+        const { gl } = this;
+        const { light, entry, face } = job;
+        const state = entry.states[face];
+        const layer = entry.base + face;
+        const bias = Math.min(Math.max(light.light.shadow.bias, 0), 1);
+        const texelWorldSize = this.texelScale * light.range * 0.5;
+        const rect = this.rectScratch;
+        this.faceViewProjection(light, face);
+        this.faceFrustum.setFromViewProjection(viewProjection);
+        this.cullFace();
+        gl.polygonOffset(1 + bias * 3, 2 + bias * 8);
+        let redraw = job.kind === 'static';
+        if (!redraw && state.staticLayer < 0) {
+            if (state.finalHasDynamics || !this.acquireStaticLayer(state))
+                redraw = true;
+            else
+                this.captureStatic(atlas, layer, state);
+        }
+        if (redraw) {
+            atlas.bindLayer(layer);
+            gl.clear(gl.DEPTH_BUFFER_BIT);
+            this.renderCasters(this.faceStatic, texelWorldSize, input);
+            if (job.hasDynamics) {
+                if (state.staticLayer >= 0 || this.acquireStaticLayer(state))
+                    this.captureStatic(atlas, layer, state);
+                this.renderCasters(this.faceDynamic, texelWorldSize, input);
+                state.dynamicRectValid = this.dynamicRect(rect) > 0;
+                if (state.dynamicRectValid)
+                    state.dynamicRect.set(rect);
+            }
+            else {
+                this.releaseStaticLayer(state);
+                state.dynamicRectValid = false;
+            }
+        }
+        else {
+            const current = job.hasDynamics ? this.dynamicRect(rect) : 0;
+            const previousUnbounded = state.finalHasDynamics && !state.dynamicRectValid;
+            this.restoreStatic(atlas, layer, state, current > 0 ? rect : null, current < 0 || previousUnbounded);
+            if (job.hasDynamics)
+                this.renderCasters(this.faceDynamic, texelWorldSize, input);
+            state.dynamicRectValid = current > 0;
+            if (state.dynamicRectValid)
+                state.dynamicRect.set(rect);
+        }
+        state.drawn = true;
+        state.staticSignature = job.staticSignature;
+        state.dynamicSignature = job.dynamicSignature;
+        state.finalHasDynamics = job.hasDynamics;
+        state.frame = this.frame;
+        state.slot.set(shadowMatrix, 0);
+        state.slot[16] = layer;
+        state.slot[17] = this.texelScale;
+        state.slot[18] = this.near;
+        state.slot[19] = this.far;
+    }
+    private cullFace(): void {
+        const { faceFrustum, faceStatic, faceDynamic } = this;
+        faceStatic.length = 0;
+        faceDynamic.length = 0;
+        for (const caster of this.inRangeStatic) {
+            if (faceFrustum.intersectsSphere(caster.bounds.center, caster.bounds.radius))
+                faceStatic.push(caster);
+        }
+        for (const caster of this.inRangeDynamic) {
+            if (faceFrustum.intersectsSphere(caster.bounds.center, caster.bounds.radius))
+                faceDynamic.push(caster);
+        }
+    }
+    private captureStatic(atlas: DepthArrayRenderTarget, layer: number, state: FaceState): void {
+        const pool = this.ensureStaticAtlas();
+        pool.copyLayerFrom(atlas, layer, state.staticLayer);
+        state.staticFrame = this.frame;
+        atlas.bindLayer(layer);
+    }
+    private restoreStatic(atlas: DepthArrayRenderTarget, layer: number, state: FaceState, current: Int32Array | null, full: boolean): void {
+        const pool = this.ensureStaticAtlas();
+        state.staticFrame = this.frame;
+        if (full) {
+            atlas.copyLayerFrom(pool, state.staticLayer, layer);
+            return;
+        }
+        const union = this.unionScratch;
+        let valid = false;
+        if (current) {
+            union.set(current);
+            valid = true;
+        }
+        if (state.dynamicRectValid) {
+            const previous = state.dynamicRect;
+            if (valid) {
+                union[0] = Math.min(union[0], previous[0]);
+                union[1] = Math.min(union[1], previous[1]);
+                union[2] = Math.max(union[2], previous[2]);
+                union[3] = Math.max(union[3], previous[3]);
+            }
+            else {
+                union.set(previous);
+                valid = true;
+            }
+        }
+        if (!valid) {
+            atlas.bindLayer(layer);
+            return;
+        }
+        const width = union[2] - union[0];
+        const height = union[3] - union[1];
+        const { size } = this;
+        if (width * height >= size * size * FULL_COPY_AREA_FRACTION)
+            atlas.copyLayerFrom(pool, state.staticLayer, layer);
+        else
+            atlas.copyLayerRegionFrom(pool, state.staticLayer, layer, union[0], union[1], width, height);
+    }
+    private dynamicRect(out: Int32Array): number {
+        const acc = this.rectAccumulator;
+        acc[0] = Infinity;
+        acc[1] = Infinity;
+        acc[2] = -Infinity;
+        acc[3] = -Infinity;
+        for (const candidate of this.faceDynamic) {
+            if (!this.accumulateBox(candidate.bounds.aabb))
+                return -1;
+        }
+        if (acc[0] === Infinity)
+            return 0;
+        const { size } = this;
+        out[0] = Math.max(0, Math.floor(acc[0] - DYNAMIC_MARGIN_TEXELS));
+        out[1] = Math.max(0, Math.floor(acc[1] - DYNAMIC_MARGIN_TEXELS));
+        out[2] = Math.min(size, Math.ceil(acc[2] + DYNAMIC_MARGIN_TEXELS));
+        out[3] = Math.min(size, Math.ceil(acc[3] + DYNAMIC_MARGIN_TEXELS));
+        return out[2] > out[0] && out[3] > out[1] ? 1 : 0;
+    }
+    private accumulateBox(box: Aabb): boolean {
+        const vp = viewProjection;
+        const acc = this.rectAccumulator;
+        const { size, near } = this;
+        for (let i = 0; i < 8; i++) {
+            const x = i & 1 ? box.max[0] : box.min[0];
+            const y = i & 2 ? box.max[1] : box.min[1];
+            const z = i & 4 ? box.max[2] : box.min[2];
+            const w = vp[3] * x + vp[7] * y + vp[11] * z + vp[15];
+            if (w <= near)
+                return false;
+            const px = (((vp[0] * x + vp[4] * y + vp[8] * z + vp[12]) / w) * 0.5 + 0.5) * size;
+            const py = (((vp[1] * x + vp[5] * y + vp[9] * z + vp[13]) / w) * 0.5 + 0.5) * size;
+            if (px < acc[0])
+                acc[0] = px;
+            if (py < acc[1])
+                acc[1] = py;
+            if (px > acc[2])
+                acc[2] = px;
+            if (py > acc[3])
+                acc[3] = py;
+        }
+        return true;
+    }
 }
