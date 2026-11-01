@@ -1,3 +1,4 @@
+import { DEBUG_VIEW_CHUNK } from '@/engine/renderer/shaders/chunks/debug-view.glsl';
 import { SCENE_LIGHTING_CHUNK } from '@/engine/renderer/shaders/chunks/scene-lighting.glsl';
 import { MYRIAD_INSTANCE_CHUNK, MYRIAD_POOL_CHUNK } from './myriad-pool.glsl';
 export const MYRIAD_RESOLVE_FRAGMENT_SHADER = `#version 300 es
@@ -10,7 +11,7 @@ uniform highp sampler2D u_instances;
 uniform mat4 u_viewProjection;
 uniform uint u_stateId;
 uniform vec2 u_screenSize;
-
+                                                                                                                                              
 uniform int u_debugView;
 uniform int u_wireframe;
 
@@ -19,12 +20,13 @@ uniform sampler2D u_metallicRoughnessMap;
 uniform sampler2D u_normalMap;
 uniform sampler2D u_occlusionMap;
 uniform sampler2D u_emissiveMap;
-
+                                                                                                        
 uniform int u_textureMask;
 
 ${MYRIAD_POOL_CHUNK}
 ${MYRIAD_INSTANCE_CHUNK}
 ${SCENE_LIGHTING_CHUNK}
+${DEBUG_VIEW_CHUNK}
 
 const int MAP_BASE_COLOR = 1;
 const int MAP_METALLIC_ROUGHNESS = 2;
@@ -46,31 +48,66 @@ struct Barycentrics {
   vec3 ddy;
 };
 
+   
+                                                                        
+                                                                             
+                                                                         
+   
+const float BARYCENTRIC_SLACK = 0.02;
+   
+                                                                            
+                                                                              
+                                                                                  
+   
+const float MIN_RELATIVE_DETERMINANT = 1e-12;
 
+   
+                                                                             
+                                                                      
+  
+                                                                                      
+                                                                                   
+                                                                                 
+                                                                        
+                                                                                 
+                                                                            
+                                                                                
+                                                                           
+                                                                               
+                                           
+   
 Barycentrics computeBarycentrics(vec4 c0, vec4 c1, vec4 c2, vec2 pixelNdc) {
   Barycentrics b;
-  vec3 invW = 1.0 / vec3(c0.w, c1.w, c2.w);
-  vec2 n0 = c0.xy * invW.x;
-  vec2 n1 = c1.xy * invW.y;
-  vec2 n2 = c2.xy * invW.z;
-  float invDet = 1.0 / determinant(mat2(n2 - n1, n0 - n1));
-  b.ddx = vec3(n1.y - n2.y, n2.y - n0.y, n0.y - n1.y) * invDet * invW;
-  b.ddy = vec3(n2.x - n1.x, n0.x - n2.x, n1.x - n0.x) * invDet * invW;
-  float ddxSum = dot(b.ddx, vec3(1.0));
-  float ddySum = dot(b.ddy, vec3(1.0));
-  vec2 delta = pixelNdc - n0;
-  float interpInvW = invW.x + delta.x * ddxSum + delta.y * ddySum;
-  float interpW = 1.0 / interpInvW;
-  b.lambda = interpW * vec3(invW.x + delta.x * b.ddx.x + delta.y * b.ddy.x, delta.x * b.ddx.y + delta.y * b.ddy.y, delta.x * b.ddx.z + delta.y * b.ddy.z);
+  mat3 m = mat3(c0.xyw, c1.xyw, c2.xyw);
+  float det = determinant(m);
+  float scale = length(c0.xyw) * length(c1.xyw) * length(c2.xyw);
+  bool stable = abs(det) > scale * MIN_RELATIVE_DETERMINANT;
+                                                                                                                   
+  mat3 inv = stable ? inverse(m) : mat3(1.0);
+  vec3 a = inv * vec3(pixelNdc, 1.0);
+  float sum = a.x + a.y + a.z;
+                                                                                              
+  if (!(sum > 0.0)) stable = false;
+  b.lambda = a / (stable ? sum : 1.0);
+  if (any(lessThan(b.lambda, vec3(-BARYCENTRIC_SLACK))) || any(greaterThan(b.lambda, vec3(1.0 + BARYCENTRIC_SLACK)))) stable = false;
+
+  if (!stable) {
+                                                                                                                    
+    vec3 clamped = clamp(b.lambda, 0.0, 1.0);
+    float total = clamped.x + clamped.y + clamped.z;
+    b.lambda = total > 1e-6 && total < 3.0 ? clamped / total : vec3(1.0 / 3.0);
+                                                                                            
+    b.ddx = vec3(-1.0, 1.0, 0.0);
+    b.ddy = vec3(-1.0, 0.0, 1.0);
+    return b;
+  }
+
+                                                                                                                                              
   vec2 ndcPerPixel = 2.0 / u_screenSize;
-  b.ddx *= ndcPerPixel.x;
-  b.ddy *= ndcPerPixel.y;
-  ddxSum *= ndcPerPixel.x;
-  ddySum *= ndcPerPixel.y;
-  float interpWDx = 1.0 / (interpInvW + ddxSum);
-  float interpWDy = 1.0 / (interpInvW + ddySum);
-  b.ddx = interpWDx * (b.lambda * interpInvW + b.ddx) - b.lambda;
-  b.ddy = interpWDy * (b.lambda * interpInvW + b.ddy) - b.lambda;
+  vec3 ax = inv[0] * ndcPerPixel.x;
+  vec3 ay = inv[1] * ndcPerPixel.y;
+  b.ddx = (ax - b.lambda * (ax.x + ax.y + ax.z)) / sum;
+  b.ddy = (ay - b.lambda * (ay.x + ay.y + ay.z)) / sum;
   return b;
 }
 
@@ -82,25 +119,10 @@ vec2 interpolate(vec3 l, vec2 a, vec2 b, vec2 c) {
   return l.x * a + l.y * b + l.z * c;
 }
 
-vec3 hashColor(uint id) {
-  uint h = id * 747796405u + 2891336453u;
-  h = ((h >> ((h >> 28u) + 4u)) ^ h) * 277803737u;
-  h = (h >> 22u) ^ h;
-  return vec3(float(h & 0xffu), float((h >> 8u) & 0xffu), float((h >> 16u) & 0xffu)) * (0.7 / 255.0) + 0.25;
-}
-
-const vec3 LEVEL_PALETTE[8] = vec3[8](
-  vec3(0.18, 0.42, 0.85),
-  vec3(0.20, 0.72, 0.78),
-  vec3(0.26, 0.74, 0.36),
-  vec3(0.76, 0.80, 0.22),
-  vec3(0.95, 0.62, 0.18),
-  vec3(0.92, 0.33, 0.22),
-  vec3(0.80, 0.26, 0.60),
-  vec3(0.55, 0.36, 0.90)
-);
-
-
+   
+                                                                               
+                                                                              
+   
 vec3 perturbNormal(vec3 N, vec3 dp1, vec3 dp2, vec2 duv1, vec2 duv2, vec2 uv, float normalScale) {
   vec3 mapN = textureGrad(u_normalMap, uv, duv1, duv2).xyz * 2.0 - 1.0;
   mapN.xy *= vec2(normalScale, -normalScale);
@@ -160,7 +182,7 @@ void main() {
   if (dot(faceNormal, u_cameraPosition - worldPosition) < 0.0) N = -N;
 
   vec3 color;
-  if (u_debugView == 0) {
+  if (u_debugView == DEBUG_VIEW_NONE) {
     vec3 baseColor = baseColorOpacity.rgb;
     if (hasMap(MAP_BASE_COLOR)) baseColor *= textureGrad(u_baseColorMap, uv, uvDx, uvDy).rgb;
 
@@ -181,29 +203,30 @@ void main() {
 
     Surface s = makeSurface(N, worldPosition, baseColor, roughness, metallic);
     vec3 hdr = shadeSurface(s, worldPosition, positionDx, positionDy, occlusion, emissive, surface.w);
-    color = finishSurfaceColor(hdr, s, mapParams.z);
-  } else if (u_debugView == 5) {
-    color = N * 0.5 + 0.5;
+    color = exposeSurfaceColor(hdr, s, mapParams.z);
+  } else if (u_debugView == DEBUG_VIEW_NORMALS) {
+    color = displayColorToSceneHdr(normalDebugColor(N));
   } else {
-    if (u_debugView == 1) color = hashColor(cluster + 1u);
-    else if (u_debugView == 2) color = hashColor(info.z >> 8u);
-
-    else if (u_debugView == 3) color = LEVEL_PALETTE[min(int(info.z & 0xffu), 7)];
-    else if (u_debugView == 4) color = hashColor(cluster * 131u + triangle + 7u);
+    if (u_debugView == DEBUG_VIEW_CLUSTERS) color = hashColor(cluster + 1u);
+    else if (u_debugView == DEBUG_VIEW_GROUPS) color = hashColor(info.z >> 8u);
+                                                                                                           
+    else if (u_debugView == DEBUG_VIEW_LEVELS) color = LEVEL_PALETTE[min(int(info.z & 0xffu), 7)];
+    else if (u_debugView == DEBUG_VIEW_TRIANGLES) color = hashColor(cluster * 131u + triangle + 7u);
     else color = (vis.y & POST_PASS_BIT) != 0u ? vec3(0.95, 0.55, 0.15) : vec3(0.25, 0.75, 0.35);
-
-    color *= 0.55 + 0.45 * max(dot(N, u_sunDirection), 0.0);
-    color = mix(color, SELECTION_TINT, mapParams.z * 0.35);
+    color = shadeDebugColor(color, N, u_sunDirection);
+                                                                                                             
+    color = displayColorToSceneHdr(color);
+    color = mix(color, SELECTION_TINT_HDR, mapParams.z * 0.35);
   }
 
-  if (u_wireframe == 1 || u_debugView == 4) {
+  if (u_wireframe == 1 || u_debugView == DEBUG_VIEW_TRIANGLES) {
     vec3 spread = abs(b.ddx) + abs(b.ddy);
     vec3 edgeDistance = b.lambda / max(spread, vec3(1e-7));
     float nearestEdge = min(edgeDistance.x, min(edgeDistance.y, edgeDistance.z));
     float wire = 1.0 - smoothstep(0.5, 1.5, nearestEdge);
-    color = mix(color, vec3(0.03), wire * 0.85);
+    color = mix(color, vec3(0.002), wire * 0.85);
   }
 
-  fragColor = vec4(color, 1.0);
+  fragColor = sceneColorOutput(color, 1.0);
 }
 `;
