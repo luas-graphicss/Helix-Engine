@@ -1,6 +1,6 @@
 import type { GL } from './context';
 import type { Skin } from '@/engine/core/scene/skin';
-export const JOINT_MATRICES_TEXTURE_UNIT = 8;
+export const JOINT_MATRICES_TEXTURE_UNIT = 9;
 const TEXELS_PER_MATRIX = 4;
 const STALE_FRAMES = 240;
 interface CacheEntry {
