@@ -256,3 +256,140 @@ export function charCode(value: unknown): number {
         return value;
     throw new InvalidCastException(`Esperado um char, encontrado ${describeType(value)}.`);
 }
+export function typeName(value: unknown): string {
+    if (value === null || value === undefined)
+        return 'null';
+    switch (typeof value) {
+        case 'number':
+            return Number.isInteger(value) ? 'Int32' : 'Double';
+        case 'string':
+            return value.length === 1 ? 'Char' : 'String';
+        case 'boolean':
+            return 'Boolean';
+        case 'function':
+            return 'Delegate';
+        case 'bigint':
+            return 'Int64';
+        case 'symbol':
+            return 'Symbol';
+        default:
+            break;
+    }
+    const object = value as object;
+    const named = (object as {
+        [TYPE_NAME]?: string;
+    })[TYPE_NAME];
+    if (named)
+        return named;
+    if (Array.isArray(object))
+        return 'Array';
+    if (object instanceof Promise)
+        return 'Task';
+    const ctor = object.constructor?.name;
+    return ctor && ctor !== 'Object' ? ctor : 'Object';
+}
+export function describeType(value: unknown): string {
+    if (value === null || value === undefined)
+        return 'null';
+    if (typeof value === 'string')
+        return `a string ${JSON.stringify(value.length > 40 ? `${value.slice(0, 40)}…` : value)}`;
+    if (typeof value === 'number' || typeof value === 'boolean')
+        return `${typeName(value)} (${str(value)})`;
+    if (typeof value === 'function')
+        return `o método/função ${(value as {
+            name?: string;
+        }).name || 'anônimo'}`;
+    return `um ${typeName(value)}`;
+}
+export function equals(a: unknown, b: unknown): boolean {
+    if (a === b)
+        return true;
+    if (isNullish(a) || isNullish(b))
+        return isNullish(a) && isNullish(b);
+    if (typeof a === 'number' && typeof b === 'number')
+        return a === b || (Number.isNaN(a) && Number.isNaN(b));
+    if (typeof a !== 'object' || typeof b !== 'object')
+        return false;
+    const custom = (a as {
+        Equals?: unknown;
+    }).Equals;
+    if (typeof custom === 'function' && !(a instanceof Error))
+        return Boolean((custom as Fn).call(a, b));
+    if (Array.isArray(a) && Array.isArray(b))
+        return a.length === b.length && a.every((item, index) => equals(item, b[index]));
+    return false;
+}
+export function hashKey(value: unknown): unknown {
+    if (value === null || value === undefined)
+        return null;
+    if (typeof value !== 'object')
+        return value;
+    const custom = (value as {
+        GetHashKey?: unknown;
+    }).GetHashKey;
+    if (typeof custom === 'function')
+        return (custom as Fn).call(value);
+    if (Array.isArray(value))
+        return `[${value.map((item) => String(hashKey(item))).join('\u0000')}]`;
+    return value;
+}
+export function compare(a: unknown, b: unknown): number {
+    if (isNullish(a))
+        return isNullish(b) ? 0 : -1;
+    if (isNullish(b))
+        return 1;
+    if (typeof a === 'number' && typeof b === 'number')
+        return a < b ? -1 : a > b ? 1 : 0;
+    if (typeof a === 'string' && typeof b === 'string')
+        return a < b ? -1 : a > b ? 1 : 0;
+    if (typeof a === 'boolean' && typeof b === 'boolean')
+        return a === b ? 0 : a ? 1 : -1;
+    if (a instanceof Date && b instanceof Date)
+        return a.getTime() - b.getTime();
+    const custom = (a as {
+        CompareTo?: unknown;
+    }).CompareTo;
+    if (typeof custom === 'function')
+        return Number((custom as Fn).call(a, b));
+    throw new InvalidCastException(`Não dá para comparar ${describeType(a)} com ${describeType(b)}: o tipo não implementa CompareTo.`);
+}
+export function enumInfo(enumObject: unknown): EnumInfo | null {
+    if (enumObject === null || typeof enumObject !== 'object')
+        return null;
+    return ((enumObject as {
+        [ENUM_INFO]?: EnumInfo;
+    })[ENUM_INFO] as EnumInfo | undefined) ?? null;
+}
+export function enumToString(enumObject: unknown, value: unknown): string {
+    const info = enumInfo(enumObject);
+    if (!info || typeof value !== 'number')
+        return str(value);
+    const index = info.values.indexOf(value);
+    if (index >= 0)
+        return info.names[index];
+    if (info.flags && value !== 0) {
+        const parts: string[] = [];
+        let rest = value;
+        for (let position = info.values.length - 1; position >= 0; position--) {
+            const flag = info.values[position];
+            if (flag !== 0 && (rest & flag) === flag) {
+                parts.unshift(info.names[position]);
+                rest &= ~flag;
+            }
+        }
+        if (rest === 0 && parts.length > 0)
+            return parts.join(', ');
+    }
+    return String(value);
+}
+export function enumParse(enumObject: unknown, text: unknown, ignoreCase = false): number | null {
+    const info = enumInfo(enumObject);
+    if (!info)
+        return null;
+    const wanted = String(text).trim();
+    const index = info.names.findIndex((name) => (ignoreCase ? name.toLowerCase() === wanted.toLowerCase() : name === wanted));
+    if (index >= 0)
+        return info.values[index];
+    const asNumber = Number(wanted);
+    return Number.isInteger(asNumber) && wanted !== '' ? asNumber : null;
+}
