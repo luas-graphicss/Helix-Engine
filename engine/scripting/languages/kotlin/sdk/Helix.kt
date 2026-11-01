@@ -343,6 +343,59 @@ operator fun Double.times(vector: Vec3) = vector * this
                                                                             
                                                                               
    
+abstract class Script {
+    var helix: Value = Value.undefined
+        internal set
+
+                                          
+    var self: Value = Value.undefined
+        internal set
+
+                                                                           
+    var script: Value = Value.undefined
+        internal set
+
+                               
+    val entity: Value get() = self
+
+    protected fun log(vararg parts: Any?) = Helix.log(*parts)
+    protected fun warn(vararg parts: Any?) = Helix.warn(*parts)
+    protected fun debug(vararg parts: Any?) = Helix.debug(*parts)
+    protected fun error(vararg parts: Any?) = Helix.error(*parts)
+    protected fun require(name: String): Value = Helix.require(name)
+
+                                                                                                   
+
+    open fun onLoad() {}
+    open fun onStart() {}
+    open fun onUpdate(dt: Double) {}
+    open fun onFixedUpdate(h: Double) {}
+    open fun onLateUpdate(dt: Double) {}
+    open fun onRender(frame: Value) {}
+    open fun onEnable() {}
+    open fun onDisable() {}
+    open fun onStop() {}
+    open fun onDestroy() {}
+
+                                                                                      
+    open fun onBeforeHotReload(): Any? = null
+    open fun onHotReload(previousState: Value) {}
+
+                                                                                                    
+
+    open fun onCollisionBegin(other: Value, contact: Value) {}
+    open fun onCollisionStay(other: Value, contact: Value) {}
+    open fun onCollisionEnd(other: Value) {}
+    open fun onTriggerEnter(other: Value) {}
+    open fun onTriggerStay(other: Value) {}
+    open fun onTriggerExit(other: Value) {}
+
+    internal fun attach(inject: dynamic) {
+        helix = Value(inject.helix)
+        self = Value(inject.entity)
+        script = Value(inject.script)
+    }
+}
 
                                                                                                    
 
@@ -355,28 +408,117 @@ operator fun Double.times(vector: Vec3) = vector * this
           
    
 object Runtime {
+    fun boot(script: Script, inject: dynamic, declaredHooks: String): dynamic {
+        script.attach(inject)
+        val hooks = js("({})")
+        for (declared in declaredHooks.split(',')) {
+            when (declared.trim()) {
+                "onLoad" -> hooks.onLoad = { script.onLoad() }
+                "onStart" -> hooks.onStart = { script.onStart() }
+                "onUpdate" -> hooks.onUpdate = { dt: Double -> script.onUpdate(dt) }
+                "onFixedUpdate" -> hooks.onFixedUpdate = { h: Double -> script.onFixedUpdate(h) }
+                "onLateUpdate" -> hooks.onLateUpdate = { dt: Double -> script.onLateUpdate(dt) }
+                "onRender" -> hooks.onRender = { frame: dynamic -> script.onRender(Value(frame)) }
+                "onEnable" -> hooks.onEnable = { script.onEnable() }
+                "onDisable" -> hooks.onDisable = { script.onDisable() }
+                "onStop" -> hooks.onStop = { script.onStop() }
+                "onDestroy" -> hooks.onDestroy = { script.onDestroy() }
+                "onBeforeHotReload" -> hooks.onBeforeHotReload = { Convert.toJs(script.onBeforeHotReload()) }
+                "onHotReload" -> hooks.onHotReload = { previous: dynamic -> script.onHotReload(Value(previous)) }
+                "onCollisionBegin" -> hooks.onCollisionBegin = { other: dynamic, contact: dynamic -> script.onCollisionBegin(Value(other), Value(contact)) }
+                "onCollisionStay" -> hooks.onCollisionStay = { other: dynamic, contact: dynamic -> script.onCollisionStay(Value(other), Value(contact)) }
+                "onCollisionEnd" -> hooks.onCollisionEnd = { other: dynamic -> script.onCollisionEnd(Value(other)) }
+                "onTriggerEnter" -> hooks.onTriggerEnter = { other: dynamic -> script.onTriggerEnter(Value(other)) }
+                "onTriggerStay" -> hooks.onTriggerStay = { other: dynamic -> script.onTriggerStay(Value(other)) }
+                "onTriggerExit" -> hooks.onTriggerExit = { other: dynamic -> script.onTriggerExit(Value(other)) }
+            }
+        }
+        return hooks
+    }
 }
 
                                                                                                     
 
 internal object Convert {
                                                                                                                                                
+    fun toJs(value: Any?): dynamic = when (value) {
+        null -> null
+        is Value -> value.raw
+        is Vec3 -> value.toJs()
+        is Double -> value
+        is Int -> value
+        is Float -> value.toDouble()
+        is Long -> value.toDouble()
+        is Short -> value.toInt()
+        is Byte -> value.toInt()
+        is Boolean -> value
+        is String -> value
+        is Char -> value.toString()
+        is Pair<*, *> -> toJsArray(arrayOf(value.first, value.second))
+        is Map<*, *> -> {
+            val out = js("({})")
+            for ((key, item) in value) out[key.toString()] = toJs(item)
+            out
+        }
+        is Collection<*> -> toJsArray(value.toTypedArray())
+        is Array<*> -> toJsArray(value)
+        is DoubleArray -> toJsArray(value.toTypedArray())
+        is IntArray -> toJsArray(value.toTypedArray())
+        is BooleanArray -> toJsArray(value.toTypedArray())
+        else -> value.asDynamic()
+    }
 
+    fun toJsArray(items: Array<out Any?>): dynamic {
+        val out = js("[]")
+        for (item in items) out.push(toJs(item))
+        return out
+    }
 
+    fun toValueList(args: dynamic): List<Value> {
+        val count = (args.length as Int)
+        return List(count) { index -> Value(args[index]) }
+    }
 }
 
 @JsName("Array")
 internal external object JsArray {
+    fun isArray(value: dynamic): dynamic
 }
 
 @JsName("Object")
 internal external object JsObject {
+    fun keys(value: dynamic): dynamic
 }
 
 @JsName("Reflect")
 internal external object JsReflect {
+    fun construct(target: dynamic, args: dynamic): dynamic
+    fun deleteProperty(target: dynamic, key: String): Boolean
 }
 
+internal fun toNumber(value: dynamic): Double = when (jsTypeOf(value)) {
+    "number" -> value as Double
+    "boolean" -> if (value as Boolean) 1.0 else 0.0
+    else -> js("Number")(value) as Double
+}
 
+internal fun truthy(value: dynamic): Boolean = js("Boolean")(value) as Boolean
 
+internal fun truncate(value: Double): Int = if (value.isNaN()) 0 else if (value > 2147483647.0) 2147483647 else if (value < -2147483648.0) -2147483648 else value.toInt()
 
+internal fun toText(value: dynamic): String {
+    if (jsTypeOf(value) == "string") return value as String
+    if (value === undefined) return "undefined"
+    if (value === null) return "null"
+    if (jsTypeOf(value) == "object") {
+        return try {
+            val text = js("String")(value) as String
+            if (text != "[object Object]") return text
+            val json: dynamic = JSON.stringify(value)
+            if (jsTypeOf(json) == "string") json as String else text
+        } catch (e: Throwable) {
+            "[objeto]"
+        }
+    }
+    return js("String")(value) as String
+}
