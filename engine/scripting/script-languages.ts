@@ -244,37 +244,282 @@ export const SCRIPT_LANGUAGES: readonly ScriptLanguage[] = [
         mimeType: 'text/x-csrc',
         lineComment: '//',
         blockComment: ['/*', '*/'],
+        indent: { size: 4, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'rust',
+        label: 'Rust',
+        tag: 'RS',
+        family: 'systems',
+        description: 'Segurança de memória e desempenho nativo, compilada para WebAssembly.',
+        extensions: ['rs'],
+        mimeType: 'text/x-rust',
+        lineComment: '//',
+        blockComment: ['/*', '*/'],
+        indent: { size: 4, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'go',
+        label: 'Go',
+        tag: 'GO',
+        family: 'systems',
+        description: 'Simplicidade e concorrência, compilada para WebAssembly.',
+        extensions: ['go'],
+        mimeType: 'text/x-go',
+        lineComment: '//',
+        blockComment: ['/*', '*/'],
+        indent: { size: 4, useTabs: true },
+        compiler: 'beta',
     }),
     language({
+        id: 'zig',
+        label: 'Zig',
+        tag: 'ZIG',
+        family: 'systems',
+        description: 'Controle de baixo nível sem macros ocultas, compilada para WebAssembly.',
+        extensions: ['zig'],
+        mimeType: 'text/x-zig',
+        lineComment: '//',
+        blockComment: null,
+        indent: { size: 4, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'java',
+        label: 'Java',
+        tag: 'JAVA',
+        family: 'systems',
+        description: 'Classes e pacotes para quem vem do ecossistema JVM.',
+        extensions: ['java'],
+        mimeType: 'text/x-java',
+        lineComment: '//',
+        blockComment: ['/*', '*/'],
+        indent: { size: 4, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'kotlin',
+        label: 'Kotlin',
+        tag: 'KT',
+        family: 'systems',
+        description: 'Concisa e segura contra nulos, familiar para quem desenvolve para Android.',
+        extensions: ['kt', 'kts'],
+        mimeType: 'text/x-kotlin',
+        lineComment: '//',
+        blockComment: ['/*', '*/'],
+        indent: { size: 4, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'swift',
+        label: 'Swift',
+        tag: 'SWIFT',
+        family: 'systems',
+        description: 'A linguagem da Apple, com sintaxe moderna e tipos fortes, compilada para WebAssembly.',
+        extensions: ['swift'],
+        mimeType: 'text/x-swift',
+        lineComment: '//',
+        blockComment: ['/*', '*/'],
+        indent: { size: 4, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'dart',
+        label: 'Dart',
+        tag: 'DART',
+        family: 'systems',
+        description: 'Linguagem do Flutter, otimizada para interfaces e compilação rápida.',
+        extensions: ['dart'],
+        mimeType: 'text/x-dart',
+        lineComment: '//',
+        blockComment: ['/*', '*/'],
+        indent: { size: 2, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'ruby',
+        label: 'Ruby',
+        tag: 'RB',
+        family: 'scripting',
+        description: 'Expressiva e amigável para scripts de regras e ferramentas, com o Ruby 3.4 completo: hooks on_start/on_update, require("Nome") entre scripts e esperas automáticas nas promessas.',
+        extensions: ['rb'],
+        mimeType: 'text/x-ruby',
+        lineComment: '#',
+        blockComment: ['=begin', '=end'],
+        indent: { size: 2, useTabs: false },
+        compiler: 'ready',
     }),
     language({
+        id: 'php',
+        label: 'PHP',
+        tag: 'PHP',
+        family: 'scripting',
+        description: 'PHP 8.4 completo, para quem já domina a linguagem: classes com hooks, módulos por helix_require e esperas com yield.',
+        extensions: ['php'],
+        mimeType: 'text/x-php',
+        lineComment: '//',
+        blockComment: ['/*', '*/'],
+        indent: { size: 4, useTabs: false },
+        compiler: 'beta',
     }),
     language({
+        id: 'wat',
+        label: 'WebAssembly (texto)',
+        tag: 'WAT',
+        family: 'systems',
+        description: 'O formato textual do WebAssembly, para módulos escritos à mão, com a API inteira pelas importações helix.*.',
+        extensions: ['wat'],
+        mimeType: 'text/x-wat',
+        lineComment: ';;',
+        blockComment: ['(;', ';)'],
+        indent: { size: 2, useTabs: false },
+        compiler: 'ready',
     }),
     language({
+        id: 'json',
+        label: 'JSON',
+        tag: 'JSON',
+        family: 'data',
+        description: 'Tabelas de dados, configurações e manifestos do jogo.',
+        extensions: ['json'],
+        mimeType: 'application/json',
+        lineComment: null,
+        blockComment: null,
+        indent: { size: 2, useTabs: false },
+        compiler: 'ready',
+        markup: true,
     }),
     language({
+        id: 'yaml',
+        label: 'YAML',
+        tag: 'YAML',
+        family: 'data',
+        description: 'Configurações legíveis, com indentação significativa.',
+        extensions: ['yaml', 'yml'],
+        mimeType: 'text/yaml',
+        lineComment: '#',
+        blockComment: null,
+        indent: { size: 2, useTabs: false },
+        compiler: 'pending',
+        markup: true,
     }),
     language({
+        id: 'toml',
+        label: 'TOML',
+        tag: 'TOML',
+        family: 'data',
+        description: 'Configuração em seções e chaves, sem ambiguidades; o arquivo chega aos scripts por require("Nome") ou helix.assets.data, já interpretado.',
+        extensions: ['toml'],
+        mimeType: 'application/toml',
+        lineComment: '#',
+        blockComment: null,
+        indent: { size: 2, useTabs: false },
+        compiler: 'ready',
+        markup: true,
     }),
     language({
+        id: 'xml',
+        label: 'XML',
+        tag: 'XML',
+        family: 'data',
+        description: 'Dados estruturados e formatos de intercâmbio.',
+        extensions: ['xml'],
+        mimeType: 'application/xml',
+        lineComment: null,
+        blockComment: ['<!--', '-->'],
+        indent: { size: 2, useTabs: false },
+        compiler: 'pending',
+        markup: true,
     }),
     language({
+        id: 'markdown',
+        label: 'Markdown',
+        tag: 'MD',
+        family: 'data',
+        description: 'Documentação, notas de design e textos do jogo.',
+        extensions: ['md', 'markdown'],
+        mimeType: 'text/markdown',
+        lineComment: null,
+        blockComment: ['<!--', '-->'],
+        indent: { size: 2, useTabs: false },
+        compiler: 'pending',
+        markup: true,
     }),
     language({
+        id: 'shell',
+        label: 'Shell',
+        tag: 'SH',
+        family: 'data',
+        description: 'Scripts de automação e build que acompanham o projeto.',
+        extensions: ['sh', 'bash', 'zsh'],
+        mimeType: 'text/x-shellscript',
+        lineComment: '#',
+        blockComment: null,
+        indent: { size: 2, useTabs: false },
+        compiler: 'pending',
+        markup: true,
     }),
 ];
+const LANGUAGES_BY_ID = new Map<ScriptLanguageId, ScriptLanguage>(SCRIPT_LANGUAGES.map((entry) => [entry.id, entry]));
+const LANGUAGES_BY_EXTENSION = new Map<string, ScriptLanguage>();
+for (const entry of SCRIPT_LANGUAGES) {
+    for (const extension of entry.extensions) {
+        if (!LANGUAGES_BY_EXTENSION.has(extension))
+            LANGUAGES_BY_EXTENSION.set(extension, entry);
+    }
+}
+export const SCRIPT_EXTENSIONS: readonly string[] = Array.from(LANGUAGES_BY_EXTENSION.keys());
+export const SCRIPT_ACCEPT = SCRIPT_EXTENSIONS.map((extension) => `.${extension}`).join(',');
+export const DEFAULT_SCRIPT_LANGUAGE: ScriptLanguageId = 'luau';
+export function scriptLanguage(id: ScriptLanguageId): ScriptLanguage {
+    const found = LANGUAGES_BY_ID.get(id);
+    if (!found)
+        throw new Error(`Linguagem de script desconhecida: ${id}.`);
+    return found;
+}
+export function isScriptLanguageId(value: unknown): value is ScriptLanguageId {
+    return typeof value === 'string' && LANGUAGES_BY_ID.has(value as ScriptLanguageId);
+}
+export function scriptLanguageForExtension(extension: string): ScriptLanguage | null {
+    return LANGUAGES_BY_EXTENSION.get(extension.toLowerCase().replace(/^\./, '')) ?? null;
+}
+export function scriptExtension(id: ScriptLanguageId): string {
+    return scriptLanguage(id).extensions[0];
+}
+export function baseLanguageCandidates(): ScriptLanguage[] {
+    return SCRIPT_LANGUAGES.filter((entry) => !entry.markup).sort((a, b) => {
+        if (Boolean(a.recommended) !== Boolean(b.recommended))
+            return a.recommended ? -1 : 1;
+        return a.label.localeCompare(b.label, 'pt-BR');
+    });
+}
+export function languagesByFamily(family: ScriptLanguageFamily): ScriptLanguage[] {
+    return SCRIPT_LANGUAGES.filter((entry) => entry.family === family);
+}
+export const ASSET_LANGUAGE_FAMILIES: readonly ScriptLanguageFamily[] = ['web', 'shader', 'data'];
+export function isAssetLanguage(id: ScriptLanguageId): boolean {
+    return ASSET_LANGUAGE_FAMILIES.includes(scriptLanguage(id).family);
+}
+export function isShaderLanguage(id: ScriptLanguageId): boolean {
+    return scriptLanguage(id).family === 'shader';
+}
+export function formatLanguageLabels(ids: readonly ScriptLanguageId[]): string {
+    const labels = ids.map((id) => scriptLanguage(id).label);
+    if (labels.length <= 1)
+        return labels.join('');
+    return `${labels.slice(0, -1).join(', ')} e ${labels[labels.length - 1]}`;
+}
+export function commentLine(id: ScriptLanguageId, text: string): string {
+    const entry = scriptLanguage(id);
+    if (entry.lineComment)
+        return `${entry.lineComment} ${text}`;
+    if (entry.blockComment)
+        return `${entry.blockComment[0]} ${text} ${entry.blockComment[1]}`;
+    return '';
+}
+export function indentUnit(id: ScriptLanguageId): string {
+    const { indent } = scriptLanguage(id);
+    return indent.useTabs ? '\t' : ' '.repeat(indent.size);
+}
