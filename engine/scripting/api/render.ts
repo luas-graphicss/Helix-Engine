@@ -221,3 +221,84 @@ export function createPostApi(host: RuntimeHost) {
         custom: createCustomPostApi(host),
     };
 }
+function createCustomPostApi(host: RuntimeHost) {
+    const { renderState: state, shaders } = host;
+    const list = state.customPost;
+    function find(target: unknown, member: string): CustomPostEntry | null {
+        if (typeof target === 'string')
+            return list.find((entry) => entry.name === target) ?? null;
+        if (typeof target === 'object' && target !== null && 'name' in target)
+            return list.find((entry) => entry.name === (target as {
+                name: unknown;
+            }).name) ?? null;
+        throw new HelixArgumentError(member, 'esperava o nome do efeito ou o objeto devolvido por helix.post.custom.add.');
+    }
+    function remove(entry: CustomPostEntry): boolean {
+        const index = list.indexOf(entry);
+        if (index < 0)
+            return false;
+        list.splice(index, 1);
+        shaders.release(entry.binding);
+        return true;
+    }
+    const handles = new WeakMap<CustomPostEntry, CustomPostHandle>();
+    function handleFor(entry: CustomPostEntry): CustomPostHandle {
+        const cached = handles.get(entry);
+        if (cached)
+            return cached;
+        const handle: CustomPostHandle = {
+            get name() {
+                return entry.name;
+            },
+            get enabled() {
+                return entry.enabled;
+            },
+            set enabled(value: boolean) {
+                entry.enabled = Boolean(value);
+            },
+            uniforms: shaders.uniforms(entry.binding),
+            remove: () => {
+                remove(entry);
+            },
+        };
+        handles.set(entry, handle);
+        return handle;
+    }
+    return {
+        add: (pass: unknown): CustomPostHandle => {
+            const member = 'helix.post.custom.add';
+            const options = requireObject(pass, member, 'o efeito');
+            const asset = options.fragment ?? options.shader;
+            if (asset === undefined)
+                throw new HelixArgumentError(member, 'informe o ativo de shader em `fragment` (nome, id ou o próprio ativo).');
+            const binding = shaders.bind(asset, 'post', options.uniforms, member);
+            const name = options.name === undefined ? binding.bundle.name : requireString(options.name, member, 'o nome do efeito');
+            const previous = list.find((entry) => entry.name === name);
+            const entry: CustomPostEntry = { name, binding, enabled: options.enabled === undefined ? true : Boolean(options.enabled), owner: host.current };
+            if (previous) {
+                shaders.release(previous.binding);
+                list[list.indexOf(previous)] = entry;
+            }
+            else {
+                list.push(entry);
+            }
+            host.current?.track(() => {
+                remove(entry);
+            });
+            return handleFor(entry);
+        },
+        get: (target: unknown): CustomPostHandle | null => {
+            const entry = find(target, 'helix.post.custom.get');
+            return entry ? handleFor(entry) : null;
+        },
+        remove: (target: unknown): boolean => {
+            const entry = find(target, 'helix.post.custom.remove');
+            return entry ? remove(entry) : false;
+        },
+        list: () => list.map((entry) => ({ name: entry.name, shader: entry.binding.bundle.name, enabled: entry.enabled })),
+        clear: () => {
+            for (const entry of list.slice())
+                remove(entry);
+        },
+    };
+}
