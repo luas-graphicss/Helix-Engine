@@ -1125,3 +1125,122 @@ export const ARRAY_METHODS: Record<string, (array: unknown[], ...args: unknown[]
         return array === other;
     },
 };
+export const ARRAY_STATICS: Record<string, Fn> = {
+    IndexOf: (array, item) => (array as unknown[]).findIndex((entry) => equals(entry, item)),
+    LastIndexOf: (array, item) => {
+        const items = array as unknown[];
+        for (let index = items.length - 1; index >= 0; index--)
+            if (equals(items[index], item))
+                return index;
+        return -1;
+    },
+    Sort: (array, comparison) => {
+        const items = array as unknown[];
+        if (typeof comparison === 'function')
+            items.sort((a, b) => Number((comparison as Fn)(a, b)));
+        else
+            items.sort(compare);
+        return undefined;
+    },
+    Reverse: (array) => {
+        ;
+        (array as unknown[]).reverse();
+        return undefined;
+    },
+    Fill: (array, value, start = 0, count) => {
+        const items = array as unknown[];
+        const from = Number(start);
+        const to = count === undefined ? items.length : from + Number(count);
+        for (let index = from; index < to; index++)
+            items[index] = value;
+        return undefined;
+    },
+    Clear: (array, start = 0, count) => {
+        const items = array as unknown[];
+        const from = Number(start);
+        const to = count === undefined ? items.length : from + Number(count);
+        for (let index = from; index < to; index++)
+            items[index] = typeof items[index] === 'number' ? 0 : typeof items[index] === 'boolean' ? false : null;
+        return undefined;
+    },
+    Copy: (source, ...rest) => {
+        const from = source as unknown[];
+        if (rest.length === 2) {
+            const [destination, count] = rest as [
+                unknown[],
+                number
+            ];
+            for (let index = 0; index < Number(count); index++)
+                destination[index] = from[index];
+        }
+        else {
+            const [sourceIndex, destination, destinationIndex, count] = rest as [
+                number,
+                unknown[],
+                number,
+                number
+            ];
+            for (let index = 0; index < Number(count); index++)
+                destination[Number(destinationIndex) + index] = from[Number(sourceIndex) + index];
+        }
+        return undefined;
+    },
+    Resize: (ref, size) => {
+        const box = ref as Ref<unknown[]>;
+        const items = box.v ?? [];
+        const length = Number(size);
+        const resized = items.slice(0, length);
+        while (resized.length < length)
+            resized.push(null);
+        box.v = resized;
+        return undefined;
+    },
+    Exists: (array, predicate) => (array as unknown[]).some((item) => Boolean(requireFunction(predicate, 'Array.Exists')(item))),
+    TrueForAll: (array, predicate) => (array as unknown[]).every((item) => Boolean(requireFunction(predicate, 'Array.TrueForAll')(item))),
+    Find: (array, predicate) => (array as unknown[]).find((item) => Boolean(requireFunction(predicate, 'Array.Find')(item))) ?? null,
+    FindIndex: (array, predicate) => (array as unknown[]).findIndex((item) => Boolean(requireFunction(predicate, 'Array.FindIndex')(item))),
+    FindAll: (array, predicate) => (array as unknown[]).filter((item) => Boolean(requireFunction(predicate, 'Array.FindAll')(item))),
+    ForEach: (array, action) => {
+        const fn = requireFunction(action, 'Array.ForEach');
+        for (const item of array as unknown[])
+            fn(item);
+        return undefined;
+    },
+    ConvertAll: (array, converter) => (array as unknown[]).map((item) => requireFunction(converter, 'Array.ConvertAll')(item)),
+    Empty: () => [],
+    BinarySearch: (array, item) => {
+        const items = array as unknown[];
+        let low = 0;
+        let high = items.length - 1;
+        while (low <= high) {
+            const middle = (low + high) >> 1;
+            const result = compare(items[middle], item);
+            if (result === 0)
+                return middle;
+            if (result < 0)
+                low = middle + 1;
+            else
+                high = middle - 1;
+        }
+        return ~low;
+    },
+};
+export const ENUMERABLE_STATICS: Record<string, Fn> = {
+    Range: (start, count) => {
+        const from = Number(start);
+        const amount = Number(count);
+        if (!Number.isInteger(amount) || amount < 0)
+            throw new ArgumentOutOfRangeException('count', 'Enumerable.Range: count precisa ser um inteiro não negativo.');
+        const list = new List();
+        for (let index = 0; index < amount; index++)
+            list.$items.push(from + index);
+        return list;
+    },
+    Repeat: (value, count) => {
+        const amount = Number(count);
+        if (!Number.isInteger(amount) || amount < 0)
+            throw new ArgumentOutOfRangeException('count', 'Enumerable.Repeat: count precisa ser um inteiro não negativo.');
+        return List.from(new Array<unknown>(amount).fill(value));
+    },
+    Empty: () => new List(),
+};
