@@ -266,4 +266,111 @@ export class WasmProgram {
         catch {
         }
     }
+    private createDispatchedCallback(id: number): (...args: unknown[]) => unknown {
+        const invoke = this.exports[CALLBACK_INVOKE];
+        if (typeof invoke !== 'function')
+            throw new HandleError(`o módulo não exporta ${CALLBACK_INVOKE}; o SDK da linguagem precisa estar ligado ao script.`);
+        const target = invoke as (id: number, args: number) => number;
+        const proxy = (...args: unknown[]): unknown => {
+            if (this.disposed || this.exitCode !== null)
+                return undefined;
+            return this.enter(() => {
+                const result = target(id, this.handles.acquire(args));
+                return this.handles.value(result);
+            });
+        };
+        Object.defineProperty(proxy, 'name', { value: `callback#${id}` });
+        if (this.registry)
+            this.registry.register(proxy, id);
+        return proxy;
+    }
+    private dropDispatchedCallback(id: number): void {
+        if (this.disposed)
+            return;
+        const drop = this.exports[CALLBACK_DROP];
+        if (typeof drop !== 'function')
+            return;
+        try {
+            ;
+            (drop as WasmFunction)(id);
+        }
+        catch {
+        }
+    }
+    private helixImports(): Record<string, (...args: never[]) => unknown> {
+        const handles = this.handles;
+        const host = this.host;
+        const imports = {
+            retain: (ref: number) => handles.retain(ref),
+            release: (ref: number) => handles.release(ref),
+            type: (ref: number) => handles.typeOf(ref),
+            equals: (a: number, b: number) => (handles.equals(a, b) ? 1 : 0),
+            root: () => handles.acquire(host.root),
+            script: () => handles.acquire(host.script),
+            self: () => handles.acquire(host.self),
+            require: (ptr: number, length: number) => handles.acquire(host.require(this.readString(ptr, length))),
+            number: (value: number) => handles.acquire(value),
+            boolean: (value: number) => handles.acquire(value !== 0),
+            string: (ptr: number, length: number) => handles.acquire(this.readString(ptr, length)),
+            null: () => handles.acquire(null),
+            array: () => handles.acquire([]),
+            object: () => handles.acquire({}),
+            function: (fnIndex: number, userdata: number, destructor: number) => handles.acquire(this.createCallback(fnIndex, userdata, destructor)),
+            callback: (id: number) => handles.acquire(this.createDispatchedCallback(id)),
+            pool: (ref: number) => handles.acquire(handles.value(ref)),
+            to_number: (ref: number) => {
+                const value = handles.value(ref);
+                if (typeof value === 'number')
+                    return value;
+                if (typeof value === 'boolean')
+                    return value ? 1 : 0;
+                if (typeof value === 'bigint')
+                    return Number(value);
+                if (typeof value === 'string')
+                    return Number(value);
+                return Number.NaN;
+            },
+            to_boolean: (ref: number) => (handles.value(ref) ? 1 : 0),
+            string_bytes: (ref: number) => this.encoder.encode(this.stringify(handles.value(ref))).length,
+            string_copy: (ref: number, ptr: number, capacity: number) => this.writeString(this.stringify(handles.value(ref)), ptr, capacity),
+            string_read: (ref: number, ptr: number, capacity: number) => this.writeBytes(this.stringify(handles.value(ref)), ptr, capacity),
+            get: (object: number, ptr: number, length: number) => handles.acquire(handles.get(object, this.readString(ptr, length))),
+            index: (object: number, index: number) => handles.acquire(handles.get(object, index)),
+            set: (object: number, ptr: number, length: number, value: number) => handles.set(object, this.readString(ptr, length), handles.value(value)),
+            set_index: (object: number, index: number, value: number) => handles.set(object, index, handles.value(value)),
+            has: (object: number, ptr: number, length: number) => (handles.hasKey(object, this.readString(ptr, length)) ? 1 : 0),
+            delete: (object: number, ptr: number, length: number) => handles.deleteKey(object, this.readString(ptr, length)),
+            length: (object: number) => handles.length(object),
+            keys: (object: number) => handles.acquire(handles.keys(object)),
+            call: (fn: number, argsPtr: number, count: number) => handles.acquire(handles.call(fn, this.readHandles(argsPtr, count))),
+            invoke: (object: number, ptr: number, length: number, argsPtr: number, count: number) => handles.acquire(handles.invoke(object, this.readString(ptr, length), this.readHandles(argsPtr, count))),
+            construct: (ctor: number, argsPtr: number, count: number) => handles.acquire(handles.construct(ctor, this.readHandles(argsPtr, count))),
+            log: (level: number, ptr: number, length: number) => host.log(Math.min(Math.max(level | 0, 0), LOG_LEVELS.length - 1), this.readString(ptr, length)),
+            throw: (ptr: number, length: number) => {
+                throw new WasmScriptThrow(this.readString(ptr, length));
+            },
+            now: () => host.now(),
+            fault_cell: (ptr: number) => {
+                this.faultCell = ptr >>> 0;
+            },
+            fault_take: (ptr: number, capacity: number) => this.takeFault(ptr, capacity),
+        };
+        const guarded: Record<string, (...args: never[]) => unknown> = {};
+        for (const [name, fn] of Object.entries(imports)) {
+            guarded[name] = (...args: never[]) => {
+                try {
+                    return (fn as (...args: never[]) => unknown)(...args);
+                }
+                catch (cause) {
+                    if (this.faultCell < 0 || this.passesThrough(cause))
+                        throw cause;
+                    this.fault(cause);
+                    return 0;
+                }
+            };
+        }
+        return guarded;
+    }
 }
+export { HandleType, LOG_LEVELS };
+const INTERNAL_EXPORT = /^(__|_Z|_start$|_initialize$|main$|memory$|malloc$|free$|calloc$|realloc$|aligned_alloc$|posix_memalign$|errno$|environ$|cabi_realloc$)/;
