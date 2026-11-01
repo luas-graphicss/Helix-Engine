@@ -4,7 +4,7 @@ import type { Terrain } from '@/engine/terrain/core/terrain';
 import { MAX_TERRAIN_LAYERS } from '@/engine/terrain/core/splat-map';
 import type { HiresMapKind, HiresMapSource } from '@/engine/terrain/materials/material-catalog';
 import { TERRAIN_VT_ALBEDO_TEXTURE_UNIT, TERRAIN_VT_NORMAL_TEXTURE_UNIT, TERRAIN_VT_PAGES_TEXTURE_UNIT } from '../terrain-texture-units';
-import { VT_CACHE_TEXELS, VT_LEVELS, VT_MAX_IN_FLIGHT, VT_PAGE_TABLE_SLICES, VT_PAGES_PER_SIDE, VT_SLOT_TEXELS, VT_SLOTS_PER_SIDE, VT_SLOTS_PER_SLICE, VT_UPLOADS_PER_FRAME, VT_VIRTUAL_SIZE_LOG2, vtPageKey, vtSourceLevels, } from './vt-layout';
+import { VT_CACHE_TEXELS, VT_LEVELS, VT_MAX_IN_FLIGHT, VT_PAGE_TABLE_SLICES, VT_PAGES_PER_SIDE, VT_SLOT_TEXELS, VT_SLOTS_PER_SIDE, VT_SLOTS_PER_SLICE, VT_UPLOADS_PER_FRAME, VT_VIRTUAL_SIZE_LOG2, vtPageKey, vtPageLevel, vtSourceLevels, } from './vt-layout';
 import { VtTileStreamer, type VtSourceEvent } from './vt-tile-streamer';
 const KINDS: readonly HiresMapKind[] = ['albedo', 'normal'];
 const STALE_REQUEST_FRAMES = 2;
@@ -204,8 +204,8 @@ export class TerrainVirtualTexture {
                 if (!hires)
                     continue;
                 const levels = vtSourceLevels(Math.round(Math.log2(hires.size)));
-                const near = far < 1 ? pageLevel(texelSize / tiling, hires.size) : levels;
-                const distant = far > 0 ? pageLevel(texelSize / (tiling * distanceTiling), hires.size) : levels;
+                const near = far < 1 ? vtPageLevel(texelSize / tiling, hires.size) : levels;
+                const distant = far > 0 ? vtPageLevel(texelSize / (tiling * distanceTiling), hires.size) : levels;
                 if (near < levels || distant < levels)
                     needMask |= 1 << i;
             }
@@ -388,8 +388,7 @@ export class TerrainVirtualTexture {
         }
     }
     private requestRect(source: VirtualSource, u0: number, v0: number, u1: number, v1: number, uvPerTexel: number): boolean {
-        const lod = Math.log2(Math.max(uvPerTexel * source.size, 1e-12));
-        const level = Math.max(Math.floor(lod + 0.5), 0);
+        const level = vtPageLevel(uvPerTexel, source.size);
         if (level >= source.levels)
             return true;
         const pages = VT_PAGES_PER_SIDE >> source.virtualLevel(level);
