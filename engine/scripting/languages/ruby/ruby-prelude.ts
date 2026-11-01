@@ -284,4 +284,284 @@ module Helix
 
     def [](key)
       super(normalize_key(key))
+    end
+
+    def []=(key, value)
+      super(normalize_key(key), value)
+    end
+
+    def fetch(key, *rest, &block)
+      super(normalize_key(key), *rest, &block)
+    end
+
+    def key?(key)
+      super(normalize_key(key))
+    end
+    alias has_key? key?
+    alias include? key?
+    alias member? key?
+
+    def dig(key, *rest)
+      value = self[key]
+      rest.empty? || value.nil? ? value : value.dig(*rest)
+    end
+
+    def method_missing(name, *args, &block)
+      key = name.to_s
+      if key.end_with?("=") && args.size == 1
+        self[key.chomp("=")] = args[0]
+      elsif key?(key) || key?(camel = Helix.camelize(key))
+        value = key?(key) ? self[key] : self[camel]
+                                                                                               
+        return value.call(*args, &block) if FnRef === value || ::Proc === value || ::Method === value
+        args.empty? ? value : super
+      elsif args.empty? && key.end_with?("?")
+        !!(self[key.chomp("?")] || self[Helix.camelize(key.chomp("?"))])
+      else
+        super
+      end
+    end
+
+    def respond_to_missing?(name, include_private = false)
+      key = name.to_s
+      key.end_with?("=", "?") || key?(key) || key?(Helix.camelize(key)) || super
+    end
+
+    private
+
+    def normalize_key(key)
+      ::Symbol === key ? key.to_s : key
+    end
+  end
+
+                                                                                 
+                                                                                
+  class Ref < ::BasicObject
+    def initialize(game, id)
+      @game = game
+      @id = id
+    end
+
+    def __hx_id
+      @id
+    end
+
+    def __hx_descriptor
+      { KIND => @id }
+    end
+
+    def ==(other)
+      Ref === other && other.__hx_id == @id
+    end
+
+    def !=(other)
+      !(self == other)
+    end
+
+    def eql?(other)
+      self == other
+    end
+
+    def equal?(other)
+      self == other
+    end
+
+    def hash
+      @id.hash ^ 0x4858
+    end
+
+    def nil?
+      false
+    end
+
+    def is_a?(klass)
+      klass === self
+    end
+    alias kind_of? is_a?
+
+    def instance_of?(klass)
+      klass.equal?(self.class)
+    end
+
+    def class
+      FnRef === self ? FnRef : Ref
+    end
+
+                                                                                                                                                    
+    IMPLICIT = %i[to_ary to_str to_hash to_proc to_io to_path to_int to_sym to_regexp to_open coerce marshal_dump _dump begin end exclude_end? each_pair].freeze
+
+    def respond_to?(name, _include_all = false)
+      !IMPLICIT.include?(name.to_sym)
+    end
+
+    def to_s
+      @game.ref_str(@id)
+    end
+
+    def inspect
+      to_s
+    end
+
+    def to_json(*args)
+      ::JSON.generate(__hx_descriptor, *args)
+    end
+
+    def [](key)
+      @game.ref_get(@id, key)
+    end
+
+    def []=(key, value)
+      @game.ref_set(@id, key, value)
+    end
+
+                                                                                                                    
+                                                                                                                         
+    def length(*args, &block)
+      return __hx_dispatch("length", args, &block) if __hx_member?("length")
+      @game.ref_len(@id)
+    end
+
+    def size(*args, &block)
+      return __hx_dispatch("size", args, &block) if __hx_member?("size")
+      @game.ref_len(@id)
+    end
+
+    def count(*args, &block)
+      return __hx_dispatch("count", args, &block) if __hx_member?("count")
+      @game.ref_len(@id)
+    end
+
+    def keys(*args, &block)
+      return __hx_dispatch("keys", args, &block) if __hx_member?("keys")
+      @game.ref_keys(@id)
+    end
+
+    def each(*args, &block)
+      return __hx_dispatch("each", args, &block) if __hx_member?("each")
+      to_a.each(&block)
+      self
+    end
+
+    def map(*args, &block)
+      return __hx_dispatch("map", args, &block) if __hx_member?("map")
+      to_a.map(&block)
+    end
+
+    def empty?
+      @game.ref_len(@id) == 0
+    end
+
+    def to_a
+      @game.ref_keys(@id).map { |key| @game.ref_get(@id, key) }
+    end
+
+    def to_h
+      @game.ref_keys(@id).each_with_object(Record.new) { |key, record| record[key.to_s] = @game.ref_get(@id, key) }
+    end
+
+    def tap
+      yield self
+      self
+    end
+
+    def method_missing(name, *args, **kwargs, &block)
+      return super if IMPLICIT.include?(name)
+      __hx_dispatch(name.to_s, args, kwargs, &block)
+    end
+
+    def __hx_member?(key)
+      @game.ref_has?(@id, key)
+    end
+
+                                                                                                                    
+                                                                
+    def __hx_dispatch(key, args, kwargs = {}, &block)
+      if key.end_with?("=") && args.size == 1 && kwargs.empty? && block.nil?
+        @game.ref_set(@id, key.chomp("="), args[0])
+        return args[0]
+      end
+      args = args.dup
+      args << kwargs unless kwargs.empty?
+      args << block if block
+      if key.end_with?("?") && args.empty?
+        value = @game.ref_get(@id, key.chomp("?"))
+        return value ? true : false
+      end
+      @game.ref_invoke(@id, key, args)
+    end
+  end
+
+                                                                                                                            
+  class FnRef < Ref
+    def __hx_descriptor
+      { KIND => "fn", "id" => @id }
+    end
+
+    def call(*args, **kwargs, &block)
+      args = args.dup
+      args << kwargs unless kwargs.empty?
+      args << block if block
+      @game.fn_call(@id, args)
+    end
+
+    def [](*args)
+      call(*args)
+    end
+
+    def to_proc
+      ::Proc.new { |*args, &block| call(*args, &block) }
+    end
+
+    def arity
+      -1
+    end
+
+    def lambda?
+      false
+    end
+  end
+
+                                                                                                                 
+  class ScriptObject
+    def initialize(game, key, file, helix, script)
+      @__hx_game = game
+      @__hx_key = key
+      @__hx_file = file
+      @__hx_helix = helix
+      @__hx_script = script
+    end
+
+    def helix
+      @__hx_helix
+    end
+
+    def script
+      @__hx_script
+    end
+
+    def __hx_run(source)
+      instance_eval(source, @__hx_file, 1)
+    end
+
+    def require(name)
+      @__hx_game.require_from(self, name.to_s)
+    end
+    alias helix_require require
+
+    def __hx_key
+      @__hx_key
+    end
+
+    def require_relative(name)
+      require(::File.basename(name.to_s, ".*"))
+    end
+
+    def puts(*args)
+      text = args.empty? ? "" : args.flatten.map(&:to_s).join("\n")
+      @__hx_game.console("info", text, Helix.script_location)
+      nil
+    end
+
+    def print(*args)
+      @__hx_game.console("info", args.map(&:to_s).join, Helix.script_location)
 `;
