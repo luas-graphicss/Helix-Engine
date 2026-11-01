@@ -1,0 +1,10 @@
+export const RAISED_CLASS = 'border border-border bg-surface-raised bg-linear-to-b from-bevel to-transparent shadow-raised';
+export const WELL_CLASS = 'border border-border bg-surface-sunken shadow-well';
+export const OVERLAY_CLASS = 'bg-surface-overlay shadow-overlay';
+export const CARD_CLASS = 'rounded-lg border border-border bg-surface shadow-raised';
+export const EMPTY_WELL_CLASS = 'rounded-lg border border-border bg-surface-sunken/60 shadow-well';
+export const EMPTY_NOTE_CLASS = 'rounded-sm border border-border bg-surface-sunken/60 shadow-well text-muted-foreground';
+export const GHOST_ACTION_CLASS = 'rounded-sm border border-border bg-surface-sunken/50 shadow-well transition-colors duration-100 hover:border-primary/60 hover:bg-surface-sunken focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-primary';
+export const TEXT_INPUT_CLASS = 'h-8 w-full min-w-0 rounded-sm border border-border bg-surface-sunken px-2.5 text-xs text-foreground shadow-well outline-none transition-colors duration-100 placeholder:text-muted-foreground/60 hover:border-border-strong focus-visible:border-primary/80 focus-visible:hover:border-primary/80 disabled:opacity-50';
+export const FOCUS_RING_CLASS = 'focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-primary';
+export const TOOLBAR_CHIP_CLASS = `flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 font-mono text-3xs text-muted-foreground ${RAISED_CLASS} transition-[color,filter] duration-100 hover:text-foreground hover:brightness-115 active:brightness-90 ${FOCUS_RING_CLASS}`;
