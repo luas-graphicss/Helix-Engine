@@ -281,5 +281,285 @@ fn cena() Value {
         .name = "Chao",
         .mesh = helix.call("mesh.plane", .{ 40, 40 }),
         .material = helix.call("material.create", .{.{ .baseColor = "#4b6b3a", .roughness = 0.95 }}),
+        .rigidBody = .{ .@"type" = "static", .collider = "box", .boxSize = V.init(40, 0.2, 40), .center = V.init(0, -0.1, 0) },
+        .receiveShadows = true,
+        .tags = .{"chao"},
+    }, grupo });
+    defer chao.deinit();
+    const tipo = chao.get("kind");
+    defer tipo.deinit();
+    checar("spawn mesh", textoIgual(tipo, "mesh") and !chao.get("mesh").isNone() and !chao.get("rigidBody").isNone());
+    checar("find", s.invoke("find", .{"Chao"}).equals(chao));
+    checar("findAll", s.invoke("findAll", .{"Chao"}).len() == 1);
+    checar("byId", s.invoke("byId", .{chao.get("id")}).equals(chao));
+    checar("byTag", s.invoke("byTag", .{"chao"}).len() >= 1);
+    checar("byKind", s.invoke("byKind", .{"mesh"}).len() >= 1);
+    const depois = s.invoke("count", .{}).number();
+    checarf("count", depois == antes + 2, "{d} vs {d}", .{ depois, antes + 2 });
+    checar("contains", s.invoke("contains", .{ grupo, chao }).boolean() and s.invoke("contains", .{ raiz, chao }).boolean());
+    const caminho = s.invoke("path", .{chao});
+    defer caminho.deinit();
+    var caminho_buf: [128]u8 = undefined;
+    const caminho_texto = caminho.stringBuf(&caminho_buf);
+    checarf("path", std.mem.indexOf(u8, caminho_texto, "Chao") != null, "{s}", .{caminho_texto});
+    visitados = 0;
+    descartar(s.invoke("traverse", .{ &contarVisita, grupo }));
+    checarf("traverse", visitados >= 2, "{d}", .{visitados});
+
+    const anel = s.invoke("spawnPrimitive", .{ "torus", .{ .name = "Anel", .position = V.init(-4, 1.2, -2), .scale = 1.5 }, grupo });
+    exec("material.setColor", .{ anel, "#3a86ff" });
+    exec("material.setEmissive", .{ anel, "#3a86ff", 0.6 });
+    checar("spawnPrimitive", !anel.get("mesh").isNone() and !anel.get("material").isNone());
+    torus = anel;
+
+    const copia = s.invoke("clone", .{ anel, true, grupo });
+    defer copia.deinit();
+    descartar(s.invoke("rename", .{ copia, "AnelCopia" }));
+    exec("transform.setPosition", .{ copia, V.init(-4, 1.2, 2) });
+    const nome_copia = copia.get("name");
+    defer nome_copia.deinit();
+    checar("clone + rename", textoIgual(nome_copia, "AnelCopia") and s.invoke("find", .{"AnelCopia"}).equals(copia));
+    descartar(s.invoke("setMeta", .{ copia, "origem", "clone" }));
+    checar("meta", textoIgual(s.invoke("getMeta", .{ copia, "origem" }), "clone"));
+    descartar(s.invoke("addTag", .{ copia, "temporario" }));
+    checar("addTag/hasTag", s.invoke("hasTag", .{ copia, "temporario" }).boolean());
+    checar("removeTag", verdadeiro(s.invoke("removeTag", .{ copia, "temporario" })) and !s.invoke("hasTag", .{ copia, "temporario" }).boolean());
+    descartar(s.invoke("setVisible", .{ copia, false }));
+    checar("setVisible", falso(copia.get("visible")));
+    descartar(s.invoke("setVisible", .{ copia, true }));
+    descartar(s.invoke("destroy", .{copia}));
+    checar("destroy", s.invoke("find", .{"AnelCopia"}).isNone() and !s.invoke("isAttached", .{copia}).boolean());
+
+    const esfera = s.invoke("spawnPrimitive", .{ "sphere", .{ .name = "Esfera", .position = V.init(4, 0.5, -3) } });
+    defer esfera.deinit();
+    descartar(s.invoke("reparent", .{ esfera, grupo }));
+    checar("reparent", esfera.get("parent").equals(grupo));
+    exec("material.setColor", .{ esfera, "#ffbe0b" });
+    descartar(s.invoke("addComponent", .{ esfera, "rigidBody", .{ .@"type" = "dynamic", .collider = "sphere", .radius = 0.5, .mass = 1 } }));
+    checar("addComponent", !esfera.get("rigidBody").isNone() and textoIgual(esfera.path("rigidBody.type"), "dynamic"));
+    const temporario = s.invoke("spawnPrimitive", .{ "box", .{ .name = "Temporario" } });
+    defer temporario.deinit();
+    descartar(s.invoke("addComponent", .{ temporario, "csg", Value.object() }));
+    checar("addComponent csg", !temporario.get("csg").isNone());
+    descartar(s.invoke("removeComponent", .{ temporario, "csg" }));
+    checar("removeComponent", temporario.get("csg").isNone());
+    descartar(s.invoke("destroy", .{temporario}));
+    checar("kinds/components", contem(s.invoke("kinds", .{}), "mesh") and contem(s.invoke("components", .{}), "rigidBody"));
+    return Value.none;
+}
+
+fn transformacao() Value {
+    const tr = api("transform");
+    defer tr.deinit();
+    const alvo = helix.call("scene.spawnPrimitive", .{ "cone", .{ .name = "Cone", .position = V.init(0, 0.5, -6) } });
+    defer alvo.deinit();
+    exec("material.setColor", .{ alvo, "#8338ec" });
+    descartar(tr.invoke("setPosition", .{ alvo, V.init(2, 0.5, -6) }));
+    checar("setPosition", eq3(tr.invoke("position", .{alvo}), 2, 0.5, -6, 1e-6));
+    descartar(tr.invoke("translate", .{ alvo, V.init(0, 1, 0), "world" }));
+    checar("translate", aprox(numero(tr.invoke("position", .{alvo}), "y"), 1.5, 1e-3));
+    descartar(tr.invoke("setRotation", .{ alvo, V.init(0, 90, 0) }));
+    checar("setRotation", aprox(numero(tr.invoke("rotation", .{alvo}), "y"), 90, 0.01));
+    descartar(tr.invoke("rotate", .{ alvo, V.init(0, 45, 0) }));
+    const girado = helix.call("math.scalar.wrapAngle", .{tr.invoke("rotation", .{alvo}).get("y")}).number();
+    checarf("rotate", aprox(girado, 135, 0.01) or aprox(girado, -225, 0.01), "{d}", .{girado});
+    descartar(tr.invoke("setScale", .{ alvo, 2 }));
+    checar("setScale", aprox(numero(tr.invoke("scale", .{alvo}), "x"), 2, 1e-6));
+    descartar(tr.invoke("setScale", .{ alvo, V.init(1, 1, 1) }));
+    const mundo = tr.invoke("worldPosition", .{alvo}).vec3();
+    checar("worldPosition", eq3(tr.invoke("position", .{alvo}), mundo.x, mundo.y, mundo.z, 1e-3));
+    checar("forward/up", aprox(comprimento(tr.invoke("forward", .{alvo})), 1, 1e-3) and aprox(comprimento(tr.invoke("up", .{alvo})), 1, 1e-3));
+    descartar(tr.invoke("lookAt", .{ alvo, V.init(0, 1.5, 0) }));
+    checar("distance", tr.invoke("distance", .{ alvo, V.init(2, 1.5, -6) }).number() < 0.01);
+    checar("directionTo", aprox(comprimento(tr.invoke("directionTo", .{ alvo, V.init(0, 1.5, 0) })), 1, 1e-3));
+    const limites = tr.invoke("bounds", .{alvo});
+    defer limites.deinit();
+    checar("bounds", !limites.isNone() and numero(limites.get("max"), "y") > numero(limites.get("min"), "y"));
+    checar("worldMatrix", tr.invoke("worldMatrix", .{alvo}).len() == 16 and tr.invoke("localMatrix", .{alvo}).len() == 16);
+    const local = tr.invoke("worldToLocal", .{ alvo, tr.invoke("localToWorld", .{ alvo, V.init(1, 0, 0) }) });
+    defer local.deinit();
+    checar("localToWorld/worldToLocal", eq3(local, 1, 0, 0, 1e-3));
+    return Value.none;
+}
+
+fn malhas() Value {
+    const me = api("mesh");
+    defer me.deinit();
+    const caixa = me.invoke("box", .{ 1, 1, 1 });
+    defer caixa.deinit();
+    const triangulos = me.invoke("triangleCount", .{caixa}).number();
+    checarf("mesh.box", me.invoke("vertexCount", .{caixa}).number() > 0 and triangulos == 12, "{d}", .{triangulos});
+    const esfera = me.invoke("sphere", .{ 0.65, 16, 12 });
+    defer esfera.deinit();
+    const furado = helix.call("csg.boolean", .{ caixa, esfera, "subtract" });
+    defer furado.deinit();
+    checar("csg.boolean", me.invoke("triangleCount", .{furado}).number() > 12);
+    const ator = helix.call("scene.spawn", .{ "mesh", .{
+        .name = "CaixaFurada",
+        .mesh = furado,
+        .material = helix.call("material.create", .{.{ .baseColor = "#e63946", .roughness = 0.4, .metallic = 0.2 }}),
+        .position = V.init(4, 0.5, 2),
+    } });
+    defer ator.deinit();
+    checar("spawn malha CSG", !ator.get("mesh").isNone());
+    checar("csg.operations", contem(helix.call("csg.operations", .{}), "union"));
+    const tri = me.invoke("create", .{.{
+        .name = "Triangulo",
+        .positions = .{ -1, 0, 0, 1, 0, 0, 0, 1.5, 0 },
+        .uvs = .{ 0, 0, 1, 0, 0.5, 1 },
+        .indices = .{ 0, 1, 2 },
+    }});
+    defer tri.deinit();
+    descartar(me.invoke("computeNormals", .{tri}));
+    checar("mesh.create + computeBounds", numero(me.invoke("computeBounds", .{tri}).get("max"), "y") >= 1.5);
+    const dupla = me.invoke("merge", .{ tri, me.invoke("flipWinding", .{me.invoke("clone", .{tri})}) });
+    defer dupla.deinit();
+    checar("mesh.merge", me.invoke("triangleCount", .{dupla}).number() == 2);
+    exec("scene.spawn", .{ "mesh", .{
+        .name = "Triangulo",
+        .mesh = dupla,
+        .material = helix.call("material.create", .{.{ .baseColor = "#06d6a0", .doubleSided = true }}),
+        .position = V.init(7, 0, -2),
+    } });
+    const grande = me.invoke("scale", .{ me.invoke("translate", .{ me.invoke("clone", .{caixa}), V.init(0, 0.5, 0) }), 2 });
+    defer grande.deinit();
+    checar("mesh.translate/scale", numero(me.invoke("computeBounds", .{grande}).get("max"), "y") > 1.9);
+    const distancia = me.invoke("raycast", .{ helix.call("math.ray.create", .{ V.init(0, 5, 0), V.init(0, -1, 0) }), grande });
+    defer distancia.deinit();
+    checar("mesh.raycast", distancia.isNumber() and distancia.number() > 0);
+    const n_vertices: usize = @intFromFloat(me.invoke("vertexCount", .{caixa}).number());
+    checar("positions/indices", me.invoke("positions", .{caixa}).len() == n_vertices * 3 and me.invoke("indices", .{caixa}).len() == 36);
+    checar("primitivas extras", me.invoke("triangleCount", .{me.invoke("torusKnot", .{})}).number() > 0 and me.invoke("triangleCount", .{me.invoke("capsule", .{})}).number() > 0);
+    return Value.none;
+}
+
+                                                                                             
+
+fn materiais() Value {
+    const mat = api("material");
+    defer mat.deinit();
+    const base = mat.invoke("create", .{.{ .name = "DebugBase", .baseColor = "#d98c2b", .roughness = 0.5, .metallic = 0.1 }});
+    defer base.deinit();
+    checar("material.create", numero(base, "roughness") == 0.5);
+    const copia = mat.invoke("clone", .{base});
+    defer copia.deinit();
+    descartar(mat.invoke("set", .{ copia, .{ .roughness = 1, .emissive = "#ffffff", .emissiveIntensity = 2 } }));
+    checar("material.clone/set", numero(copia, "roughness") == 1 and numero(base, "roughness") == 0.5);
+    const caixa = helix.call("scene.spawnPrimitive", .{ "box", .{ .name = "CaixaPintada", .position = V.init(-7, 0.5, 2) } });
+    defer caixa.deinit();
+    descartar(mat.invoke("assign", .{ caixa, base }));
+    checar("material.assign/of", !mat.invoke("of", .{caixa}).isNone());
+    descartar(mat.invoke("own", .{caixa}));
+    descartar(mat.invoke("setColor", .{ caixa, "#d98c2b" }));
+    const desenho = helix.call("texture.canvas", .{ 64, 64 });
+    defer desenho.deinit();
+    descartar(desenho.invoke("update", .{}));
+    const textura = desenho.get("texture");
+    defer textura.deinit();
+    descartar(mat.invoke("setTexture", .{ caixa, "baseColorMap", textura }));
+    checar("texture.canvas + setTexture", mat.invoke("hasAnyTexture", .{mat.invoke("of", .{caixa})}).boolean() and helix.call("texture.isTexture", .{textura}).boolean());
+    checar("material.slots", mat.invoke("slots", .{}).len() > 0);
+    checar("materials.list", helix.call("materials.list", .{}).isArray());
+    const sombreado = mat.invoke("fromShader", .{ "DebugSuperficie", .{ .glow = V.init(1, 0.45, 0.1), .speed = 2 } });
+    defer sombreado.deinit();
+    checar("material.fromShader", !sombreado.isNone());
+    if (!sombreado.isNone()) {
+        const esfera = helix.call("scene.spawnPrimitive", .{ "sphere", .{ .name = "EsferaShader", .position = V.init(0, 1, -3), .scale = 1.4 } });
+        defer esfera.deinit();
+        descartar(mat.invoke("assign", .{ esfera, sombreado }));
+        const uniforms = mat.invoke("uniforms", .{esfera});
+        defer uniforms.deinit();
+        descartar(uniforms.invoke("set", .{ "speed", 3 }));
+        checar("material.uniforms.list", uniforms.invoke("list", .{}).len() >= 1);
+    }
+    return Value.none;
+}
+
+fn luzes() Value {
+    const l = api("light");
+    defer l.deinit();
+    checar("light.types", contem(l.invoke("types", .{}), "point") and contem(l.invoke("localTypes", .{}), "spot"));
+    const lampada = l.invoke("spawn", .{ "point", .{ .name = "Lampada", .position = V.init(0, 3, 0), .color = "#ffd166", .intensity = 60, .range = 14 } });
+    defer lampada.deinit();
+    checar("light.spawn", !lampada.get("light").isNone() and textoIgual(lampada.path("light.type"), "point"));
+    descartar(l.invoke("set", .{ lampada, .{ .intensity = 80 } }));
+    checar("light.set", numero(lampada.get("light"), "intensity") == 80);
+    descartar(l.invoke("setTemperature", .{ lampada, 3200 }));
+    checar("setTemperature", numero(lampada.get("light"), "temperature") == 3200);
+    const foco = l.invoke("spawn", .{ "spot", .{
+        .name = "Holofote",
+        .position = V.init(4, 4, 0),
+        .rotation = V.init(-90, 0, 0),
+        .intensity = 120,
+        .range = 16,
+        .innerAngle = 20,
+        .outerAngle = 35,
+        .color = "#ffffff",
+    } });
+    defer foco.deinit();
+    checar("spot", textoIgual(foco.path("light.type"), "spot"));
+    const convertido = l.invoke("convert", .{ foco, "disc" });
+    defer convertido.deinit();
+    checar("light.convert", textoIgual(convertido.get("type"), "disc") and textoIgual(foco.path("light.type"), "disc"));
+    descartar(l.invoke("convert", .{ foco, "spot" }));
+    const presets = l.invoke("presets", .{});
+    defer presets.deinit();
+    checar("light.presets", presets.len() > 0);
+    if (presets.len() > 0) {
+        const primeiro = presets.at(0);
+        defer primeiro.deinit();
+        const id = primeiro.get("id");
+        defer id.deinit();
+        const preset = l.invoke("spawn", .{ id, .{ .name = "LuzPreset", .position = V.init(-4, 2.5, 4) } });
+        defer preset.deinit();
+        checar("light.fromPreset", !preset.get("light").isNone() and l.invoke("fromPreset", .{id}).get("type").equals(primeiro.get("type")));
+    }
+    checar("light.all", l.invoke("all", .{.{ .local = true }}).len() >= 2);
+    checar("effectiveRange", l.invoke("effectiveRange", .{lampada}).number() > 0);
+    checar("light.isLocal", verdadeiro(l.invoke("isLocal", .{lampada})));
+    checar("temperatureToColor", !l.invoke("temperatureToColor", .{6500}).isNone());
+    descartar(l.invoke("setColor", .{ lampada, "#ffffff" }));
+    checar("light.setColor", eq3(lampada.path("light.color"), 1, 1, 1, 0.01));
+    return Value.none;
+}
+
+fn horaMudou(args: []const Value) Value {
+    info("Hora do céu: {f}", .{arg(args, 0)});
+    return Value.none;
+}
+
+fn ceu() Value {
+    const sky = api("sky");
+    defer sky.deinit();
+    const mundo = api("world");
+    defer mundo.deinit();
+    descartar(sky.invoke("set", .{.{ .timeOfDay = 10.5, .haze = 0.3, .clouds = .{ .enabled = true, .coverage = 0.45 } }}));
+    checar("sky.set", aprox(numero(sky, "timeOfDay"), 10.5, 1e-3) and verdadeiro(sky.path("clouds.enabled")));
+    checar("sky.isDay", verdadeiro(sky.get("isDay")));
+    checar("sky.sunDirection", numero(sky.invoke("sunDirection", .{}), "y") > 0);
+    const hora = sky.invoke("formatTimeOfDay", .{10.5});
+    defer hora.deinit();
+    var hora_buf: [16]u8 = undefined;
+    const hora_texto = hora.stringBuf(&hora_buf);
+    checarf("sky.formatTimeOfDay", std.mem.indexOfScalar(u8, hora_texto, ':') != null, "{s}", .{hora_texto});
+    checar("sky.wrapTimeOfDay", sky.invoke("wrapTimeOfDay", .{25}).number() == 1);
+    checar("sky.presets", sky.invoke("presets", .{}).len() > 0);
+    assinar(sky.invoke("onHourChanged", .{&horaMudou}));
+    sky.set("cycleSpeed", 0);
+    checar("sky.cycleSpeed", numero(sky, "cycleSpeed") == 0);
+    checar("world.gravity", numero(mundo.get("gravity"), "y") < 0);
+    exec("world.wind.set", .{.{ .speed = 2, .direction = 45 }});
+    checar("world.wind.set", numero(mundo.get("wind"), "speed") == 2);
+    return Value.none;
+}
+
+fn cameraMudou(args: []const Value) Value {
+    const entidade = arg(args, 0);
+    var nome_buf: [64]u8 = undefined;
+    const nome = if (entidade.isNone()) "editor/jogador" else nomeDe(entidade, &nome_buf);
+    info("Câmera principal: {s}", .{nome});
+    return Value.none;
+}
+
 `;
 }
