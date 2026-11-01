@@ -1,5 +1,5 @@
 export const COLOR_CHUNK = `
-
+                                             
 vec3 tonemapAces(vec3 x) {
   const float a = 2.51;
   const float b = 0.03;
@@ -9,7 +9,10 @@ vec3 tonemapAces(vec3 x) {
   return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-
+   
+                                                                                 
+                                                                               
+   
 vec3 tonemapAcesInverse(vec3 y) {
   y = min(y, vec3(0.985));
   vec3 qa = y * 2.43 - 2.51;
