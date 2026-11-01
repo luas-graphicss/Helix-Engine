@@ -1,4 +1,5 @@
 import { FileBundle } from './file-bundle';
+import { IGNORE_PROGRESS, type ImportProgressReporter } from './import-progress';
 import { fileExtension, type ImportedScene, type ImportFormat } from './import-types';
 import { importGltf, isGlb } from './gltf/gltf-importer';
 import { importObj } from './obj/obj-importer';
@@ -38,22 +39,22 @@ export function partitionImportFiles(files: Iterable<File>): {
     const list = Array.from(files);
     return { models: list.filter(isModelFile), bundle: new FileBundle(list) };
 }
-export async function importModelFile(file: File, bundle: FileBundle): Promise<ImportedScene> {
+export async function importModelFile(file: File, bundle: FileBundle, progress: ImportProgressReporter = IGNORE_PROGRESS): Promise<ImportedScene> {
     const format = detectFormat(file);
     switch (format) {
         case 'glb':
         case 'gltf':
-            return importGltf(file, bundle);
+            return importGltf(file, bundle, progress);
         case 'obj':
-            return importObj(file, bundle);
+            return importObj(file, bundle, progress);
         case 'stl':
-            return importStl(file);
+            return importStl(file, progress);
         case 'fbx':
-            return importFbx(file, bundle);
+            return importFbx(file, bundle, progress);
         default: {
             const head = await file.slice(0, 12).arrayBuffer();
             if (isGlb(head))
-                return importGltf(file, bundle);
+                return importGltf(file, bundle, progress);
             throw new Error(`Formato não reconhecido: "${file.name}".`);
         }
     }
