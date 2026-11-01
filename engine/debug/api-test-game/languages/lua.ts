@@ -563,5 +563,209 @@ end
 local function dados()
   local st = helix.storage
   st.ready()
+  local execucoes = (st.get("execucoes", 0) or 0) + 1
+  st.set("execucoes", execucoes)
+  checar("storage.get/set", st.get("execucoes") == execucoes and st.has("execucoes"), execucoes)
+  helix.log.info("Debug", "Execução nº " .. execucoes .. " deste jogo de teste neste projeto.")
+  local cfg = helix.assets.data("DebugConfig")
+  checar("assets.data (TOML)", cfg ~= nil and cfg.jogador ~= nil and cfg.jogador.velocidade == 6.5)
+  checar("assets.text", string.find(helix.assets.text("DebugConfig"), "velocidade", 1, true) ~= nil)
+  checar("assets.byName", helix.assets.byName("DebugJogo", "script") ~= nil)
+  checar("assets.exists", helix.assets.exists("DebugUtil") and not helix.assets.exists("NaoExiste"))
+  checar("assets.search", #helix.assets.search("Debug") >= 5)
+  checar("project.name", type(helix.project.name) == "string")
+  checar("project.stats", helix.project.stats.entities > 0)
+  checar("net.localPlayer", helix.net.localPlayer["local"] == true)
+  checar("play.state", helix.play.state == "playing" and helix.play.isRunning)
+end
+
+                                                                                                  
+
+local function onLoad()
+  helix.log.info("Debug", "onLoad do script de entrada")
+end
+
+local function onStart()
+  helix.log.info("Debug", "Jogo de teste em " .. LINGUAGEM .. ": percorrendo a API…")
+  area("Núcleo", nucleo)
+  area("Módulo (require)", modulo)
+  area("Matemática", matematica)
+  area("Cena", cena)
+  area("Transformações", transformacao)
+  area("Malhas e CSG", malhas)
+  area("Materiais", materiais)
+  area("Luzes", luzes)
+  area("Céu e mundo", ceu)
+  area("Câmera", camera)
+  area("Pós-processamento", pos)
+  area("Render", render)
+  area("Física", fisica)
+  area("Personagem e jogador", personagem)
+  area("Terreno", terreno)
+  area("Interface", interfaceGrafica)
+  area("Áudio", audio)
+  area("VFX", vfx)
+  area("Entrada", entrada)
+  area("Eventos", eventos)
+  area("Tempo e tarefas", tempo)
+  area("Dados, projeto e rede", dados)
+  local girador = helix.assets.byName("DebugGirador", "script")
+  if girador ~= nil then
+    local extra = helix.scene.spawnPrimitive("box", { name = "GiradorDinamico", position = { -2, 0.5, -3 }, rigidBody = { type = "kinematic", collider = "box" }, script = { assetId = girador.id, props = { velocidade = 180, cor = "#00b4d8" } } })
+    checar("spawn com script", extra.script ~= nil and extra.script.assetId == girador.id)
+  else
+    checar("ativo DebugGirador", false, "não está na biblioteca")
+  end
+  local dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia."
+  if estado.falhas == 0 then
+    helix.log.info("Debug", "API percorrida em " .. LINGUAGEM .. ": " .. estado.checagens .. " checagens, nenhuma falha. " .. dica)
+  else
+    helix.log.warn("Debug", "API percorrida em " .. LINGUAGEM .. ": " .. estado.checagens .. " checagens, " .. estado.falhas .. " falhas (veja FALHOU/ERRO acima). " .. dica)
+  end
+  helix.gui.bind("checagens", estado.checagens)
+  helix.gui.bind("falhas", estado.falhas)
+end
+
+local function onUpdate(dt${t(': number')})
+  estado.quadros = estado.quadros + 1
+  if estado.torus ~= nil then helix.transform.rotate(estado.torus, { 0, 40 * dt, 0 }) end
+  local d = helix.debug
+  d.line({ -6, 0.05, -6 }, { 6, 0.05, -6 }, "#ff006e")
+  d.box({ center = { 0, 1, 3 }, size = { 3, 2, 3 } }, "#ffbe0b")
+  if estado.heroi ~= nil then
+    d.axes(estado.heroi, 1)
+    d.text(helix.math.vec3.add(helix.transform.worldPosition(estado.heroi), { 0, 2.2, 0 }), "Heroi · " .. estado.pontos .. " pts", "#ffffff")
+  end
+  d.ray({ 0, 3, 0 }, { 0, -1, 0 }, 3, "#06d6a0")
+  estado.hudTimer = estado.hudTimer + dt
+  if estado.hudTimer >= 0.5 then
+    estado.hudTimer = 0
+    helix.gui.bind("fps", math.floor(helix.render.stats.fps + 0.5))
+    helix.gui.bind("checagens", estado.checagens)
+    helix.gui.bind("falhas", estado.falhas)
+  end
+end
+
+local function onFixedUpdate(h${t(': number')})
+  estado.passosFisica = estado.passosFisica + 1
+  if estado.passosFisica == 1 then checar("onFixedUpdate recebe o passo", h > 0 and h < 1, h) end
+end
+
+local function onLateUpdate()
+  estado.lateUpdates = estado.lateUpdates + 1
+end
+
+local function onBeforeHotReload()
+  return { pontos = estado.pontos }
+end
+
+local function onHotReload(anterior)
+  estado.pontos = (anterior ~= nil and type(anterior.pontos) == "number") and anterior.pontos or 0
+  helix.log.info("Debug", "Recarga a quente: " .. estado.pontos .. " pontos preservados")
+end
+
+local function onStop()
+  for _, desligar in ipairs(estado.assinaturas) do desligar() end
+  helix.log.info("Debug", "Parou: " .. estado.quadros .. " quadros, " .. estado.passosFisica .. " passos de física, " .. estado.lateUpdates .. " lateUpdates, " .. estado.renders .. " frames (onAfterFrame), " .. estado.colisoes .. " colisões.")
+end
+
+return {
+  onLoad = onLoad,
+  onStart = onStart,
+  onUpdate = onUpdate,
+  onFixedUpdate = onFixedUpdate,
+  onLateUpdate = onLateUpdate,
+  onBeforeHotReload = onBeforeHotReload,
+  onHotReload = onHotReload,
+  onStop = onStop,
+}
 `;
+    const actor = `                                 
+                                                                                              
+                                                                                                               
+local ator = helix.self
+
+local angulo = 0
+local contatos = 0
+local quadros = 0
+local desligar = nil
+
+local function onLoad()
+  helix.props.define({
+    velocidade = { type = "range", default = 90, min = 0, max = 360, step = 1, label = "Velocidade (°/s)" },
+    cor = { type = "color", default = "#ff8800", label = "Cor" },
+    pulsar = { type = "boolean", default = true, label = "Pulsar" },
+  })
+end
+
+local function onStart()
+  helix.log.info("Girador", ator.name .. " acordou com velocidade " .. tostring(helix.props.get("velocidade")) .. "°/s")
+  helix.material.setColor(ator, helix.props.get("cor"))
+  desligar = helix.props.onChanged("cor", function(cor) helix.material.setColor(ator, cor) end)
+  helix.log.assert(helix.props.has("velocidade") and #helix.props.definitions() == 3, "props.define deveria registrar 3 propriedades")
+end
+
+local function onUpdate(dt${t(': number')})
+  quadros = quadros + 1
+  angulo = angulo + helix.props.get("velocidade") * dt
+  helix.transform.setRotation(ator, { 0, angulo, 0 })
+  if helix.props.get("pulsar") then helix.transform.setScale(ator, 1 + math.sin(helix.time.now * 3) * 0.1) end
+end
+
+local function onCollisionBegin(outro, contato)
+  contatos = contatos + 1
+  if contatos <= 3 then helix.log.info("Girador", ator.name .. " tocou " .. outro.name .. string.format(" (impulso %.2f)", contato.impulse)) end
+end
+
+local function onTriggerEnter(outro)
+  helix.log.info("Girador", outro.name .. " entrou no gatilho de " .. ator.name)
+end
+
+local function onEnable()
+  helix.log.debug("Girador", ator.name .. " ativo")
+end
+
+local function onDisable()
+  helix.log.debug("Girador", ator.name .. " inativo")
+end
+
+local function onStop()
+  helix.log.info("Girador", ator.name .. ": " .. quadros .. " quadros, " .. contatos .. " contatos")
+end
+
+local function onDestroy()
+  if desligar ~= nil then desligar() end
+end
+
+return {
+  onLoad = onLoad,
+  onStart = onStart,
+  onUpdate = onUpdate,
+  onCollisionBegin = onCollisionBegin,
+  onTriggerEnter = onTriggerEnter,
+  onEnable = onEnable,
+  onDisable = onDisable,
+  onStop = onStop,
+  onDestroy = onDestroy,
+}
+`;
+    const module = `                                     
+                                                                                        
+local DebugUtil = {}
+
+function DebugUtil.soma(a${t(': number')}, b${t(': number')})${t(': number')}
+  return a + b
+end
+
+function DebugUtil.saudacao(quem${t(': string')})${t(': string')}
+  return "Olá, " .. quem
+end
+
+function DebugUtil.limitar(valor${t(': number')}, minimo${t(': number')}, maximo${t(': number')})${t(': number')}
+  return math.min(maximo, math.max(minimo, valor))
+end
+
+return DebugUtil
+`;
+    return { entry, actor, module };
 }
