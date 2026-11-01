@@ -272,3 +272,46 @@ export function compileXml(source: string): WebCompileOutput {
     const error = xmlParseError(document, 'XML', 'XML');
     return { diagnostics: error ? [error] : [], dependencies: [] };
 }
+export function compileSvg(source: string): WebCompileOutput {
+    const diagnostics: CompileDiagnostic[] = [];
+    const dependencies = new Set<string>();
+    if (typeof DOMParser === 'undefined')
+        return { diagnostics, dependencies: [] };
+    const document = new DOMParser().parseFromString(source, 'image/svg+xml');
+    const error = xmlParseError(document, 'SVG', 'SVG');
+    if (error)
+        return { diagnostics: [error], dependencies: [] };
+    const root = document.documentElement;
+    if (root.localName !== 'svg') {
+        diagnostics.push({ severity: 'error', message: `O elemento raiz é <${root.localName}>; um script SVG precisa começar por <svg>.`, line: 1, column: 1, source: 'SVG' });
+    }
+    else if (!root.getAttribute('viewBox') && !(root.getAttribute('width') && root.getAttribute('height'))) {
+        diagnostics.push({ severity: 'info', message: 'O <svg> não declara viewBox nem width/height; o desenho pode não escalar como esperado.', line: 1, column: 1, code: 'missing-viewbox', source: 'SVG' });
+    }
+    for (const script of Array.from(document.querySelectorAll('script'))) {
+        void script;
+        diagnostics.push({ severity: 'warning', message: 'Scripts dentro de SVG não rodam na engine.', line: 1, column: 1, code: 'inline-script', source: 'SVG' });
+    }
+    for (const element of Array.from(document.querySelectorAll('[href], [*|href], [src]'))) {
+        const value = element.getAttribute('href') ?? element.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ?? element.getAttribute('src') ?? '';
+        if (isAssetUrl(value))
+            dependencies.add(assetUrlTarget(value));
+    }
+    return { diagnostics, dependencies: Array.from(dependencies) };
+}
+export function compileJson(source: string): WebCompileOutput {
+    if (source.trim().length === 0) {
+        return { diagnostics: [{ severity: 'error', message: 'O arquivo JSON está vazio.', line: 1, column: 1, source: 'JSON' }], dependencies: [] };
+    }
+    try {
+        JSON.parse(source);
+        return { diagnostics: [], dependencies: [] };
+    }
+    catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        const explicit = /\(line (\d+) column (\d+)\)/i.exec(message);
+        const atPosition = /position (\d+)/i.exec(message);
+        const location = explicit ? { line: Number(explicit[1]), column: Number(explicit[2]) } : atPosition ? positionAt(source, Number(atPosition[1])) : { line: 1, column: 1 };
+        return { diagnostics: [{ severity: 'error', message: `JSON inválido: ${message.replace(/ in JSON at position \d+.*$/i, '').replace(/^JSON\.parse: /, '')}.`, ...location, source: 'JSON' }], dependencies: [] };
+    }
+}
