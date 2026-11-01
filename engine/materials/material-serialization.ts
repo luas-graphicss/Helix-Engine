@@ -80,19 +80,21 @@ export async function deserializeMaterialDocument(record: StoredMaterial): Promi
     const document = createMaterialDocument(record.id, record.name, record.createdAt);
     document.updatedAt = record.updatedAt;
     const { material } = document;
-    const params = record.params;
-    vec3.set(material.baseColor, ...params.baseColor);
-    material.opacity = params.opacity;
-    material.roughness = params.roughness;
-    material.metallic = params.metallic;
-    vec3.set(material.emissive, ...params.emissive);
-    material.emissiveIntensity = params.emissiveIntensity;
-    material.alphaMode = params.alphaMode;
-    material.alphaCutoff = params.alphaCutoff;
-    material.doubleSided = params.doubleSided;
-    material.normalScale = params.normalScale;
-    material.occlusionStrength = params.occlusionStrength;
-    material.uvTiling = params.uvTiling;
+    const params: Partial<StoredMaterialParams> = record.params ?? {};
+    if (params.baseColor)
+        vec3.set(material.baseColor, ...params.baseColor);
+    material.opacity = params.opacity ?? material.opacity;
+    material.roughness = params.roughness ?? material.roughness;
+    material.metallic = params.metallic ?? material.metallic;
+    if (params.emissive)
+        vec3.set(material.emissive, ...params.emissive);
+    material.emissiveIntensity = params.emissiveIntensity ?? material.emissiveIntensity;
+    material.alphaMode = params.alphaMode ?? material.alphaMode;
+    material.alphaCutoff = params.alphaCutoff ?? material.alphaCutoff;
+    material.doubleSided = params.doubleSided ?? material.doubleSided;
+    material.normalScale = params.normalScale ?? material.normalScale;
+    material.occlusionStrength = params.occlusionStrength ?? material.occlusionStrength;
+    material.uvTiling = Number.isFinite(params.uvTiling) && (params.uvTiling as number) > 0 ? (params.uvTiling as number) : material.uvTiling;
     document.pipeline = { ...createPipelineSettings(), ...clonePipelineSettings(record.pipeline) };
     document.physics = { ...createPhysicalProperties(), ...record.physics };
     const entries = Object.entries(record.maps) as Array<[
