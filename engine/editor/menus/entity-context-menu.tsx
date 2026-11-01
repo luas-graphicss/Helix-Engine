@@ -1,19 +1,26 @@
 'use client';
-import { BookmarkPlus, Clapperboard, ClipboardCopy, ClipboardPaste, Copy, Eye, EyeOff, Focus, FolderInput, FolderPlus, ListTree, Locate, Lock, LockOpen, Paintbrush, Palette, Pencil, RotateCcw, Trash2, Ungroup, } from 'lucide-react';
-import { ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from '@/components/ui/context-menu';
+import { BookmarkPlus, Boxes, Clapperboard, ClipboardCopy, ClipboardPaste, Copy, Eye, EyeOff, Focus, FolderInput, FolderPlus, ListTree, Locate, Lock, LockOpen, Paintbrush, Palette, Pencil, RotateCcw, Trash2, Ungroup, } from 'lucide-react';
+import { ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/context-menu';
 import type { Entity } from '@/engine/core/scene/entity';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { rigOwnerOf } from '@/engine/editor/animation/animation-editor';
 import { useDockLayoutStore } from '@/engine/editor/layout/dock-layout-context';
 import { MaterialPickerSubmenu } from '@/engine/editor/materials/material-picker';
 import { openMaterialEditor } from '@/engine/editor/materials/material-editor-requests';
 import { applyLibraryMaterialToEntity, materialTargetKind, saveEntityMaterialToLibrary } from '@/engine/editor/operations/material-library-operations';
 import { addFolder, copySelected, deleteEntities, describeEntities, duplicateEntities, groupEntities, hiddenEntities, isolateEntities, pasteClipboard, selectChildren, showAllEntities, toggleEntitiesLocked, toggleEntitiesVisibility, ungroupEntity, unlockAllEntities, lockedEntities, } from '@/engine/editor/operations/entity-operations';
+import { savePrefabToLibrary } from '@/engine/editor/operations/prefab-operations';
 import { resetTransform } from '@/engine/editor/operations/transform-operations';
 import { focusInspectorName } from '@/engine/editor/shortcuts/focus-targets';
 import { AddEntitySubmenu } from './add-entity-menu';
+import { AudioContextActions } from './audio-context-actions';
 import { CsgContextActions } from './csg-context-actions';
-import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_SHORTCUT_CLASS } from './menu-styles';
+import { GuiContextActions } from './gui-context-actions';
+import { ScriptContextActions } from './script-context-actions';
+import { VfxContextActions } from './vfx-context-actions';
+import { LightContextActions } from './light-context-actions';
+import { MenuShortcut } from './menu-shortcut';
+import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS } from './menu-styles';
 type EntityContextMenuContentProps = {
     entity: Entity | null;
     onRename?: (entity: Entity) => void;
@@ -21,7 +28,7 @@ type EntityContextMenuContentProps = {
 function MaterialActions({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection');
     const targetKind = materialTargetKind(entity);
     if (!targetKind)
         return null;
@@ -33,7 +40,7 @@ function MaterialActions({ entity }: {
         {libraryDocument && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => openMaterialEditor({ materialId: libraryDocument.id })}>
             <Palette aria-hidden/>
             Editar material {libraryDocument.name}
-            <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>M</ContextMenuShortcut>
+            <MenuShortcut menu="context" action="view.materialEditor"/>
           </ContextMenuItem>)}
         {ownMaterial && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => saveEntityMaterialToLibrary(session, entity)}>
             <BookmarkPlus aria-hidden/>
@@ -46,7 +53,7 @@ function MaterialActions({ entity }: {
 function AnimateAction({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection');
     const dock = useDockLayoutStore();
     const owner = rigOwnerOf(entity);
     if (!owner)
@@ -69,7 +76,7 @@ function AnimateAction({ entity }: {
 function SceneActions({ parent }: {
     parent: Entity | null;
 }) {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection');
     const hidden = hiddenEntities(session.scene).length;
     const locked = lockedEntities(session.scene).length;
     return (<ContextMenuGroup>
@@ -80,17 +87,17 @@ function SceneActions({ parent }: {
       {hidden > 0 && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => showAllEntities(session)}>
           <Eye aria-hidden/>
           Mostrar todos ({hidden})
-          <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Alt+H</ContextMenuShortcut>
+          <MenuShortcut menu="context" action="selection.showAll"/>
         </ContextMenuItem>)}
       {locked > 0 && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => unlockAllEntities(session)}>
           <LockOpen aria-hidden/>
           Desbloquear todos ({locked})
-          <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Alt+L</ContextMenuShortcut>
+          <MenuShortcut menu="context" action="selection.unlockAll"/>
         </ContextMenuItem>)}
     </ContextMenuGroup>);
 }
 export function EntityContextMenuContent({ entity, onRename }: EntityContextMenuContentProps) {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection');
     const canPaste = session.clipboard !== null;
     const selection = entity ? (session.isSelected(entity) ? session.selectedEntities() : [entity]) : [];
     const many = selection.length > 1;
@@ -106,30 +113,35 @@ export function EntityContextMenuContent({ entity, onRename }: EntityContextMenu
             <ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => (many ? session.focusSelected() : session.focusEntity(entity))}>
               <Locate aria-hidden/>
               Focar{many ? ` ${label}` : ''}
-              <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>F</ContextMenuShortcut>
+              <MenuShortcut menu="context" action="selection.focus"/>
             </ContextMenuItem>
             {!many && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => (onRename ? onRename(entity) : focusInspectorName())}>
                 <Pencil aria-hidden/>
                 Renomear
-                <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>F2</ContextMenuShortcut>
+                <MenuShortcut menu="context" action="edit.rename"/>
               </ContextMenuItem>)}
             <ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => toggleEntitiesVisibility(session, selection)}>
               {anyVisible ? <EyeOff aria-hidden/> : <Eye aria-hidden/>}
               {anyVisible ? 'Ocultar' : 'Mostrar'}
-              <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>H</ContextMenuShortcut>
+              <MenuShortcut menu="context" action="selection.toggleVisibility"/>
             </ContextMenuItem>
             <ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => isolateEntities(session, selection)}>
               <Focus aria-hidden/>
               Isolar
-              <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Shift+H</ContextMenuShortcut>
+              <MenuShortcut menu="context" action="selection.isolate"/>
             </ContextMenuItem>
             <ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => toggleEntitiesLocked(session, selection)}>
               {allLocked ? <LockOpen aria-hidden/> : <Lock aria-hidden/>}
               {allLocked ? 'Desbloquear' : 'Bloquear seleção'}
-              <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>L</ContextMenuShortcut>
+              <MenuShortcut menu="context" action="selection.toggleLock"/>
             </ContextMenuItem>
           </ContextMenuGroup>
           <ContextMenuSeparator />
+          <LightContextActions selection={selection}/>
+          <ScriptContextActions selection={selection}/>
+          <GuiContextActions selection={selection}/>
+          <VfxContextActions selection={selection}/>
+          <AudioContextActions selection={selection}/>
           {!many && <AnimateAction entity={entity}/>}
           {!many && <MaterialActions entity={entity}/>}
           <ContextMenuGroup>
@@ -139,8 +151,12 @@ export function EntityContextMenuContent({ entity, onRename }: EntityContextMenu
             <ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => duplicateEntities(session, selection)}>
               <Copy aria-hidden/>
               Duplicar
-              <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+D</ContextMenuShortcut>
+              <MenuShortcut menu="context" action="edit.duplicate"/>
             </ContextMenuItem>
+            {!many && entity.parent && (<ContextMenuItem className={MENU_ITEM_CLASS} title="Guarda este ator com seus descendentes na biblioteca, para instanciar quantas vezes quiser" onClick={() => void savePrefabToLibrary(session, entity)}>
+                <Boxes aria-hidden/>
+                Salvar como prefab
+              </ContextMenuItem>)}
             <ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => {
                 if (!session.isSelected(entity))
                     session.select(entity);
@@ -148,7 +164,7 @@ export function EntityContextMenuContent({ entity, onRename }: EntityContextMenu
             }}>
               <ClipboardCopy aria-hidden/>
               Copiar
-              <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+C</ContextMenuShortcut>
+              <MenuShortcut menu="context" action="edit.copy"/>
             </ContextMenuItem>
           </ContextMenuGroup>
         </>)}
@@ -156,17 +172,17 @@ export function EntityContextMenuContent({ entity, onRename }: EntityContextMenu
         <ContextMenuItem className={MENU_ITEM_CLASS} disabled={!canPaste} onClick={() => pasteClipboard(session, container ?? undefined)}>
           <ClipboardPaste aria-hidden/>
           {container ? 'Colar dentro' : 'Colar'}
-          <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+V</ContextMenuShortcut>
+          <MenuShortcut menu="context" action="edit.paste"/>
         </ContextMenuItem>
         {entity && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => groupEntities(session, selection)}>
             <FolderInput aria-hidden/>
             {many ? `Agrupar ${label}` : 'Agrupar'}
-            <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+G</ContextMenuShortcut>
+            <MenuShortcut menu="context" action="edit.group"/>
           </ContextMenuItem>)}
         {groups.length > 0 && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => groups.forEach((group) => ungroupEntity(session, group))}>
             <Ungroup aria-hidden/>
             Desagrupar
-            <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Ctrl+Shift+G</ContextMenuShortcut>
+            <MenuShortcut menu="context" action="edit.ungroup"/>
           </ContextMenuItem>)}
         {withChildren && (<ContextMenuItem className={MENU_ITEM_CLASS} onClick={() => selectChildren(session, selection)}>
             <ListTree aria-hidden/>
@@ -189,7 +205,7 @@ export function EntityContextMenuContent({ entity, onRename }: EntityContextMenu
             <ContextMenuItem className={MENU_ITEM_CLASS} variant="destructive" onClick={() => deleteEntities(session, selection)}>
               <Trash2 aria-hidden/>
               {many ? `Excluir ${label}` : 'Excluir'}
-              <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>Del</ContextMenuShortcut>
+              <MenuShortcut menu="context" action="edit.delete"/>
             </ContextMenuItem>
           </ContextMenuGroup>
         </>)}
