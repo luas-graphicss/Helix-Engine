@@ -276,3 +276,282 @@ function tableMember<T>(table: Record<string, (self: T, ...args: unknown[]) => u
         return MISSING;
     return { value: (...args: unknown[]) => fn(target, ...args), thisArg: undefined };
 }
+function linqMember(target: Iterable<unknown>, name: string): Resolved | typeof MISSING {
+    const fn = LINQ[name];
+    if (!fn)
+        return MISSING;
+    return { value: (...args: unknown[]) => fn(target, ...args), thisArg: undefined };
+}
+function resolveMember(target: unknown, name: string): Resolved | typeof MISSING {
+    switch (typeof target) {
+        case 'string': {
+            if (name === 'Length')
+                return { value: target.length, thisArg: undefined };
+            const method = tableMember(STRING_METHODS, target, name);
+            if (method !== MISSING)
+                return method;
+            const linq = linqMember(target, name);
+            if (linq !== MISSING)
+                return linq;
+            return universalMember(target, name);
+        }
+        case 'number': {
+            const method = tableMember(NUMBER_METHODS, target, name);
+            return method !== MISSING ? method : universalMember(target, name);
+        }
+        case 'boolean': {
+            const method = tableMember(BOOL_METHODS, target, name);
+            return method !== MISSING ? method : universalMember(target, name);
+        }
+        case 'function': {
+            const own = ownMember(target as unknown as AnyRecord, name);
+            if (own !== MISSING)
+                return own;
+            const method = tableMember(DELEGATE_METHODS, target as Fn, name);
+            return method !== MISSING ? method : universalMember(target, name);
+        }
+        case 'object':
+            break;
+        default:
+            return universalMember(target, name);
+    }
+    const object = target as AnyRecord;
+    if (Array.isArray(object)) {
+        if (name === 'Length' || name === 'LongLength')
+            return { value: object.length, thisArg: undefined };
+        if (name === 'Rank')
+            return { value: 1, thisArg: undefined };
+        const method = tableMember(ARRAY_METHODS, object, name);
+        if (method !== MISSING)
+            return method;
+        const linq = linqMember(object, name);
+        if (linq !== MISSING)
+            return linq;
+        return universalMember(target, name);
+    }
+    const own = ownMember(object, name);
+    if (own !== MISSING)
+        return own;
+    if (object instanceof Map) {
+        const mapMember = MAP_METHODS[name];
+        if (mapMember)
+            return { value: mapMember(object), thisArg: undefined };
+    }
+    if (object instanceof Set) {
+        const setMember = SET_METHODS[name];
+        if (setMember)
+            return { value: setMember(object), thisArg: undefined };
+    }
+    if (object instanceof Promise) {
+        const method = tableMember(TASK_METHODS, object, name);
+        if (method !== MISSING)
+            return method;
+    }
+    if (isIterable(object)) {
+        const linq = linqMember(object, name);
+        if (linq !== MISSING)
+            return linq;
+    }
+    return universalMember(target, name);
+}
+function ownMember(object: AnyRecord, name: string): Resolved | typeof MISSING {
+    if (name in object)
+        return { value: object[name], thisArg: object };
+    const camel = lowerFirst(name);
+    if (camel !== name && camel in object)
+        return { value: object[camel], thisArg: object };
+    const pascal = upperFirst(name);
+    if (pascal !== name && pascal in object)
+        return { value: object[pascal], thisArg: object };
+    return MISSING;
+}
+const MAP_METHODS: Record<string, (map: Map<unknown, unknown>) => unknown> = {
+    Count: (map) => map.size,
+    ContainsKey: (map) => (key: unknown) => map.has(key),
+    TryGetValue: (map) => (key: unknown, out: Ref<unknown>) => {
+        out.v = map.has(key) ? map.get(key) : null;
+        return map.has(key);
+    },
+    Add: (map) => (key: unknown, value: unknown) => map.set(key, value),
+    Remove: (map) => (key: unknown) => map.delete(key),
+    Clear: (map) => () => map.clear(),
+    Keys: (map) => List.from(map.keys()),
+    Values: (map) => List.from(map.values()),
+};
+const SET_METHODS: Record<string, (set: Set<unknown>) => unknown> = {
+    Count: (set) => set.size,
+    Contains: (set) => (item: unknown) => set.has(item),
+    Add: (set) => (item: unknown) => {
+        const had = set.has(item);
+        set.add(item);
+        return !had;
+    },
+    Remove: (set) => (item: unknown) => set.delete(item),
+    Clear: (set) => () => set.clear(),
+};
+function memberNames(target: unknown): string[] {
+    const names = new Set<string>();
+    if (target === null || target === undefined)
+        return [];
+    if (typeof target === 'string')
+        for (const name of Object.keys(STRING_METHODS))
+            names.add(name);
+    else if (typeof target === 'number')
+        for (const name of Object.keys(NUMBER_METHODS))
+            names.add(name);
+    else if (Array.isArray(target)) {
+        names.add('Length');
+        for (const name of Object.keys(LINQ))
+            names.add(name);
+    }
+    else if (typeof target === 'object' || typeof target === 'function') {
+        let current: object | null = target as object;
+        while (current && current !== Object.prototype && current !== Function.prototype) {
+            for (const key of Object.getOwnPropertyNames(current))
+                if (!key.startsWith('$') && key !== 'constructor')
+                    names.add(key);
+            current = Object.getPrototypeOf(current) as object | null;
+        }
+        if (isIterable(target))
+            for (const name of Object.keys(LINQ))
+                names.add(name);
+    }
+    return Array.from(names).sort();
+}
+function similar(wanted: string, candidates: readonly string[]): string[] {
+    const lower = wanted.toLowerCase();
+    return candidates
+        .filter((candidate) => {
+        const other = candidate.toLowerCase();
+        return other === lower || other.includes(lower) || lower.includes(other) || levenshtein(lower, other) <= Math.max(1, Math.floor(wanted.length / 3));
+    })
+        .slice(0, 5);
+}
+function levenshtein(a: string, b: string): number {
+    if (a.length === 0)
+        return b.length;
+    if (b.length === 0)
+        return a.length;
+    let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= a.length; i++) {
+        const current = [i];
+        for (let j = 1; j <= b.length; j++)
+            current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        previous = current;
+    }
+    return previous[b.length];
+}
+function missingMember(target: unknown, name: string, verb: string): never {
+    const names = memberNames(target);
+    const hints = similar(name, names);
+    const suffix = hints.length > 0 ? ` Parecidos: ${hints.join(', ')}.` : names.length > 0 ? ` Membros disponíveis: ${names.slice(0, 12).join(', ')}${names.length > 12 ? '…' : ''}.` : '';
+    throw new InvalidOperationException(`${verb} "${name}" em ${describeType(target)}: o membro não existe.${suffix}`);
+}
+export function getMember(target: unknown, name: string, optional = false): unknown {
+    if (isNullish(target)) {
+        if (optional)
+            return null;
+        throw new NullReferenceException(`Não dá para ler "${name}" de um valor nulo.`);
+    }
+    const resolved = resolveMember(target, name);
+    if (resolved === MISSING)
+        return null;
+    const value = resolved.value;
+    if (typeof value === 'function' && resolved.thisArg !== undefined && !isClassConstructor(value))
+        return (value as Fn).bind(resolved.thisArg);
+    return value === undefined ? null : value;
+}
+const boundMethods = new WeakMap<object, Map<string, Fn>>();
+export function boundMethod(target: unknown, name: string): Fn {
+    if (isNullish(target))
+        throw new NullReferenceException(`Não dá para ler o método "${name}" de um valor nulo.`);
+    if (typeof target !== 'object' && typeof target !== 'function')
+        throw new InvalidOperationException(`${describeType(target)} não tem o método "${name}".`);
+    const object = target as object;
+    let cache = boundMethods.get(object);
+    if (!cache) {
+        cache = new Map();
+        boundMethods.set(object, cache);
+    }
+    const cached = cache.get(name);
+    if (cached)
+        return cached;
+    const method = (object as AnyRecord)[name];
+    if (typeof method !== 'function')
+        missingMember(target, name, 'Leitura do método');
+    const bound = (method as Fn).bind(object) as Fn;
+    cache.set(name, bound);
+    return bound;
+}
+export function setMember(target: unknown, name: string, value: unknown): unknown {
+    if (isNullish(target))
+        throw new NullReferenceException(`Não dá para atribuir "${name}" num valor nulo.`);
+    if (typeof target !== 'object' && typeof target !== 'function')
+        throw new InvalidOperationException(`Não dá para atribuir "${name}" em ${describeType(target)}.`);
+    const object = target as AnyRecord;
+    if (Array.isArray(object) && name === 'Length')
+        throw new InvalidOperationException('Length de um array é só leitura; crie outro array ou use List.');
+    const camel = lowerFirst(name);
+    const key = name in object ? name : camel in object ? camel : upperFirst(name) in object ? upperFirst(name) : name;
+    object[key] = value;
+    return value;
+}
+export function callMember(target: unknown, name: string, args: readonly unknown[], optional = false): unknown {
+    if (isNullish(target)) {
+        if (optional)
+            return null;
+        throw new NullReferenceException(`Não dá para chamar "${name}" num valor nulo.`);
+    }
+    const resolved = resolveMember(target, name);
+    if (resolved === MISSING)
+        missingMember(target, name, 'Chamada de');
+    let fn = resolved.value;
+    if (typeof fn !== 'function') {
+        if (isIterable(target) && LINQ[name])
+            return LINQ[name](target as Iterable<unknown>, ...args);
+        if (fn !== null && typeof fn === 'object' && typeof (fn as {
+            Invoke?: unknown;
+        }).Invoke === 'function')
+            return ((fn as {
+                Invoke: Fn;
+            }).Invoke as Fn).apply(fn, args as unknown[]);
+        throw new InvalidOperationException(`"${name}" em ${describeType(target)} não é um método (é ${describeType(fn)}).`);
+    }
+    if (isClassConstructor(fn) && resolved.thisArg !== undefined)
+        fn = (...rest: unknown[]) => construct(resolved.value, rest);
+    return (fn as Fn).apply(resolved.thisArg, args as unknown[]);
+}
+export function invoke(fn: unknown, args: readonly unknown[], optional = false): unknown {
+    if (isNullish(fn)) {
+        if (optional)
+            return null;
+        throw new NullReferenceException('Chamada de um delegate nulo.');
+    }
+    if (typeof fn !== 'function') {
+        const invokeMethod = (fn as {
+            Invoke?: unknown;
+        }).Invoke;
+        if (typeof invokeMethod === 'function')
+            return (invokeMethod as Fn).apply(fn, args as unknown[]);
+        throw new InvalidOperationException(`${describeType(fn)} não é uma função nem um delegate.`);
+    }
+    return (fn as Fn)(...args);
+}
+export function construct(ctor: unknown, args: readonly unknown[]): unknown {
+    if (typeof ctor !== 'function')
+        throw new InvalidOperationException(`Não dá para instanciar ${describeType(ctor)}: não é uma classe.`);
+    const prototype = (ctor as {
+        prototype?: {
+            $ctor?: unknown;
+        };
+    }).prototype;
+    if (prototype && typeof prototype.$ctor === 'function') {
+        const instance = new (ctor as new () => {
+            $ctor: Fn;
+        })();
+        return instance.$ctor(...args);
+    }
+    if (isClassConstructor(ctor))
+        return new (ctor as new (...rest: unknown[]) => object)(...args);
+    return (ctor as Fn)(...args);
+}
