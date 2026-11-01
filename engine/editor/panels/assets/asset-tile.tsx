@@ -55,6 +55,6 @@ export function AssetTile({ name, caption, tint, title, badge, selected = false,
         <span aria-hidden className={cn('absolute inset-x-0 bottom-0 h-[3px]', tint)}/>
       </span>
       {rename ? <RenameInput initial={name} rename={rename}/> : <span className="w-full truncate text-2xs text-foreground">{name}</span>}
-      <span className="w-full truncate text-[10px] text-muted-foreground">{caption}</span>
+      <span className="w-full truncate text-3xs text-muted-foreground">{caption}</span>
     </div>);
 }
