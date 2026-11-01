@@ -554,4 +554,279 @@ export class NodeBase extends GodotObject implements NodeLike, InputTarget {
             return this.$entity.parent ? wrapEntity(this.$entity.parent, this.$context) : null;
         return this.$virtualParent;
     }
+    private $root(): EngineEntity {
+        return this.$context.scene.root as EngineEntity;
+    }
+    protected $resolvePath(path: string): NodeBase | null {
+        if (path.length === 0 || path === '.')
+            return this;
+        if (path.startsWith('%')) {
+            const found = (this.$sceneApi.find as Fn)(path.slice(1).replace(/^\/+/, '')) as EngineEntity | null;
+            return found ? wrapEntity(found, this.$context) : null;
+        }
+        let current: NodeBase | null = this;
+        let parts = path.split('/');
+        if (path.startsWith('/')) {
+            current = wrapEntity(this.$root(), this.$context);
+            parts = parts.slice(1);
+            if (parts[0] === 'root')
+                parts = parts.slice(1);
+        }
+        for (const rawPart of parts) {
+            if (!current)
+                return null;
+            const part = rawPart.trim();
+            if (part === '' || part === '.')
+                continue;
+            if (part === '..') {
+                current = current.$parent();
+                continue;
+            }
+            if (part.startsWith('%')) {
+                const found = (this.$sceneApi.find as Fn)(part.slice(1), current.$entity ?? undefined) as EngineEntity | null;
+                current = found ? wrapEntity(found, this.$context) : null;
+                continue;
+            }
+            current = current.$children().find((child) => child.name === part) ?? null;
+        }
+        return current;
+    }
+    get_node(path: unknown): NodeBase {
+        const text = str(path);
+        const found = this.$resolvePath(text);
+        if (!found) {
+            const names = this.$children().map((child) => child.name);
+            fail(`get_node("${text}"): nenhum nó nesse caminho a partir de "${this.name}".${names.length > 0 ? ` Filhos: ${names.join(', ')}.` : ' Este nó não tem filhos.'}`);
+        }
+        return found;
+    }
+    get_node_or_null(path: unknown): NodeBase | null {
+        return this.$resolvePath(str(path));
+    }
+    has_node(path: unknown): boolean {
+        return this.$resolvePath(str(path)) !== null;
+    }
+    find_child(pattern: unknown, recursive = true, _owned = true): NodeBase | null {
+        const text = str(pattern);
+        const search = (node: NodeBase): NodeBase | null => {
+            for (const child of node.$children()) {
+                if (wildcardMatch(text, child.name))
+                    return child;
+                if (recursive) {
+                    const inner = search(child);
+                    if (inner)
+                        return inner;
+                }
+            }
+            return null;
+        };
+        return search(this);
+    }
+    find_children(pattern: unknown, type: unknown = '', recursive = true, _owned = true): NodeBase[] {
+        const text = str(pattern);
+        const typeName = str(type ?? '');
+        const result: NodeBase[] = [];
+        const search = (node: NodeBase): void => {
+            for (const child of node.$children()) {
+                if ((text === '' || wildcardMatch(text, child.name)) && (typeName === '' || child.is_class(typeName)))
+                    result.push(child);
+                if (recursive)
+                    search(child);
+            }
+        };
+        search(this);
+        return result;
+    }
+    find_parent(pattern: unknown): NodeBase | null {
+        const text = str(pattern);
+        for (let current = this.$parent(); current; current = current.$parent())
+            if (wildcardMatch(text, current.name))
+                return current;
+        return null;
+    }
+    get_parent(): NodeBase | null {
+        return this.$parent();
+    }
+    get_children(_includeInternal = false): NodeBase[] {
+        return this.$children();
+    }
+    get_child(index: unknown, _includeInternal = false): NodeBase {
+        const children = this.$children();
+        const at = Number(index) < 0 ? children.length + Number(index) : Number(index);
+        const child = children[at];
+        if (!child)
+            fail(`get_child(${str(index)}): "${this.name}" tem ${children.length} filho(s).`);
+        return child;
+    }
+    get_child_count(_includeInternal = false): number {
+        return this.$children().length;
+    }
+    protected $materialize(parent: EngineEntity, index?: number): void {
+        const kind = GODOT_NODE_CLASSES[godotBaseOf(this.constructor)];
+        if (!kind)
+            return;
+        const options: AnyRecord = { name: this.$virtualName, position: this.position, rotation: this.rotation_degrees, scale: this.scale, visible: this.$virtualVisible };
+        if (kind === 'character')
+            options.character = {};
+        const entity = (this.$sceneApi.spawn as Fn)(kind, options, parent) as EngineEntity;
+        if (index !== undefined)
+            (this.$sceneApi.reparent as Fn)(entity, parent, index);
+        this.$entity = entity;
+        this.$context.registerNode(entity, this);
+        for (const group of this.$groupNames)
+            entity.tags.add(group);
+        for (const child of this.$virtualChildren)
+            child.$materialize(entity);
+    }
+    add_child(node: unknown, _forceReadableName = false, _internal = 0): void {
+        const child = requireNode(node, 'add_child');
+        if (child === this)
+            fail('add_child(): um nó não pode ser filho de si mesmo.');
+        if (child.$parent() !== null && child.$inTree)
+            fail(`add_child(): "${child.name}" já tem pai (${child.$parent()!.name}); use reparent() ou remove_child() antes.`);
+        if (this.$entity) {
+            if (child.$entity) {
+                if (child.$entity.parent !== this.$entity)
+                    (this.$sceneApi.reparent as Fn)(child.$entity, this.$entity);
+            }
+            else {
+                child.$materialize(this.$entity);
+            }
+            child.$virtualParent = null;
+            if (child.$entity && !child.$script)
+                this.$context.trackManual(child);
+            if (this.$inTree)
+                child.$enterTree();
+            return;
+        }
+        child.$virtualParent = this;
+        if (!this.$virtualChildren.includes(child))
+            this.$virtualChildren.push(child);
+        if (this.$inTree)
+            child.$enterTree();
+    }
+    add_sibling(node: unknown, forceReadableName = false): void {
+        const parent = this.$parent();
+        if (!parent)
+            fail('add_sibling(): este nó não tem pai.');
+        parent.add_child(node, forceReadableName);
+        const sibling = requireNode(node, 'add_sibling');
+        if (parent.$entity && sibling.$entity)
+            (this.$sceneApi.reparent as Fn)(sibling.$entity, parent.$entity, this.get_index() + 1);
+    }
+    remove_child(node: unknown): void {
+        const child = requireNode(node, 'remove_child');
+        if (child.$parent() !== this)
+            fail(`remove_child(): "${child.name}" não é filho de "${this.name}".`);
+        child.$exitTree();
+        if (this.$entity && child.$entity)
+            (this.$sceneApi.remove as Fn)(this.$entity, child.$entity);
+        const at = this.$virtualChildren.indexOf(child);
+        if (at >= 0)
+            this.$virtualChildren.splice(at, 1);
+        child.$virtualParent = null;
+    }
+    reparent(newParent: unknown, keepGlobalTransform = true): void {
+        const parent = requireNode(newParent, 'reparent');
+        if (this.$entity && parent.$entity) {
+            if (keepGlobalTransform)
+                (this.$transformApi.setParentKeepWorld as Fn)(this.$entity, parent.$entity);
+            else
+                (this.$sceneApi.reparent as Fn)(this.$entity, parent.$entity);
+            return;
+        }
+        const previous = this.$parent();
+        if (previous) {
+            const at = previous.$virtualChildren.indexOf(this);
+            if (at >= 0)
+                previous.$virtualChildren.splice(at, 1);
+        }
+        this.$virtualParent = null;
+        parent.add_child(this);
+    }
+    get_index(_includeInternal = false): number {
+        const parent = this.$parent();
+        if (!parent)
+            return -1;
+        return parent.$children().indexOf(this);
+    }
+    move_child(node: unknown, toIndex: unknown): void {
+        const child = requireNode(node, 'move_child');
+        if (this.$entity && child.$entity) {
+            ;
+            (this.$sceneApi.reparent as Fn)(child.$entity, this.$entity, Number(toIndex));
+            return;
+        }
+        const at = this.$virtualChildren.indexOf(child);
+        if (at < 0)
+            fail(`move_child(): "${child.name}" não é filho de "${this.name}".`);
+        this.$virtualChildren.splice(at, 1);
+        this.$virtualChildren.splice(Math.max(0, Math.min(this.$virtualChildren.length, Number(toIndex))), 0, child);
+    }
+    queue_free(): void {
+        if (this.$queuedFree || this.$freed)
+            return;
+        this.$queuedFree = true;
+        this.$context.defer(() => this.free());
+    }
+    free(): void {
+        if (this.$freed)
+            return;
+        const entity = this.$entity;
+        if (entity && entity.parent) {
+            ;
+            (this.$sceneApi.destroy as Fn)(entity);
+        }
+        this.$exitTree();
+        const parent = this.$virtualParent;
+        if (parent) {
+            const at = parent.$virtualChildren.indexOf(this);
+            if (at >= 0)
+                parent.$virtualChildren.splice(at, 1);
+        }
+        super.free();
+    }
+    is_queued_for_deletion(): boolean {
+        return this.$queuedFree;
+    }
+    is_inside_tree(): boolean {
+        return this.$inTree;
+    }
+    get_tree(): SceneTree {
+        return sceneTreeOf(this.$context);
+    }
+    get_path(): string {
+        if (!this.$entity)
+            return this.$virtualParent ? `${this.$virtualParent.get_path()}/${this.name}` : this.name;
+        const path = str((this.$sceneApi.path as Fn)(this.$entity));
+        return `/root/${path.replace(/^\/+/, '')}`;
+    }
+    get_path_to(node: unknown, _useUniquePath = false): string {
+        const target = requireNode(node, 'get_path_to');
+        const mine = this.get_path().split('/').filter(Boolean);
+        const theirs = target.get_path().split('/').filter(Boolean);
+        let common = 0;
+        while (common < mine.length && common < theirs.length && mine[common] === theirs[common])
+            common++;
+        const ups = mine.length - common;
+        const parts = [...Array<string>(ups).fill('..'), ...theirs.slice(common)];
+        return parts.length === 0 ? '.' : parts.join('/');
+    }
+    get_name(): string {
+        return this.name;
+    }
+    set_name(value: unknown): void {
+        this.name = value;
+    }
+    is_ancestor_of(node: unknown): boolean {
+        const other = requireNode(node, 'is_ancestor_of');
+        for (let current = other.$parent(); current; current = current.$parent())
+            if (current === this)
+                return true;
+        return false;
+    }
+    is_in_group(group: unknown): boolean {
+        const name = str(group);
+        return this.$groupNames.has(name) || (this.$entity?.tags.has(name) ?? false);
+    }
 }
