@@ -25,7 +25,9 @@ export function DockDropZones() {
         setHovered(null);
     };
     return (<div className="pointer-events-none absolute inset-0 z-20" aria-label={`Soltar ${panel.label} numa borda para encaixar`}>
-      {DOCK_AREAS.map((area) => (<div key={area} role="button" aria-label={`Encaixar ${panel.label} à ${DOCK_AREA_LABELS[area].toLowerCase()}`} className={cn('pointer-events-auto absolute flex items-center justify-center rounded-sm border border-dashed text-2xs font-medium transition-colors', ZONE_CLASS[area], hovered === area ? 'border-primary bg-primary/25 text-foreground' : 'border-primary/50 bg-background/60 text-muted-foreground')} onDragOver={(event) => {
+      {DOCK_AREAS.map((area) => (<div key={area} role="button" aria-label={`Encaixar ${panel.label} à ${DOCK_AREA_LABELS[area].toLowerCase()}`} className={cn('pointer-events-auto absolute flex items-center justify-center rounded-sm border text-2xs font-medium backdrop-blur-sm transition-colors duration-100', ZONE_CLASS[area], hovered === area
+                ? 'border-primary bg-primary/25 text-foreground shadow-[inset_0_0_0_1px_var(--primary)]'
+                : 'border-primary/50 bg-background/75 text-muted-foreground shadow-overlay')} onDragOver={(event) => {
                 if (!isPanelDrag(event))
                     return;
                 event.preventDefault();
