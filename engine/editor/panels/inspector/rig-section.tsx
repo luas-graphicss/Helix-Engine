@@ -5,7 +5,7 @@ import { SEMANTIC_BONE_LABELS, SEMANTIC_BONES, type SemanticBone } from '@/engin
 import type { Entity } from '@/engine/core/scene/entity';
 import type { Rig } from '@/engine/core/scene/rig';
 import { applyRigBindPose } from '@/engine/editor/operations/rig-operations';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
 import { CollapsibleSection } from '@/engine/ui/collapsible-section';
 import { FieldInput } from '@/engine/ui/field-input';
@@ -29,14 +29,14 @@ function jointOf(entity: Entity): {
 function RoleChips({ rig }: {
     rig: Rig;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     return (<ul className="flex flex-wrap gap-1 px-2 pb-1" aria-label="Papéis reconhecidos">
       {SEMANTIC_BONES.map((bone: SemanticBone) => {
             const joint = rig.semantic[bone];
             const found = joint !== -1;
             const label = SEMANTIC_BONE_LABELS[bone];
             return (<li key={bone}>
-            <button type="button" disabled={!found} onClick={() => session.select(rig.joints[joint])} title={found ? `${label}: ${rig.names[joint]} (clique para selecionar)` : `${label}: não encontrado`} className={cn('rounded-sm border px-1 py-px text-[10px] leading-4', found ? 'border-border text-foreground hover:border-primary hover:text-primary' : 'cursor-default border-dashed border-border/60 text-muted-foreground/60')}>
+            <button type="button" disabled={!found} onClick={() => session.select(rig.joints[joint])} title={found ? `${label}: ${rig.names[joint]} (clique para selecionar)` : `${label}: não encontrado`} className={cn('rounded-sm border px-1 py-px text-3xs leading-4 transition-colors duration-100', found ? 'border-border bg-surface-raised text-foreground shadow-bevel hover:border-primary hover:text-primary' : 'cursor-default border-border/40 bg-surface-sunken/40 text-muted-foreground/50')}>
               {label}
             </button>
           </li>);
@@ -46,12 +46,12 @@ function RoleChips({ rig }: {
 export function RigSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const rig = entity.rig;
     if (!rig)
         return null;
     const roots = rig.rootJoints();
-    return (<CollapsibleSection title="Rig" trailing={<span className="flex items-center gap-1 text-[10px] text-axis-y">
+    return (<CollapsibleSection title="Rig" trailing={<span className="flex items-center gap-1 text-3xs text-axis-y">
           <Bone className="size-3" aria-hidden/>
           {rig.profile.humanoid ? 'Humanoide' : 'Esqueleto'}
         </span>}>
@@ -78,7 +78,7 @@ export function RigSection({ entity }: {
 export function BoneSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const membership = jointOf(entity);
     if (!membership)
         return null;
