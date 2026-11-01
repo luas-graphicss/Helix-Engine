@@ -275,3 +275,283 @@ export function groupSelectedGuiNodes(session: EditorSession): void {
     if (groupId)
         designer.select([groupId]);
 }
+export function ungroupSelectedGuiNodes(session: EditorSession): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    if (!layout || !designer.document)
+        return;
+    const groups = topLevelGuiIds(designer.document.root, [...designer.selectedIds])
+        .map((id) => findGuiNode(designer.document!.root, id))
+        .filter((node): node is GuiNode => node !== null && isGuiContainer(node) && node.children.length > 0);
+    if (groups.length === 0)
+        return;
+    const released: string[] = [];
+    designer.apply(`Desagrupar ${plural(groups.length, 'quadro', 'quadros')}`, (document) => {
+        let root = document.root;
+        const s = layout.offsetScale;
+        for (const group of groups) {
+            const parent = findGuiParent(root, group.id);
+            const groupEntry = layout.entries.get(group.id);
+            if (!parent || !groupEntry)
+                continue;
+            const parentFrame = parentContentFrame(layout, parent.id);
+            const padding = group.layout.padding;
+            const children = group.children.map((child) => {
+                const entry = layout.entries.get(child.id);
+                if (!entry)
+                    return child;
+                const box = { x: groupEntry.x + padding.left * s + entry.x, y: groupEntry.y + padding.top * s + entry.y, width: entry.width, height: entry.height };
+                return { ...child, rect: rectFromBox(child.rect, box, parentFrame, s) };
+            });
+            const index = parent.children.findIndex((child) => child.id === group.id);
+            root = removeGuiNodes(root, new Set([group.id]));
+            children.forEach((child, offset) => {
+                root = insertGuiNode(root, parent.id, child, index + offset);
+                released.push(child.id);
+            });
+        }
+        return { ...document, root };
+    });
+    if (released.length > 0)
+        designer.select(released);
+}
+export function reorderSelectedGuiNodes(session: EditorSession, direction: GuiReorder): void {
+    const designer = session.gui;
+    if (!designer.document)
+        return;
+    const ids = topLevelGuiIds(designer.document.root, [...designer.selectedIds]);
+    if (ids.length === 0)
+        return;
+    const labels: Record<GuiReorder, string> = { front: 'Trazer para a frente', forward: 'Avançar', backward: 'Recuar', back: 'Enviar para trás' };
+    designer.apply(labels[direction], (document) => {
+        let root = document.root;
+        const ordered = [...ids].sort((a, b) => indexIn(root, a) - indexIn(root, b));
+        const sequence = direction === 'front' || direction === 'backward' ? ordered : [...ordered].reverse();
+        for (const id of sequence) {
+            const parent = findGuiParent(root, id);
+            if (!parent)
+                continue;
+            const current = parent.children.findIndex((child) => child.id === id);
+            const count = parent.children.length;
+            const target = direction === 'front' ? count : direction === 'back' ? 0 : direction === 'forward' ? Math.min(count, current + 2) : Math.max(0, current - 1);
+            root = moveGuiNode(root, id, parent.id, target);
+        }
+        return { ...document, root };
+    });
+}
+function indexIn(root: GuiNode, id: string): number {
+    const parent = findGuiParent(root, id);
+    return parent ? parent.children.findIndex((child) => child.id === id) : -1;
+}
+export function alignSelectedGuiNodes(session: EditorSession, alignment: GuiAlignment): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    const selection = siblingSelection(designer);
+    if (!layout || !selection || selection.ids.length === 0)
+        return;
+    const { parent, ids } = selection;
+    if (parent.layout.kind !== 'none') {
+        session.log.info(LOG_SOURCE, `${parent.name} usa layout automático: o alinhamento �� controlado pelas opções do layout.`);
+        return;
+    }
+    const s = layout.offsetScale;
+    const frame = parentContentFrame(layout, parent.id);
+    const entries = ids.map((id) => layout.entries.get(id)).filter((entry): entry is GuiLayoutEntry => entry !== undefined);
+    const reference: GuiBox = entries.length === 1 ? { x: 0, y: 0, width: frame.width, height: frame.height } : (unionBoxes(entries.map(entryBox)) ?? { x: 0, y: 0, width: frame.width, height: frame.height });
+    const labels: Record<GuiAlignment, string> = { left: 'Alinhar à esquerda', hcenter: 'Centralizar na horizontal', right: 'Alinhar à direita', top: 'Alinhar ao topo', vcenter: 'Centralizar na vertical', bottom: 'Alinhar à base' };
+    designer.updateNodes(labels[alignment], ids, (node) => {
+        const entry = layout.entries.get(node.id);
+        if (!entry)
+            return node;
+        const box = entryBox(entry);
+        let x = box.x;
+        let y = box.y;
+        switch (alignment) {
+            case 'left':
+                x = reference.x;
+                break;
+            case 'hcenter':
+                x = reference.x + (reference.width - box.width) / 2;
+                break;
+            case 'right':
+                x = reference.x + reference.width - box.width;
+                break;
+            case 'top':
+                y = reference.y;
+                break;
+            case 'vcenter':
+                y = reference.y + (reference.height - box.height) / 2;
+                break;
+            case 'bottom':
+                y = reference.y + reference.height - box.height;
+                break;
+        }
+        return { ...node, rect: rectFromBox(node.rect, { ...box, x, y }, frame, s) };
+    });
+}
+export function distributeSelectedGuiNodes(session: EditorSession, axis: 'x' | 'y'): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    const selection = siblingSelection(designer);
+    if (!layout || !selection || selection.ids.length < 3)
+        return;
+    const { parent, ids } = selection;
+    if (parent.layout.kind !== 'none')
+        return;
+    const s = layout.offsetScale;
+    const frame = parentContentFrame(layout, parent.id);
+    const entries = ids
+        .map((id) => layout.entries.get(id))
+        .filter((entry): entry is GuiLayoutEntry => entry !== undefined)
+        .sort((a, b) => (axis === 'x' ? a.x - b.x : a.y - b.y));
+    const first = entries[0];
+    const last = entries[entries.length - 1];
+    const span = axis === 'x' ? last.x + last.width - first.x : last.y + last.height - first.y;
+    const occupied = entries.reduce((total, entry) => total + (axis === 'x' ? entry.width : entry.height), 0);
+    const gap = (span - occupied) / (entries.length - 1);
+    const positions = new Map<string, number>();
+    let cursor = axis === 'x' ? first.x : first.y;
+    for (const entry of entries) {
+        positions.set(entry.node.id, cursor);
+        cursor += (axis === 'x' ? entry.width : entry.height) + gap;
+    }
+    designer.updateNodes(axis === 'x' ? 'Distribuir na horizontal' : 'Distribuir na vertical', ids, (node) => {
+        const entry = layout.entries.get(node.id);
+        const position = positions.get(node.id);
+        if (!entry || position === undefined)
+            return node;
+        const box = entryBox(entry);
+        return { ...node, rect: rectFromBox(node.rect, axis === 'x' ? { ...box, x: position } : { ...box, y: position }, frame, s) };
+    });
+}
+export function nudgeSelectedGuiNodes(session: EditorSession, dx: number, dy: number): void {
+    const designer = session.gui;
+    if (!designer.document)
+        return;
+    const ids = topLevelGuiIds(designer.document.root, [...designer.selectedIds]);
+    if (ids.length === 0)
+        return;
+    designer.updateNodes('Mover elementos', ids, (node) => ({ ...node, rect: shiftRect(node.rect, dx, dy) }), 'gui-nudge');
+}
+export interface GuiBoxChange {
+    readonly id: string;
+    readonly box: GuiBox;
+}
+export function setGuiNodeBoxes(session: EditorSession, changes: readonly GuiBoxChange[], label: string, mergeKey: string): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    if (!layout || changes.length === 0)
+        return;
+    const s = layout.offsetScale;
+    const byId = new Map(changes.map((change) => [change.id, change.box]));
+    designer.updateNodes(label, byId.keys(), (node) => {
+        const entry = layout.entries.get(node.id);
+        const box = byId.get(node.id);
+        if (!entry || !box)
+            return node;
+        const frame = parentContentFrame(layout, entry.parentId);
+        const rect = rectFromBox(node.rect, box, frame, s);
+        const widthChanged = Math.abs(box.width - entry.width) > 0.01;
+        const heightChanged = Math.abs(box.height - entry.height) > 0.01;
+        let autoSize = rect.autoSize;
+        if (widthChanged && (autoSize === 'x' || autoSize === 'xy'))
+            autoSize = autoSize === 'xy' ? 'y' : 'none';
+        if (heightChanged && (autoSize === 'y' || autoSize === 'xy'))
+            autoSize = autoSize === 'xy' ? 'x' : 'none';
+        return { ...node, rect: { ...rect, autoSize } };
+    }, mergeKey);
+}
+export function setSelectedRotation(session: EditorSession, rotation: number, mergeKey?: string): void {
+    session.gui.updateSelected('Girar elementos', (node) => ({ ...node, rect: { ...node.rect, rotation } }), mergeKey);
+}
+export function setSelectedAnchorPreset(session: EditorSession, presetId: string): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    const preset = GUI_ANCHOR_PRESETS.find((candidate) => candidate.id === presetId);
+    if (!layout || !preset)
+        return;
+    designer.updateSelected(`Ancorar em ${preset.label.toLowerCase()}`, (node) => {
+        const entry = layout.entries.get(node.id);
+        if (!entry)
+            return node;
+        return { ...node, rect: withAnchorPreset(node.rect, entryBox(entry), parentContentFrame(layout, entry.parentId), layout.offsetScale, preset.anchor) };
+    });
+}
+export function setSelectedAnchor(session: EditorSession, anchor: GuiPoint): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    if (!layout)
+        return;
+    designer.updateSelected('Alterar ponto de âncora', (node) => {
+        const entry = layout.entries.get(node.id);
+        if (!entry)
+            return node;
+        return { ...node, rect: withAnchor(node.rect, entryBox(entry), parentContentFrame(layout, entry.parentId), layout.offsetScale, anchor) };
+    });
+}
+export function convertSelectedUnits(session: EditorSession, mode: 'proportional' | 'pixels', target: GuiUnitTarget): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    if (!layout)
+        return;
+    designer.updateSelected(mode === 'proportional' ? 'Converter para proporcional' : 'Converter para pixels', (node) => {
+        const entry = layout.entries.get(node.id);
+        if (!entry)
+            return node;
+        const box = entryBox(entry);
+        const rect = mode === 'proportional' ? toProportional(node.rect, box, parentContentFrame(layout, entry.parentId), target) : toPixels(node.rect, box, layout.offsetScale, target);
+        return { ...node, rect };
+    });
+}
+export function moveGuiNodeTo(session: EditorSession, id: string, parentId: string, index: number, keepPlace = true, mergeKey?: string): void {
+    const designer = session.gui;
+    const layout = designer.layout();
+    if (!layout || !designer.document)
+        return;
+    const node = findGuiNode(designer.document.root, id);
+    const target = findGuiNode(designer.document.root, parentId);
+    if (!node || !target || !isGuiContainer(target))
+        return;
+    const entry = layout.entries.get(id);
+    const currentParent = findGuiParent(designer.document.root, id);
+    let rect = node.rect;
+    if (keepPlace && entry && currentParent && currentParent.id !== parentId && target.layout.kind === 'none') {
+        const screen = applyMatrix(entry.world, 0, 0);
+        const local = screenPointToParent(layout, parentId, screen.x, screen.y);
+        rect = rectFromBox(node.rect, { x: local.x, y: local.y, width: entry.width, height: entry.height }, parentContentFrame(layout, parentId), layout.offsetScale);
+    }
+    designer.apply(`Mover ${node.name} para ${target.name}`, (document) => {
+        const moved = moveGuiNode(document.root, id, parentId, index);
+        if (moved === document.root)
+            return document;
+        return { ...document, root: rect === node.rect ? moved : updateGuiNode(moved, id, (current) => ({ ...current, rect })) };
+    }, mergeKey);
+}
+export function renameGuiNode(session: EditorSession, id: string, name: string): void {
+    const designer = session.gui;
+    if (!designer.document)
+        return;
+    const trimmed = name.trim();
+    const node = findGuiNode(designer.document.root, id);
+    if (!node || !trimmed || trimmed === node.name)
+        return;
+    const unique = uniqueGuiName(designer.document.root, trimmed, id);
+    designer.updateNodes(`Renomear ${node.name} para ${unique}`, [id], (current) => ({ ...current, name: unique }));
+}
+export function setGuiNodesVisible(session: EditorSession, ids: readonly string[], visible: boolean): void {
+    session.gui.updateNodes(visible ? 'Mostrar elementos' : 'Ocultar elementos', ids, (node) => (node.visible === visible ? node : { ...node, visible }));
+}
+export function setGuiNodesLocked(session: EditorSession, ids: readonly string[], locked: boolean): void {
+    const designer = session.gui;
+    designer.updateNodes(locked ? 'Bloquear elementos' : 'Desbloquear elementos', ids, (node) => (node.locked === locked ? node : { ...node, locked }));
+    if (locked)
+        designer.select([...designer.selectedIds].filter((id) => !ids.includes(id)));
+}
+export function selectGuiParent(session: EditorSession): void {
+    const designer = session.gui;
+    if (!designer.document || !designer.primaryId)
+        return;
+    const parent = findGuiParent(designer.document.root, designer.primaryId);
+    if (parent && parent.id !== GUI_ROOT_ID)
+        designer.select([parent.id]);
+}
