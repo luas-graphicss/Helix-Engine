@@ -8,43 +8,9 @@ interface CasterHistory {
     version: number;
     changedFrame: number;
 }
-export class ShadowCasterSet {
-    readonly bounds = aabb.create();
-    readonly staticCasters: ShadowCasterCandidate[] = [];
-    readonly dynamicCasters: ShadowCasterCandidate[] = [];
-    lightChanged = true;
-    staticChanged = true;
-    dynamicChanged = true;
-    private readonly light = new FloatSnapshot(3);
+export class ShadowCasterMotion {
     private readonly history = new WeakMap<Entity, CasterHistory>();
-    private readonly previousStatic: Entity[] = [];
-    private readonly previousStaticVersions: number[] = [];
-    private readonly previousDynamic: Entity[] = [];
-    private readonly previousDynamicVersions: number[] = [];
-    private readonly previousTerrains: Entity[] = [];
-    private readonly previousTerrainVersions: number[] = [];
-    sync(meshes: readonly ShadowCasterCandidate[], terrains: readonly ShadowCaster[], lightDirection: Vec3, frame: number): boolean {
-        const { bounds, staticCasters, dynamicCasters } = this;
-        this.lightChanged = this.light.sync(0, lightDirection);
-        aabb.reset(bounds);
-        staticCasters.length = 0;
-        dynamicCasters.length = 0;
-        for (const caster of meshes) {
-            aabb.union(bounds, bounds, caster.bounds.aabb);
-            if (this.isDynamic(caster, frame))
-                dynamicCasters.push(caster);
-            else
-                staticCasters.push(caster);
-        }
-        for (const caster of terrains)
-            aabb.union(bounds, bounds, caster.bounds.aabb);
-        const staticChanged = this.compare(staticCasters, this.previousStatic, this.previousStaticVersions);
-        const terrainChanged = this.compare(terrains, this.previousTerrains, this.previousTerrainVersions);
-        this.staticChanged = staticChanged || terrainChanged;
-        this.dynamicChanged = this.compare(dynamicCasters, this.previousDynamic, this.previousDynamicVersions);
-        return meshes.length + terrains.length > 0;
-    }
-    private isDynamic(caster: ShadowCasterCandidate, frame: number): boolean {
+    isDynamic(caster: ShadowCaster, frame: number): boolean {
         const { entity } = caster;
         if (entity.skin)
             return true;
@@ -63,6 +29,43 @@ export class ShadowCasterSet {
             history.changedFrame = frame;
         }
         return frame - history.changedFrame < SETTLE_FRAMES;
+    }
+}
+export class ShadowCasterSet {
+    readonly bounds = aabb.create();
+    readonly staticCasters: ShadowCasterCandidate[] = [];
+    readonly dynamicCasters: ShadowCasterCandidate[] = [];
+    lightChanged = true;
+    staticChanged = true;
+    dynamicChanged = true;
+    private readonly light = new FloatSnapshot(3);
+    private readonly motion = new ShadowCasterMotion();
+    private readonly previousStatic: Entity[] = [];
+    private readonly previousStaticVersions: number[] = [];
+    private readonly previousDynamic: Entity[] = [];
+    private readonly previousDynamicVersions: number[] = [];
+    private readonly previousTerrains: Entity[] = [];
+    private readonly previousTerrainVersions: number[] = [];
+    sync(meshes: readonly ShadowCasterCandidate[], terrains: readonly ShadowCaster[], lightDirection: Vec3, frame: number): boolean {
+        const { bounds, staticCasters, dynamicCasters } = this;
+        this.lightChanged = this.light.sync(0, lightDirection);
+        aabb.reset(bounds);
+        staticCasters.length = 0;
+        dynamicCasters.length = 0;
+        for (const caster of meshes) {
+            aabb.union(bounds, bounds, caster.bounds.aabb);
+            if (this.motion.isDynamic(caster, frame))
+                dynamicCasters.push(caster);
+            else
+                staticCasters.push(caster);
+        }
+        for (const caster of terrains)
+            aabb.union(bounds, bounds, caster.bounds.aabb);
+        const staticChanged = this.compare(staticCasters, this.previousStatic, this.previousStaticVersions);
+        const terrainChanged = this.compare(terrains, this.previousTerrains, this.previousTerrainVersions);
+        this.staticChanged = staticChanged || terrainChanged;
+        this.dynamicChanged = this.compare(dynamicCasters, this.previousDynamic, this.previousDynamicVersions);
+        return meshes.length + terrains.length > 0;
     }
     private compare(casters: readonly ShadowCaster[], previous: Entity[], previousVersions: number[]): boolean {
         let changed = previous.length !== casters.length;
