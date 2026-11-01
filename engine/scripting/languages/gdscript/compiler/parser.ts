@@ -699,4 +699,280 @@ export class Parser {
         }
         return statements;
     }
+    private parseStatement(): Statement {
+        const token = this.peek();
+        if (token.kind === 'keyword') {
+            switch (token.value) {
+                case 'var':
+                    return this.parseVariableStatement();
+                case 'const':
+                    return this.parseConstantStatement();
+                case 'if':
+                    return this.parseIf();
+                case 'while': {
+                    this.next();
+                    const condition = this.parseExpression();
+                    this.expectOperator(':', '":" depois da condição do while');
+                    const body = this.parseBlock();
+                    return { kind: 'while', span: span(token, body.span), condition, body };
+                }
+                case 'for':
+                    return this.parseFor();
+                case 'match':
+                    return this.parseMatch();
+                case 'return': {
+                    this.next();
+                    const value = this.check('newline') || this.check('eof') || this.check('dedent') || this.checkOperator(';') ? null : this.parseExpression();
+                    return { kind: 'return', span: span(token, value?.span ?? token), value };
+                }
+                case 'break':
+                    this.next();
+                    return { kind: 'break', span: token };
+                case 'continue':
+                    this.next();
+                    return { kind: 'continue', span: token };
+                case 'pass':
+                    this.next();
+                    return { kind: 'pass', span: token };
+                case 'breakpoint':
+                    this.next();
+                    return { kind: 'breakpoint', span: token };
+                case 'assert': {
+                    this.next();
+                    this.expectOperator('(', '"(" depois de assert');
+                    const condition = this.parseExpression();
+                    let message: Expression | null = null;
+                    if (this.matchOperator(',')) {
+                        if (!this.checkOperator(')'))
+                            message = this.parseExpression();
+                    }
+                    const end = this.expectOperator(')');
+                    return { kind: 'assert', span: span(token, end), condition, message };
+                }
+                case 'elif':
+                case 'else':
+                    throw this.failure(`"${token.value}" sem um "if" na mesma indentação.`, token);
+                case 'yield':
+                    throw this.failure('"yield" foi removido no GDScript 2: use "await".', token);
+                case 'func':
+                    if (this.check('identifier', undefined, 1))
+                        throw this.failure('Funções com nome só podem ser declaradas no corpo da classe; dentro de uma função use uma lambda (var f = func(x): …).', token);
+                    break;
+                case 'class':
+                case 'signal':
+                case 'enum':
+                case 'static':
+                case 'class_name':
+                case 'extends':
+                    throw this.failure(`"${token.value}" só pode aparecer no corpo da classe, não dentro de uma função.`, token);
+                default:
+                    break;
+            }
+        }
+        if (token.kind === 'annotation') {
+            if (!token.value.startsWith('warning_ignore'))
+                throw this.failure(`A anotação @${token.value} não pode ficar dentro de uma função.`, token);
+            this.parseAnnotations();
+            this.skipNewlines();
+            return this.parseStatement();
+        }
+        const expression = this.parseExpression();
+        const operator = this.peek();
+        if (operator.kind === 'operator' && operator.value === ':=') {
+            throw this.failure(`Para declarar "${expression.kind === 'identifier' ? expression.name : 'a variável'}" com tipo inferido use "var ${expression.kind === 'identifier' ? expression.name : 'nome'} := valor".`, operator);
+        }
+        if (operator.kind === 'operator' && ASSIGNMENT_OPERATORS.has(operator.value)) {
+            this.next();
+            if (expression.kind !== 'identifier' && expression.kind !== 'member' && expression.kind !== 'index') {
+                throw this.failure('O lado esquerdo de uma atribuição precisa ser uma variável, um membro (a.b) ou um índice (a[i]).', expression.span);
+            }
+            const value = this.parseExpression();
+            return { kind: 'assignment', span: span(expression.span, value.span), operator: operator.value as AssignmentOperator, target: expression, value };
+        }
+        if (operator.kind === 'operator' && operator.value === ':') {
+            throw this.failure('":" inesperado: para declarar uma variável use "var nome: Tipo".', operator);
+        }
+        return { kind: 'expression', span: expression.span, expression };
+    }
+    private parseVariableStatement(): Statement {
+        const start = this.expect('keyword', 'var', '"var"');
+        const name = this.expectIdentifier('o nome da variável');
+        let type: TypeRef | null = null;
+        let inferred = false;
+        let value: Expression | null = null;
+        if (this.matchOperator(':=')) {
+            inferred = true;
+            value = this.parseExpression();
+        }
+        else {
+            if (this.matchOperator(':')) {
+                if (this.checkOperator('='))
+                    throw this.failure('Para inferir o tipo use ":=" junto (var x := 5).', this.peek());
+                type = this.parseType('o tipo da variável');
+            }
+            if (this.matchOperator('='))
+                value = this.parseExpression();
+        }
+        return { kind: 'variable', span: span(start, value?.span ?? type?.span ?? name), name: name.value, nameSpan: name, type, inferred, value };
+    }
+    private parseConstantStatement(): Statement {
+        const start = this.expect('keyword', 'const', '"const"');
+        const name = this.expectIdentifier('o nome da constante');
+        let type: TypeRef | null = null;
+        if (this.matchOperator(':=')) {
+            const value = this.parseExpression();
+            return { kind: 'constant', span: span(start, value.span), name: name.value, nameSpan: name, type: null, value };
+        }
+        if (this.matchOperator(':'))
+            type = this.parseType('o tipo da constante');
+        if (!this.matchOperator('='))
+            throw this.failure(`A constante "${name.value}" precisa de um valor.`, this.peek());
+        const value = this.parseExpression();
+        return { kind: 'constant', span: span(start, value.span), name: name.value, nameSpan: name, type, value };
+    }
+    private parseIf(): Statement {
+        const start = this.expect('keyword', 'if', '"if"');
+        const condition = this.parseExpression();
+        this.expectOperator(':', '":" depois da condição do if');
+        const then = this.parseBlock();
+        let otherwise: Block | null = null;
+        if (this.checkKeyword('elif')) {
+            const elif = this.peek();
+            const nested = this.parseIf();
+            otherwise = { span: nested.span, statements: [nested] };
+            void elif;
+        }
+        else if (this.checkKeyword('else')) {
+            this.next();
+            this.expectOperator(':', '":" depois de else');
+            otherwise = this.parseBlock();
+        }
+        return { kind: 'if', span: span(start, otherwise?.span ?? then.span), condition, then, otherwise };
+    }
+    private parseFor(): Statement {
+        const start = this.expect('keyword', 'for', '"for"');
+        const variable = this.expectIdentifier('o nome da variável do for');
+        let variableType: TypeRef | null = null;
+        if (this.matchOperator(':'))
+            variableType = this.parseType('o tipo da variável do for');
+        this.expect('keyword', 'in', '"in" (for item in lista)');
+        const iterable = this.parseExpression();
+        this.expectOperator(':', '":" depois do for');
+        const body = this.parseBlock();
+        return { kind: 'for', span: span(start, body.span), variable: variable.value, variableSpan: variable, variableType, iterable, body };
+    }
+    private parseMatch(): Statement {
+        const start = this.expect('keyword', 'match', '"match"');
+        const value = this.parseExpression();
+        this.expectOperator(':', '":" depois do valor do match');
+        this.expect('newline', undefined, 'uma quebra de linha depois de "match …:"');
+        this.expect('indent', undefined, 'os padrões do match, indentados');
+        const branches: MatchBranch[] = [];
+        while (!this.check('dedent') && !this.check('eof')) {
+            this.skipNewlines();
+            if (this.check('dedent') || this.check('eof'))
+                break;
+            try {
+                const first = this.peek();
+                const patterns: Pattern[] = [this.parsePattern()];
+                while (this.matchOperator(','))
+                    patterns.push(this.parsePattern());
+                let guard: Expression | null = null;
+                if (this.matchKeyword('when'))
+                    guard = this.parseExpression();
+                this.expectOperator(':', '":" depois do padrão');
+                const body = this.parseBlock();
+                branches.push({ span: span(first, body.span), patterns, guard, body });
+            }
+            catch (error) {
+                this.report(error);
+                this.synchronize();
+            }
+        }
+        const end = this.expect('dedent', undefined, 'o fim do match');
+        if (branches.length === 0)
+            throw this.failure('O match precisa de pelo menos um padrão.', start);
+        return { kind: 'match', span: span(start, end), value, branches };
+    }
+    private parsePattern(): Pattern {
+        const token = this.peek();
+        if (token.kind === 'identifier' && token.value === '_') {
+            this.next();
+            return { kind: 'wildcard', span: token };
+        }
+        if (token.kind === 'keyword' && token.value === 'var') {
+            this.next();
+            const name = this.expectIdentifier('o nome da variável do padrão');
+            return { kind: 'binding', span: span(token, name), name: name.value };
+        }
+        if (token.kind === 'operator' && token.value === '[') {
+            this.next();
+            const elements: Pattern[] = [];
+            let open = false;
+            while (!this.checkOperator(']')) {
+                if (this.checkOperator('.') && this.checkOperator('.', 1)) {
+                    this.next();
+                    this.next();
+                    open = true;
+                    if (!this.checkOperator(']'))
+                        throw this.failure('".." precisa ser o último elemento do padrão de lista.', this.peek());
+                    break;
+                }
+                elements.push(this.parsePattern());
+                if (!this.matchOperator(','))
+                    break;
+            }
+            const end = this.expectOperator(']');
+            return { kind: 'array', span: span(token, end), elements, open };
+        }
+        if (token.kind === 'operator' && token.value === '{') {
+            this.next();
+            const entries: DictionaryPatternEntry[] = [];
+            let open = false;
+            while (!this.checkOperator('}')) {
+                if (this.checkOperator('.') && this.checkOperator('.', 1)) {
+                    this.next();
+                    this.next();
+                    open = true;
+                    if (!this.checkOperator('}'))
+                        throw this.failure('".." precisa ser o último elemento do padrão de dicionário.', this.peek());
+                    break;
+                }
+                const key = this.parseExpression();
+                let value: Pattern | null = null;
+                if (this.matchOperator(':'))
+                    value = this.parsePattern();
+                entries.push({ key, value });
+                if (!this.matchOperator(','))
+                    break;
+            }
+            const end = this.expectOperator('}');
+            return { kind: 'dictionary', span: span(token, end), entries, open };
+        }
+        const value = this.parseExpression();
+        return { kind: 'value', span: value.span, value };
+    }
+    parseExpression(): Expression {
+        return this.parseAs();
+    }
+    private parseAs(): Expression {
+        let expression = this.parseTernary();
+        while (this.checkKeyword('as')) {
+            this.next();
+            const target = this.parseType('o tipo depois de "as"');
+            expression = { kind: 'as', span: span(expression.span, target.span), value: expression, target };
+        }
+        return expression;
+    }
+    private parseTernary(): Expression {
+        const whenTrue = this.parseOr();
+        if (!this.checkKeyword('if'))
+            return whenTrue;
+        this.next();
+        const condition = this.parseOr();
+        if (!this.matchKeyword('else'))
+            throw this.failure('O "if" de uma expressão precisa de "else": valor if condição else outro.', this.peek());
+        const whenFalse = this.parseTernary();
+        return { kind: 'ternary', span: span(whenTrue.span, whenFalse.span), condition, whenTrue, whenFalse };
+    }
 }
