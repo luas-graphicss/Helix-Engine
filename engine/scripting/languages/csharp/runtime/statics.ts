@@ -1056,3 +1056,77 @@ export const COLOR = Object.assign(function Color(r: unknown = 0, g: unknown = 0
         return { r: ((value >> 16) & 255) / 255, g: ((value >> 8) & 255) / 255, b: (value & 255) / 255, a: match[2] ? parseInt(match[2], 16) / 255 : 1 };
     },
 });
+export const ARRAY = ARRAY_STATICS;
+export const ENUMERABLE = ENUMERABLE_STATICS;
+export const ENVIRONMENT: Record<string, unknown> = {
+    NewLine: '\n',
+    TickCount: 0,
+    get TickCount64() {
+        return Math.floor(performance.now());
+    },
+    ProcessorCount: typeof navigator === 'object' && navigator.hardwareConcurrency ? navigator.hardwareConcurrency : 1,
+    MachineName: 'helix',
+    UserName: 'jogador',
+    Version: { Major: 8, Minor: 0, ToString: () => '8.0' },
+    GetEnvironmentVariable: () => null,
+    Exit: () => {
+        throw new InvalidOperationException('Environment.Exit não existe num jogo no navegador.');
+    },
+};
+Object.defineProperty(ENVIRONMENT, 'TickCount', { get: () => Math.floor(performance.now()) });
+export const GUID: Record<string, unknown> = {
+    NewGuid: () => ({
+        $value: typeof crypto === 'object' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now().toString(16)}-${Math.random().toString(16).slice(2)}`,
+        ToString() {
+            return this.$value;
+        },
+        Equals(other: unknown) {
+            return typeof other === 'object' && other !== null && (other as {
+                $value?: string;
+            }).$value === this.$value;
+        },
+        GetHashKey() {
+            return `guid:${this.$value}`;
+        },
+    }),
+    Empty: { $value: '00000000-0000-0000-0000-000000000000', ToString: () => '00000000-0000-0000-0000-000000000000' },
+};
+export const NUMBER_METHODS: Record<string, (self: number, ...args: unknown[]) => unknown> = {
+    ToString: (self, specifier?) => (typeof specifier === 'string' ? formatNumber(self, specifier) : numberToString(self)),
+    CompareTo: (self, other) => {
+        const value = Number(other);
+        return self < value ? -1 : self > value ? 1 : 0;
+    },
+    Equals: (self, other) => self === other,
+    GetHashCode: (self) => (Number.isInteger(self) ? self : Math.floor(self * 1000003)),
+    GetType: (self) => (Number.isInteger(self) ? { Name: 'Int32', FullName: 'System.Int32', ToString: () => 'System.Int32' } : { Name: 'Double', FullName: 'System.Double', ToString: () => 'System.Double' }),
+    GetTypeCode: (self) => (Number.isInteger(self) ? 9 : 14),
+    HasFlag: (self, flag) => (self & toInt(flag)) === toInt(flag),
+};
+export const BOOL_METHODS: Record<string, (self: boolean, ...args: unknown[]) => unknown> = {
+    ToString: (self) => (self ? 'True' : 'False'),
+    CompareTo: (self, other) => (self === other ? 0 : self ? 1 : -1),
+    Equals: (self, other) => self === other,
+    GetHashCode: (self) => (self ? 1 : 0),
+    GetType: () => ({ Name: 'Boolean', FullName: 'System.Boolean', ToString: () => 'System.Boolean' }),
+};
+export const DELEGATE_METHODS: Record<string, (self: Fn, ...args: unknown[]) => unknown> = {
+    Invoke: (self, ...args) => self(...args),
+    DynamicInvoke: (self, args) => self(...(Array.isArray(args) ? args : [args])),
+    GetInvocationList: (self) => ((self as {
+        $targets?: Fn[];
+    }).$targets ?? [self]).slice(),
+    Equals: (self, other) => self === other,
+    GetType: () => ({ Name: 'Delegate', FullName: 'System.Delegate', ToString: () => 'System.Delegate' }),
+    ToString: (self) => `Method ${self.name || 'anônimo'}`,
+};
+export const TASK_METHODS: Record<string, (self: Promise<unknown>, ...args: unknown[]) => unknown> = {
+    ContinueWith: (self, fn) => self.then((value) => (fn as Fn)(Promise.resolve(value)), (error: unknown) => (fn as Fn)(Promise.reject(error))),
+    GetAwaiter: (self) => self,
+    ConfigureAwait: (self) => self,
+    Wait: () => {
+        throw new InvalidOperationException('Task.Wait() bloquearia o jogo: use await.');
+    },
+    GetType: () => ({ Name: 'Task', FullName: 'System.Threading.Tasks.Task', ToString: () => 'System.Threading.Tasks.Task' }),
+    ToString: () => 'Task',
+};
