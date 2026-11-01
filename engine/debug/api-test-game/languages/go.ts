@@ -561,5 +561,285 @@ func soltarCaixa() {
 	})
 	api("material").Invoke("setColor", caixa, random.Invoke("color"))
 	pontos++
+	api("gui").Invoke("bind", "pontos", pontos)
+	api("events").Invoke("emit", "debug.caixa", opts{"nome": caixa.Get("name")})
+}
+
+func interfaceGrafica() helix.Value {
+	g := api("gui")
+	g.Invoke("css", "DebugEstilo")
+	hud := g.Invoke("html", "DebugHud", opts{"id": "debug-hud"})
+	checar("gui.html", !hud.IsNone() && !g.Invoke("element", "#debug-hud").IsNone())
+	icone := g.Invoke("svg", "DebugIcone", opts{"id": "debug-icone"})
+	checar("gui.svg", !icone.IsNone())
+	slot := g.Invoke("element", "[data-slot=icone]")
+	if !slot.IsNone() && !icone.IsNone() {
+		slot.Invoke("appendChild", icone)
+	}
+	checar("gui.bind", g.Invoke("bind", "linguagem", linguagem).Number() >= 1)
+	g.Invoke("bind", "titulo", "Helix · Debug")
+	assinar(g.Invoke("onAction", "caixa", func() { soltarCaixa() }))
+	assinar(g.Invoke("onAction", "reiniciar", func() { api("play").Invoke("restart") }))
+	checar("gui.elements", g.Invoke("elements", "[data-bind]").Len() >= 5)
+	checar("gui.size", numero(g.Get("size"), "width") > 0)
+	escala := func(scale, offset float64) opts { return opts{"scale": scale, "offset": offset} }
+	declarativa := g.Invoke("create", "DebugTela", opts{"referenceSize": opts{"x": 1280, "y": 720}})
+	painel := g.Invoke("add", declarativa, "frame", opts{
+		"name": "Painel",
+		"rect": opts{
+			"position": opts{"x": escala(1, -236), "y": escala(0, 16)},
+			"size":     opts{"x": escala(0, 220), "y": escala(0, 48)},
+		},
+	})
+	g.Invoke("add", declarativa, "text", opts{"name": "Rotulo", "text": "Tela declarativa OK"}, painel.Path("node.id"))
+	checar("gui.add/find", textoIgual(g.Invoke("find", declarativa, "Rotulo").Get("kind"), "text"))
+	g.Invoke("setText", declarativa, "Rotulo", "Tela declarativa OK · "+linguagem)
+	                                                                                   
+	return g.Invoke("show", declarativa, "debug-tela").Invoke("then", func(args []helix.Value) {
+		g := api("gui")
+		tela = arg(args, 0)
+		checar("gui.show/isShown", !tela.IsNone() && g.Invoke("isShown", tela).Bool())
+		checar("gui.kinds", contem(g.Invoke("kinds"), "button"))
+	})
+}
+
+func audio() helix.Value {
+	a, s := api("audio"), api("scene")
+	checar("audio.supported", a.Get("supported").IsBool())
+	mixer := a.Get("mixer")
+	mixer.Invoke("setVolumeDb", "sfx", -3)
+	checar("mixer.setVolumeDb", numero(mixer.Invoke("bus", "sfx"), "volumeDb") == -3)
+	checar("audio.clips", a.Invoke("clips").IsArray())
+	fonte := s.Invoke("spawn", "sound", opts{"name": "FonteSonora", "position": v3(3, 1, 3), "audioSource": opts{"trigger": "manual", "spatial": true}})
+	checar("spawn sound", !fonte.Get("audioSource").IsNone())
+	fontes := a.Get("sources")
+	fontes.Invoke("set", fonte, opts{"volumeDb": -4})
+	checar("sources.set", numero(fonte.Get("audioSource"), "volumeDb") == -4)
+	checar("sources.isPlaying", falso(fontes.Invoke("isPlaying", fonte)))
+	return helix.Undefined()
+}
+
+func vfx() helix.Value {
+	v := api("vfx")
+	ids := v.Get("templates").Invoke("ids")
+	checar("vfx.templates", ids.Len() > 0)
+	checar("vfx.moduleKinds", v.Invoke("moduleKinds").Len() > 0)
+	doc := v.Invoke("fromTemplate", ids.At(0), "DebugFaiscas")
+	doc = v.Invoke("addEmitter", doc, opts{"name": "Extra", "maxParticles": 50})
+	doc = v.Invoke("set", doc, opts{"loop": true})
+	checar("vfx.fromTemplate/addEmitter", doc.Get("emitters").Len() >= 2 && verdadeiro(doc.Get("loop")))
+	return v.Invoke("save", doc, "DebugFaiscas").Invoke("then", func(args []helix.Value) {
+		v := api("vfx")
+		ativo := arg(args, 0)
+		checar("vfx.save", !ativo.IsNone() && textoIgual(ativo.Get("kind"), "vfx"))
+		ator := v.Invoke("emitAt", ativo, v3(0, 1.5, -8), opts{"destroyWhenFinished": false})
+		checar("vfx.emitAt", verdadeiro(v.Invoke("has", ator)))
+		v.Invoke("burst", ator, 20)
+		checar("vfx.stats", v.Invoke("stats").Get("effects").IsNumber())
+	})
+}
+
+                                                                                          
+
+func aoTeclar(e helix.Value) {
+	if e.Get("repeat").Bool() {
+		return
+	}
+	switch e.Get("code").String() {
+	case "KeyR":
+		api("play").Invoke("restart")
+	case "KeyB":
+		soltarCaixa()
+	case "KeyE":
+		api("events").Invoke("emit", "debug.ping", opts{"origem": "teclado", "quadro": api("time").Get("frame")})
+	case "KeyF":
+		api("camera").Invoke("shake", 0.4, 0.6)
+	case "KeyG":
+		if !efeito.IsUndefined() {
+			ligado := !efeito.Get("enabled").Bool()
+			efeito.Set("enabled", ligado)
+			if ligado {
+				info("Efeito DebugPost ligado")
+			} else {
+				info("Efeito DebugPost desligado")
+			}
+		}
+	case "KeyT":
+		tm := api("time")
+		if numero(tm, "scale") == 1 {
+			tm.Set("scale", 0.3)
+		} else {
+			tm.Set("scale", 1)
+		}
+		info("time.scale = %g", numero(tm, "scale"))
+	case "KeyH":
+		if !tela.IsUndefined() {
+			g := api("gui")
+			if g.Invoke("isShown", tela).Bool() {
+				g.Invoke("hide", tela)
+			} else {
+				g.Invoke("show", tela, "debug-tela")
+			}
+		}
+	case "KeyL":
+		var nomes []string
+		for _, luz := range api("light").Invoke("all", opts{"local": true}).Slice() {
+			nomes = append(nomes, nomeDe(luz.Get("entity")))
+		}
+		info("Luzes locais: %s", strings.Join(nomes, ", "))
+	}
+}
+
+func cliqueNaCena(x, y float64) {
+	c := api("camera")
+	alvo := c.Invoke("pick", x, y)
+	ponto := c.Invoke("pickPoint", x, y)
+	if !alvo.IsNone() {
+		info("Clique em %s", nomeDe(alvo))
+	}
+	if !ponto.IsNone() {
+		api("debug").Invoke("sphere", ponto, 0.3, "#ff006e", 2)
+	}
+}
+
+func entrada() helix.Value {
+	in := api("input")
+	acoes := in.Get("actions")
+	acoes.Invoke("define", "pular", []string{"Space", "Gamepad:0"})
+	acoes.Invoke("define", "soltar", []string{"KeyB"})
+	checar("actions.define/bindings", acoes.Invoke("bindings", "pular").Len() >= 1)
+	checar("action()", textoIgual(in.Invoke("action", "pular").Get("name"), "pular") && acoes.Invoke("down", "pular").IsBool())
+	checar("isDown", falso(in.Invoke("isDown", "KeyW")))
+	checar("pointer", in.Path("pointer.x").IsNumber())
+	checar("gamepads", in.Invoke("gamepads").IsArray())
+	checar("axis2d", in.Invoke("axis2d", opts{"up": "KeyW", "down": "KeyS", "left": "KeyA", "right": "KeyD"}).Get("x").IsNumber())
+	teclas := in.Invoke("keysDown")
+	checar("keysDown", teclas.IsObject() || teclas.IsArray())
+	assinar(in.Invoke("onKeyDown", func(args []helix.Value) { aoTeclar(arg(args, 0)) }))
+	assinar(in.Invoke("onPointerDown", func(args []helix.Value) {
+		e := arg(args, 0)
+		if numero(e, "button") == 0 {
+			cliqueNaCena(numero(e, "x"), numero(e, "y"))
+		}
+	}))
+	assinar(in.Invoke("onGamepadButtonDown", func(args []helix.Value) {
+		e := arg(args, 0)
+		info("Gamepad %g botão %g", numero(e, "pad"), numero(e, "button"))
+	}))
+	return helix.Undefined()
+}
+
+func eventos() helix.Value {
+	ev, play := api("events"), api("play")
+	                                                                                
+	recebido := helix.Undefined()
+	desligar := ev.Invoke("on", "debug.ping", func(args []helix.Value) { recebido = arg(args, 0) })
+	checar("events.emit conta ouvintes", ev.Invoke("emit", "debug.ping", opts{"origem": "teste"}).Number() == 1)
+	checar("events.on recebe", !recebido.IsUndefined() && textoIgual(recebido.Get("origem"), "teste"))
+	checar("listenerCount", ev.Invoke("listenerCount", "debug.ping").Number() == 1)
+	desligar.Call()
+	checar("unsubscribe", ev.Invoke("listenerCount", "debug.ping").Number() == 0)
+	umaVez := 0
+	ev.Invoke("once", "debug.once", func() { umaVez++ })
+	ev.Invoke("emit", "debug.once")
+	ev.Invoke("emit", "debug.once")
+	checar("events.once", umaVez == 1)
+	assinar(ev.Invoke("on", "debug.ping", func(args []helix.Value) { info("ping de %v", arg(args, 0).Get("origem")) }))
+	assinar(ev.Invoke("on", "debug.caixa", func(args []helix.Value) { depurar("caixa %v", arg(args, 0).Get("nome")) }))
+	doAtor := 0
+	assinar(ev.Invoke("onEntity", torus, "toque", func() { doAtor++ }))
+	ev.Invoke("emitEntity", torus, "toque")
+	checar("onEntity/emitEntity", doAtor == 1)
+	assinar(play.Invoke("onStopped", func() { info("play.onStopped disparou") }))
+	assinar(play.Invoke("onPaused", func() { info("pausado") }))
+	assinar(play.Invoke("onResumed", func() { info("retomado") }))
+	return helix.Undefined()
+}
+
+                                                                                 
+func tempo() helix.Value {
+	tm := api("time")
+	checar("time.now", numero(tm, "now") >= 0 && numero(tm, "frame") >= 0)
+	checar("time.delta", numero(tm, "delta") >= 0 && numero(tm, "fixedDelta") > 0)
+	inicio := numero(tm, "now")
+	return tm.Invoke("wait", 0.1).Invoke("then", func(args []helix.Value) helix.Value {
+		tm := api("time")
+		decorrido := numero(tm, "now") - inicio
+		checarf("time.wait", decorrido >= 0.09, "%.3f", decorrido)
+		quadro := tm.Get("frame").Int()
+		return tm.Invoke("waitFrames", 2).Invoke("then", func(args []helix.Value) helix.Value {
+			tm := api("time")
+			agora := tm.Get("frame").Int()
+			checarf("time.waitFrames", agora >= quadro+2, "%d", agora-quadro)
+			assinar(tm.Invoke("every", 2, func() { api("gui").Invoke("bind", "atores", api("scene").Invoke("count")) }))
+			disparou := false
+			tm.Invoke("delay", 0.2, func() { disparou = true })
+			return tm.Invoke("wait", 0.3).Invoke("then", func(args []helix.Value) { checar("time.delay", disparou) })
+		})
+	})
+}
+
+func dados() helix.Value {
+	return api("storage").Invoke("ready").Invoke("then", func(args []helix.Value) helix.Value {
+		st := api("storage")
+		atual := st.Invoke("get", "execucoes", 0)
+		execucoes := 1
+		if atual.IsNumber() {
+			execucoes = atual.Int() + 1
+		}
+		return st.Invoke("set", "execucoes", execucoes).Invoke("then", func(args []helix.Value) helix.Value {
+			st := api("storage")
+			checarf("storage.get/set", st.Invoke("get", "execucoes").Int() == execucoes && st.Invoke("has", "execucoes").Bool(), "%d", execucoes)
+			info("Execução nº %d deste jogo de teste neste projeto.", execucoes)
+			return api("assets").Invoke("data", "DebugConfig").Invoke("then", func(args []helix.Value) helix.Value {
+				cfg := arg(args, 0)
+				checar("assets.data (TOML)", !cfg.IsNone() && !cfg.Get("jogador").IsNone() && numero(cfg.Get("jogador"), "velocidade") == 6.5)
+				return api("assets").Invoke("text", "DebugConfig").Invoke("then", func(args []helix.Value) {
+					checar("assets.text", strings.Contains(arg(args, 0).String(), "velocidade"))
+					ativos := api("assets")
+					checar("assets.byName", !ativos.Invoke("byName", "DebugJogo", "script").IsNone())
+					checar("assets.exists", ativos.Invoke("exists", "DebugUtil").Bool() && !ativos.Invoke("exists", "NaoExiste").Bool())
+					checar("assets.search", ativos.Invoke("search", "Debug").Len() >= 5)
+					checar("project.name", api("project").Get("name").IsString())
+					checar("project.stats", numero(api("project").Get("stats"), "entities") > 0)
+					checar("net.localPlayer", verdadeiro(api("net").Path("localPlayer.local")))
+					checar("play.state", textoIgual(api("play").Get("state"), "playing") && verdadeiro(api("play").Get("isRunning")))
+				})
+			})
+		})
+	})
+}
+
+                                                                                                
+                                                      
+func recuperar() (resultado helix.Value) {
+	defer func() {
+		if r := recover(); r != nil {
+			checarf("recover captura o panic", strings.Contains(fmt.Sprint(r), "proposital"), "%v", r)
+		}
+	}()
+	panic("panic proposital dentro da área, recuperado antes de chegar à engine")
+}
+
+                                                                                                  
+func rejeitar() helix.Value {
+	promessa := api("time").Invoke("wait", 0)
+	return promessa.Get("constructor").Invoke("reject", "erro proposital: a rejeição vira ERRO na cadeia")
+}
+
+                                                                                           
+
+type area struct {
+	nome  string
+	rodar func() helix.Value
+	                                                                                          
+	esperaErro bool
+}
+
+var areas = []area{
+	{"Núcleo", nucleo, false},
+	{"Módulo (Require)", modulo, false},
+	{"Matemática", matematica, false},
+	{"Cena", cena, false},
 `;
 }
