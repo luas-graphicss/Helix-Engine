@@ -33,7 +33,7 @@ export function ImportMeshesTab({ draft }: ImportMeshesTabProps) {
           Nenhuma
         </Button>
       </div>
-      <p className="px-2 py-1 font-mono text-[10px] text-muted-foreground">
+      <p className="px-2 py-1 font-mono text-3xs text-muted-foreground">
         {formatInteger(included)} de {formatInteger(scene.meshes.length)} {scene.meshes.length === 1 ? 'malha incluída' : 'malhas incluídas'}
       </p>
       <ul className="flex flex-col" aria-label="Malhas do arquivo">
@@ -45,12 +45,12 @@ export function ImportMeshesTab({ draft }: ImportMeshesTabProps) {
               <CheckBox checked={isIncluded} label={`Incluir ${mesh.name}`} onChange={(checked) => setMeshIncluded(index, checked)}/>
               <div className="flex min-w-0 flex-col">
                 <span className="truncate text-2xs text-foreground">{mesh.name}</span>
-                <span className="truncate text-[10px] text-muted-foreground">
+                <span className="truncate text-3xs text-muted-foreground">
                   {materialName}
                   {flags && ` · ${flags}`}
                 </span>
               </div>
-              <span className="font-mono text-[10px] tabular-nums text-muted-foreground">{formatInteger(triangles)} tris</span>
+              <span className="font-mono text-3xs tabular-nums text-muted-foreground">{formatInteger(triangles)} tris</span>
             </li>);
         })}
         {rows.length === 0 && <li className="p-4 text-center text-2xs text-muted-foreground">Nenhuma malha corresponde ao filtro.</li>}
