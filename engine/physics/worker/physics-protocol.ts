@@ -264,3 +264,45 @@ export function decodeShape(record: ShapeRecord): ColliderShape | null {
         }
     }
 }
+export function encodeBody(body: RigidBody, slot: number, transfer: Transferable[]): BodyRecord {
+    return {
+        id: body.id,
+        slot,
+        type: body.type,
+        shape: encodeShape(body.shape, transfer),
+        position: triple(body.position),
+        orientation: quadruple(body.orientation),
+        mass: body.mass,
+        friction: body.friction,
+        restitution: body.restitution,
+        linearDamping: body.linearDamping,
+        angularDamping: body.angularDamping,
+        gravityScale: body.gravityScale,
+        canSleep: body.canSleep,
+        layer: body.layer,
+        collisionMask: body.collisionMask,
+    };
+}
+export function encodeJoint(joint: Joint): JointRecord {
+    return { id: joint.id, bodyA: joint.bodyA.id, bodyB: joint.bodyB.id, definition: cloneJointDefinition(joint.definition) };
+}
+export function cloneSettings(settings: PhysicsSettings): PhysicsSettings {
+    return { ...settings, gravity: new Float32Array(settings.gravity) };
+}
+export function settingsSignature(settings: PhysicsSettings): string {
+    const parts: (number | boolean)[] = [settings.gravity[0], settings.gravity[1], settings.gravity[2]];
+    for (const key of Object.keys(settings).sort()) {
+        if (key === 'gravity')
+            continue;
+        const value = (settings as unknown as Record<string, unknown>)[key];
+        if (typeof value === 'number' || typeof value === 'boolean')
+            parts.push(value);
+    }
+    return parts.join('|');
+}
+export function waterSignature(water: WaterSettings): string {
+    return `${water.enabled ? 1 : 0}|${water.level}|${water.waveHeight}|${water.waveLength}|${water.waveSpeed}|${water.waveDirection}|${water.choppiness}|${water.ripples}`;
+}
+export function copyMatrix(matrix: Mat4): Float32Array {
+    return mat4.copy(mat4.create(), matrix) as Float32Array;
+}
