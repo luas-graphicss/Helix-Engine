@@ -37,7 +37,7 @@ export function copyGizmoFrame(out: GizmoFrame, frame: GizmoFrame): GizmoFrame {
 }
 const forward = vec3.create();
 const toOrigin = vec3.create();
-export function computeGizmoFrame(out: GizmoFrame, worldMatrix: Mat4, camera: PerspectiveCamera, localAxes: boolean): boolean {
+export function computeGizmoFrame(out: GizmoFrame, worldMatrix: Mat4, camera: PerspectiveCamera, localAxes: boolean, scale = 1): boolean {
     mat4.getTranslation(out.origin, worldMatrix);
     vec3.subtract(forward, camera.target, camera.position);
     vec3.normalize(forward, forward);
@@ -45,7 +45,7 @@ export function computeGizmoFrame(out: GizmoFrame, worldMatrix: Mat4, camera: Pe
     const depth = vec3.dot(toOrigin, forward);
     if (depth <= camera.near)
         return false;
-    out.size = depth * Math.tan(degToRad(camera.fovDegrees) / 2) * 2 * GIZMO_SCREEN_FRACTION;
+    out.size = depth * Math.tan(degToRad(camera.fovDegrees) / 2) * 2 * GIZMO_SCREEN_FRACTION * scale;
     for (let i = 0; i < 3; i++) {
         const axis = out.axes[i];
         vec3.set(axis, i === 0 ? 1 : 0, i === 1 ? 1 : 0, i === 2 ? 1 : 0);
