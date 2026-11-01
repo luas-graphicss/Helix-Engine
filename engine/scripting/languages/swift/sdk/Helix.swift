@@ -446,26 +446,179 @@ extension Bool: ValueConvertible {
   public var value: Value { hxReady(); return Value(owned: hx_boolean(self ? 1 : 0)) }
 }
 
+extension String: ValueConvertible {
+  public var value: Value {
+    hxReady()
+    return hxWithBytes(self) { Value(owned: hx_string($0, $1)) }
+  }
+}
 
+extension Substring: ValueConvertible {
+  public var value: Value { String(self).value }
+}
 
+extension Array: ValueConvertible where Element: ValueConvertible {
+  public var value: Value { Value.list(self.map { $0 as ValueConvertible }) }
+}
 
+extension Dictionary: ValueConvertible where Key == String, Value: ValueConvertible {
+  public var value: Helix.Value {
+    let object = Helix.Value.object()
+    for (key, item) in self { object.set(key, item) }
+    return object
+  }
+}
 
+extension Optional: ValueConvertible where Wrapped: ValueConvertible {
+  public var value: Value {
+    switch self {
+    case .some(let wrapped): return wrapped.value
+    case .none: return Value.null()
+    }
+  }
+}
 
                                                                                              
 
+enum HelixCallbacks {
+  static var table: [UInt32: ([Value]) -> ValueConvertible] = [:]
+  static var next: UInt32 = 1
+
+  static func register(_ body: @escaping ([Value]) -> ValueConvertible) -> UInt32 {
+    let id = next
+    next = next &+ 1
+    if next == 0 { next = 1 }
+    table[id] = body
+    return id
+  }
+}
 
                                                                                     
+@_expose(wasm, "__hx_invoke_callback")
+@_cdecl("__hx_invoke_callback")
+func __hx_invoke_callback(_ id: UInt32, _ args: UInt32) -> UInt32 {
+  guard let body = HelixCallbacks.table[id] else { return 0 }
+  let list = Value(adopting: args).array
+  return body(list).value.intoRaw()
+}
 
                                                                                         
+@_expose(wasm, "__hx_drop_callback")
+@_cdecl("__hx_drop_callback")
+func __hx_drop_callback(_ id: UInt32) {
+  HelixCallbacks.table[id] = nil
+}
 
                                                                                                  
 
                                                                                                 
+public enum Helix {
+  public typealias Value = HelixScript.Value
+
+                                                                                               
+  public static var root: Value {
+    hxReady()
+    return Value.acquire(hxCheck(hx_root(), #fileID, #line), #fileID, #line)
+  }
+
+                                                                                
+  public static var entity: Value {
+    hxReady()
+    return Value.acquire(hxCheck(hx_self(), #fileID, #line), #fileID, #line)
+  }
+
+                                                                     
+  public static var script: Value {
+    hxReady()
+    return Value.acquire(hxCheck(hx_script(), #fileID, #line), #fileID, #line)
+  }
+
+                                                                                                 
+  @discardableResult
+  public static func require(_ name: String, file: StaticString = #fileID, line: UInt = #line) -> Value {
+    hxReady()
+    return hxWithBytes(name) { Value.acquire(hxCheck(hx_require($0, $1), file, line), file, line) }
+  }
+
+                                             
+  public static func now() -> Double {
+    hxReady()
+    return hx_now()
+  }
+
+  public static func log(_ level: Level, _ message: String) {
+    hxReady()
+    hxWithBytes(message) { hx_log(level.rawValue, $0, $1) }
+  }
+
+                                                                                       
+  public static func log(_ parts: Any...) { log(.info, join(parts)) }
+  public static func debug(_ parts: Any...) { log(.debug, join(parts)) }
+  public static func warn(_ parts: Any...) { log(.warn, join(parts)) }
+  public static func error(_ parts: Any...) { log(.error, join(parts)) }
+
+                                                                                      
+  public static func fail(_ message: String, file: StaticString = #fileID, line: UInt = #line) -> Never {
+    fatalError(message, file: file, line: line)
+  }
+
+  public static func vec3(_ x: Double, _ y: Double, _ z: Double) -> Vec3 { Vec3(x, y, z) }
+
+  static func join(_ parts: [Any]) -> String {
+    parts.map { part -> String in
+      if let value = part as? Value { return value.string }
+      if let text = part as? String { return text }
+      return String(describing: part)
+    }.joined(separator: " ")
+  }
+}
 
                                                                                    
+public func log(_ parts: Any...) { Helix.log(.info, Helix.join(parts)) }
+public func warn(_ parts: Any...) { Helix.log(.warn, Helix.join(parts)) }
+@discardableResult
+public func require(_ name: String, file: StaticString = #fileID, line: UInt = #line) -> Value { Helix.require(name, file: file, line: line) }
 
                                                                                              
 
                                                                                       
                                                                                           
                                                                                                 
+open class Script {
+  public init() {}
+
+                                                        
+  public var helix: Value { Helix.root }
+                                     
+  public var entity: Value { Helix.entity }
+                                                                      
+  public var script: Value { Helix.script }
+
+  public func log(_ parts: Any...) { Helix.log(.info, Helix.join(parts)) }
+  public func warn(_ parts: Any...) { Helix.log(.warn, Helix.join(parts)) }
+  @discardableResult
+  public func require(_ name: String, file: StaticString = #fileID, line: UInt = #line) -> Value { Helix.require(name, file: file, line: line) }
+
+                  
+  open func onLoad() {}
+  open func onStart() {}
+  open func onUpdate(_ dt: Double) {}
+  open func onFixedUpdate(_ h: Double) {}
+  open func onLateUpdate(_ dt: Double) {}
+  open func onRender(_ frame: Value) {}
+  open func onEnable() {}
+  open func onDisable() {}
+  open func onStop() {}
+  open func onDestroy() {}
+                                                                                 
+  open func onBeforeHotReload() -> Value { Value.undefined }
+  open func onHotReload(_ previousState: Value) {}
+
+            
+  open func onCollisionBegin(_ other: Value, _ contact: Value) {}
+  open func onCollisionStay(_ other: Value, _ contact: Value) {}
+  open func onCollisionEnd(_ other: Value) {}
+  open func onTriggerEnter(_ other: Value) {}
+  open func onTriggerStay(_ other: Value) {}
+  open func onTriggerExit(_ other: Value) {}
+}
