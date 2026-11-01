@@ -412,3 +412,244 @@ function dateParts(date: Date, utc: boolean): {
         ? { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), weekday: date.getUTCDay(), hour: date.getUTCHours(), minute: date.getUTCMinutes(), second: date.getUTCSeconds() }
         : { year: date.getFullYear(), month: date.getMonth() + 1, day: date.getDate(), weekday: date.getDay(), hour: date.getHours(), minute: date.getMinutes(), second: date.getSeconds() };
 }
+function datetimeDict(date: Date, utc: boolean, options: {
+    date: boolean;
+    time: boolean;
+    weekday?: boolean;
+    dst?: boolean;
+}): Dictionary {
+    const parts = dateParts(date, utc);
+    const dict = new Dictionary();
+    if (options.date) {
+        dict.set('year', parts.year);
+        dict.set('month', parts.month);
+        dict.set('day', parts.day);
+        if (options.weekday !== false)
+            dict.set('weekday', parts.weekday);
+    }
+    if (options.time) {
+        dict.set('hour', parts.hour);
+        dict.set('minute', parts.minute);
+        dict.set('second', parts.second);
+    }
+    if (options.dst)
+        dict.set('dst', !utc && isDst(date));
+    return dict;
+}
+function isDst(date: Date): boolean {
+    const january = new Date(date.getFullYear(), 0, 1).getTimezoneOffset();
+    const july = new Date(date.getFullYear(), 6, 1).getTimezoneOffset();
+    return Math.max(january, july) !== date.getTimezoneOffset();
+}
+function dateString(date: Date, utc: boolean): string {
+    const parts = dateParts(date, utc);
+    return `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}`;
+}
+function timeString(date: Date, utc: boolean): string {
+    const parts = dateParts(date, utc);
+    return `${pad2(parts.hour)}:${pad2(parts.minute)}:${pad2(parts.second)}`;
+}
+function datetimeString(date: Date, utc: boolean, useSpace: unknown): string {
+    return `${dateString(date, utc)}${useSpace ? ' ' : 'T'}${timeString(date, utc)}`;
+}
+function dictField(dict: unknown, key: string, fallback: number): number {
+    if (dict instanceof Dictionary)
+        return int(dict.get(key), fallback);
+    if (dict !== null && typeof dict === 'object')
+        return int((dict as AnyRecord)[key], fallback);
+    return fallback;
+}
+function dateFromDict(dict: unknown): Date {
+    return new Date(Date.UTC(dictField(dict, 'year', 1970), dictField(dict, 'month', 1) - 1, dictField(dict, 'day', 1), dictField(dict, 'hour', 0), dictField(dict, 'minute', 0), dictField(dict, 'second', 0)));
+}
+function dateFromString(value: unknown, where: string): Date {
+    const source = text(value, where).trim();
+    const match = /^(?:(\d{4})-(\d{2})-(\d{2}))?[T ]?(?:(\d{2}):(\d{2})(?::(\d{2}))?)?$/.exec(source);
+    if (!match || source === '')
+        fail(`${where}: "${source}" não é uma data/hora no formato ISO 8601 (YYYY-MM-DDTHH:MM:SS).`);
+    const [, year, month, day, hour, minute, second] = match;
+    return new Date(Date.UTC(year ? Number(year) : 1970, month ? Number(month) - 1 : 0, day ? Number(day) : 1, hour ? Number(hour) : 0, minute ? Number(minute) : 0, second ? Number(second) : 0));
+}
+function fromUnix(value: unknown): Date {
+    return new Date(float(value) * 1000);
+}
+function createTime(context: GameContext): Singleton {
+    const started = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    function ticksMsec(): number {
+        const realtime = context.time.realtime;
+        if (typeof realtime === 'number' && Number.isFinite(realtime))
+            return Math.floor(realtime * 1000);
+        return Math.floor((typeof performance !== 'undefined' ? performance.now() : Date.now()) - started);
+    }
+    const time: Singleton = {
+        get_ticks_msec: () => ticksMsec(),
+        get_ticks_usec: () => ticksMsec() * 1000,
+        get_unix_time_from_system: () => Date.now() / 1000,
+        get_unix_time_from_datetime_dict: (dict: unknown) => Math.floor(dateFromDict(dict).getTime() / 1000),
+        get_unix_time_from_datetime_string: (value: unknown) => Math.floor(dateFromString(value, 'Time.get_unix_time_from_datetime_string()').getTime() / 1000),
+        get_datetime_dict_from_system: (utc: unknown = false) => datetimeDict(new Date(), Boolean(utc), { date: true, time: true, dst: true }),
+        get_datetime_dict_from_unix_time: (unix: unknown) => datetimeDict(fromUnix(unix), true, { date: true, time: true }),
+        get_datetime_string_from_system: (utc: unknown = false, useSpace: unknown = false) => datetimeString(new Date(), Boolean(utc), useSpace),
+        get_datetime_string_from_unix_time: (unix: unknown, useSpace: unknown = false) => datetimeString(fromUnix(unix), true, useSpace),
+        get_datetime_string_from_datetime_dict: (dict: unknown, useSpace: unknown = false) => datetimeString(dateFromDict(dict), true, useSpace),
+        get_datetime_dict_from_datetime_string: (value: unknown, weekday: unknown = true) => datetimeDict(dateFromString(value, 'Time.get_datetime_dict_from_datetime_string()'), true, { date: true, time: true, weekday: Boolean(weekday) }),
+        get_date_dict_from_system: (utc: unknown = false) => datetimeDict(new Date(), Boolean(utc), { date: true, time: false, dst: true }),
+        get_date_dict_from_unix_time: (unix: unknown) => datetimeDict(fromUnix(unix), true, { date: true, time: false }),
+        get_date_string_from_system: (utc: unknown = false) => dateString(new Date(), Boolean(utc)),
+        get_date_string_from_unix_time: (unix: unknown) => dateString(fromUnix(unix), true),
+        get_time_dict_from_system: (utc: unknown = false) => datetimeDict(new Date(), Boolean(utc), { date: false, time: true }),
+        get_time_dict_from_unix_time: (unix: unknown) => datetimeDict(fromUnix(unix), true, { date: false, time: true }),
+        get_time_string_from_system: (utc: unknown = false) => timeString(new Date(), Boolean(utc)),
+        get_time_string_from_unix_time: (unix: unknown) => timeString(fromUnix(unix), true),
+        get_time_zone_from_system: () => {
+            const now = new Date();
+            let name = 'UTC';
+            try {
+                name = Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
+            }
+            catch {
+            }
+            return new Dictionary({ bias: -now.getTimezoneOffset(), name });
+        },
+        get_offset_string_from_offset_minutes: (minutes: unknown) => {
+            const total = int(minutes);
+            const sign = total < 0 ? '-' : '+';
+            return `${sign}${pad2(Math.floor(Math.abs(total) / 60))}:${pad2(Math.abs(total) % 60)}`;
+        },
+    };
+    for (const [index, key] of WEEKDAY.entries())
+        time[key] = index;
+    const months = ['JANUARY', 'FEBRUARY', 'MARCH', 'APRIL', 'MAY', 'JUNE', 'JULY', 'AUGUST', 'SEPTEMBER', 'OCTOBER', 'NOVEMBER', 'DECEMBER'];
+    for (const [index, month] of months.entries())
+        time[`MONTH_${month}`] = index + 1;
+    return withConstants('Time', time);
+}
+function createEngine(context: GameContext, singletons: () => Record<string, Singleton>): Singleton {
+    context.ensurePhysicsClock();
+    let lastPhysicsAt = 0;
+    context.physicsListeners.add(() => {
+        lastPhysicsAt = Number(context.time.now ?? 0);
+    });
+    const stored = { max_physics_steps_per_frame: 8, physics_jitter_fix: 0.5, print_error_messages: true, print_to_stdout: true };
+    function ticksPerSecond(): number {
+        const fixed = Number(context.time.fixedDelta ?? 0);
+        return fixed > 0 ? Math.round(1 / fixed) : 60;
+    }
+    function setTicksPerSecond(value: unknown): void {
+        const ticks = Math.max(1, int(value, 60));
+        const set = context.physics.set as ((patch: AnyRecord) => void) | undefined;
+        if (typeof set === 'function') {
+            try {
+                set({ fixedTimestep: 1 / ticks });
+                return;
+            }
+            catch {
+            }
+        }
+        context.warnOnce('ticks', `Engine.physics_ticks_per_second: esta engine mantém o passo de física em ${ticksPerSecond()} Hz; ajuste-o nas configurações de física do projeto.`);
+    }
+    function timeScale(): number {
+        const scale = context.time.scale;
+        return typeof scale === 'number' ? scale : 1;
+    }
+    function setTimeScale(value: unknown): void {
+        const scale = Math.max(0, float(value, 1));
+        try {
+            context.time.scale = scale;
+        }
+        catch {
+            context.warnOnce('time_scale', 'Engine.time_scale: este host não permite alterar a escala de tempo.');
+        }
+    }
+    const engine: Singleton = {
+        get_frames_per_second: () => context.fps,
+        get_process_frames: () => int(context.time.frame),
+        get_physics_frames: () => context.physicsFrames,
+        get_frames_drawn: () => int(context.time.frame),
+        get_physics_interpolation_fraction: () => {
+            const fixed = Number(context.time.fixedDelta ?? 0);
+            if (fixed <= 0)
+                return 0;
+            return Math.max(0, Math.min(1, (Number(context.time.now ?? 0) - lastPhysicsAt) / fixed));
+        },
+        is_in_physics_frame: () => context.inPhysicsFrame,
+        is_editor_hint: () => Boolean(context.helix.isEditor),
+        is_embedded_in_editor: () => Boolean(context.helix.isEditor),
+        get_version_info: () => new Dictionary({ major: 4, minor: 3, patch: 0, hex: 0x040300, status: 'stable', build: 'helix', hash: '', timestamp: 0, string: '4.3.0.stable.helix' }),
+        get_main_loop: () => sceneTreeOf(context),
+        has_singleton: (name: unknown) => typeof name === 'string' && Object.prototype.hasOwnProperty.call(singletons(), name),
+        get_singleton: (name: unknown) => {
+            const all = singletons();
+            if (typeof name !== 'string' || !Object.prototype.hasOwnProperty.call(all, name))
+                fail(`Engine.get_singleton(): não existe o singleton "${str(name)}".`);
+            return all[name];
+        },
+        get_singleton_list: () => Object.keys(singletons()),
+        get_architecture_name: () => 'wasm32',
+        get_author_info: () => new Dictionary({ lead_developers: [], founders: [], project_managers: [], developers: [] }),
+        get_license_text: () => 'Godot Engine API compatibility layer for helix. MIT License.',
+        get_write_movie_path: () => '',
+        get_time_scale: () => timeScale(),
+        set_time_scale: (value: unknown) => setTimeScale(value),
+        get_max_fps: () => context.maxFps,
+        set_max_fps: (value: unknown) => {
+            context.maxFps = Math.max(0, int(value));
+        },
+        get_physics_ticks_per_second: () => ticksPerSecond(),
+        set_physics_ticks_per_second: (value: unknown) => setTicksPerSecond(value),
+        get time_scale() {
+            return timeScale();
+        },
+        set time_scale(value: unknown) {
+            setTimeScale(value);
+        },
+        get max_fps() {
+            return context.maxFps;
+        },
+        set max_fps(value: unknown) {
+            context.maxFps = Math.max(0, int(value));
+        },
+        get physics_ticks_per_second() {
+            return ticksPerSecond();
+        },
+        set physics_ticks_per_second(value: unknown) {
+            setTicksPerSecond(value);
+        },
+        get max_physics_steps_per_frame() {
+            return stored.max_physics_steps_per_frame;
+        },
+        set max_physics_steps_per_frame(value: unknown) {
+            stored.max_physics_steps_per_frame = Math.max(1, int(value, 8));
+        },
+        get physics_jitter_fix() {
+            return stored.physics_jitter_fix;
+        },
+        set physics_jitter_fix(value: unknown) {
+            stored.physics_jitter_fix = float(value, 0.5);
+        },
+        get print_error_messages() {
+            return stored.print_error_messages;
+        },
+        set print_error_messages(value: unknown) {
+            stored.print_error_messages = Boolean(value);
+        },
+        get print_to_stdout() {
+            return stored.print_to_stdout;
+        },
+        set print_to_stdout(value: unknown) {
+            stored.print_to_stdout = Boolean(value);
+        },
+    };
+    return withConstants('Engine', engine);
+}
+const WEB_FEATURES = new Set(['web', 'html5', 'javascript', 'wasm32', '32', 'debug', 'template', 'pc', 'helix']);
+function heapUsed(): number {
+    const memory = (typeof performance !== 'undefined' ? (performance as unknown as {
+        memory?: {
+            usedJSHeapSize?: number;
+            totalJSHeapSize?: number;
+            jsHeapSizeLimit?: number;
+        };
+    }).memory : undefined) ?? undefined;
+    return memory?.usedJSHeapSize ?? 0;
+}
