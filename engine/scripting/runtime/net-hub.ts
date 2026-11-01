@@ -264,4 +264,252 @@ export class NetHub {
         }
         return facade;
     }
+    private acceptConnection(endpoint: NetEndpoint): void {
+        let player: ServerPlayer | null = null;
+        let greeted = false;
+        const offMessage = endpoint.onMessage((message) => {
+            if (!player) {
+                if (message.t !== 'hello' || greeted)
+                    return;
+                greeted = true;
+                this.handleHello(endpoint, message, (admitted) => {
+                    player = admitted;
+                });
+                return;
+            }
+            this.handleServerMessage(player, message);
+        });
+        const offClose = endpoint.onClose((reason) => {
+            offMessage();
+            offClose();
+            if (player)
+                this.removePlayer(player, reason);
+        });
+    }
+    private handleHello(endpoint: NetEndpoint, hello: Extract<NetMessage, {
+        t: 'hello';
+    }>, admit: (player: ServerPlayer) => void): void {
+        const reject = (reason: string) => {
+            endpoint.send({ t: 'reject', reason });
+            endpoint.close(reason);
+        };
+        if (hello.protocol !== HELIX_NET_PROTOCOL)
+            return reject(`protocolo ${hello.protocol} não é o ${HELIX_NET_PROTOCOL} deste servidor`);
+        if (this.players.size >= this.maxPlayers)
+            return reject('sala cheia');
+        const requested = hello.name.trim().slice(0, 32) || `Jogador ${this.nextPlayerId}`;
+        const gate = this.gate;
+        if (!gate)
+            return admit(this.admitPlayer(endpoint, requested));
+        const settle = (verdict: unknown) => {
+            if (!endpoint.open)
+                return;
+            const reason = verdict === false ? 'entrada recusada' : typeof verdict === 'string' ? verdict : null;
+            if (reason) {
+                this.services.log('info', `Conexão de "${requested}" recusada: ${reason}.`);
+                return reject(reason);
+            }
+            if (this.players.size >= this.maxPlayers)
+                return reject('sala cheia');
+            const renamed = typeof verdict === 'object' && verdict !== null && typeof (verdict as {
+                name?: unknown;
+            }).name === 'string' ? (verdict as {
+                name: string;
+            }).name.trim().slice(0, 32) : '';
+            admit(this.admitPlayer(endpoint, renamed || requested));
+        };
+        let verdict: unknown;
+        try {
+            verdict = this.services.run(gate.owner, () => gate.fn(hello.ticket, { name: requested, protocol: hello.protocol }));
+        }
+        catch (cause) {
+            this.services.report(gate.owner, 'helix.net.authenticate', cause);
+            verdict = false;
+        }
+        if (verdict instanceof Promise) {
+            verdict.then(settle, (cause: unknown) => {
+                this.services.report(gate.owner, 'helix.net.authenticate', cause);
+                settle(false);
+            });
+            return;
+        }
+        settle(verdict);
+    }
+    private admitPlayer(endpoint: NetEndpoint, name: string): ServerPlayer {
+        const info: NetPlayerInfo = { id: this.nextPlayerId++, name, joinedAt: Math.round(this.serverTime) };
+        const player: ServerPlayer = { info, endpoint, calls: new Map(), unsubscribe: [] };
+        this.players.set(info.id, player);
+        endpoint.send({ t: 'welcome', player: info, players: Array.from(this.players.values(), (entry) => entry.info), state: this.stateSnapshot(), tickRate: this.tickRate, serverTime: Math.round(this.serverTime) });
+        for (const other of this.players.values())
+            if (other !== player)
+                other.endpoint.send({ t: 'playerJoined', player: info });
+        const seen = toNetPlayer(info, null, false);
+        this.services.emitBus('net.playerJoined', seen);
+        this.services.log('info', `${info.name} entrou no servidor (${this.players.size} de ${this.maxPlayers}).`);
+        return player;
+    }
+    private removePlayer(player: ServerPlayer, reason: string): void {
+        if (!this.players.delete(player.info.id))
+            return;
+        for (const other of this.players.values())
+            other.endpoint.send({ t: 'playerLeft', player: player.info, reason });
+        this.services.emitBus('net.playerLeft', { ...toNetPlayer(player.info, null, false), reason });
+        this.services.log('info', `${player.info.name} saiu do servidor (${reason}).`);
+    }
+    private handleServerMessage(player: ServerPlayer, message: NetMessage): void {
+        switch (message.t) {
+            case 'call':
+                void this.serveCall(player, message);
+                return;
+            case 'event':
+                this.dispatchListeners(this.serverListeners, message.name, [this.playerFor(player.info.id, 'server'), ...message.args], `net.on:${message.name}`);
+                return;
+            case 'result':
+                this.settle(message);
+                return;
+            case 'ping':
+                player.endpoint.send({ t: 'pong', at: message.at, serverTime: Math.round(this.serverTime) });
+                return;
+            default:
+                return;
+        }
+    }
+    private async serveCall(player: ServerPlayer, message: Extract<NetMessage, {
+        t: 'call';
+    }>): Promise<void> {
+        const entry = this.serverRpcs.get(message.name);
+        const reply = (result: Extract<NetMessage, {
+            t: 'result';
+        }>) => {
+            if (player.endpoint.open)
+                player.endpoint.send(result);
+        };
+        if (!entry) {
+            reply({ t: 'result', id: message.id, ok: false, error: `nenhum rpc chamado "${message.name}" está registrado no servidor` });
+            return;
+        }
+        if (!this.allowCall(player, message.name, entry.perSecond)) {
+            reply({ t: 'result', id: message.id, ok: false, error: `"${message.name}" passou do limite de ${entry.perSecond} chamadas por segundo` });
+            return;
+        }
+        try {
+            const value = await this.services.run(entry.owner, () => entry.fn(this.playerFor(player.info.id, 'server'), ...message.args));
+            if (value !== undefined && !isJsonValue(value))
+                throw new HelixError(`o rpc "${message.name}" devolveu algo que não é JSON; devolva ids e dados simples.`);
+            reply({ t: 'result', id: message.id, ok: true, value: (value ?? null) as JsonValue });
+        }
+        catch (cause) {
+            this.services.report(entry.owner, `net.rpc:${message.name}`, cause);
+            reply({ t: 'result', id: message.id, ok: false, error: describeThrown(cause) });
+        }
+    }
+    private allowCall(player: ServerPlayer, name: string, perSecond: number): boolean {
+        if (!Number.isFinite(perSecond) || perSecond <= 0)
+            return true;
+        const now = this.serverTime;
+        const recent = (player.calls.get(name) ?? []).filter((at) => now - at < 1000);
+        if (recent.length >= perSecond) {
+            player.calls.set(name, recent);
+            return false;
+        }
+        recent.push(now);
+        player.calls.set(name, recent);
+        return true;
+    }
+    private stateSnapshot(): JsonRecord {
+        const snapshot: JsonRecord = {};
+        for (const [key, value] of this.state)
+            snapshot[key] = value;
+        return snapshot;
+    }
+    private setState(key: string, value: JsonValue): void {
+        if (sameJson(this.state.get(key), value))
+            return;
+        this.state.set(key, structuredClone(value));
+        this.dirtyKeys.add(key);
+        this.removedKeys.delete(key);
+        if (!this.isAuthoritative)
+            this.applyStateDelta({ [key]: value }, []);
+    }
+    private removeState(key: string): boolean {
+        if (!this.state.delete(key))
+            return false;
+        this.dirtyKeys.delete(key);
+        this.removedKeys.add(key);
+        if (!this.isAuthoritative)
+            this.applyStateDelta({}, [key]);
+        return true;
+    }
+    private flushState(): void {
+        if (this.dirtyKeys.size === 0 && this.removedKeys.size === 0)
+            return;
+        const set: JsonRecord = {};
+        for (const key of this.dirtyKeys) {
+            const value = this.state.get(key);
+            if (value !== undefined)
+                set[key] = value;
+        }
+        const removed = Array.from(this.removedKeys);
+        this.dirtyKeys.clear();
+        this.removedKeys.clear();
+        for (const player of this.players.values())
+            player.endpoint.send({ t: 'state', set, removed });
+    }
+    private flushReplication(): void {
+        if (this.replicated.size === 0 || this.players.size === 0)
+            return;
+        const entities: Array<{
+            id: number;
+            name: string;
+            fields: JsonRecord;
+        }> = [];
+        for (const [entity, fields] of this.replicated) {
+            if (!this.services.entityAlive(entity)) {
+                this.replicated.delete(entity);
+                this.lastReplicated.delete(entity);
+                continue;
+            }
+            const previous = this.lastReplicated.get(entity) ?? {};
+            const changed: JsonRecord = {};
+            let any = false;
+            for (const field of fields) {
+                const value = readField(entity, field);
+                if (value === undefined || sameJson(previous[field], value))
+                    continue;
+                changed[field] = value;
+                previous[field] = value;
+                any = true;
+            }
+            this.lastReplicated.set(entity, previous);
+            if (any)
+                entities.push({ id: entity.id, name: entity.name, fields: changed });
+        }
+        if (entities.length === 0)
+            return;
+        for (const player of this.players.values())
+            player.endpoint.send({ t: 'replicate', entities });
+    }
+    private connectClient(endpoint: NetEndpoint, ticket: JsonValue | null): void {
+        this.clientEndpoint = endpoint;
+        endpoint.onMessage((message) => {
+            if (this.clientEndpoint === endpoint)
+                this.handleClientMessage(message);
+        });
+        endpoint.onClose((reason) => {
+            if (this.clientEndpoint !== endpoint || !this.started)
+                return;
+            const wasConnected = this.connected;
+            this.connected = false;
+            this.clientEndpoint = null;
+            for (const call of this.pending.values())
+                call.reject(new HelixError(`helix.net.call: "${call.name}" perdeu a conexão (${reason}).`));
+            this.pending.clear();
+            if (wasConnected)
+                this.services.log('warn', `Conexão com o servidor perdida: ${reason}.`);
+            else
+                this.services.log('error', `Não foi possível entrar no servidor: ${reason}.`);
+            this.services.emitBus('net.disconnected', { reason, wasConnected });
+        });
+        endpoint.send({ t: 'hello', protocol: HELIX_NET_PROTOCOL, name: this.services.localPlayerName(), ticket });
+    }
 }
