@@ -6,7 +6,7 @@ import { ToggleField } from '@/engine/ui/toggle-field';
 import { SegmentedControl } from '@/engine/ui/segmented-control';
 import { PropertyRow } from '@/engine/ui/property-row';
 import { IconButton } from '@/engine/ui/icon-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { formatTimeOfDay, moonPhaseName } from '@/engine/core/environment/celestial';
 import type { CloudQuality } from '@/engine/core/environment/sky-settings';
 const MINUTE = 1 / 60;
@@ -26,7 +26,7 @@ const times = (value: number) => `${value.toFixed(1)}×`;
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 const cycleSpeed = (value: number) => (value <= 0 ? 'Pausado' : `${value.toFixed(2)} h/s`);
 export function EnvironmentPanel() {
-    const session = useEditorState();
+    const session = useSessionTopic('scene');
     const sky = session.scene.sky;
     const { clouds } = sky;
     const cycling = sky.cycleSpeed > 0;
@@ -36,8 +36,8 @@ export function EnvironmentPanel() {
           <CloudSun className="size-4" aria-hidden/>
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="text-xs font-semibold text-foreground">Céu e atmosfera</span>
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
+          <span className="truncate text-xs font-semibold text-foreground">Céu e atmosfera</span>
+          <span className="truncate font-mono text-3xs text-muted-foreground">
             {formatTimeOfDay(sky.timeOfDay)} · {moonPhaseName(sky.moonPhase)}
           </span>
         </div>
