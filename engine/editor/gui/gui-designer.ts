@@ -277,4 +277,232 @@ export class GuiDesigner implements GuiDocumentHost {
         if (changed)
             this.notify();
     }
+    setTool(tool: GuiTool): void {
+        if (this.tool === tool)
+            return;
+        this.tool = tool;
+        if (tool !== 'select')
+            this.editingTextId = null;
+        this.notify();
+    }
+    setMode(mode: GuiDesignerMode): void {
+        if (this.mode === mode)
+            return;
+        this.mode = mode;
+        this.editingTextId = null;
+        this.runtime.reset();
+        this.runtimeDocument = null;
+        if (mode === 'preview')
+            this.syncRuntime();
+        else
+            this.runtime.setViewportProvider(null);
+        this.notify();
+    }
+    togglePreview(): void {
+        this.setMode(this.mode === 'preview' ? 'design' : 'preview');
+    }
+    setOption<K extends keyof GuiDesignerOptions>(key: K, value: GuiDesignerOptions[K]): void {
+        if (this.options[key] === value)
+            return;
+        this.options = { ...this.options, [key]: value };
+        this.notify();
+    }
+    toggleOption(key: Exclude<keyof GuiDesignerOptions, 'gridSize'>): void {
+        this.setOption(key, !this.options[key]);
+    }
+    get screen(): GuiEmulatedScreen {
+        return this.screenCache;
+    }
+    get followsReference(): boolean {
+        return this.deviceSpec === null;
+    }
+    emulateDevice(spec: GuiDeviceSpec | null): void {
+        this.deviceSpec = spec;
+        const natural = spec ? (spec.category === 'custom' ? spec.naturalOrientation : null) : this.document ? orientationOf(this.document.referenceSize.x, this.document.referenceSize.y) : null;
+        if (natural)
+            this.deviceOrientation = natural;
+        this.refreshScreen();
+        this.notify();
+    }
+    emulateCustomDevice(custom: GuiCustomDevice): void {
+        this.customDevice = clampCustomDevice(custom);
+        this.emulateDevice(customDeviceSpec(this.customDevice));
+    }
+    resetDevice(): void {
+        this.emulateDevice(null);
+    }
+    setDeviceOrientation(orientation: GuiDeviceOrientation): void {
+        if (this.deviceOrientation === orientation)
+            return;
+        this.deviceOrientation = orientation;
+        this.refreshScreen();
+        this.notify();
+    }
+    rotateDevice(): void {
+        this.setDeviceOrientation(oppositeOrientation(this.deviceOrientation));
+    }
+    private refreshScreen(): void {
+        const reference = this.document?.referenceSize ?? GUI_DEFAULT_REFERENCE_SIZE;
+        const before = emulatedDeviceBounds(this.screenCache, this.options.deviceFrame);
+        const screen = resolveEmulatedScreen(this.deviceSpec, this.deviceOrientation, reference);
+        this.screenCache = screen;
+        this.layoutCache = null;
+        this.runtime.setSafeArea(screen.safeArea);
+        if (this.device.x !== screen.width || this.device.y !== screen.height) {
+            this.device = { x: screen.width, y: screen.height };
+            this.runtime.setViewport(this.device);
+        }
+        const after = emulatedDeviceBounds(screen, this.options.deviceFrame);
+        if (before.x !== after.x || before.y !== after.y || before.width !== after.width || before.height !== after.height)
+            this.pendingFit = true;
+    }
+    beginTextEdit(id: string): void {
+        if (!this.document)
+            return;
+        const node = findGuiNode(this.document.root, id);
+        if (!node || !node.text || node.locked)
+            return;
+        this.editingTextId = id;
+        this.select([id]);
+    }
+    endTextEdit(): void {
+        if (!this.editingTextId)
+            return;
+        this.editingTextId = null;
+        this.notify();
+    }
+    setClipboard(nodes: readonly GuiNode[]): void {
+        this.clipboard = nodes;
+        this.notify();
+    }
+    setView(view: GuiViewState): void {
+        this.view = view;
+        this.pendingFit = false;
+        this.notify();
+    }
+    zoomTo(zoom: number, pivot: GuiPoint): void {
+        const next = Math.min(GUI_MAX_ZOOM, Math.max(GUI_MIN_ZOOM, zoom));
+        const { zoom: current, panX, panY } = this.view;
+        if (next === current)
+            return;
+        const docX = (pivot.x - panX) / current;
+        const docY = (pivot.y - panY) / current;
+        this.setView({ zoom: next, panX: pivot.x - docX * next, panY: pivot.y - docY * next });
+    }
+    zoomStep(direction: 1 | -1, pivot: GuiPoint): void {
+        const current = this.view.zoom;
+        const next = direction > 0 ? GUI_ZOOM_LEVELS.find((level) => level > current + 1e-6) : [...GUI_ZOOM_LEVELS].reverse().find((level) => level < current - 1e-6);
+        this.zoomTo(next ?? (direction > 0 ? GUI_MAX_ZOOM : GUI_MIN_ZOOM), pivot);
+    }
+    panBy(dx: number, dy: number): void {
+        this.setView({ ...this.view, panX: this.view.panX + dx, panY: this.view.panY + dy });
+    }
+    fitToView(width: number, height: number, padding = 48): void {
+        if (width <= 0 || height <= 0)
+            return;
+        const bounds = emulatedDeviceBounds(this.screenCache, this.options.deviceFrame);
+        const zoom = Math.min(GUI_MAX_ZOOM, Math.max(GUI_MIN_ZOOM, Math.min((width - padding * 2) / bounds.width, (height - padding * 2) / bounds.height)));
+        this.setView({ zoom, panX: (width - bounds.width * zoom) / 2 - bounds.x * zoom, panY: (height - bounds.height * zoom) / 2 - bounds.y * zoom });
+    }
+    fitSelection(width: number, height: number): void {
+        const layout = this.layout();
+        if (!layout || this.selectedIds.size === 0)
+            return this.fitToView(width, height);
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const id of this.selectedIds) {
+            const entry = layout.entries.get(id);
+            if (!entry)
+                continue;
+            const [a, b, c, d, e, f] = entry.world;
+            for (const [px, py] of [
+                [0, 0],
+                [entry.width, 0],
+                [0, entry.height],
+                [entry.width, entry.height],
+            ]) {
+                const x = a * px + c * py + e;
+                const y = b * px + d * py + f;
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+            }
+        }
+        if (!Number.isFinite(minX))
+            return;
+        const boxW = Math.max(1, maxX - minX);
+        const boxH = Math.max(1, maxY - minY);
+        const zoom = Math.min(GUI_MAX_ZOOM, Math.max(GUI_MIN_ZOOM, Math.min((width - 96) / boxW, (height - 96) / boxH, 4)));
+        this.setView({ zoom, panX: width / 2 - (minX + boxW / 2) * zoom, panY: height / 2 - (minY + boxH / 2) * zoom });
+    }
+    setWorkspaceSize(width: number, height: number): void {
+        this.workspaceSize = { x: width, y: height };
+    }
+    fitAll(): void {
+        this.fitToView(this.workspaceSize.x, this.workspaceSize.y);
+    }
+    fitSelectionInView(): void {
+        this.fitSelection(this.workspaceSize.x, this.workspaceSize.y);
+    }
+    private get workspaceCenter(): GuiPoint {
+        return { x: this.workspaceSize.x / 2, y: this.workspaceSize.y / 2 };
+    }
+    zoomAtCenter(zoom: number): void {
+        this.zoomTo(zoom, this.workspaceCenter);
+    }
+    get devicePixelZoom(): number {
+        return zoomForDevicePixels(this.screenCache, typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1);
+    }
+    get physicalSizeZoom(): number | null {
+        return zoomForPhysicalSize(this.screenCache);
+    }
+    zoomToDevicePixels(): void {
+        this.zoomAtCenter(this.devicePixelZoom);
+    }
+    zoomToPhysicalSize(): void {
+        const zoom = this.physicalSizeZoom;
+        if (zoom !== null)
+            this.zoomAtCenter(zoom);
+    }
+    zoomStepAtCenter(direction: 1 | -1): void {
+        this.zoomStep(direction, this.workspaceCenter);
+    }
+    toDocument(x: number, y: number): GuiPoint {
+        return { x: (x - this.view.panX) / this.view.zoom, y: (y - this.view.panY) / this.view.zoom };
+    }
+    toScreen(x: number, y: number): GuiPoint {
+        return { x: x * this.view.zoom + this.view.panX, y: y * this.view.zoom + this.view.panY };
+    }
+    layout(): GuiLayoutResult | null {
+        if (!this.document)
+            return null;
+        const cache = this.layoutCache;
+        if (cache && cache.document === this.document && cache.screen === this.screenCache && cache.fontsVersion === this.fontsVersion)
+            return cache.result;
+        const result = layoutGuiDocument(this.document, this.device, { measurer: guiTextMeasurer, cssFamily: (family) => guiFonts.cssFamily(family), safeArea: this.screenCache.safeArea });
+        this.layoutCache = { document: this.document, screen: this.screenCache, fontsVersion: this.fontsVersion, result };
+        return result;
+    }
+    flat() {
+        return this.document ? flattenGui(this.document.root) : [];
+    }
+    syncRuntime(): void {
+        this.runtime.setMediaScope(GUI_DESIGNER_MEDIA_SCOPE);
+        this.runtime.setViewportProvider(this.viewports);
+        this.runtime.setHoverEnabled(this.screenCache.spec?.input !== 'touch');
+        if (!this.document || this.runtimeDocument === this.document)
+            return;
+        this.runtimeDocument = this.document;
+        this.runtime.setDocuments([this.document]);
+        this.runtime.setViewport(this.device);
+    }
+    tick(deltaSeconds: number): void {
+        if (this.mode !== 'preview' || !this.document)
+            return;
+        this.syncRuntime();
+        this.runtime.tick(deltaSeconds);
+    }
 }
