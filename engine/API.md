@@ -558,3 +558,283 @@ Ponte: `gui/document/*`, `gui/layout/*`, `gui/runtime/gui-runtime.ts`, `gui/rend
 - `GuiAppearance`: `fill { color, alpha, gradient: { kind: 'linear' | 'radial', angle, stops[] } | null }, stroke { width, color, alpha } | null, radii [tl, tr, br, bl], shadow { color, alpha, blur, offsetX, offsetY } | null, opacity` `engine`
 - `GuiStates`: `hover, pressed, disabled: GuiStateStyle | null, transitionMs` `engine`
 - Texto (`GuiTextStyle`): `content, family, size, weight, italic, color, alpha, align, verticalAlign, lineHeight, letterSpacing, wrap, uppercase, shadow, outline, fitToBox` `engine`
+- Imagem (`GuiImage`): `assetId, fit: 'stretch' | 'contain' | 'cover' | 'tile' | 'slice', slice: insets, tint, tintAlpha` `engine`
+- Ícone: catálogo `gui/icons/gui-icon-catalog.ts` → `helix.gui.icons.list()`. `engine`
+- Fontes: registro `gui/fonts/gui-font-registry.ts` → `helix.gui.fonts.list()`, `register(fontAsset)`, `measure(text, style)` (`gui-text-measure.ts`). `engine`
+
+### 11.5 Controles
+
+- `button`, `toggle { checked }`, `slider { value, min, max, step }`, `progress { value, max }`, `input { value, placeholder, maxLength, password, multiline }`, `scroll { offset, direction }`, `divider`, `video { assetId, fit: 'cover' | 'contain' | 'stretch', playOn: 'start' | 'hover' | 'manual', loop, muted }`, `viewport { camera: 'entity' | 'orbit', cameraName, targetName, distance }` `engine`
+- `value(node)`, `setValue(node, value)`, `focus(node)`, `blur()`, `hasFocusedInput` `engine` / `expor`
+- Vídeo: `play(node)`, `pause(node)`, `toggleVideo(nodeId)`, `seek(node, seconds)` `engine` / `expor`
+- Viewport na GUI: `setViewportProvider` (câmera da cena desenhada dentro de um nó). `engine`
+
+### 11.6 Eventos e entrada
+
+- `GuiRuntimeEvent { type: 'activate' | 'change' | 'focus' | 'blur', nodeId, nodeName, value }` → `helix.gui.on(screen, type, handler)`, `onNode(node, type, handler)` `engine`
+- Ponteiro: `pointerEnter/Leave/Move/Down/Up` por nó, `wheel`, `cursor` `expor` (o runtime já faz hit-test; falta emitir por nó)
+- Teclado: `keyDown(node, event)` em inputs; IME: não submeter enquanto `isComposing`. `engine`
+- `tick(dt)`, `invalidate()`, `animating` — para quem controla o runtime à mão. `engine`
+
+### 11.7 HUD do jogo
+
+- `helix.gui.hud: Screen` — a tela do play (`PlaytestHud`); `visible`, `interactive`, `cursor`. `engine`
+- `helix.gui.canvas2d: CanvasRenderingContext2D` — o canvas do HUD para desenhar direto (mira, minimapa, debug), em `onRender`. `expor`
+- `helix.gui.enabled = false` — a engine não desenha nem trata GUI; o script usa `canvas2d` ou DOM próprio (`helix.gui.domRoot: HTMLElement`). `expor` / `novo`
+
+### 11.8 Superfícies 3D (GUI no mundo)
+
+- `GuiSurfaceSettings` no ator: `content: { kind: 'screen', assetId } | { kind: 'video', video } | { kind: 'view', view }`, `mount: { kind: 'face', face, offset, inset } | { kind: 'panel', position, rotation, width, height } | { kind: 'billboard', offset, width, height, lockY, constantSize }`, `pixelsPerMeter, shading: 'lit' | 'screen' | 'overlay', brightness, blend: 'opaque' | 'cutout' | 'transparent', opacity, doubleSided` `engine`
+- `interactive: boolean` por superfície (hoje toda superfície com tela responde ao ponteiro). `expor`
+- `helix.gui.surfaces.of(entity)`, `onEvent(entity, handler)` (`GuiSurfaceEvent` + `GuiSurfaceHit` com ponto 3D), `raycast(ray)` `engine`
+- `synthesize(content, size)` — documento gerado para vídeo/view sem tela. `engine`
+
+### 11.9 Templates e declarativo
+
+- Templates (`gui/templates/gui-templates.ts`): `helix.gui.templates.list()`, `instantiate(id)`. `engine`
+- HTML/CSS/SVG como ativos: `helix.gui.fromHtml(asset)` converte o subconjunto suportado (`div/span/p/img/button/input`, flex, cores, bordas, sombras, fontes) para `GuiDocument`; SVG vira `image`. Fora do subconjunto, aviso no console com a linha. `novo`
+
+---
+
+## 12. Áudio — `helix.audio`
+
+Ponte: `audio/audio-engine.ts`, `audio/mixer/*`, `audio/world/*`, `audio/clip/*`, `audio/graph/*`, `audio/playback/*`, `audio/analysis/*`, `audio/synth/*`, `audio/export/*`, `audio/core/*`.
+
+### 12.1 Mixer
+
+- Buses: `master | music | sfx | ambience | voice | ui`; `BusSettings { volumeDb, muted, solo }` `engine`
+- `bus(id).volumeDb`, `muted`, `solo`, `effectiveGain(id)`, `anySoloed()` `engine`
+- `fadeBus(id, toDb, seconds)` `novo`
+- `helix.audio.locked: boolean`, `unlock()` — autoplay do navegador (`core/audio-context.ts`). `engine`
+- `suspend()`, `resume()`, `masterDb` `engine`
+
+### 12.2 Fontes 3D (componente `sound`)
+
+- `AudioSourceSettings`: `assetId, muted, volumeDb, pitch, loopMode: 'clip' | 'loop' | 'once', trigger: 'auto' | 'proximity' | 'manual', triggerRadius, stopOnExit, fadeIn, fadeOut, repeatMin, repeatMax, randomStart, spatial, panningModel: 'equalpower' | 'hrtf', distanceModel: 'inverse' | 'linear' | 'exponential', minDistance, maxDistance, rolloff, airAbsorption, cone { enabled, innerAngle, outerAngle, outerGainDb }, doppler, occlusion { enabled, attenuationDb, lowpass }, reverbSend, priority` `engine`
+- `play(entity)`, `stop(entity)`, `stopAll(fadeSeconds?, keepLatched?)`, `isPlaying(entity)`, `isLatched(entity)`, `runtime(entity): { status, gain, distance, occluded }` `engine`
+- `pause(entity)`, `resume(entity)`, `seek(entity, seconds)`, `setAsset(entity, asset)` `expor`
+- `status`: `playing | virtual | loading | waiting | stopped | muted | solo-muted | no-asset | off | locked | error` `engine`
+- Eventos: `audio.started(entity)`, `audio.ended(entity)`, `audio.looped(entity)`. `novo`
+- Ouvinte: `helix.audio.listener: { entity | 'camera', position, forward, up }` — por padrão a câmera principal. `expor` (`spatial-listener.ts`)
+
+### 12.3 Zonas (componente `audioZone`)
+
+- `AudioZoneSettings`: `enabled, shape: 'box' | 'sphere', size, radius, falloff, priority, reverb: ReverbSettings, echo: DelaySettings, filter { enabled, frequency }, ambience { assetId, volumeDb }` `engine`
+- `presets()`, `applyPreset(entity, id)`, `weightAt(entity, point)` `engine`
+- Eventos: `audio.zoneEntered(entity)`, `audio.zoneExited(entity)` (do ouvinte). `novo`
+
+### 12.4 Clipes e reprodução direta (2D / one-shot)
+
+- `AudioClipSettings`: `bus, volumeDb, pitch, pan, loop, loopStart, loopEnd, trimStart, trimEnd, fadeIn { duration, curve }, fadeOut, randomPitch, randomVolumeDb, effects: AudioEffectsSettings { eq, filter, distortion, compressor, delay, reverb }` (`audio-effects.ts`) `engine`
+- `play(asset, settings?): Voice` (2D), `playAt(asset, position, settings?): Voice` (3D sem ator) `engine` / `expor`
+- `Voice`: `stop(fade?)`, `pause`, `resume`, `volumeDb`, `pitch`, `time`, `ended: Promise`, `onEnded` `engine` / `expor`
+- Presets de clipe (`audio-clip-presets.ts`), `neutralize`, `rollVariation` `engine`
+
+### 12.5 Análise, síntese e exportação
+
+- `levelMeter(bus | voice): { peak, rms }`, `waveform(asset): Float32Array`, `spectrum(bus | voice, size): Float32Array` (`analysis/*`) `engine` / `expor`
+- Sinais de teste (`synth/test-signals.ts`): `tone(freq, seconds)`, `noise(kind, seconds)`, `sweep` → `AudioBuffer`. `engine`
+- `render(asset, settings): AudioBuffer`, `encodeWav(buffer): Blob` (`export/*`) `engine`
+- Decodificação: `decode(file): AudioBuffer` com cache (`decode/*`). `engine`
+
+### 12.6 Acesso bruto e substituição
+
+- `helix.audio.context: AudioContext`, `masterNode: GainNode`, `busNode(id): GainNode` — ligar nós Web Audio próprios (DSP, síntese, worklets). `expor`
+- `helix.audio.enabled = false` — a engine não cria vozes; o script usa `context`. `expor`
+- `helix.audio.worklet(assetJs)` — registra um `AudioWorkletProcessor` a partir de um ativo de script JavaScript. `novo`
+
+---
+
+## 13. Animação, esqueletos e personagens — `helix.animation`
+
+Ponte: `core/animation/*`, `animation/*`, `character/animation/*`, `character/rig/*`, `core/scene/rig.ts`, `core/scene/skin.ts`, `editor/animation/animation-editor.ts`.
+
+### 13.1 Documentos e clipes
+
+- `AnimationDocument`: `name, duration, loop, frameRate, referenceSpeed, tracks[] { joint, path: 'translation' | 'rotation' | 'scale', interpolation: 'linear' | 'step' | 'cubic', times, values }, skeleton, events[] { time, name }, source` `engine`
+- `clip(asset): SkeletonClip`, `clipFromDocument`, `retarget(clip, rig)` (`retarget.ts`), `fromBvh(file)`, `fromImported(model, clipName)` `engine`
+- Edição (`track-editing.ts`): `setKey(track, time, value)`, `removeKey`, `insertEvent(doc, time, name)`, `trim`, `resample(frameRate)`, `save(doc, name)` `engine` / `expor`
+- `sample(clip, time, outPose)` (`track-sampling.ts`) `engine`
+
+### 13.2 Player
+
+- `player(entity): AnimationPlayer` — `rig`, `currentClip`, `playbackState: 'stopped' | 'playing' | 'paused'`, `playing`, `time`, `speed`, `loop`, `duration`, `phase` `engine`
+- `play(clip, { loop, speed, fadeIn, startTime })`, `replaceClip`, `pause`, `resume`, `togglePlay`, `stop`, `seek(time)`, `setSpeed`, `setLoop`, `rest()` `engine`
+- `onEvent(handler(event, clip))` — eventos da trilha (passos, golpes). `engine`
+- `evaluate(outPose)`, `apply()` `engine`
+- Camadas e mistura: `layer(name, { weight, mask: joints[], additive })`, `crossFade(clipA, clipB, seconds)`, `blendTree({ param, clips })`. `novo`
+- Eventos de engine: `animation.started`, `animation.finished`, `animation.looped`, `animation.event(name)`. `novo`
+
+### 13.3 Esqueleto, pose e IK
+
+- `Rig`/`Skeleton`: `joints[] { name, parent, bind }`, `boneRoles` (`core/animation/bone-roles.ts`: `hips, spine, head, leftHand, …`), `jointByRole(role)` `engine`
+- `Pose`: `getJoint(name): { position, rotation, scale }`, `setJoint`, `worldMatrixOf(joint)`, `attach(entity, joint, offset?)` (socket). `engine` / `expor`
+- IK (`animation/ik/*`): `twoBoneIk(pose, chain, target, pole)`, `limbChains(rig)` → `helix.animation.ik.solve(entity, 'leftArm' | 'rightLeg' | …, target, pole?, weight)`. `engine` / `expor`
+- Sobreposições (`character/animation/pose-overlay.ts`, `clips/air-overlays.ts`): `overlay(entity, clip, weight, mask)`. `engine`
+- Locomoção (`locomotion-animator.ts`): `blend idle/walk/run/crouch` por velocidade; `locomotion.enabled = false` para animar à mão. `engine` / `expor`
+
+### 13.4 Modelos de personagem
+
+- Registro (`character/assets/*`): `models(): CharacterModelAsset[]`, `mannequin`, `setModel(entity, assetId)`, `bindings(entity): clips` `engine`
+- Pele (`Skin`): `skinOf(entity)`, matrizes de junta (`gpu-skin-cache`). `engine`
+
+---
+
+## 14. Efeitos visuais (VFX) — `helix.vfx`
+
+Ponte: `vfx/vfx-settings.ts`, `vfx/document/*`, `vfx/simulation/*`, `vfx/world/vfx-system.ts`, `vfx/textures/*`, `vfx/preview/*`, `editor/commands/vfx-commands.ts`.
+
+### 14.1 Componente
+
+- `VfxSettings` no ator: `assetId, autoPlay, playInEditor, loop: boolean | null, scale, timeScale, seed, cullDistance` `engine`
+- `play(entity)`, `pause`, `resume`, `stop`, `reset()`, `instance(entity): VfxInstance`, `stats` `engine`
+- `burst(entity, count, emitterName?)`, `emitAt(asset, position, options?)` (efeito solto, sem ator), `setParam(entity, path, value)` (sobrescreve campo do documento só nessa instância) `expor` / `novo`
+- Eventos: `vfx.started`, `vfx.finished(entity)`, `vfx.loop`. `novo`
+
+### 14.2 Documento (efeito)
+
+- `VfxDocument`: `name, duration, loop, prewarm, scale, cullRadius, emitters[]` `engine`
+- `VfxEmitter`: `id, name, enabled, delay, duration, loop, maxParticles, space: 'local' | 'world', spawn (rate, bursts), shape { kind: 'point' | 'sphere' | 'hemisphere' | 'cone' | 'box' | 'circle' | 'edge', emitFrom: 'volume' | 'surface' | 'edge', … }, initial (vida, velocidade, tamanho, rotação, cor), modules[], renderer { mode: 'billboard' | 'stretched' | 'horizontal' | 'vertical', blend: 'alpha' | 'additive' | 'premultiplied' | 'multiply', sort: 'none' | 'distance' | 'oldest' | 'youngest', lighting: 'unlit' | 'lit', texture }, tint` `engine`
+- Módulos (`VfxModuleKind`): `asset, attractor, collision, colorBySpeed, colorOverLife, drag, force, gravity, limitVelocity, noise, orbit, rotationOverLife, sizeBySpeed, sizeOverLife, velocityOverLife, vortex` `engine`
+- Curvas (`vfx-curves.ts`): `constant, range, curve(points), gradient(stops)`. `engine`
+- Árvore (`vfx-tree.ts`): `addEmitter`, `removeEmitter`, `addModule(emitter, kind)`, `removeModule`, `set(path, value)` `engine`
+- Templates (`vfx-templates.ts`): `empty, campfire, torch, thruster, sparks, explosion, dust-impact, rain, snow, leaves, fireflies, magic-aura, portal, healing, confetti` → `templates.list()`, `fromTemplate(id)` `engine`
+- Texturas (`vfx-texture-catalog.ts`): `textures.list()` + qualquer textura da biblioteca. `engine`
+- `save(doc, name)`, `toJson`, `fromJson` (`vfx-io.ts`) `engine`
+
+### 14.3 Partículas brutas
+
+- `instance.particles: { count, positions, velocities, ages, lifetimes, sizes, colors }` — leitura e escrita por frame (`particle-pool.ts`). `expor`
+- Módulo custom: `helix.vfx.modules.register(kind, { init(p), update(p, dt) })`. `novo`
+- Shader próprio por emissor: `renderer.shader = asset` (seção 8.6). `novo`
+
+---
+
+## 15. Entrada — `helix.input`
+
+Ponte: `character/controller/character-input.ts`, `editor/viewport/use-viewport-input.ts`, `editor/shortcuts/*`.
+
+- Teclado: `isDown(key)`, `wasPressed(key)`, `wasReleased(key)`, `onKeyDown(handler)`, `onKeyUp(handler)`, `keysDown(): string[]`; códigos físicos (`KeyW`) e teclas lógicas. `expor`
+- Mouse/ponteiro: `pointer { x, y, dx, dy, buttons, wheel, inside }`, `lockPointer()`, `unlockPointer()`, `pointerLocked`, `onPointerDown/Up/Move`, `cursor: 'default' | 'none' | 'crosshair' | …` `expor` (`CharacterInput` já faz lock e look)
+- Toque: `touches[] { id, x, y, dx, dy }`, gestos `pinch`, `pan`. `novo`
+- Gamepad: `gamepads()`, `axis(pad, index)`, `button(pad, index)`, `rumble(pad, strong, weak, ms)`. `novo`
+- Mapa de ações: `actions.define('jump', ['Space', 'Gamepad:A'])`, `action('jump').pressed`, `axis2d('move', { up, down, left, right, stick })`, remapeável em runtime (menu de controles). `novo`
+- `InputFrame` do personagem (`x, z, run, jump, crouchToggles, lookX, lookY, wheel`): `helix.input.characterFrame()` leitura; escrita via `character.setIntent` (9.5). `engine`
+- Texto: `onTextInput(handler)` com composição IME respeitada. `novo`
+- Prioridade: GUI com foco consome primeiro (`hasFocusedInput`); `helix.input.capture = 'game' | 'gui' | 'both'`. `expor`
+- Atalhos do editor (`isEditor`): `shortcutBindings.resolve`, `register(action, chord)` (seção 19). `engine`
+
+---
+
+## 16. Ativos e biblioteca — `helix.assets`
+
+Ponte: `assets/library/*`, `assets/import/*`, `assets/image-decoder.ts`, `editor/operations/asset-library-operations.ts`, `editor/library/*`.
+
+- `AssetKind`: `model | texture | audio | animation | gui | font | video | vfx | script` `engine`
+- `get(id)`, `byName(name, kind?)`, `list(kind?)`, `byTag(tag)`, `search(query)`, `tags(asset)`, `setTags`, `rename`, `remove`, `exists` `engine`
+- `file(asset): File/Blob`, `url(asset): string` (object URL gerenciado) `engine`
+- Carregar por tipo: `model(asset): { meshes, materials, rig, skins, animations, hierarchy }`, `texture(asset): Texture`, `audio(asset): AudioBuffer`, `animation(asset): AnimationDocument`, `gui(asset): GuiDocument`, `vfx(asset): VfxDocument`, `font(asset): FontFace`, `video(asset): HTMLVideoElement`, `script(asset): ScriptDocument` `engine`
+- Importar em runtime (`assets/import/*`): `import(file | url, options?)` — glTF/GLB, OBJ+MTL, STL, FBX (ASCII e binário), BVH, imagens, áudio (`audio-formats.ts`), vídeo, `.hxgui`, `.hxvfx`, `.hxanim`, scripts, fontes; `options`: `convertUnits, placement, saveToLibrary, materializer` (`import-materializer.ts`). `engine`
+- Pacotes de arquivos (`file-bundle.ts`): `bundle(files)` para modelos com texturas ao lado. `engine`
+- Miniaturas (`thumbnails/*`): `thumbnail(asset): Blob`. `engine`
+- Dados: ativos `json | yaml | toml | xml | markdown | csv` → `data(asset): any` (parse feito pela engine), `text(asset): string`. `novo`
+- Eventos: `assets.added`, `assets.changed`, `assets.removed`. `engine` (`AssetLibrary.onChange`)
+- Pastas e organização da biblioteca (editor): `folders`, `move(asset, folder)`. `engine`
+
+---
+
+## 17. Projeto, cena e persistência — `helix.project`, `helix.storage`
+
+Ponte: `project/*`, `core/storage/*`, `core/transfer/download-blob.ts`.
+
+### 17.1 Projeto
+
+- `id, name, template, formatVersion (PROJECT_FORMAT_VERSION), createdAt, openedAt` `engine`
+- `rename(name)` `engine`
+- `settings`: tudo de `Scene`: `sky (7), postProcessing (8), physics (9), player (9.5), audio (12.1), scripting (1.8)` `engine`
+
+### 17.2 Cena como documento
+
+- `serialize(): SceneDocument` (`serialize-scene.ts`), `deserialize(doc)` (`deserialize-scene.ts`), `toBinary`, `fromBinary` (`binary-table.ts`), `plainData` (`restoreInto`) `engine`
+- `save()` (agora), `autosave { enabled, state: 'clean' | 'dirty' | 'saving' | 'error', lastSavedAt, markDirty() }` (`project-autosave.ts`) `engine`
+- Instantâneos (`scene-snapshots.ts`, `scene-store.ts`): `snapshots()`, `restore(key)`, `snapshotNow(label)` `engine`
+- Várias cenas por projeto: `scenes()`, `load(sceneName, { additive })`, `unload`, `current`, `onLoaded` — níveis e menus. `novo`
+- Prefabs: `helix.scene.saveAsPrefab(entity, name)`, `instantiatePrefab(asset, parent?)` — sub-árvore como ativo `.hxprefab` da biblioteca (`project/prefab/`, `editor/operations/prefab-operations.ts`); a instância nasce com ids novos, e a raiz mantém a transformação local gravada. `engine`
+
+### 17.3 Backup e arquivos
+
+- `.helix`: `exportProject(): Blob`, `importProject(file)` (`project-file.ts`, `project-backup.ts`) `engine`
+- `download(blob, name)` (`download-blob.ts`), `pickFiles(accept, multiple)` (`editor/files/file-picker.tsx`) `engine`
+- Saúde do armazenamento (`storage-health.ts`): `quota(): { used, total }`, `persisted`, `requestPersistence()` `engine`
+
+### 17.4 Saves do jogo — `helix.storage`
+
+Dados do jogador, separados da cena (progresso, opções). `novo`
+
+- `get(key): JsonValue`, `set(key, value)`, `remove(key)`, `keys()`, `clear()` — IndexedDB do projeto (`core/storage/*`), namespace por projeto.
+- `slot(name): Storage` — vários saves.
+- `export(): Blob`, `import(blob)`.
+- `session`: igual, mas vive só até fechar a aba.
+
+---
+
+## 18. Jogo (modo play) — `helix.play`
+
+Ponte: `editor/playtest/*`, `scripting/script-document.ts`.
+
+- `state: 'stopped' | 'playing' | 'paused'`, `play()`, `pause()`, `togglePlayPause()`, `stop()`, `stepOnce()`, `timeScale` `engine`
+- `isRunning`, `isPossessing`, `pointerLocked` `engine`
+- Eventos: `play.started`, `play.paused`, `play.resumed`, `play.stopped` — para scripts que precisam limpar estado. `novo`
+- `helix.play.restart()`, `reloadScene()` (volta ao `.helix` salvo, sem sair do play). `novo`
+- `helix.play.standalone: boolean` — rodando fora do editor (build exportado). `novo`
+- Rede (contextos `client` / `server` já existem no documento de script): `helix.net.isServer`, `isClient`, `rpc(name, handler)`, `call(name, ...args)`, `replicate(entity, fields)`, `onPlayerJoined/Left`, `players()` — a engine define a ABI agora para as linguagens já nascerem com ela; o transporte vem depois. `novo`
+- Build/exportação: `helix.play.export({ target: 'web' })` empacota cena, ativos usados e scripts compilados (seção 21) num site estático. `novo`
+
+---
+
+## 19. Editor (modo ferramenta) — `helix.editor`
+
+Só disponível quando `helix.isEditor`. Scripts que usam esta seção são ferramentas, não jogo: nunca rodam no build.
+
+Ponte: `editor/session/editor-session.ts`, `editor/history/*`, `editor/commands/*`, `editor/layout/*`, `editor/menus/*`, `editor/shortcuts/*`, `editor/dialogs/*`, `settings/*`.
+
+- Seleção: `selection: Entity[]`, `select(entities)`, `clearSelection()`, `onSelectionChanged` `engine`
+- Histórico: `undo()`, `redo()`, `execute(command)`, `beginGroup(label)` / `endGroup()`, `revision`; comandos prontos (`set-value-command`, `entity-commands`, `terrain-commands`, `gui-commands`, `vfx-commands`, `asset-library-commands`). `engine`
+- Toda escrita via `helix.*` dentro do editor passa pelo histórico automaticamente (desfazer funciona para scripts de ferramenta). `expor`
+- Painéis: `panels.open(id)`, `close`, `toggle`, `register({ id, title, render })` (`dock-layout`, `dock-panels`). `engine` / `novo`
+- Menus e ações: `menus.add(path, { label, shortcut, run })`, `actions.register(id, run)` (`menu-bar`, `shortcut-actions`). `novo`
+- Atalhos: `shortcuts.bind(action, chord)`, `resolve(event)` (`shortcut-bindings.ts`). `engine`
+- Diálogos: `dialogs.open(id)`, `confirm(message)`, `prompt(message)`, `pickAsset(kind)`, `pickColor` (`editor-dialogs.ts`, `viewport-color-picker.ts`) `engine` / `novo`
+- Configurações da engine (`engine-settings-schema.ts`): `settings.get(key)`, `set(key, value)`, `onChanged(key)` — todas as chaves `editor.*`, `render.*`, `simulation.*`, `audio.*`, `gui.*`, `selection.*`, `snap.*`, `project.*` (e `code.*` do editor de código, `editor/code/*`). `engine`
+- Gizmos: `gizmo.mode: 'move' | 'rotate' | 'scale'`, `space: 'local' | 'world'`, `snap` (`snap-settings-menu.tsx`) `engine`
+- Viewport: `viewport.capture(): Blob` (`viewport-capture.ts`), `frame(entity)`, `views` (`scene-view-pool.ts`) `engine`
+- Importação (`editor/import/*`): `import.open(files)`, draft (`use-import-draft.ts`). `engine`
+- Editor de código (`editor/code/*`): `code.open(asset, line?)`, `code.tabs`, `code.save(asset)`, `code.run()` (`runActiveScript`), `code.compile()` (`compileProject`). `engine`
+- Console (`editor/panels/console-panel.tsx`): igual a `helix.log` + `clear()`. `engine`
+
+---
+
+## 20. A regra de substituição (três níveis por sistema)
+
+Toda linguagem deve expor os três níveis para cada linha desta tabela; um teste de conformidade por célula.
+
+| Sistema | 1. Ajustar | 2. Enganchar | 3. Desligar e substituir |
+| --- | --- | --- | --- |
+| Gráficos | `helix.render.*`, `RenderProfile` | `onBeforePass/onAfterPass`, `custom.add` | `render.enabled = false` + `render.gl` |
+| Pós-processamento | `helix.post.*` | `post.custom.add` | `post.enabled = false` + passe custom |
+| Shaders | uniformes | `#include` dos chunks | `shaders.override(...)` |
+| Céu | `helix.sky.*` | `sky.hourChanged` | `sky.enabled = false` + `render.skybox` |
+| Física | `PhysicsSettings`, corpos | `onPreStep`, `addForceField` | `physics.enabled = false` ou `physics.backend` |
+| Personagem | `CharacterSettings` | `setIntent`, `inputSource = 'script'` | `controllerClass` ou cinemático próprio |
+| Terreno | alturas, camadas, grama, água | `onRegionChanged`, `generateWith` | malha própria (`helix.mesh`) + `heightfield` só para física |
+| GUI | documentos e nós | eventos por nó | `gui.enabled = false` + `canvas2d` / `domRoot` |
+| Áudio | mixer, fontes, zonas | `busNode` | `audio.enabled = false` + `context` |
+| Animação | player | `onEvent`, camadas | `evaluate` + `Pose` escrita à mão |
+| VFX | documento e instância | `modules.register` | `particles` bruto + shader próprio |
+| Entrada | mapa de ações | `onKeyDown` etc. | `capture = 'game'` + DOM listeners |
+| Câmera | campos da câmera | `cameraControl = 'script'` | `main` = ator próprio |
+| Cena | atores e componentes | eventos `scene.*` | — (a cena é o modelo; não se substitui) |
+| Persistência | autosave | `serialize/deserialize` | `storage` próprio via `export/import` |
+
+---
+
