@@ -561,5 +561,285 @@ public class DebugJogo : ActorScript
     }
 
     private Task Terreno()
+    {
+        var t = Helix.Terrain;
+        Checar("terrain.presets", t.Presets().Any(p => p.Value == "hills"));
+        Checar("terrain.resolutions", t.Resolutions().Contains(65));
+        var colinas = t.Spawn(new { name = "Colinas", size = 48, resolution = 65, preset = "hills", seed = 7, position = V(0, -6, -70) });
+        Checar("terrain.spawn", colinas.Terrain != null && t.All().Contains(colinas));
+        var dados = t.Of(colinas);
+        Checar("terrain.of", dados.Resolution == 65 && dados.Heightfield.Heights.Length == 65 * 65);
+        var altura = t.HeightAt(V(0, 0, -70), colinas);
+        Checar("heightAt", altura != null && double.IsFinite(altura), altura);
+        Checar("normalAt", t.NormalAt(V(0, 0, -70), colinas) != null);
+        Checar("contains", t.Contains(V(0, 0, -70), colinas) && !t.Contains(V(500, 0, 0), colinas));
+        t.Sculpt(colinas, "raise", V(5, 0, -70), new { radius = 6, strength = 1 }, 1);
+        t.MarkDirty(colinas);
+        var grade = t.WorldToGrid(V(0, 0, -70), colinas);
+        Checar("worldToGrid/gridToWorld", grade != null && t.GridToWorld(grade.Gx, grade.Gz, colinas).Length == 3);
+        Checar("terrain.layers", t.Layers(colinas) is Array);
+        var catalogo = t.Materials.Catalog();
+        Checar("materials.catalog", catalogo.Length > 0);
+        if (catalogo.Length > 0 && t.Layers(colinas).Length < 2) Checar("addLayer", t.AddLayer(colinas, catalogo[0].Id) != null);
+        t.AutoPaint(colinas);
+        var pesos = t.WeightsAt(V(0, 0, -70), colinas);
+        Checar("weightsAt", pesos == null || pesos is Array);
+        t.Grass.Set(colinas, new { enabled = true, density = 0.5 });
+        Checar("grass.set", t.Grass.SettingsOf(colinas).Enabled == true);
+        t.Water.Set(colinas, new { enabled = true, level = -2 });
+        Checar("water.set", t.Water.SettingsOf(colinas).Enabled == true);
+        Checar("water.isUnderwater", t.Water.IsUnderwater(V(0, -100, -70), colinas) is bool);
+        Checar("water.sampleSurface", t.Water.SampleSurface(colinas, 0, -70).Height is double);
+        Checar("terrain.brush", t.Brush(new { radius = 3 }).Radius == 3);
+        Checar("terrain.tools/falloffs", t.Tools().Contains("smooth") && t.Falloffs().Contains("linear"));
+        Checar("terrain.first", t.First() != null);
+        Checar("terrain.raycast", t.Raycast(V(0, 50, -70), V(0, -1, 0), colinas) != null);
+        Checar("terrain.shadingOf", t.ShadingOf(colinas) != null);
+        return Task.CompletedTask;
+    }
+
+                                                                                                        
+
+    private async Task InterfaceGrafica()
+    {
+        var g = Helix.Gui;
+        g.Css("DebugEstilo");
+        var hud = g.Html("DebugHud", new { id = "debug-hud" });
+        Checar("gui.html", hud != null && g.Element("#debug-hud") != null);
+        var icone = g.Svg("DebugIcone", new { id = "debug-icone" });
+        Checar("gui.svg", icone != null && ((string)icone.TagName).ToLower() == "svg");
+        var slot = g.Element("[data-slot=icone]");
+        if (slot != null) slot.AppendChild(icone);
+        Checar("gui.bind", g.Bind("linguagem", LINGUAGEM) >= 1);
+        g.Bind("titulo", "Helix · Debug");
+        assinaturas.Add(g.OnAction("caixa", () => SoltarCaixa()));
+        assinaturas.Add(g.OnAction("reiniciar", () => Helix.Play.Restart()));
+        Checar("gui.elements", g.Elements("[data-bind]").Length >= 5);
+        Checar("gui.size", g.Size.Width > 0);
+        Checar("gui.canvas2d", g.Canvas2d.FillRect != null);
+        Checar("gui.domRoot", g.DomRoot != null);
+        Checar("gui.pointerEvents", g.PointerEvents == false);
+
+        var documento = g.Create("DebugTela", new { referenceSize = new { x = 1280, y = 720 } });
+        var painel = g.Add(documento, "frame", new { name = "Painel", rect = new { position = new { x = new { scale = 1, offset = -236 }, y = new { scale = 0, offset = 16 } }, size = new { x = new { scale = 0, offset = 220 }, y = new { scale = 0, offset = 48 } } } });
+        g.Add(documento, "text", new { name = "Rotulo", text = "Tela declarativa OK" }, painel.Node.Id);
+        Checar("gui.add/find", g.Find(documento, "Rotulo").Kind == "text");
+        g.SetText(documento, "Rotulo", "Tela declarativa OK · " + LINGUAGEM);
+        g.SetVisible(documento, "Rotulo", true);
+        g.SetInteractable(documento, "Painel", false);
+        tela = await g.Show(documento, "debug-tela");
+        Checar("gui.show/isShown", g.IsShown(tela) && g.Screens().Any(s => s.Name == "DebugTela"));
+        Checar("gui.documents", g.Documents().Length >= 1);
+        Checar("gui.kinds", g.Kinds().Contains("button"));
+        assinaturas.Add(g.OnEvent(e => Helix.Log.Debug("Debug", $"GUI {e.Type} em {e.NodeName}")));
+        Checar("gui.surfaces", g.Surfaces.SettingsOf != null);
+    }
+
+    private async Task Audio()
+    {
+        var a = Helix.Audio;
+        Checar("audio.supported", a.Supported is bool);
+        Checar("mixer.buses", a.Mixer.Buses().Contains("sfx"));
+        a.Mixer.SetVolumeDb("sfx", -3);
+        Checar("mixer.setVolumeDb", a.Mixer.Bus("sfx").VolumeDb == -3);
+        Checar("mixer.range", a.Mixer.Range.MinDb < a.Mixer.Range.MaxDb);
+        Checar("createClipSettings", a.CreateClipSettings().Bus != null);
+        var clips = a.Clips();
+        Checar("audio.clips", clips is Array);
+        if (clips.Length > 0 && a.Supported == true)
+        {
+            var voz = await a.PlayOnce(clips[0], new { volumeDb = -6 });
+            Checar("audio.playOnce", voz.Asset.Id == clips[0].Id);
+            Checar("clipSettingsOf", a.ClipSettingsOf(clips[0]).Bus != null);
+        }
+        else
+        {
+            Helix.Log.Info("Debug", "Sem ativos de áudio na biblioteca: a reprodução não foi testada (importe um .mp3/.ogg para cobrir).");
+        }
+        var fonte = Helix.Scene.Spawn("sound", new { name = "FonteSonora", position = V(3, 1, 3), audioSource = new { assetId = clips.Length > 0 ? clips[0].Id : null, trigger = "manual", spatial = true } });
+        Checar("spawn sound", fonte.AudioSource != null && a.Sources.SettingsOf(fonte) != null);
+        a.Sources.Set(fonte, new { volumeDb = -4 });
+        Checar("sources.set", fonte.AudioSource.VolumeDb == -4);
+        Checar("sources.all", a.Sources.All().Contains(fonte));
+        Checar("sources.isPlaying", a.Sources.IsPlaying(fonte) == false);
+        var zona = Helix.Scene.Spawn("group", new { name = "ZonaSonora", position = V(0, 0, 0), audioZone = new { shape = "sphere", radius = 10 } });
+        Checar("zones.settingsOf", a.Zones.SettingsOf(zona).Radius == 10 && a.Zones.All().Contains(zona));
+        assinaturas.Add(a.OnEnded(_ => Helix.Log.Debug("Debug", "áudio terminou")));
+        Checar("audio.status", new[] { "idle", "unavailable", "suspended", "running", "closed" }.Contains((string)a.Status), a.Status);
+        Checar("audio.stats", a.Stats != null && a.VoiceCount is double);
+    }
+
+    private Task Animacao()
+    {
+        var an = Helix.Animation;
+        Checar("animation.roles", an.Roles().Contains("hips"));
+        Checar("animation.paths", an.Paths().Contains("rotation"));
+        var doc = an.Create("DebugClipe", new { duration = 2, loop = true });
+        doc = an.SetKey(doc, "hips", "rotation", 0, new[] { 0f, 0f, 0f, 1f });
+        doc = an.SetKey(doc, "hips", "rotation", 1, Helix.Math.Quat.FromEuler(V(0, 90, 0)));
+        doc = an.AddEvent(doc, 0.5, "passo");
+        doc = an.SetDuration(doc, 2.5);
+        Checar("animation.create/setKey/addEvent", doc.Tracks.Length == 1 && doc.Events.Length == 1 && doc.Duration == 2.5);
+        Checar("animation.rigged", an.Rigged() is Array);
+        Checar("ik.limbs", an.Ik.Limbs().Contains("leftArm"));
+        var rigados = an.Rigged();
+        if (rigados.Length > 0)
+        {
+            var p = an.Player(rigados[0]);
+            Checar("animation.player", p.Entity == rigados[0] && an.HasPlayer(rigados[0]));
+            Checar("animation.rig", an.Rig(rigados[0]).JointCount > 0);
+        }
+        else
+        {
+            Helix.Log.Info("Debug", "Sem personagens com esqueleto na cena: a reprodução de clipes não foi testada (importe um .glb animado para cobrir).");
+        }
+        Checar("animation.playing", an.Playing is double);
+        return Task.CompletedTask;
+    }
+
+    private async Task Vfx()
+    {
+        var v = Helix.Vfx;
+        Checar("vfx.templates", v.Templates.Ids().Length > 0 && v.Templates.List().Length > 0);
+        Checar("vfx.moduleKinds", v.ModuleKinds().Contains("gravity") && v.Modules().Length > 0);
+        Checar("vfx.shapes/renderModes/blendModes", v.Shapes().Length > 0 && v.RenderModes().Length > 0 && v.BlendModes().Length > 0);
+        var id = v.Templates.Ids()[0];
+        var doc = v.FromTemplate(id, "DebugFaiscas");
+        doc = v.AddEmitter(doc, new { name = "Extra", maxParticles = 50 });
+        var extra = doc.Emitters[doc.Emitters.Length - 1];
+        doc = v.AddModule(doc, extra.Id, "gravity", new { });
+        doc = v.SetEmitter(doc, extra.Id, new { loop = true });
+        doc = v.Set(doc, new { loop = true });
+        Checar("vfx.fromTemplate/addEmitter/addModule", doc.Emitters.Length >= 2 && doc.Loop == true);
+        var json = v.ToJson(doc);
+        Checar("vfx.toJson/fromJson", v.FromJson(json).Emitters.Length == doc.Emitters.Length);
+        Checar("vfx.textures", v.Textures.List().Length > 0);
+        var ativo = await v.Save(doc, "DebugFaiscas");
+        Checar("vfx.save", ativo.Kind == "vfx");
+        var ator = v.EmitAt(ativo, V(0, 1.5f, -8), new { destroyWhenFinished = false });
+        Checar("vfx.emitAt", v.Has(ator) && v.State(ator) is string);
+        v.Burst(ator, 20);
+        Checar("vfx.alive/time", v.Alive(ator) is double && v.Time(ator) is double);
+        var outro = Helix.Scene.Spawn("vfx", new { name = "VfxAtor", position = V(-6, 1, -8), vfx = new { assetId = ativo.Id, autoPlay = true } });
+        Checar("spawn vfx", v.Has(outro) && v.Settings(outro).AssetId == ativo.Id);
+        Checar("vfx.document", (await v.Document(ativo)).Emitters.Length >= 2);
+        Checar("vfx.stats", v.Stats().Effects is double);
+    }
+
+                                                                                                       
+
+    private Task Entrada()
+    {
+        var i = Helix.Input;
+        i.Actions.Define("pular", new[] { "Space", "Gamepad:0" });
+        i.Actions.Define("soltar", new[] { "KeyB" });
+        Checar("actions.define/bindings", i.Actions.Bindings("pular").Contains("Space") && i.Actions.Names().Contains("soltar"));
+        Checar("action()", i.Action("pular").Name == "pular" && i.Actions.Down("pular") is bool);
+        Checar("isDown", i.IsDown("KeyW") == false);
+        Checar("pointer", i.Pointer.X is double);
+        Checar("cursors", i.Cursors().Contains("crosshair"));
+        Checar("gamepads", i.Gamepads() is Array);
+        Checar("axis2d", i.Axis2d(new { up = "KeyW", down = "KeyS", left = "KeyA", right = "KeyD" }).X is double);
+        Checar("input.capture", new[] { "game", "gui", "both" }.Contains((string)i.Capture));
+        Checar("keysDown", i.KeysDown() is Array);
+        Checar("touches", i.Touches is Array);
+        var quadroPersonagem = i.CharacterFrame();
+        Checar("characterFrame", quadroPersonagem == null || quadroPersonagem.X is double);
+        assinaturas.Add(i.OnKeyDown(e => AoTeclar(e)));
+        assinaturas.Add(i.OnKeyUp(_ => { }));
+        assinaturas.Add(i.OnPointerDown(e => { if (e.Button == 0) CliqueNaCena(e.X, e.Y); }));
+        assinaturas.Add(i.OnWheel(_ => { }));
+        assinaturas.Add(i.OnGamepadButtonDown(e => Helix.Log.Info("Debug", $"Gamepad {e.Pad} botão {e.Button}")));
+        return Task.CompletedTask;
+    }
+
+    private void AoTeclar(dynamic e)
+    {
+        if (e.Repeat == true) return;
+        string code = e.Code;
+        switch (code)
+        {
+            case "KeyR":
+                Helix.Play.Restart();
+                break;
+            case "KeyB":
+                SoltarCaixa();
+                break;
+            case "KeyE":
+                Helix.Events.Emit("debug.ping", new { origem = "teclado", quadro = Helix.Time.Frame });
+                break;
+            case "KeyF":
+                Helix.Camera.Shake(0.4, 0.6);
+                break;
+            case "KeyG":
+                if (efeito != null)
+                {
+                    efeito.Enabled = !efeito.Enabled;
+                    Helix.Log.Info("Debug", $"Efeito DebugPost {(efeito.Enabled ? "ligado" : "desligado")}");
+                }
+                break;
+            case "KeyT":
+                Helix.Time.Scale = Helix.Time.Scale == 1 ? 0.3 : 1;
+                Helix.Log.Info("Debug", $"time.scale = {Helix.Time.Scale}");
+                break;
+            case "KeyH":
+                if (tela != null)
+                {
+                    if (Helix.Gui.IsShown(tela)) Helix.Gui.Hide(tela);
+                    else Helix.Gui.Show(tela, "debug-tela");
+                }
+                break;
+            case "KeyL":
+                Helix.Log.Info("Debug", $"Luzes locais: {string.Join(", ", Helix.Light.All(new { local = true }).Select(l => (string)l.Entity.Name))}");
+                break;
+        }
+    }
+
+    private void SoltarCaixa()
+    {
+        var caixa = Helix.Scene.SpawnPrimitive("box", new { name = "CaixaSolta", position = V(Helix.Math.Random.Range(-3, 3), 6, Helix.Math.Random.Range(0, 4)), rigidBody = new { type = "dynamic", collider = "box", mass = 1 }, tags = new[] { "caixa" } });
+        Helix.Material.SetColor(caixa, Helix.Math.Random.Color());
+        pontos += 1;
+        Helix.Gui.Bind("pontos", pontos);
+        Helix.Events.Emit("debug.caixa", new { nome = caixa.Name });
+    }
+
+    private void CliqueNaCena(double x, double y)
+    {
+        var alvo = Helix.Camera.Pick(x, y);
+        var ponto = Helix.Camera.PickPoint(x, y);
+        if (alvo != null) Helix.Log.Info("Debug", $"Clique em {alvo.Name}{(ponto != null ? $" @ {ponto[0]:F1}, {ponto[1]:F1}, {ponto[2]:F1}" : "")}");
+        if (ponto != null) Helix.Debug.Sphere(ponto, 0.3, "#ff006e", 2);
+    }
+
+    private Task Eventos()
+    {
+        var ev = Helix.Events;
+        dynamic recebido = null;
+        var off = ev.On("debug.ping", p => { recebido = p; });
+        Checar("events.emit conta ouvintes", ev.Emit("debug.ping", new { origem = "teste" }) == 1);
+        Checar("events.on recebe", recebido != null && recebido.Origem == "teste");
+        Checar("listenerCount", ev.ListenerCount("debug.ping") == 1);
+        off();
+        Checar("unsubscribe", ev.ListenerCount("debug.ping") == 0);
+        var umaVez = 0;
+        ev.Once("debug.once", () => umaVez++);
+        ev.Emit("debug.once");
+        ev.Emit("debug.once");
+        Checar("events.once", umaVez == 1);
+        Action ouvinte = () => { };
+        ev.On("debug.off", ouvinte);
+        ev.Off("debug.off", ouvinte);
+        Checar("events.off", ev.ListenerCount("debug.off") == 0);
+        Checar("events.names", ev.Names() is Array);
+        assinaturas.Add(ev.On("debug.ping", p => Helix.Log.Info("Debug", $"ping de {p.Origem}")));
+        assinaturas.Add(ev.On("debug.caixa", p => Helix.Log.Debug("Debug", $"caixa {p.Nome}")));
+        var doAtor = 0;
+        assinaturas.Add(ev.OnEntity(torus, "toque", () => doAtor++));
+        ev.EmitEntity(torus, "toque");
+        Checar("onEntity/emitEntity", doAtor == 1);
+        assinaturas.Add(Helix.Play.OnStopped(() => Helix.Log.Info("Debug", "play.onStopped disparou")));
+        assinaturas.Add(Helix.Play.OnPaused(() => Helix.Log.Info("Debug", "pausado")));
+        assinaturas.Add(Helix.Play.OnResumed(() => Helix.Log.Info("Debug", "retomado")));
 `;
 }
