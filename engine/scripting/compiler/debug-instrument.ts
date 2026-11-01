@@ -175,3 +175,133 @@ function shiftSourceMap(file: TS.SourceFile, map: DecodedSourceMap, edits: reado
     });
     return { mappings };
 }
+class ScopeCollector {
+    constructor(private readonly ts: typeof TS, private readonly excluded: ReadonlySet<string>) { }
+    collect(statement: TS.Node): {
+        names: string[];
+        hasThis: boolean;
+    } {
+        const { ts } = this;
+        const names: string[] = [];
+        const seen = new Set<string>();
+        const add = (name: string): void => {
+            if (names.length >= MAX_SCOPE_NAMES || seen.has(name) || this.excluded.has(name) || !isValidIdentifier(name))
+                return;
+            seen.add(name);
+            names.push(name);
+        };
+        let hasThis = false;
+        let thisDecided = false;
+        let cursor: TS.Node = statement;
+        for (let parent = statement.parent; parent; parent = parent.parent) {
+            if (ts.isSourceFile(parent) || ts.isBlock(parent) || ts.isModuleBlock(parent) || ts.isCaseClause(parent) || ts.isDefaultClause(parent)) {
+                this.blockScoped(parent.statements, cursor, add);
+            }
+            else if (ts.isForStatement(parent) || ts.isForInStatement(parent) || ts.isForOfStatement(parent)) {
+                const initializer = parent.initializer;
+                if (initializer && ts.isVariableDeclarationList(initializer))
+                    for (const declaration of initializer.declarations)
+                        this.bindingNames(declaration.name, add);
+            }
+            else if (ts.isCatchClause(parent)) {
+                if (parent.variableDeclaration && cursor === parent.block)
+                    this.bindingNames(parent.variableDeclaration.name, add);
+            }
+            else if (isFunctionLikeDeclaration(ts, parent)) {
+                for (const parameter of parent.parameters)
+                    this.bindingNames(parameter.name, add);
+                if ((ts.isFunctionExpression(parent) || ts.isFunctionDeclaration(parent)) && parent.name)
+                    add(parent.name.text);
+                if (parent.body)
+                    this.functionScoped(parent.body, add);
+                if (!thisDecided && !ts.isArrowFunction(parent)) {
+                    hasThis = true;
+                    thisDecided = true;
+                }
+            }
+            else if (ts.isClassStaticBlockDeclaration(parent) || ts.isPropertyDeclaration(parent)) {
+                if (!thisDecided) {
+                    hasThis = true;
+                    thisDecided = true;
+                }
+            }
+            if (ts.isSourceFile(parent)) {
+                this.functionScoped(parent, add);
+                break;
+            }
+            cursor = parent;
+        }
+        return { names, hasThis };
+    }
+    moduleScope(file: TS.SourceFile): string[] {
+        const { ts } = this;
+        const names: string[] = [];
+        const seen = new Set<string>();
+        const add = (name: string): void => {
+            if (names.length >= MAX_SCOPE_NAMES || seen.has(name) || this.excluded.has(name) || !isValidIdentifier(name))
+                return;
+            seen.add(name);
+            names.push(name);
+        };
+        for (const statement of file.statements) {
+            if (ts.isVariableStatement(statement))
+                for (const declaration of statement.declarationList.declarations)
+                    this.bindingNames(declaration.name, add);
+            else if ((ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) && statement.name)
+                add(statement.name.text);
+        }
+        return names;
+    }
+    private blockScoped(statements: readonly TS.Statement[], cursor: TS.Node, add: (name: string) => void): void {
+        const { ts } = this;
+        for (const statement of statements) {
+            if (ts.isFunctionDeclaration(statement)) {
+                if (statement.name)
+                    add(statement.name.text);
+                continue;
+            }
+            if (statement === cursor || statement.pos >= cursor.pos)
+                break;
+            if (ts.isVariableStatement(statement) && statement.declarationList.flags & ts.NodeFlags.BlockScoped) {
+                for (const declaration of statement.declarationList.declarations)
+                    this.bindingNames(declaration.name, add);
+            }
+            else if (ts.isClassDeclaration(statement) && statement.name)
+                add(statement.name.text);
+        }
+    }
+    private functionScoped(body: TS.Node, add: (name: string) => void): void {
+        const { ts } = this;
+        const walk = (node: TS.Node): void => {
+            if (ts.isVariableStatement(node)) {
+                if (!(node.declarationList.flags & ts.NodeFlags.BlockScoped))
+                    for (const declaration of node.declarationList.declarations)
+                        this.bindingNames(declaration.name, add);
+                return;
+            }
+            if (ts.isVariableDeclarationList(node)) {
+                if (!(node.flags & ts.NodeFlags.BlockScoped))
+                    for (const declaration of node.declarations)
+                        this.bindingNames(declaration.name, add);
+                return;
+            }
+            if (ts.isFunctionLike(node) || ts.isClassLike(node))
+                return;
+            ts.forEachChild(node, walk);
+        };
+        if (ts.isBlock(body) || ts.isSourceFile(body))
+            ts.forEachChild(body, walk);
+    }
+    private bindingNames(name: TS.BindingName, add: (name: string) => void): void {
+        const { ts } = this;
+        if (ts.isIdentifier(name)) {
+            add(name.text);
+            return;
+        }
+        for (const element of name.elements) {
+            if (ts.isOmittedExpression(element))
+                continue;
+            this.bindingNames(element.name, add);
+        }
+    }
+}
