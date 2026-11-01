@@ -841,5 +841,262 @@ var areas = []area{
 	{"Módulo (Require)", modulo, false},
 	{"Matemática", matematica, false},
 	{"Cena", cena, false},
+	{"Transformações", transformacao, false},
+	{"Malhas e CSG", malhas, false},
+	{"Materiais", materiais, false},
+	{"Luzes", luzes, false},
+	{"Céu e mundo", ceu, false},
+	{"Câmera", camera, false},
+	{"Pós-processamento", pos, false},
+	{"Render", render, false},
+	{"Física", fisica, false},
+	{"Personagem e jogador", personagem, false},
+	{"Terreno", terreno, false},
+	{"Interface", interfaceGrafica, false},
+	{"Áudio", audio, false},
+	{"VFX", vfx, false},
+	{"Entrada", entrada, false},
+	{"Eventos", eventos, false},
+	{"Tempo e tarefas", tempo, false},
+	{"Dados, projeto e rede", dados, false},
+	{"Panic recuperado (recover)", recuperar, false},
+	{"Erro proposital (Promise.reject)", rejeitar, true},
+}
+
+func areaOk(a *area) {
+	if a.esperaErro {
+		checar("a rejeição deveria ter chegado à cadeia", false)
+		return
+	}
+	depurar("ok %s", a.nome)
+}
+
+func areaErro(a *area, args []helix.Value) {
+	causa := arg(args, 0)
+	mensagem := causa.String()
+	if causa.IsObject() {
+		mensagem = causa.Get("message").String()
+	}
+	if a.esperaErro {
+		checarf("a rejeição chega como erro da promessa", strings.Contains(mensagem, "proposital"), "%s", mensagem)
+		return
+	}
+	falhas++
+	erro("ERRO em %s: %s", a.nome, mensagem)
+}
+
+                                                                                               
+func encadear(promessa helix.Value, a *area) helix.Value {
+	depois := promessa.Invoke("then", func(args []helix.Value) helix.Value { return a.rodar() })
+	return depois.Invoke("then", func(args []helix.Value) { areaOk(a) }, func(args []helix.Value) { areaErro(a, args) })
+}
+
+func finalizar() {
+	girador := api("assets").Invoke("byName", "DebugGirador", "script")
+	if !girador.IsNone() {
+		extra := api("scene").Invoke("spawnPrimitive", "box", opts{
+			"name":      "GiradorDinamico",
+			"position":  v3(-2, 0.5, -3),
+			"rigidBody": opts{"type": "kinematic", "collider": "box"},
+			"script":    opts{"assetId": girador.Get("id"), "props": opts{"velocidade": 180, "cor": "#00b4d8"}},
+		})
+		checar("spawn com script", !extra.Get("script").IsNone() && extra.Path("script.assetId").Equals(girador.Get("id")))
+	} else {
+		checarf("ativo DebugGirador", false, "não está na biblioteca")
+	}
+	dica := "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia."
+	if falhas == 0 {
+		info("API percorrida em %s: %d checagens, nenhuma falha. %s", linguagem, checagens, dica)
+	} else {
+		aviso("API percorrida em %s: %d checagens, %d falhas (veja FALHOU/ERRO acima). %s", linguagem, checagens, falhas, dica)
+	}
+	api("gui").Invoke("bind", "checagens", checagens)
+	api("gui").Invoke("bind", "falhas", falhas)
+}
+
+                                                                                          
+
+                       
+func onLoad() {
+	info("onLoad do script de entrada")
+}
+
+                        
+func onStart() {
+	info("Jogo de teste em %s: percorrendo a API…", linguagem)
+	promessa := api("time").Invoke("wait", 0)
+	for i := range areas {
+		promessa = encadear(promessa, &areas[i])
+	}
+	promessa.Invoke("then", func() { finalizar() })
+}
+
+                         
+func onUpdate(dt float64) {
+	quadros++
+	if !torus.IsUndefined() {
+		api("transform").Invoke("rotate", torus, v3(0, 40*dt, 0))
+	}
+	d := api("debug")
+	d.Invoke("line", v3(-6, 0.05, -6), v3(6, 0.05, -6), "#ff006e")
+	d.Invoke("box", opts{"center": v3(0, 1, 3), "size": v3(3, 2, 3)}, "#ffbe0b")
+	if !heroi.IsUndefined() {
+		d.Invoke("axes", heroi, 1)
+		acima := api("math.vec3").Invoke("add", api("transform").Invoke("worldPosition", heroi), v3(0, 2.2, 0))
+		d.Invoke("text", acima, fmt.Sprintf("Heroi · %d pts", pontos), "#ffffff")
+	}
+	d.Invoke("ray", v3(0, 3, 0), v3(0, -1, 0), 3, "#06d6a0")
+	hudTimer += dt
+	if hudTimer >= 0.5 {
+		hudTimer = 0
+		g := api("gui")
+		g.Invoke("bind", "fps", math.Round(numero(api("render").Get("stats"), "fps")))
+		g.Invoke("bind", "checagens", checagens)
+		g.Invoke("bind", "falhas", falhas)
+	}
+}
+
+                               
+func onFixedUpdate(h float64) {
+	passosFisica++
+	if passosFisica == 1 {
+		checarf("onFixedUpdate recebe o passo", h > 0 && h < 1, "%g", h)
+	}
+}
+
+                              
+func onLateUpdate() {
+	lateUpdates++
+}
+
+                                                                          
+  
+                                    
+func onBeforeHotReload() float64 {
+	return float64(pontos)
+}
+
+                             
+func onHotReload(anterior float64) {
+	pontos = 0
+	if anterior > 0 {
+		pontos = int(anterior)
+	}
+	info("Recarga a quente: %d pontos preservados", pontos)
+}
+
+                       
+func onStop() {
+	for _, desligar := range assinaturas {
+		desligar.Call()
+	}
+	assinaturas = nil
+	info("Parou: %d quadros, %d passos de física, %d lateUpdates, %d frames (onAfterFrame), %d colisões.", quadros, passosFisica, lateUpdates, renders, colisoes)
+	torus, heroi, efeito, tela = helix.Undefined(), helix.Undefined(), helix.Undefined(), helix.Undefined()
+}
+
+func main() {}
+`;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+package main
+
+import (
+	"fmt"
+	"math"
+
+	"helix"
+)
+
+                                                                                        
+var (
+	angulo            float64
+	contatos, quadros int
+	desligar          helix.Value
+)
+
+type opts = map[string]any
+
+func registrar(metodo, mensagem string) {
+	helix.Root().Get("log").Invoke(metodo, "Girador", mensagem)
+}
+
+func nomeDe(entidade helix.Value) string { return entidade.Get("name").String() }
+
+                       
+func onLoad() {
+	helix.Root().Get("props").Invoke("define", opts{
+		"velocidade": opts{"type": "range", "default": 90, "min": 0, "max": 360, "step": 1, "label": "Velocidade (°/s)"},
+		"cor":        opts{"type": "color", "default": "#ff8800", "label": "Cor"},
+		"pulsar":     opts{"type": "boolean", "default": true, "label": "Pulsar"},
+	})
+}
+
+                        
+func onStart() {
+	props, ator, lg := helix.Root().Get("props"), helix.Self(), helix.Root().Get("log")
+	registrar("info", fmt.Sprintf("%s acordou com velocidade %v°/s", nomeDe(ator), props.Invoke("get", "velocidade")))
+	helix.Root().Get("material").Invoke("setColor", ator, props.Invoke("get", "cor"))
+	desligar = props.Invoke("onChanged", "cor", func(args []helix.Value) {
+		if len(args) > 0 {
+			helix.Root().Get("material").Invoke("setColor", helix.Self(), args[0])
+		}
+	})
+	proprio := helix.Root().Get("self")
+	lg.Invoke("assert", !proprio.IsNone() && proprio.Equals(ator), "helix.self deveria ser o ator deste script")
+	lg.Invoke("assert", props.Invoke("has", "velocidade").Bool() && props.Invoke("definitions").Len() == 3, "props.define deveria registrar 3 propriedades")
+}
+
+                         
+func onUpdate(dt float64) {
+	props, tr := helix.Root().Get("props"), helix.Root().Get("transform")
+	quadros++
+	angulo += props.Invoke("get", "velocidade").Number() * dt
+	tr.Invoke("setRotation", helix.Self(), helix.V3(0, angulo, 0))
+	if props.Invoke("get", "pulsar").Bool() {
+		tr.Invoke("setScale", helix.Self(), 1+math.Sin(helix.Root().Path("time.now").Number()*3)*0.1)
+	}
+}
+
+                                  
+func onCollisionBegin(outro, contato uint32) {
+	contatos++
+	if contatos > 3 {
+		return
+	}
+	o, c := helix.Wrap(outro), helix.Wrap(contato)
+	registrar("info", fmt.Sprintf("%s tocou %s (impulso %.2f)", nomeDe(helix.Self()), nomeDe(o), c.Get("impulse").Number()))
+}
+
+                                
+func onTriggerEnter(outro uint32) {
+	registrar("info", fmt.Sprintf("%s entrou no gatilho de %s", nomeDe(helix.Wrap(outro)), nomeDe(helix.Self())))
+}
+
+                         
+func onEnable() {
+	registrar("debug", fmt.Sprintf("%s ativo", nomeDe(helix.Self())))
+}
+
+                          
+func onDisable() {
+	registrar("debug", fmt.Sprintf("%s inativo", nomeDe(helix.Self())))
+}
+
+                       
+func onStop() {
+	registrar("info", fmt.Sprintf("%s: %d quadros, %d contatos", nomeDe(helix.Self()), quadros, contatos))
+}
+
+                          
+func onDestroy() {
+	if desligar.IsFunction() {
+		desligar.Call()
+	}
+	desligar = helix.Undefined()
+}
+
+func main() {}
 `;
 }
