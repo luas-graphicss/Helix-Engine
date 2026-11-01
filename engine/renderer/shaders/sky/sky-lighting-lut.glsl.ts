@@ -18,7 +18,7 @@ const int ELEVATION_SAMPLES = 8;
 
 out vec4 fragColor;
 
- 
+                                                                                                   
 vec3 skyIrradianceOverPi() {
   vec3 sum = vec3(0.0);
   for (int i = 0; i < ELEVATION_SAMPLES; i++) {
@@ -49,6 +49,8 @@ void main() {
     vec3 sky = skyIrradianceOverPi();
     if (texel == ${SKY_LIGHTING_TEXEL.skyIrradiance}) {
       value = sky;
+    } else if (texel == ${SKY_LIGHTING_TEXEL.shadedGroundIrradiance}) {
+      value = GROUND_ALBEDO * sky;
     } else {
       vec3 horizontalIrradiance = sky * PI
         + u_sunIrradiance * sunTransmittance * max(u_sunDirection.y, 0.0)
