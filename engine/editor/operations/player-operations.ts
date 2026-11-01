@@ -4,13 +4,14 @@ import type { Scene } from '@/engine/core/scene/scene';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { SetValueCommand } from '@/engine/editor/commands/set-value-command';
 import { baseNameWithoutExtension, computeImportStats } from '@/engine/assets/import/import-types';
-import { IMPORT_FORMAT_SUMMARY, importModelFile, partitionImportFiles } from '@/engine/assets/import/import-registry';
+import { IMPORT_FORMAT_SUMMARY, partitionImportFiles } from '@/engine/assets/import/import-registry';
+import { readModelFile } from '@/engine/assets/import/import-worker-client';
 import { buildCharacterModelAsset, describeCharacterModel, MANNEQUIN_MODEL_ID, type CharacterModelAsset } from '@/engine/character/assets/character-model-asset';
 import { allocateCharacterModelId, getCharacterModel, registerCharacterModel } from '@/engine/character/assets/character-model-registry';
 import { findCharacterActors, findPossessableCharacter } from '@/engine/character/character-actor';
 import { cloneCharacterSettings, copyCharacterSettings, type CharacterClipState, type CharacterSettings } from '@/engine/character/character-settings';
 import { createPlayerCameraSettings, createPlayerSettings, type PlayerCameraSettings } from '@/engine/character/player-settings';
-import { assignCharacterClip, assignCharacterScalar, syncActorModel, type CharacterScalar } from './character-operations';
+import { assignCharacterClip, assignCharacterScalar, CHARACTER_SCALAR_LABEL, syncActorModel, type CharacterScalar } from './character-operations';
 const LOG_SOURCE = 'Personagem';
 export type PlayerCameraScalar = Exclude<keyof PlayerCameraSettings, 'invertY'>;
 const CAMERA_RANGE: Record<PlayerCameraScalar, [
@@ -32,6 +33,43 @@ function actorsSharingProfile(scene: Scene): Entity[] {
 export function independentCharacterActors(scene: Scene): Entity[] {
     return findCharacterActors(scene).filter((entity) => entity.character !== scene.player.character);
 }
+export function playerCharacterActor(session: EditorSession): Entity | null {
+    const { scene } = session;
+    const actor = session.playtest.characters?.possessed?.entity ?? findPossessableCharacter(scene);
+    return actor?.character && actor.character !== scene.player.character ? actor : null;
+}
+export function playerCharacterSettings(session: EditorSession): CharacterSettings {
+    return playerCharacterActor(session)?.character ?? session.scene.player.character;
+}
+interface PlayerCharacterSnapshot {
+    profile: CharacterSettings;
+    actor: CharacterSettings | null;
+}
+function commitPlayerCharacter(session: EditorSession, label: string, mutate: (settings: CharacterSettings) => boolean, mergeKey?: string): boolean {
+    const { scene } = session;
+    const profile = scene.player.character;
+    const actor = playerCharacterActor(session);
+    const target = actor?.character ?? null;
+    const after: PlayerCharacterSnapshot = { profile: cloneCharacterSettings(profile), actor: target ? cloneCharacterSettings(target) : null };
+    const changedProfile = mutate(after.profile);
+    const changedActor = after.actor ? mutate(after.actor) : false;
+    if (!changedProfile && !changedActor)
+        return false;
+    const before: PlayerCharacterSnapshot = { profile: cloneCharacterSettings(profile), actor: target ? cloneCharacterSettings(target) : null };
+    const apply = (value: PlayerCharacterSnapshot) => {
+        const profileModelChanged = profile.model !== value.profile.model;
+        copyCharacterSettings(profile, value.profile);
+        for (const entity of actorsSharingProfile(scene))
+            syncActorModel(session, entity, profileModelChanged);
+        if (actor && target && value.actor) {
+            const modelChanged = target.model !== value.actor.model;
+            copyCharacterSettings(target, value.actor);
+            syncActorModel(session, actor, modelChanged);
+        }
+    };
+    session.history.execute(new SetValueCommand(label, apply, before, after, mergeKey));
+    return true;
+}
 export function setPlayerEnabled(session: EditorSession, enabled: boolean): void {
     const { player } = session.scene;
     if (player.enabled === enabled)
@@ -40,6 +78,7 @@ export function setPlayerEnabled(session: EditorSession, enabled: boolean): void
     session.log.info(LOG_SOURCE, enabled
         ? 'Personagem do jogador ligado: a simulação volta a criar e possuir o personagem padrão.'
         : 'Personagem do jogador desligado: a simulação não cria nem possui personagem; o controle fica por conta do código do projeto.');
+    session.playtest.syncPlayer();
     session.notify();
 }
 export function setPlayerSpawnIfMissing(session: EditorSession, value: boolean): void {
@@ -50,29 +89,22 @@ export function setPlayerSpawnIfMissing(session: EditorSession, value: boolean):
     session.notify();
 }
 export function setPlayerCharacterScalar(session: EditorSession, field: CharacterScalar, value: number): void {
-    const { scene } = session;
-    if (!assignCharacterScalar(scene.player.character, field, value))
-        return;
-    for (const entity of actorsSharingProfile(scene))
-        syncActorModel(session, entity, false);
-    session.notify();
+    commitPlayerCharacter(session, CHARACTER_SCALAR_LABEL[field], (settings) => assignCharacterScalar(settings, field, value), `player:${field}`);
 }
 export function setPlayerClip(session: EditorSession, state: CharacterClipState, assetId: string | null): void {
-    if (!assignCharacterClip(session, session.scene.player.character, state, assetId))
-        return;
-    session.notify();
+    commitPlayerCharacter(session, assetId ? 'Clipe do personagem' : 'Clipe do modelo', (settings) => assignCharacterClip(session, settings, state, assetId));
 }
 export function setPlayerModel(session: EditorSession, modelId: string): void {
-    const { scene } = session;
-    const { character } = scene.player;
-    if (character.model === modelId)
+    const changed = commitPlayerCharacter(session, 'Modelo do personagem', (settings) => {
+        if (settings.model === modelId)
+            return false;
+        settings.model = modelId;
+        return true;
+    });
+    if (!changed)
         return;
-    character.model = modelId;
-    for (const entity of actorsSharingProfile(scene))
-        syncActorModel(session, entity, true);
     const asset = getCharacterModel(modelId);
     session.log.info(LOG_SOURCE, `Modelo do jogador: ${asset ? `${asset.label} (${describeCharacterModel(asset)})` : modelId}.`);
-    session.notify();
 }
 export function setPlayerCameraScalar(session: EditorSession, field: PlayerCameraScalar, value: number): void {
     if (!Number.isFinite(value))
@@ -103,15 +135,14 @@ export function setPlayerCameraInvertY(session: EditorSession, invertY: boolean)
     session.notify();
 }
 export function resetPlayerSettings(session: EditorSession): void {
-    const { scene } = session;
-    const { player } = scene;
+    const { player } = session.scene;
     const defaults = createPlayerSettings();
-    const model = player.character.model;
-    copyCharacterSettings(player.character, { ...defaults.character, model });
+    commitPlayerCharacter(session, 'Restaurar perfil padrão', (settings) => {
+        copyCharacterSettings(settings, { ...defaults.character, model: settings.model, autoPossess: settings.autoPossess });
+        return true;
+    });
     Object.assign(player.camera, createPlayerCameraSettings());
     player.spawnIfMissing = defaults.spawnIfMissing;
-    for (const entity of actorsSharingProfile(scene))
-        syncActorModel(session, entity, false);
     session.log.info(LOG_SOURCE, 'Perfil do jogador restaurado ao padrão.');
     session.notify();
 }
@@ -157,7 +188,7 @@ export async function importCharacterModelFiles(session: EditorSession, files: I
     for (const file of models) {
         const started = performance.now();
         try {
-            const imported = await importModelFile(file, bundle);
+            const imported = await readModelFile(file, bundle);
             const asset = registerCharacterModel(buildCharacterModelAsset(imported, { id: allocateCharacterModelId(), label: baseNameWithoutExtension(file.name), source: file.name }));
             const stats = computeImportStats(imported);
             session.log.info(LOG_SOURCE, `${file.name} lido em ${Math.round(performance.now() - started)} ms: ${describeCharacterModel(asset)}, ${stats.triangles.toLocaleString('pt-BR')} triângulos.`);
