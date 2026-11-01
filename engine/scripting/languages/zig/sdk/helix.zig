@@ -558,3 +558,283 @@ pub const Value = struct {
                                                                                               
                                                                    
     pub fn call(self: Value, args: anytype) Value {
+        var converted = Arguments.of(args);
+        defer converted.deinit();
+        return check(adopt(ffi.call(self.handle, converted.ptr(), converted.count())));
+    }
+
+                                                                                                  
+    pub fn invoke(self: Value, method: []const u8, args: anytype) Value {
+        var converted = Arguments.of(args);
+        defer converted.deinit();
+        return check(adopt(ffi.invoke(self.handle, method.ptr, method.len, converted.ptr(), converted.count())));
+    }
+
+                           
+    pub fn construct(self: Value, args: anytype) Value {
+        var converted = Arguments.of(args);
+        defer converted.deinit();
+        return check(adopt(ffi.construct(self.handle, converted.ptr(), converted.count())));
+    }
+
+                                                                                        
+    pub fn equals(self: Value, other: Value) bool {
+        return check(ffi.equals(self.handle, other.handle)) != 0;
+    }
+
+                                                                                                  
+    pub fn iterator(self: Value) Iterator {
+        return .{ .target = self, .count = self.len() };
+    }
+
+                                                                                
+    pub fn format(self: Value, writer: *std.Io.Writer) std.Io.Writer.Error!void {
+        var buffer: [512]u8 = undefined;
+        const length = self.stringLen();
+        if (length <= buffer.len) return writer.writeAll(self.stringBuf(&buffer));
+        const own = self.string(allocator) catch return writer.writeAll(self.stringBuf(&buffer));
+        defer allocator.free(own);
+        try writer.writeAll(own);
+    }
+};
+
+pub const Iterator = struct {
+    target: Value,
+    count: usize,
+    index: usize = 0,
+
+    pub fn next(self: *Iterator) ?Value {
+        if (self.index >= self.count) return null;
+        const item = self.target.at(self.index);
+        self.index += 1;
+        return item;
+    }
+};
+
+                                                                                    
+pub const Callback = *const fn ([]const Value) Value;
+
+                                                                                                
+
+const MAX_INLINE_ARGS = 8;
+
+                                                                                                      
+const Arguments = struct {
+    inline_handles: [MAX_INLINE_ARGS]u32 = undefined,
+    inline_owned: [MAX_INLINE_ARGS]bool = undefined,
+    heap_handles: []u32 = &.{},
+    heap_owned: []bool = &.{},
+    total: usize = 0,
+
+    fn of(args: anytype) Arguments {
+        const T = @TypeOf(args);
+        var out = Arguments{};
+        switch (@typeInfo(T)) {
+            .@"struct" => |info| {
+                if (!info.is_tuple) @compileError("os argumentos de uma chamada são uma tupla (.{ a, b }) ou uma fatia []const Value, não " ++ @typeName(T));
+                out.reserve(info.field_types.len);
+                inline for (0..info.field_types.len) |i| {
+                    const arg = args[i];
+                    if (@TypeOf(arg) == Value) {
+                        out.put(i, arg.handle, false);
+                    } else {
+                        out.put(i, Value.from(arg).handle, true);
+                    }
+                }
+            },
+            .pointer => {
+                out.reserve(args.len);
+                for (args, 0..) |arg, i| out.put(i, @as(Value, arg).handle, false);
+            },
+            else => @compileError("os argumentos de uma chamada são uma tupla (.{ a, b }) ou uma fatia []const Value, não " ++ @typeName(T)),
+        }
+        return out;
+    }
+
+    fn reserve(self: *Arguments, n: usize) void {
+        self.total = n;
+        if (n > MAX_INLINE_ARGS) {
+            self.heap_handles = allocator.alloc(u32, n) catch @panic("sem memória para os argumentos da chamada");
+            self.heap_owned = allocator.alloc(bool, n) catch @panic("sem memória para os argumentos da chamada");
+        }
+    }
+
+    fn put(self: *Arguments, i: usize, handle: u32, owned: bool) void {
+        if (self.total > MAX_INLINE_ARGS) {
+            self.heap_handles[i] = handle;
+            self.heap_owned[i] = owned;
+        } else {
+            self.inline_handles[i] = handle;
+            self.inline_owned[i] = owned;
+        }
+    }
+
+    fn ptr(self: *Arguments) [*]const u32 {
+        return if (self.total > MAX_INLINE_ARGS) self.heap_handles.ptr else &self.inline_handles;
+    }
+
+    fn count(self: *const Arguments) i32 {
+        return @intCast(self.total);
+    }
+
+    fn deinit(self: *Arguments) void {
+        const handles: []const u32 = if (self.total > MAX_INLINE_ARGS) self.heap_handles else self.inline_handles[0..self.total];
+        const owned: []const bool = if (self.total > MAX_INLINE_ARGS) self.heap_owned else self.inline_owned[0..self.total];
+        for (handles, owned) |handle, is_owned| if (is_owned) ffi.release(handle);
+        if (self.total > MAX_INLINE_ARGS) {
+            allocator.free(self.heap_handles);
+            allocator.free(self.heap_owned);
+        }
+    }
+};
+
+                                                                                                
+
+const CallbackEntry = struct {
+    plain: ?Callback,
+    context: ?*anyopaque,
+    bound: ?*const fn (*anyopaque, []const Value) Value,
+};
+
+var callbacks: std.AutoHashMapUnmanaged(u32, CallbackEntry) = .empty;
+var next_callback: u32 = 1;
+
+fn registerCallback(plain: ?Callback, context: ?*anyopaque, bound: ?*const fn (*anyopaque, []const Value) Value) Value {
+    ready();
+    const id = next_callback;
+    next_callback = @max(next_callback +% 1, 1);
+    callbacks.put(allocator, id, .{ .plain = plain, .context = context, .bound = bound }) catch @panic("sem memória para registrar o callback");
+    return check(Value.adopt(ffi.callback(id)));
+}
+
+                                                                                              
+export fn __hx_invoke_callback(id: u32, args_handle: u32) u32 {
+    const entry = callbacks.get(id) orelse return 0;
+    const list = Value.adopt(args_handle);
+    defer list.deinit();
+    const count = list.len();
+    var inline_args: [MAX_INLINE_ARGS]Value = undefined;
+    const args: []Value = if (count <= MAX_INLINE_ARGS) inline_args[0..count] else allocator.alloc(Value, count) catch @panic("sem memória para os argumentos do callback");
+    defer if (count > MAX_INLINE_ARGS) allocator.free(args);
+    for (args, 0..) |*slot, i| slot.* = list.at(i);
+    defer for (args) |arg| arg.deinit();
+    const result = if (entry.bound) |bound| bound(entry.context.?, args) else if (entry.plain) |plain| plain(args) else Value.none;
+    return result.intoRaw();
+}
+
+                                                                                        
+export fn __hx_drop_callback(id: u32) void {
+    _ = callbacks.remove(id);
+}
+
+                                                                                                    
+
+                                                                                         
+pub fn root() Value {
+    ready();
+    return check(Value.adopt(ffi.root()));
+}
+
+                                                                              
+pub fn actor() Value {
+    ready();
+    return check(Value.adopt(ffi.self()));
+}
+
+                                                                   
+pub fn script() Value {
+    ready();
+    return check(Value.adopt(ffi.script()));
+}
+
+                                                                                               
+pub fn require(name: []const u8) Value {
+    ready();
+    return check(Value.adopt(ffi.require(name.ptr, name.len)));
+}
+
+                                                                                  
+pub fn call(dotted: []const u8, args: anytype) Value {
+    const base = root();
+    defer base.deinit();
+    if (std.mem.lastIndexOfScalar(u8, dotted, '.')) |dot| {
+        const owner = base.path(dotted[0..dot]);
+        defer owner.deinit();
+        return owner.invoke(dotted[dot + 1 ..], args);
+    }
+    return base.invoke(dotted, args);
+}
+
+                                           
+pub fn now() f64 {
+    ready();
+    return ffi.now();
+}
+
+                                                
+pub fn log(level: Level, message: []const u8) void {
+    ready();
+    ffi.log(@intFromEnum(level), message.ptr, message.len);
+}
+
+                                                                                                                             
+pub fn print(comptime fmt: []const u8, args: anytype) void {
+    emit(.info, fmt, args);
+}
+
+pub fn debug(comptime fmt: []const u8, args: anytype) void {
+    emit(.debug, fmt, args);
+}
+
+pub fn warn(comptime fmt: []const u8, args: anytype) void {
+    emit(.warn, fmt, args);
+}
+
+pub fn err(comptime fmt: []const u8, args: anytype) void {
+    emit(.err, fmt, args);
+}
+
+fn emit(level: Level, comptime fmt: []const u8, args: anytype) void {
+    var buffer: [1024]u8 = undefined;
+    if (std.fmt.bufPrint(&buffer, fmt, args)) |text| {
+        log(level, text);
+    } else |_| {
+        const text = std.fmt.allocPrint(allocator, fmt, args) catch {
+            log(level, "(mensagem longa demais para formatar)");
+            return;
+        };
+        defer allocator.free(text);
+        log(level, text);
+    }
+}
+
+                                                                                                          
+pub fn throw(comptime fmt: []const u8, args: anytype) noreturn {
+    var buffer: [1024]u8 = undefined;
+    const text = std.fmt.bufPrint(&buffer, fmt, args) catch fmt;
+    @panic(text);
+}
+
+                                                                                                  
+
+                                                                                                     
+                                                 
+fn Raw(comptime T: type) type {
+    return switch (T) {
+        void, f64, f32, i32, u32, i64, u64 => T,
+        bool => i32,
+        Value, Vec3, []const u8 => u32,
+        else => @compileError("o tipo " ++ @typeName(T) ++ " não atravessa a ABI da engine: use f64, f32, i32, u32, i64, u64, bool, helix.Value ou helix.Vec3"),
+    };
+}
+
+fn fromRaw(comptime T: type, value: Raw(T)) T {
+    return switch (T) {
+        bool => value != 0,
+        Value => Value.adopt(value),
+        Vec3 => blk: {
+            const wrapped = Value.adopt(value);
+            defer wrapped.deinit();
+            break :blk wrapped.vec3();
+        },
+        []const u8 => @compileError("parâmetros de texto chegam como helix.Value; leia com .string(gpa) ou .stringBuf(buffer)"),
