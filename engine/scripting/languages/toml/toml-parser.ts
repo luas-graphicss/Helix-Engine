@@ -771,4 +771,65 @@ class TomlParser {
                 return { pos: pos + 1, value: array };
         }
     }
+    private parseInlineTable(pos: number): {
+        pos: number;
+        value: TomlTable;
+    } {
+        const opening = pos;
+        pos++;
+        const nested = new NestedTable();
+        const flags = new Flags();
+        pos = this.skipChars(pos, WS);
+        if (this.src.startsWith('}', pos))
+            return { pos: pos + 1, value: nested.table };
+        for (;;) {
+            if (this.charAt(pos) === '\n' || this.charAt(pos) === '')
+                this.fail('Uma tabela inline { } precisa ficar inteira numa linha; para várias linhas use um cabeçalho [tabela].', 'multiline-inline-table', opening, pos);
+            const pairStart = pos;
+            const pair = this.parseKeyValuePair(pos);
+            pos = pair.pos;
+            const key = pair.key;
+            const keyParent = key.slice(0, -1);
+            const keyStem = key[key.length - 1];
+            if (flags.is(key, 'frozen'))
+                this.fail(`"${describeKey(key)}" não pode ser acrescentada: a tabela inline "${describeKey(keyParent)}" já está fechada.`, 'frozen-table', pairStart, pair.keyEnd);
+            let nest: TomlTable;
+            try {
+                nest = nested.getOrCreateNest(keyParent, false);
+            }
+            catch (cause) {
+                if (!(cause instanceof NotATableError))
+                    throw cause;
+                this.fail(`"${describeKey(key)}": um dos nomes do caminho já guarda um valor que não é tabela.`, 'not-a-table', pairStart, pair.keyEnd);
+            }
+            if (Object.prototype.hasOwnProperty.call(nest, keyStem))
+                this.fail(`A chave "${describeKey(key)}" aparece duas vezes na mesma tabela inline.`, 'duplicate-key', pairStart, pair.keyEnd);
+            assign(nest, keyStem, pair.value);
+            pos = this.skipChars(pos, WS);
+            const char = this.charAt(pos);
+            if (char === '}')
+                return { pos: pos + 1, value: nested.table };
+            if (char !== ',') {
+                if (char === '\n' || char === '')
+                    this.fail('A tabela inline que começa aqui não foi fechada: falta "}" na mesma linha.', 'unclosed-inline-table', opening, pos);
+                this.fail(`Dentro de uma tabela inline os pares são separados por vírgula, mas encontrei ${describeChar(char)}.`, 'unclosed-inline-table', pos);
+            }
+            if (isTable(pair.value) || Array.isArray(pair.value))
+                flags.set(key, 'frozen', true);
+            pos++;
+            pos = this.skipChars(pos, WS);
+            if (this.charAt(pos) === '}')
+                this.fail('Tabelas inline não aceitam vírgula depois do último par.', 'trailing-comma', pos);
+        }
+    }
+}
+export function parseToml(source: string): TomlParseResult {
+    return new TomlParser(source).parse();
+}
+export function parseTomlOrThrow(source: string): TomlTable {
+    const result = parseToml(source);
+    const first = result.diagnostics[0];
+    if (first)
+        throw new Error(`TOML inválido (linha ${first.line}, coluna ${first.column}): ${first.message}`);
+    return result.value;
 }
