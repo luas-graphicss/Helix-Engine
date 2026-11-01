@@ -482,3 +482,258 @@ function cloneValueType(value: unknown): unknown {
 function sortValues(a: unknown, b: unknown): number {
     return compare(a, b, 'sort');
 }
+const ARRAY_METHODS: Record<string, Method<List>> = {
+    size: (list) => list.length,
+    is_empty: (list) => list.length === 0,
+    append: (list, value) => {
+        list.push(value);
+        return null;
+    },
+    push_back: (list, value) => {
+        list.push(value);
+        return null;
+    },
+    push_front: (list, value) => {
+        list.unshift(value);
+        return null;
+    },
+    pop_back: (list) => (list.length === 0 ? null : list.pop()),
+    pop_front: (list) => (list.length === 0 ? null : list.shift()),
+    pop_at: (list, index) => {
+        if (list.length === 0)
+            return null;
+        const at = normalizeIndex(list, index, 'pop_at');
+        return list.splice(at, 1)[0];
+    },
+    insert: (list, index, value) => {
+        const at = normalizeIndex(list, index, 'insert', true);
+        list.splice(at, 0, value);
+        return 0;
+    },
+    remove_at: (list, index) => {
+        const at = normalizeIndex(list, index, 'remove_at');
+        list.splice(at, 1);
+        return null;
+    },
+    erase: (list, value) => {
+        const at = list.findIndex((item) => eq(item, value));
+        if (at !== -1)
+            list.splice(at, 1);
+        return null;
+    },
+    clear: (list) => {
+        list.length = 0;
+        return null;
+    },
+    has: (list, value) => list.some((item) => eq(item, value)),
+    find: (list, value, from = 0) => {
+        for (let index = Math.max(0, toInt(from)); index < list.length; index++)
+            if (eq(list[index], value))
+                return index;
+        return -1;
+    },
+    rfind: (list, value, from = -1) => {
+        const start = toInt(from) < 0 ? list.length - 1 : Math.min(toInt(from), list.length - 1);
+        for (let index = start; index >= 0; index--)
+            if (eq(list[index], value))
+                return index;
+        return -1;
+    },
+    find_custom: (list, fn, from = 0) => {
+        const predicate = requireCallable(fn, 'Array', 'find_custom');
+        for (let index = Math.max(0, toInt(from)); index < list.length; index++)
+            if (truthy(predicate(list[index])))
+                return index;
+        return -1;
+    },
+    rfind_custom: (list, fn, from = -1) => {
+        const predicate = requireCallable(fn, 'Array', 'rfind_custom');
+        const start = toInt(from) < 0 ? list.length - 1 : Math.min(toInt(from), list.length - 1);
+        for (let index = start; index >= 0; index--)
+            if (truthy(predicate(list[index])))
+                return index;
+        return -1;
+    },
+    count: (list, value) => list.filter((item) => eq(item, value)).length,
+    front: (list) => (list.length === 0 ? null : list[0]),
+    back: (list) => (list.length === 0 ? null : list[list.length - 1]),
+    get: (list, index, fallback = null) => {
+        const at = toInt(index);
+        const resolved = at < 0 ? list.length + at : at;
+        return resolved >= 0 && resolved < list.length ? list[resolved] : fallback;
+    },
+    set: (list, index, value) => {
+        list[normalizeIndex(list, index, 'set')] = value;
+        return null;
+    },
+    duplicate: (list, deep = false) => (truthy(deep) ? (deepCopy(list) as List) : list.slice()),
+    slice: (list, begin = 0, end = 2147483647, step = 1, deep = false) => {
+        const stride = toInt(step);
+        if (stride === 0)
+            fail('Array.slice(): o passo não pode ser 0.');
+        let start = toInt(begin);
+        let stop = toInt(end);
+        if (start < 0)
+            start += list.length;
+        if (stop < 0)
+            stop += list.length;
+        const result: List = [];
+        if (stride > 0) {
+            start = Math.max(0, start);
+            stop = Math.min(list.length, stop);
+            for (let index = start; index < stop; index += stride)
+                result.push(truthy(deep) ? deepCopy(list[index]) : list[index]);
+        }
+        else {
+            start = Math.min(list.length - 1, start);
+            stop = Math.max(-1, stop);
+            for (let index = start; index > stop; index += stride)
+                result.push(truthy(deep) ? deepCopy(list[index]) : list[index]);
+        }
+        return result;
+    },
+    reverse: (list) => {
+        list.reverse();
+        return null;
+    },
+    sort: (list) => {
+        list.sort(sortValues);
+        return null;
+    },
+    sort_custom: (list, fn) => {
+        const before = requireCallable(fn, 'Array', 'sort_custom');
+        list.sort((a, b) => (truthy(before(a, b)) ? -1 : truthy(before(b, a)) ? 1 : 0));
+        return null;
+    },
+    shuffle: (list) => {
+        for (let index = list.length - 1; index > 0; index--) {
+            const other = Math.floor(Math.random() * (index + 1));
+            const swap = list[index];
+            list[index] = list[other];
+            list[other] = swap;
+        }
+        return null;
+    },
+    map: (list, fn) => {
+        const mapper = requireCallable(fn, 'Array', 'map');
+        return list.map((item) => mapper(item));
+    },
+    filter: (list, fn) => {
+        const predicate = requireCallable(fn, 'Array', 'filter');
+        return list.filter((item) => truthy(predicate(item)));
+    },
+    reduce: (list, fn, accum = null) => {
+        const reducer = requireCallable(fn, 'Array', 'reduce');
+        let value = accum;
+        let start = 0;
+        if (value === null && list.length > 0) {
+            value = list[0];
+            start = 1;
+        }
+        for (let index = start; index < list.length; index++)
+            value = reducer(value, list[index]);
+        return value;
+    },
+    any: (list, fn) => {
+        const predicate = requireCallable(fn, 'Array', 'any');
+        return list.some((item) => truthy(predicate(item)));
+    },
+    all: (list, fn) => {
+        const predicate = requireCallable(fn, 'Array', 'all');
+        return list.every((item) => truthy(predicate(item)));
+    },
+    append_array: (list, other) => {
+        if (!Array.isArray(other))
+            fail(`Array.append_array(): esperava uma lista, recebeu ${describeTypeOf(other)}.`);
+        list.push(...other);
+        return null;
+    },
+    assign: (list, other) => {
+        if (!Array.isArray(other))
+            fail(`Array.assign(): esperava uma lista, recebeu ${describeTypeOf(other)}.`);
+        list.length = 0;
+        list.push(...other);
+        return null;
+    },
+    fill: (list, value) => {
+        list.fill(value);
+        return null;
+    },
+    resize: (list, size) => {
+        const wanted = requireInt(size, 'Array', 'resize', 'o tamanho');
+        if (wanted < 0)
+            fail('Array.resize(): o tamanho não pode ser negativo.');
+        const previous = list.length;
+        list.length = wanted;
+        for (let index = previous; index < wanted; index++)
+            list[index] = null;
+        return 0;
+    },
+    min: (list) => {
+        if (list.length === 0)
+            return null;
+        let best = list[0];
+        for (const item of list)
+            if (compare(item, best, 'min') < 0)
+                best = item;
+        return best;
+    },
+    max: (list) => {
+        if (list.length === 0)
+            return null;
+        let best = list[0];
+        for (const item of list)
+            if (compare(item, best, 'max') > 0)
+                best = item;
+        return best;
+    },
+    pick_random: (list) => (list.length === 0 ? null : list[Math.floor(Math.random() * list.length)]),
+    bsearch: (list, value, before = true) => {
+        let low = 0;
+        let high = list.length;
+        const first = truthy(before);
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            const result = compare(list[middle], value, 'bsearch');
+            if (result < 0 || (!first && result === 0))
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        return low;
+    },
+    bsearch_custom: (list, value, fn, before = true) => {
+        const less = requireCallable(fn, 'Array', 'bsearch_custom');
+        let low = 0;
+        let high = list.length;
+        const first = truthy(before);
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            if (truthy(less(list[middle], value)) || (!first && eq(list[middle], value)))
+                low = middle + 1;
+            else
+                high = middle;
+        }
+        return low;
+    },
+    hash: (list) => STRING_METHODS.hash(str(list)) as number,
+    is_read_only: () => false,
+    make_read_only: () => null,
+    is_typed: () => false,
+    is_same_typed: () => false,
+    get_typed_builtin: () => 0,
+    get_typed_class_name: () => '',
+    get_typed_script: () => null,
+};
+interface DictView {
+    has(key: unknown): boolean;
+    get(key: unknown): unknown;
+    set(key: unknown, value: unknown): void;
+    delete(key: unknown): boolean;
+    keys(): unknown[];
+    values(): unknown[];
+    size(): number;
+    clear(): void;
+    fresh(): DictView;
+    source: unknown;
+}
