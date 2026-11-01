@@ -281,5 +281,285 @@ end
 
 def ceu
   sky = helix.sky
+  sky.set({ timeOfDay: 10.5, haze: 0.3, clouds: { enabled: true, coverage: 0.45 } })
+  checar("sky.set", aprox(sky.timeOfDay, 10.5) && sky.clouds.enabled == true)
+  checar("sky.isDay", sky.isDay == true)
+  checar("sky.sunDirection", sky.sunDirection[1] > 0)
+  checar("sky.wrapTimeOfDay", sky.wrapTimeOfDay(25) == 1)
+  checar("sky.presets", sky.presets.size > 0)
+  assinar(sky.onHourChanged { |hora| helix.log.info("Debug", "Hora do céu: #{hora}") })
+  sky.cycleSpeed = 0
+  checar("sky.cycleSpeed", sky.cycleSpeed == 0)
+  checar("world.gravity", helix.world.gravity[1] < 0)
+  helix.world.wind.set({ speed: 2, direction: 45 })
+  checar("world.wind.set", helix.world.wind.speed == 2)
+end
+
+def camera
+  cam = helix.camera
+  checar("camera.fov", cam.fov > 0 && cam.aspect > 0)
+  checar("camera.near/far", cam.near > 0 && cam.far > cam.near)
+  checar("viewport", cam.viewport.width > 0)
+  tela = cam.worldToScreen([0, 0, 0])
+  checar("worldToScreen", tela.nil? || tela.x.is_a?(Numeric))
+  raio = cam.screenToRay(cam.viewport.width / 2.0, cam.viewport.height / 2.0)
+  checar("screenToRay", raio.nil? || aprox(helix.math.vec3.length(raio[:direction]), 1, 0.01))
+  checar("viewMatrix", cam.viewMatrix.size == 16)
+  cam.player.set({ distance: 7, pitch: 18 })
+  checar("player.set", cam.player.settings.distance == 7)
+  checar("distanceTo", cam.distanceTo([0, 0, 0]) >= 0)
+  checar("camera.position", cam.position.size == 3 && cam.forward.size == 3)
+  assinar(cam.onMainChanged { |ator| helix.log.info("Debug", "Câmera principal: #{ator ? ator.name : "editor/jogador"}") })
+end
+
+def pos_processamento
+  post = helix.post
+  checar("post.toneMappers", post.toneMappers.size > 0)
+  post.set({
+    bloom: { enabled: true, intensity: 0.5, threshold: 1, softKnee: 0.5, radius: 0.6 },
+    vignette: { enabled: true, intensity: 0.35, smoothness: 0.5, roundness: 1 },
+  })
+  checar("post.set", post.bloom.enabled == true && post.vignette.enabled == true)
+  post.exposure = 1.05
+  checar("post.exposure", aprox(post.exposure, 1.05))
+  post.toneMapper = "agx"
+  checar("post.toneMapper", post.toneMapper == "agx")
+  checar("post.presets", post.presets.size > 0)
+  efeito = post.custom.add({ fragment: "DebugPost", name: "DebugPost", uniforms: { tint: [0.15, 0.05, 0.3], strength: 0.6 } })
+  @efeito = efeito
+  checar("post.custom.add", !efeito.nil? && !post.custom.get("DebugPost").nil?)
+  efeito.uniforms.set("strength", 0.8)
+  checar("efeito.uniforms.list", efeito.uniforms.list.size >= 2)
+end
+
+def render
+  rend = helix.render
+  checar("render.passNames", rend.passNames.size > 0)
+  checar("render.stats", rend.stats.drawCalls.is_a?(Numeric))
+  checar("render.frame", rend.frame.width.is_a?(Numeric))
+  assinar(rend.onAfterFrame { @renders += 1 })
+  rend.showGrid = false
+  checar("render.showGrid", rend.showGrid == false)
+  checar("render.pixelRatio", rend.pixelRatio > 0)
+end
+
+                                                                                                    
+
+def fisica
+  fis = helix.physics
+  checar("physics.enabled", fis.enabled == true)
+  checar("physics.gravity", fis.gravity[1] < 0)
+  checar("physics.settings", fis.settings.fixedTimestep > 0)
+  5.times do |i|
+    caixa = helix.scene.spawnPrimitive("box", { name: "Caixa#{i + 1}", position: [-2 + i * 1.1, 3 + i * 1.2, 3], rigidBody: { type: "dynamic", collider: "box", mass: 2, restitution: 0.3 }, tags: ["caixa"] })
+    helix.material.setColor(caixa, helix.math.color.hsl(42 + i * 12, 0.7, 0.5))
+  end
+  caixas = helix.scene.byTag("caixa")
+  checar("caixas dinâmicas", caixas.size == 5 && fis.hasBody(caixas[0]))
+  corpo = fis.bodyOf(caixas[0])
+  checar("bodyOf", corpo.isDynamic && corpo.mass > 0)
+  corpo.applyImpulse([0, 2, 0])
+  corpo.applyTorque([0, 1, 0])
+  corpo.setMaterial({ friction: 0.8 })
+  corpo.wake
+  checar("body.linearVelocity", corpo.linearVelocity.size == 3)
+  checar("bodies()", fis.bodies.size >= 6)
+  hit = fis.raycast([0, 5, 0], [0, -1, 0], 20)
+  checar("physics.raycast", hit && hit[:entity], hit && hit[:entity]&.name)
+  checar("raycastAll", fis.raycastAll([0, 5, 0], [0, -1, 0], 20).size >= 1)
+  checar("overlapSphere", fis.overlapSphere([0, 3, 3], 4).is_a?(Array))
+  checar("massProperties", fis.massProperties(caixas[0]).mass > 0)
+  checar("colliderVolume", fis.colliderVolume(caixas[0]) > 0)
+  checar("shapes.sphere volume", aprox(fis.shapes.volume(fis.shapes.sphere(1)), 4.18879, 0.01))
+  assinar(fis.onCollisionBegin { |e|
+    @colisoes += 1
+    helix.log.info("Debug", "Colisão: #{e.a.name} × #{e.b.name}#{format(" (impulso %.2f)", e.contact.impulse)}") if @colisoes <= 3
+  })
+  assinar(fis.onOutOfBounds { |ator| helix.log.warn("Debug", "#{ator.name} caiu do mundo") })
+  gatilho = helix.scene.spawn("group", { name: "Gatilho", position: [0, 1, 3], trigger: { shape: "box", size: [3, 2, 3] } })
+  checar("trigger spawn", !gatilho.nil? && helix.scene.isAttached(gatilho))
+  checar("physics.stats", fis.stats.bodies.is_a?(Numeric))
+end
+
+def personagem
+  heroi = helix.character.spawn({ name: "Heroi", position: [0, 1.2, 8], character: { walkSpeed: 4, runSpeed: 7, jumpHeight: 1.4 } })
+  @heroi = heroi
+  checar("character.spawn", !heroi.character.nil? && helix.character.has(heroi))
+  controle = helix.character.of(heroi)
+  checar("character.of", [true, false].include?(controle.isGrounded))
+  checar("settingsOf", helix.character.settingsOf(heroi).walkSpeed == 4)
+  helix.player.possess(heroi)
+  checar("player.possess", helix.player.possessed == heroi && helix.player.isPossessing)
+  assinar(helix.character.onJumped { |e| helix.log.info("Debug", "#{e.entity.name} pulou") })
+  assinar(helix.player.onPossessed { |ator| helix.log.info("Debug", "Possuindo #{ator ? ator.name : "ninguém"}") })
+  checar("character.all", helix.character.all.size >= 1)
+  checar("player.spawnPoint", helix.player.spawnPoint.size == 3)
+  checar("character.velocity", controle.velocity.size == 3 && controle.position.size == 3)
+end
+
+def terreno
+  terr = helix.terrain
+  checar("terrain.presets", terr.presets.size > 0)
+  colinas = terr.spawn({ name: "Colinas", size: 48, resolution: 65, preset: "hills", seed: 7, position: [0, -6, -70] })
+  checar("terrain.spawn", !colinas.terrain.nil? && terr.all.size >= 1)
+  checar("terrain.of", terr.of(colinas).resolution == 65)
+  altura = terr.heightAt([0, 0, -70], colinas)
+  checar("heightAt", altura.is_a?(Numeric), altura)
+  checar("contains", terr.contains([0, 0, -70], colinas) && !terr.contains([500, 0, 0], colinas))
+  terr.sculpt(colinas, "raise", [5, 0, -70], { radius: 6, strength: 1 }, 1)
+  terr.markDirty(colinas)
+  terr.grass.set(colinas, { enabled: true, density: 0.5 })
+  checar("grass.set", terr.grass.settingsOf(colinas).enabled == true)
+  terr.water.set(colinas, { enabled: true, level: -2 })
+  checar("water.set", terr.water.settingsOf(colinas).enabled == true)
+  checar("terrain.raycast", !terr.raycast([0, 50, -70], [0, -1, 0], colinas).nil?)
+end
+
+                                                                                                   
+
+def interface_grafica
+  gui = helix.gui
+  gui.css("DebugEstilo")
+  hud = gui.html("DebugHud", { id: "debug-hud" })
+  checar("gui.html", !hud.nil? && !gui.element("#debug-hud").nil?)
+  icone = gui.svg("DebugIcone", { id: "debug-icone" })
+  checar("gui.svg", !icone.nil?)
+  slot = gui.element("[data-slot=icone]")
+  slot.appendChild(icone) if slot && icone
+  checar("gui.bind", gui.bind("linguagem", LINGUAGEM) >= 1)
+  gui.bind("titulo", "Helix · Debug")
+  assinar(gui.onAction("caixa") { soltar_caixa })
+  assinar(gui.onAction("reiniciar") { helix.play.restart })
+  checar("gui.elements", gui.elements("[data-bind]").size >= 5)
+  checar("gui.size", gui.size.width > 0)
+  tela = gui.create("DebugTela", { referenceSize: { x: 1280, y: 720 } })
+  painel = gui.add(tela, "frame", { name: "Painel", rect: { position: { x: { scale: 1, offset: -236 }, y: { scale: 0, offset: 16 } }, size: { x: { scale: 0, offset: 220 }, y: { scale: 0, offset: 48 } } } })
+  gui.add(tela, "text", { name: "Rotulo", text: "Tela declarativa OK" }, painel.node.id)
+  checar("gui.add/find", gui.find(tela, "Rotulo").kind == "text")
+  gui.setText(tela, "Rotulo", "Tela declarativa OK · #{LINGUAGEM}")
+  @tela = gui.show(tela, "debug-tela")
+  checar("gui.show/isShown", gui.isShown(@tela))
+  checar("gui.kinds", gui.kinds.is_a?(Array))
+end
+
+def audio
+  som = helix.audio
+  checar("audio.supported", [true, false].include?(som.supported))
+  som.mixer.setVolumeDb("sfx", -3)
+  checar("mixer.setVolumeDb", som.mixer.bus("sfx").volumeDb == -3)
+  checar("audio.clips", som.clips.is_a?(Array))
+  fonte = helix.scene.spawn("sound", { name: "FonteSonora", position: [3, 1, 3], audioSource: { trigger: "manual", spatial: true } })
+  checar("spawn sound", !fonte.audioSource.nil?)
+  som.sources.set(fonte, { volumeDb: -4 })
+  checar("sources.set", fonte.audioSource.volumeDb == -4)
+  checar("sources.isPlaying", som.sources.isPlaying(fonte) == false)
+end
+
+def efeitos_visuais
+  vfx = helix.vfx
+  ids = vfx.templates.ids
+  checar("vfx.templates", ids.size > 0)
+  checar("vfx.moduleKinds", vfx.moduleKinds.size > 0)
+  doc = vfx.fromTemplate(ids[0], "DebugFaiscas")
+  doc = vfx.addEmitter(doc, { name: "Extra", maxParticles: 50 })
+  doc = vfx.set(doc, { loop: true })
+  checar("vfx.fromTemplate/addEmitter", doc[:emitters].size >= 2 && doc[:loop] == true)
+  ativo = vfx.save(doc, "DebugFaiscas")
+  checar("vfx.save", ativo.kind == "vfx")
+  ator = vfx.emitAt(ativo, [0, 1.5, -8], { destroyWhenFinished: false })
+  checar("vfx.emitAt", vfx.has(ator))
+  vfx.burst(ator, 20)
+  checar("vfx.stats", vfx.stats.effects.is_a?(Numeric))
+end
+
+                                                                                                   
+
+def soltar_caixa
+  caixa = helix.scene.spawnPrimitive("box", { name: "CaixaSolta", position: [helix.math.random.range(-3, 3), 6, helix.math.random.range(0, 4)], rigidBody: { type: "dynamic", collider: "box", mass: 1 }, tags: ["caixa"] })
+  helix.material.setColor(caixa, helix.math.random.color)
+  @pontos += 1
+  helix.gui.bind("pontos", @pontos)
+  helix.events.emit("debug.caixa", { nome: caixa.name })
+end
+
+def ao_teclar(evento)
+  return if evento.repeat?
+
+  case evento.code
+  when "KeyR" then helix.play.restart
+  when "KeyB" then soltar_caixa
+  when "KeyE" then helix.events.emit("debug.ping", { origem: "teclado", quadro: helix.time.frame })
+  when "KeyF" then helix.camera.shake(0.4, 0.6)
+  when "KeyG"
+    if @efeito
+      @efeito.enabled = !@efeito.enabled
+      helix.log.info("Debug", "Efeito DebugPost #{@efeito.enabled ? "ligado" : "desligado"}")
+    end
+  when "KeyT"
+    helix.time.scale = helix.time.scale == 1 ? 0.3 : 1
+    helix.log.info("Debug", "time.scale = #{helix.time.scale}")
+  when "KeyH"
+    return unless @tela
+
+    helix.gui.isShown(@tela) ? helix.gui.hide(@tela) : helix.gui.show(@tela, "debug-tela")
+  when "KeyL"
+    nomes = helix.light.all({ local: true }).map { |luz| luz.entity.name }
+    helix.log.info("Debug", "Luzes locais: #{nomes.join(", ")}")
+  end
+end
+
+def clique_na_cena(x, y)
+  alvo = helix.camera.pick(x, y)
+  ponto = helix.camera.pickPoint(x, y)
+  helix.log.info("Debug", "Clique em #{alvo.name}") if alvo
+  helix.debug.sphere(ponto, 0.3, "#ff006e", 2) if ponto
+end
+
+def entrada
+  inp = helix.input
+  inp.actions.define("pular", ["Space", "Gamepad:0"])
+  inp.actions.define("soltar", ["KeyB"])
+  checar("actions.define/bindings", inp.actions.bindings("pular").size >= 1)
+  checar("action()", inp.action("pular").name == "pular" && [true, false].include?(inp.actions.down("pular")))
+  checar("isDown", inp.isDown("KeyW") == false)
+  checar("pointer", inp.pointer.x.is_a?(Numeric))
+  checar("gamepads", inp.gamepads.is_a?(Array))
+  checar("axis2d", inp.axis2d({ up: "KeyW", down: "KeyS", left: "KeyA", right: "KeyD" }).x.is_a?(Numeric))
+  checar("keysDown", inp.keysDown.is_a?(Array))
+  assinar(inp.onKeyDown(method(:ao_teclar)))
+  assinar(inp.onPointerDown { |e| clique_na_cena(e.x, e.y) if e.button == 0 })
+  assinar(inp.onGamepadButtonDown { |e| helix.log.info("Debug", "Gamepad #{e.pad} botão #{e.button}") })
+end
+
+def eventos
+  ev = helix.events
+  recebido = nil
+  desligar = ev.on("debug.ping") { |carga| recebido = carga }
+  checar("events.emit conta ouvintes", ev.emit("debug.ping", { origem: "teste" }) == 1)
+  checar("events.on recebe", recebido && recebido[:origem] == "teste")
+  checar("listenerCount", ev.listenerCount("debug.ping") == 1)
+  desligar.call
+  checar("unsubscribe", ev.listenerCount("debug.ping") == 0)
+  uma_vez = 0
+  ev.once("debug.once") { uma_vez += 1 }
+  ev.emit("debug.once")
+  ev.emit("debug.once")
+  checar("events.once", uma_vez == 1)
+  assinar(ev.on("debug.ping") { |carga| helix.log.info("Debug", "ping de #{carga[:origem]}") })
+  assinar(ev.on("debug.caixa") { |carga| helix.log.debug("Debug", "caixa #{carga[:nome]}") })
+  do_ator = 0
+  assinar(ev.onEntity(@torus, "toque") { do_ator += 1 })
+  ev.emitEntity(@torus, "toque")
+  checar("onEntity/emitEntity", do_ator == 1)
+  assinar(helix.play.onStopped { helix.log.info("Debug", "play.onStopped disparou") })
+  assinar(helix.play.onPaused { helix.log.info("Debug", "pausado") })
+  assinar(helix.play.onResumed { helix.log.info("Debug", "retomado") })
+end
+
+def tempo
+  tm = helix.time
+  checar("time.now", tm.now >= 0 && tm.frame >= 0)
+  checar("time.delta", tm.delta >= 0 && tm.fixedDelta > 0)
+  inicio = tm.now
 `;
 }
