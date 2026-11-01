@@ -29,6 +29,10 @@ function sliceSignature(material: TerrainMaterial | null, kind: TerrainMapKind):
         return `rough:${material.roughness}`;
     return 'flat';
 }
+export interface TerrainGpuActivity {
+    uploads: number;
+    pending: number;
+}
 class TerrainTextureArray {
     texture: WebGLTexture;
     count = 0;
@@ -38,7 +42,7 @@ class TerrainTextureArray {
         this.size = terrainMapSize(kind);
         this.texture = createTextureHandle(gl);
     }
-    sync(layers: readonly TerrainLayer[], neutral: (size: number) => Uint8Array): void {
+    sync(layers: readonly TerrainLayer[], neutral: (size: number) => Uint8Array, activity: TerrainGpuActivity): void {
         const { gl } = this;
         const count = Math.max(layers.length, 1);
         let dirty = false;
@@ -49,11 +53,15 @@ class TerrainTextureArray {
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.texture);
         for (let slice = 0; slice < count; slice++) {
             const material = layers[slice]?.material ?? null;
+            const texture = material?.[this.kind];
+            if (texture && !texture.image)
+                activity.pending++;
             const signature = sliceSignature(material, this.kind);
             if (this.signatures[slice] === signature)
                 continue;
             this.upload(slice, material, neutral);
             this.signatures[slice] = signature;
+            activity.uploads++;
             dirty = true;
         }
         if (dirty)
@@ -151,7 +159,7 @@ export class TerrainGpuResources {
     get ormhArray(): WebGLTexture {
         return this.arrays.ormh.texture;
     }
-    sync(terrain: Terrain): void {
+    sync(terrain: Terrain, activity: TerrainGpuActivity): void {
         const { gl } = this;
         gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
         gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
@@ -159,12 +167,14 @@ export class TerrainGpuResources {
         this.heights.sync(terrain);
         if (terrain.splatVersion !== this.splatVersion || terrain.splat.resolution !== this.splatResolution) {
             this.uploadSplat(terrain);
+            activity.uploads++;
         }
         if (terrain.grassVersion !== this.grassVersion || terrain.grassMap.resolution !== this.grassResolution) {
             this.uploadGrass(terrain);
+            activity.uploads++;
         }
         for (const kind of KINDS)
-            this.arrays[kind].sync(terrain.layers, this.neutral);
+            this.arrays[kind].sync(terrain.layers, this.neutral, activity);
         gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
     }
     private uploadGrass(terrain: Terrain): void {
@@ -219,6 +229,7 @@ export class TerrainGpuResources {
     }
 }
 export class TerrainGpuCache {
+    readonly stats: TerrainGpuActivity = { uploads: 0, pending: 0 };
     private readonly entries = new Map<Terrain, TerrainGpuResources>();
     private readonly anisotropic: EXT_texture_filter_anisotropic | null;
     private readonly maxAnisotropy: number;
@@ -230,13 +241,17 @@ export class TerrainGpuCache {
             ? Math.min(gl.getParameter(this.anisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT) as number, MAX_ANISOTROPY)
             : 1;
     }
+    beginFrame(): void {
+        this.stats.uploads = 0;
+        this.stats.pending = 0;
+    }
     resolve(terrain: Terrain): TerrainGpuResources {
         let entry = this.entries.get(terrain);
         if (!entry) {
             entry = new TerrainGpuResources(this.gl, this.maxAnisotropy, this.anisotropic, this.neutralBuffer);
             this.entries.set(terrain, entry);
         }
-        entry.sync(terrain);
+        entry.sync(terrain, this.stats);
         entry.lastUsedFrame = this.frame;
         return entry;
     }
