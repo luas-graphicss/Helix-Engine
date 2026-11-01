@@ -15,9 +15,9 @@ node_modules
 .next/
 .DS_Store
 .v0/
-dist/
-build/
-coverage/
+/dist/
+/build/
+/coverage/
 *.tsbuildinfo
 next-env.d.ts
 **/__tests__/
