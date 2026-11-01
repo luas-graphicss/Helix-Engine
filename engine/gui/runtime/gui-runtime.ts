@@ -276,4 +276,260 @@ export class GuiRuntime {
         this.emit('change', node, next);
         return next;
     }
+    private ensureLayout(): void {
+        if (!this.layoutDirty)
+            return;
+        this.layouts = this.documents.map((document) => layoutGuiDocument(document, this.viewport, { measurer: guiTextMeasurer, cssFamily: (family) => guiFonts.cssFamily(family), scrollOffsets: this.scroll, safeArea: this.safeArea }));
+        this.layoutDirty = false;
+    }
+    renderState(): GuiRenderState {
+        return { hovered: this.hovered, pressed: this.pressed, focused: this.focused, values: this.values, scroll: this.scroll, time: this.time };
+    }
+    render(context: CanvasRenderingContext2D, base: GuiMatrix): void {
+        this.ensureLayout();
+        const state = this.renderState();
+        for (const layout of this.layouts) {
+            renderGuiLayout(context, layout, {
+                base,
+                images: guiImages,
+                icons: guiIcons,
+                fonts: guiFonts,
+                state,
+                placeholders: false,
+                videos: guiVideos,
+                mediaScope: this.mediaScope,
+                viewports: this.viewports,
+                elapsedSeconds: this.time,
+            });
+        }
+        this.needsRender = false;
+    }
+    private findNode(id: string): GuiNode | null {
+        for (const layout of this.layouts) {
+            const entry = layout.entries.get(id);
+            if (entry)
+                return entry.node;
+        }
+        return null;
+    }
+    private hit(x: number, y: number, accept: (entry: GuiLayoutEntry) => boolean): Hit | null {
+        this.ensureLayout();
+        for (let index = this.layouts.length - 1; index >= 0; index--) {
+            const layout = this.layouts[index];
+            const entry = hitTestGui(layout, x, y, accept);
+            if (entry)
+                return { layout, entry };
+        }
+        return null;
+    }
+    pointerMove(x: number, y: number): boolean {
+        if (this.sliderDrag) {
+            this.updateSlider(this.sliderDrag, x, y);
+            return true;
+        }
+        if (this.viewportDrag) {
+            this.updateViewportDrag(this.viewportDrag, x, y);
+            return true;
+        }
+        const hit = this.hit(x, y, interactive);
+        const id = this.hoverEnabled ? (hit?.entry.node.id ?? null) : null;
+        if (id !== this.hovered) {
+            this.hovered = id;
+            this.needsRender = true;
+        }
+        return hit !== null;
+    }
+    pointerDown(x: number, y: number): boolean {
+        guiVideos.unblockAll();
+        const hit = this.hit(x, y, interactive);
+        if (this.focused && hit?.entry.node.id !== this.focused)
+            this.blur();
+        if (!hit)
+            return false;
+        const { node } = hit.entry;
+        this.pressed = node.id;
+        this.needsRender = true;
+        switch (node.kind) {
+            case 'slider':
+                this.sliderDrag = hit;
+                this.updateSlider(hit, x, y);
+                break;
+            case 'input':
+                if (this.focused !== node.id) {
+                    this.focused = node.id;
+                    this.emit('focus', node);
+                }
+                break;
+            case 'viewport':
+                if (node.control?.kind === 'viewport' && node.control.interactive)
+                    this.viewportDrag = { hit, lastX: x, lastY: y };
+                break;
+            default:
+                break;
+        }
+        return true;
+    }
+    pointerUp(x: number, y: number): boolean {
+        const pressed = this.pressed;
+        this.pressed = null;
+        this.sliderDrag = null;
+        this.viewportDrag = null;
+        if (!pressed)
+            return false;
+        this.needsRender = true;
+        const hit = this.hit(x, y, interactive);
+        if (hit && hit.entry.node.id === pressed) {
+            const { node } = hit.entry;
+            if (node.kind === 'toggle' && node.control?.kind === 'toggle') {
+                const next = !this.currentValue(node.id, node.control.value);
+                this.values.set(node.id, next);
+                this.emit('change', node, next);
+            }
+            if (node.kind === 'button')
+                this.emit('activate', node);
+            if (node.kind === 'video' && node.control?.kind === 'video') {
+                if (node.control.clickToggles)
+                    this.toggleVideo(node.id);
+                this.emit('activate', node);
+            }
+        }
+        return true;
+    }
+    pointerLeave(): void {
+        if (this.hovered !== null) {
+            this.hovered = null;
+            this.needsRender = true;
+        }
+    }
+    wheel(x: number, y: number, deltaX: number, deltaY: number): boolean {
+        const viewportHit = this.hit(x, y, (entry) => entry.node.kind === 'viewport' && entry.node.interactable && entry.node.control?.kind === 'viewport' && entry.node.control.interactive);
+        if (viewportHit) {
+            const key = viewportHit.entry.node.id + VIEWPORT_ZOOM_KEY;
+            const current = this.numberValue(key);
+            this.values.set(key, Math.max(-6, Math.min(6, current + deltaY * ZOOM_PER_WHEEL_UNIT)));
+            this.needsRender = true;
+            return true;
+        }
+        const hit = this.hit(x, y, (entry) => entry.node.kind === 'scroll' && entry.canvasSize !== null);
+        if (!hit || !hit.entry.canvasSize)
+            return false;
+        const { entry } = hit;
+        const canvasSize = hit.entry.canvasSize;
+        const control = entry.node.control?.kind === 'scroll' ? entry.node.control : null;
+        const current = this.scroll.get(entry.node.id) ?? { x: 0, y: 0 };
+        const maxX = Math.max(0, canvasSize.x - entry.width);
+        const maxY = Math.max(0, canvasSize.y - entry.height);
+        const next = {
+            x: control?.direction === 'vertical' ? 0 : Math.max(0, Math.min(maxX, current.x + deltaX)),
+            y: control?.direction === 'horizontal' ? 0 : Math.max(0, Math.min(maxY, current.y + deltaY)),
+        };
+        if (next.x === current.x && next.y === current.y)
+            return maxX > 0 || maxY > 0;
+        this.scroll.set(entry.node.id, next);
+        this.layoutDirty = true;
+        this.needsRender = true;
+        return true;
+    }
+    keyDown(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'>): boolean {
+        const node = this.focused ? this.findNode(this.focused) : null;
+        if (!node || node.control?.kind !== 'input')
+            return false;
+        const control = node.control;
+        const current = this.currentValue(node.id, control.value);
+        if (event.key === 'Escape') {
+            this.blur();
+            return true;
+        }
+        if (event.key === 'Enter') {
+            if (control.multiline)
+                return this.setInput(node, `${current}\n`);
+            this.emit('activate', node, current);
+            this.blur();
+            return true;
+        }
+        if (event.key === 'Backspace')
+            return this.setInput(node, current.slice(0, -1));
+        if (event.ctrlKey || event.metaKey || event.altKey || event.key.length !== 1)
+            return false;
+        if (control.maxLength !== null && current.length >= control.maxLength)
+            return true;
+        return this.setInput(node, current + event.key);
+    }
+    private setInput(node: GuiNode, value: string): boolean {
+        this.values.set(node.id, value);
+        this.needsRender = true;
+        this.emit('change', node, value);
+        return true;
+    }
+    private blur(): void {
+        const node = this.focused ? this.findNode(this.focused) : null;
+        this.focused = null;
+        this.needsRender = true;
+        if (node)
+            this.emit('blur', node);
+    }
+    valueOf(nodeId: string): GuiRuntimeValue | undefined {
+        return this.values.get(nodeId);
+    }
+    setValue(nodeId: string, value: GuiRuntimeValue): void {
+        this.values.set(nodeId, value);
+        this.needsRender = true;
+        const node = this.findNode(nodeId);
+        if (node)
+            this.emit('change', node, value);
+    }
+    private currentValue<T extends GuiRuntimeValue>(id: string, fallback: T): T {
+        const value = this.values.get(id);
+        return value !== undefined && typeof value === typeof fallback ? (value as T) : fallback;
+    }
+    private numberValue(key: string): number {
+        const value = this.values.get(key);
+        return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    }
+    private updateViewportDrag(drag: ViewportDrag, x: number, y: number): void {
+        const { node } = drag.hit.entry;
+        const deltaX = x - drag.lastX;
+        const deltaY = y - drag.lastY;
+        drag.lastX = x;
+        drag.lastY = y;
+        if (deltaX === 0 && deltaY === 0)
+            return;
+        const scale = ORBIT_DEGREES_PER_PIXEL / Math.max(0.25, drag.hit.layout.offsetScale);
+        const yawKey = node.id + VIEWPORT_YAW_KEY;
+        const pitchKey = node.id + VIEWPORT_PITCH_KEY;
+        const pitchBase = node.control?.kind === 'viewport' ? node.control.pitch : 0;
+        this.values.set(yawKey, this.numberValue(yawKey) - deltaX * scale);
+        this.values.set(pitchKey, Math.max(-89 - pitchBase, Math.min(89 - pitchBase, this.numberValue(pitchKey) - deltaY * scale)));
+        this.needsRender = true;
+    }
+    private updateSlider(hit: Hit, x: number, y: number): void {
+        const { entry } = hit;
+        const control = entry.node.control?.kind === 'slider' ? entry.node.control : null;
+        if (!control)
+            return;
+        const local = toLocal(entry, x, y);
+        const knob = control.knobSize * hit.layout.offsetScale;
+        const fraction = control.direction === 'horizontal'
+            ? (local.x - knob / 2) / Math.max(1, entry.width - knob)
+            : 1 - (local.y - knob / 2) / Math.max(1, entry.height - knob);
+        let value = control.min + Math.max(0, Math.min(1, fraction)) * (control.max - control.min);
+        if (control.step > 0)
+            value = control.min + Math.round((value - control.min) / control.step) * control.step;
+        value = Math.max(control.min, Math.min(control.max, value));
+        if (this.currentValue(entry.node.id, control.value) === value)
+            return;
+        this.values.set(entry.node.id, value);
+        this.needsRender = true;
+        this.emit('change', entry.node, value);
+    }
+}
+function collect(node: GuiNode, into: Set<string>): void {
+    into.add(node.id);
+    for (const child of node.children)
+        collect(child, into);
+}
+function walk(node: GuiNode, visit: (node: GuiNode) => void): void {
+    visit(node);
+    for (const child of node.children)
+        walk(child, visit);
 }
