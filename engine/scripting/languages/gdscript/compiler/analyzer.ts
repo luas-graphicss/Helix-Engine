@@ -797,4 +797,250 @@ class Analyzer {
         return cls;
     }
     private readonly hierarchyResolved = new Set<ClassInfo>();
+    private resolveHierarchy(cls: ClassInfo, visiting: Set<ClassInfo>): void {
+        if (this.hierarchyResolved.has(cls))
+            return;
+        if (visiting.has(cls)) {
+            this.error(cls.decl.span, `A classe "${cls.name}" herda de si mesma (ciclo de extends).`);
+            cls.parent = null;
+            return;
+        }
+        visiting.add(cls);
+        const decl = cls.decl;
+        const extendsPath = decl.extendsPath;
+        const extendsType = decl.extendsType;
+        let parent: ClassInfo | null = null;
+        let godotBase: string | null = null;
+        if (extendsPath) {
+            const target = this.siblingByPath(extendsPath);
+            if (!target)
+                this.error(decl.span, `Não encontrei o script "${extendsPath}" no projeto para estender.${this.suggest(extendsPath.slice(extendsPath.lastIndexOf('/') + 1), [...this.siblingsByFile.keys()])}`);
+            else
+                parent = target;
+        }
+        else if (extendsType) {
+            const name = extendsType.name;
+            if (extendsType.args.length > 0)
+                this.error(extendsType.span, 'A classe base não aceita parâmetros de tipo.');
+            const found = this.lookupClassLexical(name, cls.outer) ?? this.siblingsByClassName.get(name) ?? null;
+            if (found === cls) {
+                this.error(extendsType.span, `"${name}" não pode estender a si mesma.`);
+            }
+            else if (found) {
+                parent = found;
+            }
+            else if (isGodotClass(name) || name === 'Object' || name === 'Node') {
+                godotBase = name;
+            }
+            else if (BUILTIN_TYPE_NAMES.includes(name)) {
+                this.error(extendsType.span, `Não é possível estender o tipo embutido "${name}".`);
+            }
+            else {
+                const candidates = [...this.siblingsByClassName.keys(), ...this.classesByTypeName.keys(), 'Node', 'Node3D', 'CharacterBody3D', 'RigidBody3D', 'Area3D', 'StaticBody3D', 'Camera3D', 'RefCounted', 'Resource', 'Object'];
+                this.error(extendsType.span, `Classe base desconhecida: "${name}".${this.suggest(name, candidates)}`);
+            }
+        }
+        if (parent) {
+            this.useClass(parent);
+            cls.parent = parent;
+            this.resolveHierarchy(parent, visiting);
+            cls.godotBase = parent.godotBase;
+        }
+        else if (godotBase) {
+            cls.godotBase = godotBase;
+        }
+        visiting.delete(cls);
+        this.hierarchyResolved.add(cls);
+    }
+    private lookupClassLexical(name: string, from: ClassInfo | null): ClassInfo | null {
+        for (let c: ClassInfo | null = from; c; c = c.outer) {
+            if (c.name === name)
+                return c;
+            for (let p: ClassInfo | null = c; p; p = p.parent) {
+                const inner = p.inner.get(name);
+                if (inner)
+                    return inner;
+            }
+        }
+        if (this.main && this.main.name === name)
+            return this.main;
+        return null;
+    }
+    private lookupClass(name: string, from: ClassInfo | null): ClassInfo | null {
+        const dot = name.indexOf('.');
+        if (dot !== -1) {
+            const head = this.lookupClass(name.slice(0, dot), from);
+            return head ? this.lookupClass(name.slice(dot + 1), head) ?? head.inner.get(name.slice(dot + 1)) ?? null : null;
+        }
+        const lexical = this.lookupClassLexical(name, from);
+        if (lexical)
+            return lexical;
+        const sibling = this.siblingsByClassName.get(name);
+        if (sibling)
+            return sibling;
+        return null;
+    }
+    private lookupEnum(name: string, from: ClassInfo | null): MemberInfo | null {
+        const dot = name.indexOf('.');
+        if (dot !== -1) {
+            const head = this.lookupClass(name.slice(0, dot), from);
+            if (!head)
+                return null;
+            const member = this.findMember(head, name.slice(dot + 1));
+            return member && member.kind === 'enum' ? member : null;
+        }
+        for (let c: ClassInfo | null = from; c; c = c.outer) {
+            const member = this.findMember(c, name);
+            if (member && member.kind === 'enum')
+                return member;
+        }
+        return null;
+    }
+    private findMember(cls: ClassInfo, name: string): MemberInfo | null {
+        for (let c: ClassInfo | null = cls; c; c = c.parent) {
+            const member = c.members.get(name);
+            if (member)
+                return member;
+        }
+        return null;
+    }
+    private findStaticInOuters(cls: ClassInfo, name: string): MemberInfo | null {
+        for (let o = cls.outer; o; o = o.outer) {
+            const member = this.findMember(o, name);
+            if (member && member.isStatic)
+                return member;
+        }
+        return null;
+    }
+    private inherits(from: ClassInfo, to: string): boolean {
+        for (let c: ClassInfo | null = from; c; c = c.parent)
+            if (c.typeName === to || c.name === to)
+                return true;
+        return godotIsA(from.godotBase, to);
+    }
+    private resolveTypeRef(ref: TypeRef, cls: ClassInfo): StaticType {
+        const name = ref.name;
+        if (name === 'void') {
+            ref.resolved = { kind: 'void' };
+            return 'void';
+        }
+        if (name === 'Variant') {
+            ref.resolved = { kind: 'variant' };
+            return 'Variant';
+        }
+        if (BUILTIN_TYPE_NAMES.includes(name)) {
+            if (name === 'Array' && ref.args.length === 1) {
+                const element = this.resolveTypeRef(ref.args[0]!, cls);
+                const elementRuntime = ref.args[0]!.resolved?.kind === 'builtin' ? (ref.args[0]!.resolved as {
+                    runtimeName: string;
+                }).runtimeName : null;
+                const staticType = `Array[${element}]`;
+                ref.resolved = { kind: 'builtin', staticType, runtimeName: elementRuntime ? `Array[${elementRuntime}]` : 'Array' };
+                return staticType;
+            }
+            if (name === 'Dictionary' && ref.args.length === 2) {
+                this.resolveTypeRef(ref.args[0]!, cls);
+                this.resolveTypeRef(ref.args[1]!, cls);
+                ref.resolved = { kind: 'builtin', staticType: 'Dictionary', runtimeName: 'Dictionary' };
+                return 'Dictionary';
+            }
+            if (ref.args.length > 0)
+                this.error(ref.span, `O tipo ${name} não aceita parâmetros (${typeRefToString(ref)}).`);
+            ref.resolved = { kind: 'builtin', staticType: name, runtimeName: name };
+            return name;
+        }
+        if (ref.args.length > 0)
+            this.error(ref.span, `Só Array e Dictionary aceitam parâmetros de tipo (${typeRefToString(ref)}).`);
+        const found = this.lookupClass(name, cls);
+        if (found) {
+            this.useClass(found);
+            ref.resolved = { kind: 'class', className: found.typeName, jsName: found.jsName, scriptName: found.isSibling ? found.scriptName : null };
+            return found.typeName;
+        }
+        const enumMember = this.lookupEnum(name, cls);
+        if (enumMember) {
+            ref.resolved = { kind: 'enum', className: enumMember.owner.typeName, enumName: enumMember.name };
+            return 'int';
+        }
+        if (isGodotClass(name)) {
+            ref.resolved = { kind: 'godot', name };
+            return name;
+        }
+        const candidates = [...BUILTIN_TYPE_NAMES, ...this.classesByTypeName.keys(), ...this.siblingsByClassName.keys(), 'Node3D', 'CharacterBody3D', 'RigidBody3D', 'Area3D', 'Timer', 'Tween', 'InputEvent', 'InputEventKey', 'InputEventMouseButton'];
+        this.error(ref.span, `Tipo desconhecido: "${name}".${this.suggest(name, candidates)}`);
+        ref.resolved = { kind: 'variant' };
+        return 'Variant';
+    }
+    private isObjectType(type: StaticType): boolean {
+        return this.classesByTypeName.has(type) || isGodotClass(type) || type === 'Object' || type === 'Node' || type === 'JSON';
+    }
+    private assignable(from: StaticType, to: StaticType): boolean {
+        if (to === 'Variant' || from === 'Variant' || isMeta(from) || isMeta(to) || from === to || to === 'void')
+            return true;
+        if (from === 'null')
+            return !NON_NULLABLE.has(baseTypeName(to));
+        if (from === 'void')
+            return false;
+        if (to === 'float' && from === 'int')
+            return true;
+        if (STRING_TYPES.has(from) && STRING_TYPES.has(to))
+            return true;
+        if ((to === 'Vector2' && from === 'Vector2i') || (to === 'Vector3' && from === 'Vector3i'))
+            return true;
+        if (isArrayType(from) && isArrayType(to)) {
+            const fromElement = from.startsWith('Array[') ? arrayElement(from) : null;
+            const toElement = to.startsWith('Array[') ? arrayElement(to) : null;
+            return !fromElement || !toElement || fromElement === toElement;
+        }
+        if (baseTypeName(to) === 'Dictionary' && baseTypeName(from) === 'Dictionary')
+            return true;
+        if (this.isObjectType(to)) {
+            if (!this.isObjectType(from))
+                return false;
+            if (to === 'Object' || from === 'Object')
+                return true;
+            const fromClass = this.classesByTypeName.get(from);
+            const toClass = this.classesByTypeName.get(to);
+            if (fromClass && toClass)
+                return this.inherits(fromClass, to) || this.inherits(toClass, from);
+            if (fromClass)
+                return godotIsA(fromClass.godotBase, to) || godotIsA(to, fromClass.godotBase);
+            if (toClass)
+                return godotIsA(toClass.godotBase, from) || godotIsA(from, toClass.godotBase);
+            return godotIsA(from, to) || godotIsA(to, from);
+        }
+        return false;
+    }
+    private checkAssignable(from: StaticType, to: StaticType, span: SourceSpan, what: string): void {
+        if (!this.assignable(from, to))
+            this.error(span, `Não é possível atribuir um valor do tipo ${describeType(from)} a ${what}, do tipo ${describeType(to)}.`);
+    }
+    private declareMemberTypes(cls: ClassInfo): void {
+        for (const member of cls.members.values()) {
+            const decl = member.decl;
+            if (!decl)
+                continue;
+            if (decl.kind === 'variable') {
+                if (decl.type)
+                    member.type = this.resolveTypeRef(decl.type, cls);
+                decl.staticType = member.type;
+            }
+            else if (decl.kind === 'constant' && decl.type) {
+                member.type = this.resolveTypeRef(decl.type, cls);
+            }
+            else if (decl.kind === 'function') {
+                member.type = decl.returnType ? this.resolveTypeRef(decl.returnType, cls) : 'Variant';
+                for (const param of decl.params) {
+                    param.staticType = param.type ? this.resolveTypeRef(param.type, cls) : 'Variant';
+                    param.jsName = jsIdentifier(param.name);
+                }
+            }
+            else if (decl.kind === 'signal') {
+                for (const param of decl.params) {
+                    param.staticType = param.type ? this.resolveTypeRef(param.type, cls) : 'Variant';
+                    param.jsName = jsIdentifier(param.name);
+                }
+            }
+        }
+    }
 }
