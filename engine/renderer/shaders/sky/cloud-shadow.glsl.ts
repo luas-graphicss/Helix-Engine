@@ -3,7 +3,7 @@ export const CLOUD_SHADOW_MAP_SIZE = 512;
 export const CLOUD_SHADOW_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
 
- 
+                                                                                                
 uniform vec4 u_cloudShadowRegion;
 uniform vec3 u_lightDirection;
 
