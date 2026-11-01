@@ -265,4 +265,105 @@ export class ForeignBridge {
             return describeThrown(cause);
         }
     }
+    len(id: number): number {
+        try {
+            const target = this.objectOf(id);
+            if (Array.isArray(target) || ArrayBuffer.isView(target))
+                return (target as unknown as ArrayLike<number>).length;
+            if (target instanceof Map || target instanceof Set)
+                return target.size;
+            return Object.keys(target).length;
+        }
+        catch {
+            return 0;
+        }
+    }
+    keys(id: number): Array<string | number> {
+        try {
+            const target = this.objectOf(id);
+            if (Array.isArray(target) || ArrayBuffer.isView(target)) {
+                const length = (target as unknown as ArrayLike<number>).length;
+                return Array.from({ length }, (_, index) => index + this.options.indexBase);
+            }
+            if (target instanceof Map)
+                return Array.from(target.keys()).map((key) => (typeof key === 'number' ? key : String(key)));
+            if (target instanceof Set)
+                return Array.from({ length: target.size }, (_, index) => index + this.options.indexBase);
+            return enumerableKeys(target);
+        }
+        catch {
+            return [];
+        }
+    }
+    has(id: number, key: string): boolean {
+        try {
+            const target = this.objectOf(id);
+            if (Array.isArray(target) || ArrayBuffer.isView(target) || target instanceof Map || target instanceof Set)
+                return false;
+            return key in target;
+        }
+        catch {
+            return false;
+        }
+    }
+    private propertyKey(target: object, key: unknown): string | number {
+        if (typeof key === 'number') {
+            if (Array.isArray(target) || ArrayBuffer.isView(target) || target instanceof Set)
+                return key - this.options.indexBase;
+            return key;
+        }
+        if (typeof key === 'string')
+            return key;
+        if (typeof key === 'bigint')
+            return Number(key) - this.options.indexBase;
+        throw new HelixError(`chave inválida (${formatValue(key)}): objetos da engine só aceitam nomes (texto) ou índices (número).`);
+    }
+    private isDataProperty(target: object, property: string | number): boolean {
+        if (Array.isArray(target) || ArrayBuffer.isView(target))
+            return typeof property === 'number';
+        for (let current: object | null = target; current && current !== Object.prototype; current = Object.getPrototypeOf(current)) {
+            const descriptor = Object.getOwnPropertyDescriptor(current, property);
+            if (descriptor)
+                return descriptor.get === undefined && descriptor.set === undefined;
+        }
+        return false;
+    }
+}
+function encodePrimitive(value: unknown): ForeignPrimitive {
+    switch (typeof value) {
+        case 'string':
+        case 'number':
+        case 'boolean':
+            return value;
+        case 'bigint':
+            return Number(value);
+        default:
+            return undefined;
+    }
+}
+function enumerableKeys(target: object): string[] {
+    const keys = new Set<string>(Object.keys(target));
+    for (let current: object | null = Object.getPrototypeOf(target); current && current !== Object.prototype; current = Object.getPrototypeOf(current)) {
+        for (const [name, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(current))) {
+            if (name === 'constructor' || !descriptor.enumerable)
+                continue;
+            keys.add(name);
+        }
+    }
+    return Array.from(keys);
+}
+function copyIntoTypedArray(target: Float32Array, value: object, member: string): void {
+    if (target.length === 3) {
+        toVec3(value, member, target);
+        return;
+    }
+    if (target.length === 4) {
+        toQuat(value, member, target);
+        return;
+    }
+    const numbers = Array.isArray(value) ? value : ArrayBuffer.isView(value) ? Array.from(value as unknown as ArrayLike<number>) : null;
+    if (!numbers || numbers.length !== target.length || numbers.some((entry) => typeof entry !== 'number')) {
+        throw new HelixError(`${member}: esperava uma lista de ${target.length} números.`);
+    }
+    target.set(numbers as number[]);
 }
