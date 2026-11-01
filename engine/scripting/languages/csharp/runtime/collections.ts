@@ -277,4 +277,193 @@ export const LINQ: Record<string, (source: Iterable<unknown>, ...args: unknown[]
             throw new InvalidOperationException('MinBy: a sequência está vazia.');
         return items.reduce((best, item) => (compare(map(item), map(best)) < 0 ? item : best));
     },
+    MaxBy(source, selector) {
+        const map = requireFunction(selector, 'MaxBy');
+        const items = toArray(source);
+        if (items.length === 0)
+            throw new InvalidOperationException('MaxBy: a sequência está vazia.');
+        return items.reduce((best, item) => (compare(map(item), map(best)) > 0 ? item : best));
+    },
+    Aggregate(source, seedOrFn, fnOrResult, resultSelector) {
+        const items = toArray(source);
+        if (typeof seedOrFn === 'function' && fnOrResult === undefined) {
+            if (items.length === 0)
+                throw new InvalidOperationException('Aggregate: a sequência está vazia.');
+            return items.slice(1).reduce((acc, item) => (seedOrFn as Fn)(acc, item), items[0]);
+        }
+        const fn = requireFunction(fnOrResult, 'Aggregate');
+        const result = items.reduce((acc, item) => fn(acc, item), seedOrFn);
+        return resultSelector ? requireFunction(resultSelector, 'Aggregate')(result) : result;
+    },
+    Contains(source, value) {
+        for (const item of source)
+            if (equals(item, value))
+                return true;
+        return false;
+    },
+    Distinct(source) {
+        const seen = new Set<unknown>();
+        const result = new List();
+        for (const item of source) {
+            const key = hashKey(item);
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            result.$items.push(item);
+        }
+        return result;
+    },
+    DistinctBy(source, selector) {
+        const map = requireFunction(selector, 'DistinctBy');
+        const seen = new Set<unknown>();
+        const result = new List();
+        for (const item of source) {
+            const key = hashKey(map(item));
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            result.$items.push(item);
+        }
+        return result;
+    },
+    Take(source, count) {
+        return List.from(toArray(source).slice(0, Math.max(0, Number(count))));
+    },
+    TakeLast(source, count) {
+        const items = toArray(source);
+        const amount = Math.max(0, Number(count));
+        return List.from(amount === 0 ? [] : items.slice(-amount));
+    },
+    TakeWhile(source, predicate) {
+        const test = requireFunction(predicate, 'TakeWhile');
+        const result = new List();
+        let index = 0;
+        for (const item of source) {
+            if (!test(item, index++))
+                break;
+            result.$items.push(item);
+        }
+        return result;
+    },
+    Skip(source, count) {
+        return List.from(toArray(source).slice(Math.max(0, Number(count))));
+    },
+    SkipLast(source, count) {
+        const items = toArray(source);
+        const amount = Math.max(0, Number(count));
+        return List.from(items.slice(0, Math.max(0, items.length - amount)));
+    },
+    SkipWhile(source, predicate) {
+        const test = requireFunction(predicate, 'SkipWhile');
+        const result = new List();
+        let skipping = true;
+        let index = 0;
+        for (const item of source) {
+            if (skipping && test(item, index++))
+                continue;
+            skipping = false;
+            result.$items.push(item);
+        }
+        return result;
+    },
+    Reverse(source) {
+        return List.from(toArray(source).slice().reverse());
+    },
+    Concat(source, other) {
+        return List.from([...toArray(source), ...toArray(iterate(other, 'Concat'))]);
+    },
+    Append(source, item) {
+        return List.from([...toArray(source), item]);
+    },
+    Prepend(source, item) {
+        return List.from([item, ...toArray(source)]);
+    },
+    Union(source, other) {
+        return LINQ.Distinct(List.from([...toArray(source), ...toArray(iterate(other, 'Union'))]));
+    },
+    Intersect(source, other) {
+        const keys = new Set(toArray(iterate(other, 'Intersect')).map((item) => hashKey(item)));
+        return LINQ.Distinct(List.from(toArray(source).filter((item) => keys.has(hashKey(item)))));
+    },
+    Except(source, other) {
+        const keys = new Set(toArray(iterate(other, 'Except')).map((item) => hashKey(item)));
+        return LINQ.Distinct(List.from(toArray(source).filter((item) => !keys.has(hashKey(item)))));
+    },
+    Zip(source, other, resultSelector) {
+        const left = toArray(source);
+        const right = toArray(iterate(other, 'Zip'));
+        const length = Math.min(left.length, right.length);
+        const result = new List();
+        for (let index = 0; index < length; index++) {
+            result.$items.push(resultSelector ? requireFunction(resultSelector, 'Zip')(left[index], right[index]) : new Tuple([left[index], right[index]], ['First', 'Second']));
+        }
+        return result;
+    },
+    GroupBy(source, keySelector, elementSelector) {
+        const keyOfItem = requireFunction(keySelector, 'GroupBy');
+        const groups = new Map<unknown, Grouping>();
+        const result = new List();
+        for (const item of source) {
+            const key = keyOfItem(item);
+            const hashed = hashKey(key);
+            let grouping = groups.get(hashed);
+            if (!grouping) {
+                grouping = new Grouping(key);
+                groups.set(hashed, grouping);
+                result.$items.push(grouping);
+            }
+            grouping.$items.push(elementSelector ? requireFunction(elementSelector, 'GroupBy')(item) : item);
+        }
+        return result;
+    },
+    Chunk(source, size) {
+        const amount = Number(size);
+        if (!Number.isInteger(amount) || amount <= 0)
+            throw new ArgumentOutOfRangeException('size', 'Chunk: o tamanho precisa ser um inteiro positivo.');
+        const items = toArray(source);
+        const result = new List();
+        for (let index = 0; index < items.length; index += amount)
+            result.$items.push(items.slice(index, index + amount));
+        return result;
+    },
+    DefaultIfEmpty(source, defaultValue) {
+        const items = toArray(source);
+        return List.from(items.length === 0 ? [defaultValue === undefined ? null : defaultValue] : items);
+    },
+    SequenceEqual(source, other) {
+        const left = toArray(source);
+        const right = toArray(iterate(other, 'SequenceEqual'));
+        return left.length === right.length && left.every((item, index) => equals(item, right[index]));
+    },
+    Cast(source) {
+        return List.from(toArray(source));
+    },
+    OfType(source) {
+        return List.from(toArray(source).filter((item) => !isNullish(item)));
+    },
+    AsEnumerable(source) {
+        return source;
+    },
+    ToList(source) {
+        return List.from(toArray(source));
+    },
+    ToArray(source) {
+        return toArray(source).slice();
+    },
+    ToHashSet(source) {
+        return HashSet.from(source);
+    },
+    ToDictionary(source, keySelector, valueSelector) {
+        const keyOfItem = requireFunction(keySelector, 'ToDictionary');
+        const dictionary = new Dictionary();
+        for (const item of source)
+            dictionary.Add(keyOfItem(item), valueSelector ? requireFunction(valueSelector, 'ToDictionary')(item) : item);
+        return dictionary;
+    },
+    ToLookup(source, keySelector, elementSelector) {
+        return LINQ.GroupBy(source, keySelector, elementSelector);
+    },
+    Index(source) {
+        return List.from(toArray(source).map((item, index) => new Tuple([index, item], ['Index', 'Item'])));
+    },
 };
