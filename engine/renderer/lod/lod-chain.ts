@@ -1,12 +1,13 @@
 import { getMeshVersion, getTriangleCount, type MeshData } from '@/engine/renderer/geometry/mesh-data';
-import { simplifyByClustering, toMeshData, type SimplifierOutput } from './mesh-simplifier';
+import { simplifyToTriangles, toMeshData, type SimplifierOutput, type SimplifierState } from './mesh-simplifier';
 import type { LodWorkerRequest, LodWorkerResponse } from './lod.worker';
 export const MIN_TRIANGLES_FOR_LOD = 300;
-const LEVEL_CELLS: readonly number[] = [40, 20, 10, 5];
+const LEVEL_RATIO = 0.5;
+const REDUCED_LEVELS = 4;
 const MIN_REDUCTION = 0.3;
 const MIN_LEVEL_TRIANGLES = 24;
 const MAX_IN_FLIGHT = 2;
-export const MAX_LOD_LEVELS = LEVEL_CELLS.length + 1;
+export const MAX_LOD_LEVELS = REDUCED_LEVELS + 1;
 export interface LodChain {
     readonly levels: readonly MeshData[];
     readonly complete: boolean;
@@ -15,6 +16,7 @@ class ChainEntry implements LodChain {
     readonly levels: MeshData[];
     complete: boolean;
     inFlight = false;
+    state: SimplifierState | null = null;
     constructor(readonly source: MeshData, readonly version: number) {
         this.levels = [source];
         this.complete = getTriangleCount(source) < MIN_TRIANGLES_FOR_LOD;
@@ -22,7 +24,8 @@ class ChainEntry implements LodChain {
 }
 interface PendingJob {
     entry: ChainEntry;
-    cells: number;
+    targetTriangles: number;
+    state: SimplifierState | null;
 }
 function createWorker(): Worker | null {
     if (typeof Worker === 'undefined')
@@ -43,7 +46,7 @@ export class LodChainCache {
     constructor() {
         this.worker = createWorker();
         if (this.worker) {
-            this.worker.onmessage = (event: MessageEvent<LodWorkerResponse>) => this.complete(event.data.jobId, event.data.output);
+            this.worker.onmessage = (event: MessageEvent<LodWorkerResponse>) => this.complete(event.data.jobId, event.data.output, event.data.state);
             this.worker.onerror = () => this.abandonWorker();
         }
     }
@@ -70,12 +73,18 @@ export class LodChainCache {
         const job = this.queue.shift();
         if (!job)
             return;
-        const { source } = job.entry;
-        this.complete(this.register(job), simplifyByClustering(source, job.cells));
+        const jobId = this.register(job);
+        const level = simplifyToTriangles(this.previousLevel(job.entry), job.targetTriangles, job.state);
+        this.complete(jobId, level.output, level.state);
+    }
+    private previousLevel(entry: ChainEntry): MeshData {
+        return entry.levels[entry.levels.length - 1];
     }
     private enqueue(entry: ChainEntry): void {
         entry.inFlight = true;
-        this.queue.push({ entry, cells: LEVEL_CELLS[entry.levels.length - 1] });
+        const triangles = getTriangleCount(this.previousLevel(entry));
+        this.queue.push({ entry, targetTriangles: Math.floor(triangles * LEVEL_RATIO), state: entry.state });
+        entry.state = null;
     }
     private register(job: PendingJob): number {
         const jobId = this.nextJobId++;
@@ -84,21 +93,26 @@ export class LodChainCache {
     }
     private dispatch(job: PendingJob): void {
         const jobId = this.register(job);
-        const { source } = job.entry;
+        const source = this.previousLevel(job.entry);
         const request: LodWorkerRequest = {
             jobId,
-            cells: job.cells,
+            targetTriangles: job.targetTriangles,
             input: {
                 positions: source.positions.slice(),
                 normals: source.normals.slice(),
                 uvs: source.uvs.slice(),
                 indices: source.indices.slice(),
             },
+            state: job.state,
         };
-        const { input } = request;
-        this.worker?.postMessage(request, [input.positions.buffer, input.normals.buffer, input.uvs.buffer, input.indices.buffer]);
+        const { input, state } = request;
+        const transfer: Transferable[] = [input.positions.buffer, input.normals.buffer, input.uvs.buffer, input.indices.buffer];
+        if (state)
+            transfer.push(state.positionIds.buffer, state.quadrics.buffer, state.weights.buffer, state.deviations.buffer);
+        job.state = null;
+        this.worker?.postMessage(request, transfer);
     }
-    private complete(jobId: number, output: SimplifierOutput): void {
+    private complete(jobId: number, output: SimplifierOutput, state: SimplifierState): void {
         const job = this.jobs.get(jobId);
         if (!job)
             return;
@@ -107,14 +121,17 @@ export class LodChainCache {
         entry.inFlight = false;
         if (this.entries.get(entry.source) !== entry)
             return;
-        const previous = entry.levels[entry.levels.length - 1];
+        const previous = this.previousLevel(entry);
         const triangles = output.indices.length / 3;
         const reducedEnough = triangles <= getTriangleCount(previous) * (1 - MIN_REDUCTION);
         if (triangles > 0 && reducedEnough) {
             entry.levels.push(toMeshData(`${entry.source.name}·LOD${entry.levels.length}`, output));
+            entry.state = state;
         }
-        if (!reducedEnough || triangles <= MIN_LEVEL_TRIANGLES || entry.levels.length >= MAX_LOD_LEVELS)
+        if (!reducedEnough || triangles <= MIN_LEVEL_TRIANGLES || entry.levels.length >= MAX_LOD_LEVELS) {
             entry.complete = true;
+            entry.state = null;
+        }
     }
     private abandonWorker(): void {
         this.worker?.terminate();
