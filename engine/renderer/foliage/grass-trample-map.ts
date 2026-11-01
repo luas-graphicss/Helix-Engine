@@ -72,6 +72,7 @@ class TrampleMap {
 }
 export class GrassTrampleMaps {
     stamps = 0;
+    recovering = 0;
     private readonly recoverProgram: ShaderProgram;
     private readonly stampProgram: ShaderProgram;
     private readonly stampVao: WebGLVertexArrayObject;
@@ -100,6 +101,7 @@ export class GrassTrampleMaps {
     }
     beginFrame(): void {
         this.stamps = 0;
+        this.recovering = 0;
     }
     resolve(terrain: Terrain): TrampleMap {
         const resolution = clamp(Math.round(terrain.size * TEXELS_PER_METER), MIN_RESOLUTION, MAX_RESOLUTION);
@@ -123,6 +125,7 @@ export class GrassTrampleMaps {
         map.idleSeconds = stampCount > 0 ? 0 : map.idleSeconds + deltaSeconds;
         if (stampCount === 0 && map.idleSeconds > recovery + 1)
             return;
+        this.recovering++;
         map.pendingRecovery += deltaSeconds / recovery;
         let step = 0;
         if (map.pendingRecovery >= MIN_RECOVERY_STEP) {
