@@ -19,10 +19,10 @@ export function MaterialLibraryList({ documents, status, selectedId, onSelect, o
     const [query, setQuery] = useState('');
     const normalized = query.trim().toLowerCase();
     const visible = normalized ? documents.filter((document) => document.name.toLowerCase().includes(normalized)) : documents;
-    return (<aside className="flex w-60 shrink-0 flex-col border-r border-border bg-surface-sunken/40">
+    return (<aside className="flex w-[clamp(10rem,22%,15rem)] shrink-0 flex-col border-r border-border bg-surface-sunken/40">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
-        <span className="flex-1 text-[10px] font-medium tracking-wider text-muted-foreground uppercase">Biblioteca</span>
-        <span className="font-mono text-[10px] text-muted-foreground">{documents.length}</span>
+        <span className="flex-1 text-3xs font-medium tracking-wider text-muted-foreground uppercase">Biblioteca</span>
+        <span className="font-mono text-3xs text-muted-foreground">{documents.length}</span>
         <IconButton label="Importar conjunto PBR (imagens)" size="sm" onClick={onImport}>
           <Images />
         </IconButton>
@@ -48,7 +48,7 @@ export function MaterialLibraryList({ documents, status, selectedId, onSelect, o
                   <MaterialSwatch document={document} className="size-9"/>
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className={cn('truncate text-2xs', active ? 'font-medium text-foreground' : 'text-foreground/90')}>{document.name}</span>
-                    <span className="truncate font-mono text-[10px] text-muted-foreground">{materialCaption(document)}</span>
+                    <span className="truncate font-mono text-3xs text-muted-foreground">{materialCaption(document)}</span>
                   </span>
                 </button>
               </li>);
