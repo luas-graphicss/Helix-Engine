@@ -265,3 +265,108 @@ export function scalarPeak(scalar: VfxScalar): number {
         }
     }
 }
+export function scalarAverage(scalar: VfxScalar): number {
+    switch (scalar.kind) {
+        case 'constant':
+            return scalar.value;
+        case 'random':
+            return (scalar.min + scalar.max) / 2;
+        case 'curve': {
+            const range = curveRange(scalar.curve);
+            return ((range.min + range.max) / 2) * scalar.scale;
+        }
+        default: {
+            const a = curveRange(scalar.min);
+            const b = curveRange(scalar.max);
+            return ((a.min + a.max + b.min + b.max) / 4) * scalar.scale;
+        }
+    }
+}
+export function convertScalar(scalar: VfxScalar, kind: VfxScalarKind): VfxScalar {
+    if (scalar.kind === kind)
+        return scalar;
+    const average = scalarAverage(scalar);
+    const spread = Math.abs(average) * 0.25;
+    switch (kind) {
+        case 'constant':
+            return scalarConstant(average);
+        case 'random':
+            return scalar.kind === 'randomCurve'
+                ? scalarRandom(scalarAverage(scalarCurve(scalar.min, scalar.scale)), scalarAverage(scalarCurve(scalar.max, scalar.scale)))
+                : scalarRandom(average - spread, average + spread);
+        case 'curve':
+            if (scalar.kind === 'randomCurve')
+                return scalarCurve(scalar.min, scalar.scale);
+            return scalarCurve(constantCurve(1), average);
+        default:
+            if (scalar.kind === 'curve')
+                return scalarRandomCurve(scalar.curve, scalar.curve, scalar.scale);
+            if (scalar.kind === 'random')
+                return scalarRandomCurve(constantCurve(scalar.min), constantCurve(scalar.max), 1);
+            return scalarRandomCurve(constantCurve(0.75), constantCurve(1.25), average);
+    }
+}
+export function colorConstant(color: VfxRgb, alpha = 1): VfxColorValue {
+    return { kind: 'constant', color, alpha };
+}
+export function colorRandom(a: VfxRgb, b: VfxRgb, alphaA = 1, alphaB = 1): VfxColorValue {
+    return { kind: 'random', a, alphaA, b, alphaB };
+}
+export function colorGradient(gradient: VfxGradient): VfxColorValue {
+    return { kind: 'gradient', gradient };
+}
+export function sampleColorValue(value: VfxColorValue, t: number, random: number, out: Float32Array, offset = 0): void {
+    switch (value.kind) {
+        case 'constant':
+            out[offset] = value.color[0];
+            out[offset + 1] = value.color[1];
+            out[offset + 2] = value.color[2];
+            out[offset + 3] = value.alpha;
+            return;
+        case 'random':
+            out[offset] = lerp(value.a[0], value.b[0], random);
+            out[offset + 1] = lerp(value.a[1], value.b[1], random);
+            out[offset + 2] = lerp(value.a[2], value.b[2], random);
+            out[offset + 3] = lerp(value.alphaA, value.alphaB, random);
+            return;
+        default:
+            sampleGradient(value.gradient, t, out, offset);
+    }
+}
+export function colorValueSwatch(value: VfxColorValue): VfxRgb {
+    switch (value.kind) {
+        case 'constant':
+            return value.color;
+        case 'random':
+            return [(value.a[0] + value.b[0]) / 2, (value.a[1] + value.b[1]) / 2, (value.a[2] + value.b[2]) / 2];
+        default: {
+            const sample = new Float32Array(4);
+            sampleGradient(value.gradient, 0.5, sample);
+            return [sample[0], sample[1], sample[2]];
+        }
+    }
+}
+export function convertColorValue(value: VfxColorValue, kind: VfxColorKind): VfxColorValue {
+    if (value.kind === kind)
+        return value;
+    const swatch = colorValueSwatch(value);
+    const alpha = value.kind === 'constant' ? value.alpha : value.kind === 'random' ? (value.alphaA + value.alphaB) / 2 : 1;
+    switch (kind) {
+        case 'constant':
+            return colorConstant(swatch, alpha);
+        case 'random':
+            return colorRandom(swatch, [clamp(swatch[0] * 0.7, 0, 1), clamp(swatch[1] * 0.7, 0, 1), clamp(swatch[2] * 0.7, 0, 1)], alpha, alpha);
+        default:
+            return colorGradient(solidGradient(swatch, alpha));
+    }
+}
+export function rgbToHex(color: VfxRgb): string {
+    return `#${color.map((channel) => Math.round(clamp(channel, 0, 1) * 255).toString(16).padStart(2, '0')).join('')}`;
+}
+export function hexToRgb(hex: string): VfxRgb | null {
+    const match = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+    if (!match)
+        return null;
+    const value = Number.parseInt(match[1], 16);
+    return [((value >> 16) & 0xff) / 255, ((value >> 8) & 0xff) / 255, (value & 0xff) / 255];
+}
