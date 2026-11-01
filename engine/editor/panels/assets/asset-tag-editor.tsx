@@ -23,7 +23,7 @@ export function AssetTagEditor({ tags, onChange }: AssetTagEditorProps) {
     };
     return (<div className="flex flex-col gap-1.5 px-2">
       {tags.length > 0 && (<ul className="flex flex-wrap gap-1" aria-label="Etiquetas">
-          {tags.map((tag) => (<li key={tag} className="flex h-5 items-center gap-1 rounded-sm bg-surface-raised pr-0.5 pl-1.5 font-mono text-[10px] text-foreground">
+          {tags.map((tag) => (<li key={tag} className="flex h-5 items-center gap-1 rounded-sm bg-surface-raised pr-0.5 pl-1.5 font-mono text-3xs text-foreground">
               {tag}
               <button type="button" aria-label={`Remover etiqueta ${tag}`} onClick={() => onChange(tags.filter((candidate) => candidate !== tag))} className="flex size-4 items-center justify-center rounded-[2px] text-muted-foreground hover:bg-highlight hover:text-foreground">
                 <X className="size-3" aria-hidden/>
