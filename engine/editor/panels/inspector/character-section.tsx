@@ -5,7 +5,7 @@ import { FieldInput } from '@/engine/ui/field-input';
 import { SliderField } from '@/engine/ui/slider-field';
 import { ToggleField } from '@/engine/ui/toggle-field';
 import type { Entity } from '@/engine/core/scene/entity';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { setCharacterAutoPossess, setCharacterModel, setCharacterScalar, type CharacterScalar } from '@/engine/editor/operations/character-operations';
 import { hasModel } from '@/engine/character/rig/character-rig';
 import type { AnimatorState } from '@/engine/character/animation/locomotion-animator';
@@ -45,7 +45,7 @@ function ScalarRows({ entity, rows }: {
     entity: Entity;
     rows: readonly ScalarRow[];
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const settings = entity.character;
     if (!settings)
         return null;
@@ -58,7 +58,7 @@ function ScalarRows({ entity, rows }: {
 export function CharacterRuntimeReadout({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const instance = session.playtest.characters?.instanceOf(entity) ?? null;
     if (!instance)
         return null;
@@ -80,12 +80,11 @@ export function CharacterRuntimeReadout({ entity }: {
 export function CharacterSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const models = useCharacterModels();
     const settings = entity.character;
     if (!settings)
         return null;
-    const sharesProfile = settings === session.scene.player.character;
     const modelReady = hasModel(entity);
     const modelKnown = models.some((model) => model.id === settings.model);
     return (<>
@@ -95,8 +94,7 @@ export function CharacterSection({ entity }: {
           <CharacterModelSelect value={settings.model} onChange={(id) => setCharacterModel(session, entity, id)}/>
         </PropertyRow>
         {!modelReady && <Hint>Carregando o modelo…</Hint>}
-        {modelReady && !modelKnown && <Hint>Modelo não carregado nesta sessão; o ator veste o manequim. Reimporte-o na aba Personagem.</Hint>}
-        {sharesProfile && <Hint>Este é o personagem do jogador desta simulação: edita o perfil da aba Personagem.</Hint>}
+        {modelReady && !modelKnown && <Hint>Modelo não carregado; usando o manequim.</Hint>}
         <ScalarRows entity={entity} rows={CAPSULE_ROWS}/>
         <CharacterRuntimeReadout entity={entity}/>
       </CollapsibleSection>
@@ -112,5 +110,5 @@ export function CharacterSection({ entity }: {
 function Hint({ children }: {
     children: string;
 }) {
-    return <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">{children}</p>;
+    return <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">{children}</p>;
 }
