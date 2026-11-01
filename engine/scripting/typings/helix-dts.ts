@@ -2375,3 +2375,157 @@ const EDITOR_API = `
     notify(): void
   }
 `;
+const HELIX_ROOT = `
+                                                               
+  export interface ScriptHooks {
+    onLoad?(): void | Promise<void>
+    onStart?(): void | Promise<void>
+    onUpdate?(dt: number): void
+    onFixedUpdate?(h: number): void
+    onLateUpdate?(dt: number): void
+    onRender?(frame: FrameInfo): void
+    onEnable?(): void
+    onDisable?(): void
+    onStop?(): void
+    onDestroy?(): void
+    onBeforeHotReload?(): unknown
+    onHotReload?(previousState: unknown): void
+    onCollisionBegin?(other: Entity, contact: Contact): void
+    onCollisionStay?(other: Entity, contact: Contact): void
+    onCollisionEnd?(other: Entity): void
+    onTriggerEnter?(other: Entity): void
+    onTriggerStay?(other: Entity): void
+    onTriggerExit?(other: Entity): void
+  }
+
+     
+                                                                                                 
+                                                                                 
+     
+  export class ActorScript implements ScriptHooks {
+                                                                   
+    readonly actor: Entity
+    readonly self: Entity
+    readonly entity: Entity
+    readonly helix: Helix
+    readonly script: ScriptHandle
+    onLoad?(): void | Promise<void>
+    onStart?(): void | Promise<void>
+    onUpdate?(dt: number): void
+    onFixedUpdate?(h: number): void
+    onLateUpdate?(dt: number): void
+    onRender?(frame: FrameInfo): void
+    onEnable?(): void
+    onDisable?(): void
+    onStop?(): void
+    onDestroy?(): void
+    onBeforeHotReload?(): unknown
+    onHotReload?(previousState: unknown): void
+    onCollisionBegin?(other: Entity, contact: Contact): void
+    onCollisionStay?(other: Entity, contact: Contact): void
+    onCollisionEnd?(other: Entity): void
+    onTriggerEnter?(other: Entity): void
+    onTriggerStay?(other: Entity): void
+    onTriggerExit?(other: Entity): void
+  }
+
+  export interface Helix {
+                                                                        
+    readonly context: RunContext
+                                                                                    
+    readonly isEditor: boolean
+    readonly isPlaying: boolean
+    readonly engine: EngineInfo
+                                                                                             
+    readonly self: Entity | null
+    readonly script: ScriptHandle | null
+    readonly ActorScript: typeof ActorScript
+    readonly time: TimeApi
+    readonly task: TaskApi
+    readonly log: LogApi
+    readonly debug: DebugApi
+    readonly events: EventsApi
+    readonly math: MathApi
+    readonly props: PropsApi
+    readonly scene: SceneApi
+    readonly transform: TransformApi
+    readonly mesh: MeshApi
+    readonly csg: CsgApi
+    readonly material: MaterialApi
+    readonly materials: MaterialLibraryApi
+    readonly texture: TextureApi
+    readonly light: LightApi
+    readonly camera: CameraApi
+    readonly sky: SkyApi
+    readonly world: WorldApi
+    readonly render: RenderApi
+    readonly post: PostApi
+    readonly physics: PhysicsApi
+    readonly character: CharacterApi
+    readonly player: PlayerApi
+    readonly terrain: TerrainApi
+    readonly gui: GuiApi
+    readonly audio: AudioApi
+    readonly animation: AnimationApi
+    readonly vfx: VfxApi
+    readonly input: InputApi
+    readonly assets: AssetsApi
+    readonly project: ProjectApi
+    readonly storage: StorageApi
+    readonly play: PlayApi
+    readonly net: NetApi
+                                                         
+    readonly editor?: EditorApi
+  }
+
+  export const helix: Helix
+  export default helix
+
+  export const context: RunContext
+  export const isEditor: boolean
+  export const isPlaying: boolean
+  export const engine: EngineInfo
+  export const time: TimeApi
+  export const task: TaskApi
+  export const log: LogApi
+  export const debug: DebugApi
+  export const events: EventsApi
+  export const math: MathApi
+  export const props: PropsApi
+  export const scene: SceneApi
+  export const transform: TransformApi
+  export const mesh: MeshApi
+  export const csg: CsgApi
+  export const material: MaterialApi
+  export const materials: MaterialLibraryApi
+  export const texture: TextureApi
+  export const light: LightApi
+  export const camera: CameraApi
+  export const sky: SkyApi
+  export const world: WorldApi
+  export const render: RenderApi
+  export const post: PostApi
+  export const physics: PhysicsApi
+  export const character: CharacterApi
+  export const player: PlayerApi
+  export const terrain: TerrainApi
+  export const gui: GuiApi
+  export const audio: AudioApi
+  export const animation: AnimationApi
+  export const vfx: VfxApi
+  export const input: InputApi
+  export const assets: AssetsApi
+  export const project: ProjectApi
+  export const storage: StorageApi
+  export const play: PlayApi
+  export const net: NetApi
+  export const editor: EditorApi | undefined
+`;
+export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${EDITOR_API}${HELIX_ROOT}
+}
+
+declare module '@helix/engine' {
+  export * from 'helix'
+  export { default } from 'helix'
+}
+`;
