@@ -1052,4 +1052,115 @@ public class DebugJogo extends Script {
     }
 }
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+import helix.*;
+
+public class DebugGirador extends Script {
+                                                                                   
+    private double angulo;
+    private int contatos, quadros;
+    private Value desligar;
+
+    private void registrar(String metodo, String mensagem) {
+        helix().get("log").call(metodo, "Girador", mensagem);
+    }
+
+    private static String nomeDe(Value entidade) {
+        return entidade.get("name").asString();
+    }
+
+    @Override
+    public void onLoad() {
+        helix().get("props").call("define", Helix.object(
+            "velocidade", Helix.object("type", "range", "default", 90, "min", 0, "max", 360, "step", 1, "label", "Velocidade (°/s)"),
+            "cor", Helix.object("type", "color", "default", "#ff8800", "label", "Cor"),
+            "pulsar", Helix.object("type", "boolean", "default", true, "label", "Pulsar")
+        ));
+    }
+
+    @Override
+    public void onStart() {
+        Value props = helix().get("props"), lg = helix().get("log");
+        registrar("info", nomeDe(self()) + " acordou com velocidade " + props.call("get", "velocidade").asString() + "°/s");
+        helix().get("material").call("setColor", self(), props.call("get", "cor"));
+        desligar = props.call("onChanged", "cor", (Fn1) cor -> {
+            helix().get("material").call("setColor", self(), cor);
+            return null;
+        });
+        Value proprio = helix().get("self");
+        lg.call("assert", !proprio.isNullish() && proprio.equals(self()), "helix.self deveria ser o ator deste script");
+        lg.call("assert", props.call("has", "velocidade").asBoolean() && props.call("definitions").length() == 3, "props.define deveria registrar 3 propriedades");
+    }
+
+    @Override
+    public void onUpdate(double dt) {
+        Value props = helix().get("props"), tr = helix().get("transform");
+        quadros++;
+        angulo += props.call("get", "velocidade").asDouble() * dt;
+        tr.call("setRotation", self(), Helix.vec3(0, angulo, 0));
+        if (props.call("get", "pulsar").asBoolean()) tr.call("setScale", self(), 1 + Math.sin(helix().path("time.now").asDouble() * 3) * 0.1);
+    }
+
+    @Override
+    public void onCollisionBegin(Value other, Value contact) {
+        contatos++;
+        if (contatos > 3) return;
+        registrar("info", nomeDe(self()) + " tocou " + nomeDe(other) + " (impulso " + Math.round(contact.get("impulse").asDouble() * 100) / 100.0 + ")");
+    }
+
+    @Override
+    public void onTriggerEnter(Value other) {
+        registrar("info", nomeDe(other) + " entrou no gatilho de " + nomeDe(self()));
+    }
+
+    @Override
+    public void onEnable() {
+        registrar("debug", nomeDe(self()) + " ativo");
+    }
+
+    @Override
+    public void onDisable() {
+        registrar("debug", nomeDe(self()) + " inativo");
+    }
+
+    @Override
+    public void onStop() {
+        registrar("info", nomeDe(self()) + ": " + quadros + " quadros, " + contatos + " contatos");
+    }
+
+    @Override
+    public void onDestroy() {
+        if (desligar != null) desligar.invoke();
+        desligar = null;
+    }
+}
+`;
+    const module = String.raw `                                     
+                                                                                                             
+                                                                                                           
+                                            
+import org.teavm.jso.JSExport;
+
+public final class DebugUtil {
+    private DebugUtil() {}
+
+    @JSExport
+    public static double soma(double a, double b) {
+        return a + b;
+    }
+
+    @JSExport
+    public static String saudacao(String quem) {
+        return "Olá, " + quem;
+    }
+
+    @JSExport
+    public static double limitar(double valor, double minimo, double maximo) {
+        return Math.max(minimo, Math.min(maximo, valor));
+    }
+}
+`;
+    return { entry, actor, module };
 }
