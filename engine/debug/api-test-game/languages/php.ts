@@ -841,5 +841,113 @@ final class DebugJogo extends \\Helix\\Script
     public function onStop(): void
     {
         foreach ($this->assinaturas as $desligar) {
+            $desligar();
+        }
+        $this->helix->log->info('Debug', "Parou: {$this->quadros} quadros, {$this->passosFisica} passos de física, {$this->lateUpdates} lateUpdates, {$this->renders} frames (onAfterFrame), {$this->colisoes} colisões.");
+    }
+}
 `;
+    const actor = `<?php
+                                 
+                                                                                              
+                                                                                                                
+declare(strict_types=1);
+
+final class DebugGirador extends \\Helix\\Script
+{
+    private float $angulo = 0.0;
+    private int $contatos = 0;
+    private int $quadros = 0;
+    private mixed $desligar = null;
+
+    public function onLoad(): void
+    {
+        $this->helix->props->define([
+            'velocidade' => ['type' => 'range', 'default' => 90, 'min' => 0, 'max' => 360, 'step' => 1, 'label' => 'Velocidade (°/s)'],
+            'cor' => ['type' => 'color', 'default' => '#ff8800', 'label' => 'Cor'],
+            'pulsar' => ['type' => 'boolean', 'default' => true, 'label' => 'Pulsar'],
+        ]);
+    }
+
+    public function onStart(): void
+    {
+        $h = $this->helix;
+        $ator = $this->self;
+        $h->log->info('Girador', "{$ator->name} acordou com velocidade {$h->props->get('velocidade')}°/s");
+        $h->material->setColor($ator, $h->props->get('cor'));
+        $this->desligar = $h->props->onChanged('cor', function ($cor) use ($h, $ator): void {
+            $h->material->setColor($ator, $cor);
+        });
+        $h->log->assert($h->self !== null && $h->self->id === $ator->id, 'helix.self deveria ser o ator deste script');
+        $h->log->assert($h->props->has('velocidade') && count($h->props->definitions()) === 3, 'props.define deveria registrar 3 propriedades');
+    }
+
+    public function onUpdate(float $dt): void
+    {
+        $h = $this->helix;
+        $this->quadros++;
+        $this->angulo += (float) $h->props->get('velocidade') * $dt;
+        $h->transform->setRotation($this->self, [0, $this->angulo, 0]);
+        if ($h->props->get('pulsar')) {
+            $h->transform->setScale($this->self, 1 + sin((float) $h->time->now * 3) * 0.1);
+        }
+    }
+
+    public function onCollisionBegin(mixed $outro, mixed $contato): void
+    {
+        $this->contatos++;
+        if ($this->contatos <= 3) {
+            $this->helix->log->info('Girador', sprintf('%s tocou %s (impulso %.2f)', $this->self->name, $outro->name, (float) $contato->impulse));
+        }
+    }
+
+    public function onTriggerEnter(mixed $outro): void
+    {
+        $this->helix->log->info('Girador', "{$outro->name} entrou no gatilho de {$this->self->name}");
+    }
+
+    public function onEnable(): void
+    {
+        $this->helix->log->debug('Girador', "{$this->self->name} ativo");
+    }
+
+    public function onDisable(): void
+    {
+        $this->helix->log->debug('Girador', "{$this->self->name} inativo");
+    }
+
+    public function onStop(): void
+    {
+        $this->helix->log->info('Girador', "{$this->self->name}: {$this->quadros} quadros, {$this->contatos} contatos");
+    }
+
+    public function onDestroy(): void
+    {
+        if ($this->desligar !== null) {
+            ($this->desligar)();
+        }
+    }
+}
+`;
+    const module = `<?php
+                                     
+                                                                                                                         
+declare(strict_types=1);
+
+function soma(int|float $a, int|float $b): int|float
+{
+    return $a + $b;
+}
+
+function saudacao(string $quem): string
+{
+    return "Olá, {$quem}";
+}
+
+function limitar(int|float $valor, int|float $minimo, int|float $maximo): int|float
+{
+    return min($maximo, max($minimo, $valor));
+}
+`;
+    return { entry, actor, module };
 }
