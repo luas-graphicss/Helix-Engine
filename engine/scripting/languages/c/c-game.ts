@@ -277,3 +277,35 @@ export { WasmGame as CGame };
 function now(): number {
     return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
+function describeCTrap(message: string): string {
+    const lower = message.toLowerCase();
+    if (lower.includes('out of bounds'))
+        return 'acesso à memória fora dos limites: ponteiro inválido, índice além do array ou buffer estourado.';
+    if (lower.includes('unreachable'))
+        return 'o programa abortou: assert/abort(), exceção C++ não tratada ou função sem return.';
+    if (lower.includes('divide by zero'))
+        return 'divisão inteira por zero.';
+    if (lower.includes('integer overflow') || lower.includes('invalid conversion'))
+        return 'conversão de ponto flutuante para inteiro fora do intervalo (NaN ou infinito).';
+    if (lower.includes('indirect call') || lower.includes('signature mismatch'))
+        return 'chamada por ponteiro de função com assinatura errada ou ponteiro nulo.';
+    if (lower.includes('stack'))
+        return 'estouro de pilha: recursão sem fim ou arrays locais grandes demais.';
+    return `falha do WebAssembly: ${message}`;
+}
+export function wasmTraceback(cause: unknown): string | null {
+    if (!(cause instanceof Error) || !cause.stack)
+        return null;
+    const frames: string[] = [];
+    for (const line of cause.stack.split('\n')) {
+        if (!/wasm:\/\/|wasm-function\[/.test(line))
+            continue;
+        const named = /at\s+(\S+)\s+\(/.exec(line) ?? /^\s*([^@\s]+)@/.exec(line);
+        const indexed = /wasm-function\[(\d+)\]/.exec(line);
+        const label = named && named[1] !== 'wasm-function' ? demangle(named[1]) : indexed ? `função #${indexed[1]}` : 'função desconhecida';
+        frames.push(`  em ${label}`);
+        if (frames.length >= 12)
+            break;
+    }
+    return frames.length > 0 ? frames.join('\n') : null;
+}
