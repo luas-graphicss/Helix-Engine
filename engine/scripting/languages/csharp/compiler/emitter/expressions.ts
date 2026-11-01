@@ -517,3 +517,154 @@ function withTemps(ctx: EmitContext, parts: readonly Expression[], build: (texts
         return target;
     return { ...target, wrap: (body) => `((${params.join(', ')}) => ${body})(${args.join(', ')})` };
 }
+function lvalue(ctx: EmitContext, target: Expression): LValue {
+    switch (target.kind) {
+        case 'identifier':
+            return plainTarget(identifier(ctx, target));
+        case 'member': {
+            const resolution = target.resolution;
+            if (resolution?.kind === 'member')
+                return plainTarget(`${ctx.typeReference(resolution.owner, resolution.ownerIsSibling)}.${resolution.jsName}`);
+            if (resolution?.kind === 'direct') {
+                if (target.target.kind === 'base')
+                    return plainTarget(`super.${resolution.jsName}`);
+                return withTemps(ctx, [target.target], ([object]) => plainTarget(`${object}.${resolution.jsName}`));
+            }
+            return withTemps(ctx, [target.target], ([object]) => ({
+                simple: false,
+                read: `$.get(${object}, ${q(target.name)})`,
+                write: (value) => `$.set(${object}, ${q(target.name)}, ${value})`,
+                wrap: (body) => body,
+            }));
+        }
+        case 'element': {
+            const keys = target.arguments.map((argument) => argument.expression);
+            const fixed = keys.filter((key) => key.kind !== 'fromEnd');
+            return withTemps(ctx, [target.target, ...fixed], ([object, ...names]) => {
+                let next = 0;
+                const keyTexts = keys.map((key) => (key.kind === 'fromEnd' ? indexKey(ctx, key, object) : names[next++]));
+                return {
+                    simple: false,
+                    read: indexRead(target.target.staticType, object, keyTexts),
+                    write: (value) => `$.setAt(${object}, [${keyTexts.join(', ')}], ${value})`,
+                    wrap: (body) => body,
+                };
+            });
+        }
+        default:
+            return plainTarget(expression(ctx, target));
+    }
+}
+function nativeCompound(operator: BinaryOperator, left: StaticType | undefined, right: StaticType | undefined): boolean {
+    const plainNumber = (type: StaticType | undefined) => type !== undefined && (type.kind === 'int' || type.kind === 'float' || type.kind === 'enum');
+    switch (operator) {
+        case '+':
+            if (left?.kind === 'string')
+                return concatenatesNatively(right);
+            return plainNumber(left) && plainNumber(right);
+        case '-':
+        case '*':
+            return plainNumber(left) && plainNumber(right);
+        case '/':
+        case '%':
+            return plainNumber(left) && plainNumber(right) && (left?.kind === 'float' || right?.kind === 'float');
+        case '&':
+        case '|':
+        case '^':
+        case '<<':
+        case '>>':
+            return isIntegral(left) && isIntegral(right) && left?.kind !== 'char' && right?.kind !== 'char';
+        default:
+            return false;
+    }
+}
+function assignment(ctx: EmitContext, e: Expression & {
+    kind: 'assign';
+}): string {
+    if (e.target.kind === 'tuple') {
+        const targets = e.target.elements.map((element) => lvalue(ctx, element.value));
+        const parts = ctx.nextTemp('d');
+        const writes = targets.map((target, index) => target.wrap(target.write(`${parts}[${index}]`)));
+        return `((${parts}) => (${writes.join(', ')}, ${parts}))($.deconstruct(${expression(ctx, e.value)}, ${targets.length}))`;
+    }
+    const target = lvalue(ctx, e.target);
+    const value = expression(ctx, e.value);
+    if (e.operator === '=')
+        return target.wrap(target.write(value));
+    if (e.operator === '??=')
+        return target.wrap(target.simple ? `(${target.read} ??= ${value})` : `(${target.read} ?? ${target.write(value)})`);
+    const operator = e.operator.slice(0, -1) as BinaryOperator;
+    const left: Operand = { text: target.read, type: e.target.staticType };
+    const right: Operand = { text: value, type: e.value.staticType };
+    if (target.simple && nativeCompound(operator, left.type, right.type))
+        return target.wrap(`(${target.read} ${e.operator} ${value})`);
+    return target.wrap(target.write(binaryText(ctx, operator, left, right)));
+}
+function cast(ctx: EmitContext, e: Expression & {
+    kind: 'cast';
+}): string {
+    const target = e.staticType;
+    const source = e.expression.staticType;
+    const text = expression(ctx, e.expression);
+    switch (target?.kind) {
+        case 'int':
+            if (source?.kind === 'int' || source?.kind === 'enum')
+                return text;
+            if (source?.kind === 'char')
+                return `$.charCode(${text})`;
+            return `$.toInt(${text})`;
+        case 'float':
+            if (source?.kind === 'int' || source?.kind === 'float' || source?.kind === 'enum')
+                return text;
+            return `$.toFloat(${text})`;
+        case 'char':
+            return source?.kind === 'char' ? text : `$.toChar(${text})`;
+        case 'enum':
+            return source?.kind === 'int' || source?.kind === 'enum' ? text : `$.cast(${text}, ${typeOperand(ctx, target)})`;
+        case 'bool':
+        case 'string':
+        case 'class':
+        case 'collection':
+        case 'array':
+            return `$.cast(${text}, ${typeOperand(ctx, target)})`;
+        default:
+            return text;
+    }
+}
+function templateText(text: string): string {
+    return q(text).slice(1, -1).replace(/`/g, '\\`').replace(/\$\{/g, '\\${');
+}
+function interpolated(ctx: EmitContext, e: Expression & {
+    kind: 'interpolated';
+}): string {
+    let out = '`';
+    for (const part of e.parts) {
+        if (part.kind === 'text') {
+            out += templateText(part.value);
+            continue;
+        }
+        const value = operand(ctx, part.expression);
+        const base = value.type?.kind === 'enum' ? stringPart(ctx, value) : value.text;
+        const formatted = part.format !== null || part.alignment !== null ? `$.fmt(${base}, ${part.format !== null ? q(part.format) : 'null'}, ${part.alignment ?? 'null'})` : `$.str(${base})`;
+        out += '${' + formatted + '}';
+    }
+    return out + '`';
+}
+function switchExpression(ctx: EmitContext, e: Expression & {
+    kind: 'switchExpression';
+}): string {
+    const value = ctx.nextTemp('v');
+    const bindings = unique(e.arms.flatMap((arm) => patternJsNames(arm.pattern)));
+    const arms = e.arms
+        .map((arm) => {
+        const test = patternTest(ctx, arm.pattern, value, e.value.staticType);
+        const condition = arm.guard ? `(${test} && ${truthy(ctx, arm.guard)})` : test;
+        return `${condition} ? ${expression(ctx, arm.result)} : `;
+    })
+        .join('');
+    const body = `${arms}$.noMatch(${value})`;
+    const params = [value, ...bindings].join(', ');
+    const isAsync = e.arms.some((arm) => containsAwait(arm.result) || (arm.guard !== null && containsAwait(arm.guard)));
+    const source = expression(ctx, e.value);
+    return isAsync ? `(await (async (${params}) => ${body})(${source}))` : `((${params}) => ${body})(${source})`;
+}
