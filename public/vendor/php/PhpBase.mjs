@@ -397,12 +397,41 @@ export class PhpBase extends EventTarget
                                                                                          
                                                                            
     
+	exec(phpCode)
+	{
+		return this._enqueue(
+			   
+                                                         
+                                                                    
+                                                                                  
+      
+			phpCode => this._exec(phpCode),
+			[phpCode]
+		);
+	}
 
 	   
                                                      
                                                                              
                                                                            
     
+	async _exec(phpCode)
+	{
+		try
+		{
+			return await (await this.binary).ccall(
+				'pib_exec'
+				, STR
+				, [STR]
+				, [phpCode]
+				, {async: true}
+			);
+		}
+		finally
+		{
+			this.flush();
+		}
+	}
 
 	   
                                                                    
@@ -410,6 +439,56 @@ export class PhpBase extends EventTarget
                                                                                                          
                                                                                         
     
+	async x(fragments, ...values)
+	{
+		const names = [];
+		const phpModule = await this.binary;
+
+		if(phpModule.hasVrzno)
+		{
+			for(const value of values)
+			{
+				const name = `___value__${this.valueIndex++}`;
+				this.shared[name] = value;
+				names.push(name);
+			}
+
+			let code = '';
+
+			fragments = [...fragments];
+
+			while(fragments.length || names.length)
+			{
+				if(fragments.length) code += fragments.shift();
+				if(names.length) code += `(vrzno_shared('${names.shift()}'))`;
+			}
+
+			code = `vrzno_zval( ${code} );`;
+
+			return phpModule.consumeZval(await this.exec(code));
+		}
+		else
+		{
+			const encoded = values.map(value => JSON.stringify(value));
+
+			fragments = [...fragments];
+
+			let code = '';
+
+			while(fragments.length || names.length)
+			{
+				if(fragments.length)
+					code += fragments.shift();
+
+				if(encoded.length)
+				{
+					code += `(json_decode('${encoded.shift()}'))`;
+				}
+			}
+
+			return this.exec(code);
+		}
+	}
 
 	   
                                                                     
@@ -417,17 +496,93 @@ export class PhpBase extends EventTarget
                                                                                                      
                                                                                   
     
+	async r(fragments, ...values)
+	{
+		const names = [];
+		const phpModule = await this.binary;
+
+		if(phpModule.hasVrzno)
+		{
+			for(const value of values)
+			{
+				const name = `___value__${this.valueIndex++}`;
+				this.shared[name] = value;
+				names.push(name);
+			}
+
+			let code = '';
+
+			fragments = [...fragments];
+
+			while(fragments.length || names.length)
+			{
+				if(fragments.length)
+					code += fragments.shift();
+
+				if(names.length)
+				{
+					code += `(vrzno_shared('${names.shift()}'))`;
+				}
+			}
+
+			return this.run(code);
+		}
+		else
+		{
+			const encoded = values.map(value => JSON.stringify(value));
+
+			fragments = [...fragments];
+
+			let code = '';
+
+			while(fragments.length || names.length)
+			{
+				if(fragments.length)
+					code += fragments.shift();
+
+				if(encoded.length)
+				{
+					code += `(json_decode('${encoded.shift()}'))`;
+				}
+			}
+
+			return this.run(code);
+		}
+	}
 
 	   
                                                  
                                                                                          
     
+	async refresh()
+	{
+		const php = await this.binary;
+
+		for(const callback of php.onRefresh)
+		{
+			callback();
+		}
+
+		Object.keys(this.shared).forEach(key => delete this.shared[key]);
+
+		return php.ccall(
+			'pib_refresh'
+			, NUM
+			, []
+			, []
+			, {async: true}
+		);
+	}
 
 	   
                                               
                                                     
                                                                                  
     
+	analyzePath(path)
+	{
+		return this._enqueue(fsOps.analyzePath, [this.binary, path]);
+	}
 
 	   
                                                 
@@ -435,6 +590,10 @@ export class PhpBase extends EventTarget
                                                                                   
                                                                        
     
+	readdir(path, options)
+	{
+		return this._enqueue(fsOps.readdir, [this.binary, path, options]);
+	}
 
 	   
                                              
@@ -442,24 +601,40 @@ export class PhpBase extends EventTarget
                                                                     
                                                                              
     
+	readFile(path, options)
+	{
+		return this._enqueue(fsOps.readFile, [this.binary, path, options]);
+	}
 
 	   
                                                         
                                                  
                                                                    
     
+	stat(path)
+	{
+		return this._enqueue(fsOps.stat, [this.binary, path]);
+	}
 
 	   
                                                   
                                                   
                                                                            
     
+	mkdir(path)
+	{
+		return this._enqueue(fsOps.mkdir, [this.binary, path]);
+	}
 
 	   
                                                     
                                                   
                                                                                      
     
+	rmdir(path)
+	{
+		return this._enqueue(fsOps.rmdir, [this.binary, path]);
+	}
 
 	   
                                       
@@ -467,6 +642,10 @@ export class PhpBase extends EventTarget
                                                         
                                                                                 
     
+	rename(path, newPath)
+	{
+		return this._enqueue(fsOps.rename, [this.binary, path, newPath]);
+	}
 
 	   
                                               
@@ -475,10 +654,18 @@ export class PhpBase extends EventTarget
                                                                      
                                                                                 
     
+	writeFile(path, data, options)
+	{
+		return this._enqueue(fsOps.writeFile, [this.binary, path, data, options]);
+	}
 
 	   
                                                
                                              
                                                                                 
     
+	unlink(path)
+	{
+		return this._enqueue(fsOps.unlink, [this.binary, path]);
+	}
 }
