@@ -1,5 +1,7 @@
 {
   "version": "5.7.3",
-  "libs": {},
+  "libs": {
+    "lib.es2023.d.ts": ""
+  },
   "messages": {}
 }
