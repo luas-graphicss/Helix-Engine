@@ -281,5 +281,285 @@ final class DebugJogo: Script {
             "indices": lista([0, 1, 2]),
         ]))
         me.invoke("computeNormals", tri)
+        checar("mesh.create + computeBounds", numero(me.invoke("computeBounds", tri)["max"], "y") >= 1.5)
+        let dupla = me.invoke("merge", tri, me.invoke("flipWinding", me.invoke("clone", tri)))
+        checar("mesh.merge", me.invoke("triangleCount", dupla).number == 2)
+        s.invoke("spawn", "mesh", obj([
+            "name": "Triangulo",
+            "mesh": dupla,
+            "material": mat.invoke("create", obj(["baseColor": "#06d6a0", "doubleSided": true])),
+            "position": v3(7, 0, -2),
+        ]))
+        let grande = me.invoke("scale", me.invoke("translate", me.invoke("clone", caixa), v3(0, 0.5, 0)), 2)
+        checar("mesh.translate/scale", numero(me.invoke("computeBounds", grande)["max"], "y") > 1.9)
+        let distancia = me.invoke("raycast", api("math.ray").invoke("create", v3(0, 5, 0), v3(0, -1, 0)), grande)
+        checar("mesh.raycast", distancia.isNumber && distancia.number > 0)
+        let vertices = me.invoke("vertexCount", caixa).int
+        checar("positions/indices", me.invoke("positions", caixa).count == vertices * 3 && me.invoke("indices", caixa).count == 36)
+        checar("primitivas extras", me.invoke("triangleCount", me.invoke("torusKnot")).number > 0 && me.invoke("triangleCount", me.invoke("capsule")).number > 0)
+        return Value.undefined
+    }
+
+                                                                                                  
+
+    private func materiais() -> Value {
+        let mat = api("material")
+        let s = api("scene")
+        let tex = api("texture")
+        let base = mat.invoke("create", obj(["name": "DebugBase", "baseColor": "#d98c2b", "roughness": 0.5, "metallic": 0.1]))
+        checar("material.create", numero(base, "roughness") == 0.5)
+        let copia = mat.invoke("clone", base)
+        mat.invoke("set", copia, obj(["roughness": 1, "emissive": "#ffffff", "emissiveIntensity": 2]))
+        checar("material.clone/set", numero(copia, "roughness") == 1 && numero(base, "roughness") == 0.5)
+        let caixa = s.invoke("spawnPrimitive", "box", obj(["name": "CaixaPintada", "position": v3(-7, 0.5, 2)]))
+        mat.invoke("assign", caixa, base)
+        checar("material.assign/of", !mat.invoke("of", caixa).isNone)
+        mat.invoke("own", caixa)
+        mat.invoke("setColor", caixa, "#d98c2b")
+        let desenho = tex.invoke("canvas", 64, 64)
+        desenho.invoke("update")
+        mat.invoke("setTexture", caixa, "baseColorMap", desenho["texture"])
+        checar("texture.canvas + setTexture", mat.invoke("hasAnyTexture", mat.invoke("of", caixa)).bool && tex.invoke("isTexture", desenho["texture"]).bool)
+        checar("material.slots", mat.invoke("slots").count > 0)
+        checar("materials.list", api("materials").invoke("list").isArray)
+        let sombreado = mat.invoke("fromShader", "DebugSuperficie", obj(["glow": v3(1, 0.45, 0.1), "speed": 2]))
+        checar("material.fromShader", !sombreado.isNone)
+        if !sombreado.isNone {
+            let esfera = s.invoke("spawnPrimitive", "sphere", obj(["name": "EsferaShader", "position": v3(0, 1, -3), "scale": 1.4]))
+            mat.invoke("assign", esfera, sombreado)
+            mat.invoke("uniforms", esfera).invoke("set", "speed", 3)
+            checar("material.uniforms.list", mat.invoke("uniforms", esfera).invoke("list").count >= 1)
+        }
+        return Value.undefined
+    }
+
+    private func luzes() -> Value {
+        let l = api("light")
+        checar("light.types", contem(l.invoke("types"), "point") && contem(l.invoke("localTypes"), "spot"))
+        let lampada = l.invoke("spawn", "point", obj(["name": "Lampada", "position": v3(0, 3, 0), "color": "#ffd166", "intensity": 60, "range": 14]))
+        checar("light.spawn", !lampada["light"].isNone && textoIgual(lampada.path("light.type"), "point"))
+        l.invoke("set", lampada, obj(["intensity": 80]))
+        checar("light.set", numero(lampada["light"], "intensity") == 80)
+        l.invoke("setTemperature", lampada, 3200)
+        checar("setTemperature", numero(lampada["light"], "temperature") == 3200)
+        let foco = l.invoke("spawn", "spot", obj([
+            "name": "Holofote", "position": v3(4, 4, 0), "rotation": v3(-90, 0, 0), "intensity": 120, "range": 16,
+            "innerAngle": 20, "outerAngle": 35, "color": "#ffffff",
+        ]))
+        checar("spot", textoIgual(foco.path("light.type"), "spot"))
+        let convertido = l.invoke("convert", foco, "disc")
+        checar("light.convert", textoIgual(convertido["type"], "disc") && textoIgual(foco.path("light.type"), "disc"))
+        l.invoke("convert", foco, "spot")
+        let presets = l.invoke("presets")
+        checar("light.presets", presets.count > 0)
+        if presets.count > 0 {
+            let primeiro = presets[0]
+            let preset = l.invoke("spawn", primeiro["id"], obj(["name": "LuzPreset", "position": v3(-4, 2.5, 4)]))
+            checar("light.fromPreset", !preset["light"].isNone && l.invoke("fromPreset", primeiro["id"])["type"] == primeiro["type"])
+        }
+        checar("light.all", l.invoke("all", obj(["local": true])).count >= 2)
+        checar("effectiveRange", l.invoke("effectiveRange", lampada).number > 0)
+        checar("light.isLocal", verdadeiro(l.invoke("isLocal", lampada)))
+        checar("temperatureToColor", !l.invoke("temperatureToColor", 6500).isNone)
+        l.invoke("setColor", lampada, "#ffffff")
+        checar("light.setColor", eq3(lampada.path("light.color"), 1, 1, 1, 0.01))
+        return Value.undefined
+    }
+
+    private func ceu() -> Value {
+        let sky = api("sky")
+        let mundo = api("world")
+        sky.invoke("set", obj(["timeOfDay": 10.5, "haze": 0.3, "clouds": obj(["enabled": true, "coverage": 0.45])]))
+        checar("sky.set", aprox(numero(sky, "timeOfDay"), 10.5, 1e-3) && verdadeiro(sky.path("clouds.enabled")))
+        checar("sky.isDay", verdadeiro(sky["isDay"]))
+        checar("sky.sunDirection", numero(sky.invoke("sunDirection"), "y") > 0)
+        let hora = sky.invoke("formatTimeOfDay", 10.5).string
+        checar("sky.formatTimeOfDay", hora.contains(":"), hora)
+        checar("sky.wrapTimeOfDay", sky.invoke("wrapTimeOfDay", 25).number == 1)
+        checar("sky.presets", sky.invoke("presets").count > 0)
+        assinar(sky.invoke("onHourChanged", Value.function { [self] args in info("Hora do céu: \(arg(args, 0).string)"); return Value.undefined }))
+        sky["cycleSpeed"] = 0
+        checar("sky.cycleSpeed", numero(sky, "cycleSpeed") == 0)
+        checar("world.gravity", numero(mundo["gravity"], "y") < 0)
+        mundo["wind"].invoke("set", obj(["speed": 2, "direction": 45]))
+        checar("world.wind.set", numero(mundo["wind"], "speed") == 2)
+        return Value.undefined
+    }
+
+    private func camera() -> Value {
+        let c = api("camera")
+        checar("camera.fov", numero(c, "fov") > 0 && numero(c, "aspect") > 0)
+        checar("camera.near/far", numero(c, "near") > 0 && numero(c, "far") > numero(c, "near"))
+        let viewport = c["viewport"]
+        checar("viewport", numero(viewport, "width") > 0)
+        let naTela = c.invoke("worldToScreen", v3(0, 0, 0))
+        checar("worldToScreen", naTela.isNone || naTela["x"].isNumber)
+        let raio = c.invoke("screenToRay", numero(viewport, "width") / 2, numero(viewport, "height") / 2)
+        checar("screenToRay", raio.isNone || aprox(comprimento(raio["direction"]), 1, 0.01))
+        checar("viewMatrix", c["viewMatrix"].count == 16)
+        let jogador = c["player"]
+        jogador.invoke("set", obj(["distance": 7, "pitch": 18]))
+        checar("player.set", numero(jogador["settings"], "distance") == 7)
+        checar("distanceTo", c.invoke("distanceTo", v3(0, 0, 0)).number >= 0)
+        checar("camera.position", !c["position"].isNone && !c["forward"].isNone)
+        assinar(c.invoke("onMainChanged", Value.function { [self] args in
+            let entidade = arg(args, 0)
+            info(entidade.isNone ? "Câmera principal: editor/jogador" : "Câmera principal: \(nomeDe(entidade))")
+            return Value.undefined
+        }))
+        return Value.undefined
+    }
+
+    private func pos() -> Value {
+        let p = api("post")
+        checar("post.toneMappers", p.invoke("toneMappers").count > 0)
+        p.invoke("set", obj([
+            "bloom": obj(["enabled": true, "intensity": 0.5, "threshold": 1, "softKnee": 0.5, "radius": 0.6]),
+            "vignette": obj(["enabled": true, "intensity": 0.35, "smoothness": 0.5, "roundness": 1]),
+        ]))
+        checar("post.set", verdadeiro(p.path("bloom.enabled")) && verdadeiro(p.path("vignette.enabled")))
+        p["exposure"] = 1.05
+        checar("post.exposure", aprox(numero(p, "exposure"), 1.05, 1e-3))
+        p["toneMapper"] = "agx"
+        checar("post.toneMapper", textoIgual(p["toneMapper"], "agx"))
+        checar("post.presets", p.invoke("presets").count > 0)
+        let custom = p["custom"]
+        let novo = custom.invoke("add", obj(["fragment": "DebugPost", "name": "DebugPost", "uniforms": obj(["tint": v3(0.15, 0.05, 0.3), "strength": 0.6])]))
+        efeito = novo
+        checar("post.custom.add", !novo.isNone && !custom.invoke("get", "DebugPost").isNone)
+        novo["uniforms"].invoke("set", "strength", 0.8)
+        checar("efeito.uniforms.list", novo["uniforms"].invoke("list").count >= 2)
+        return Value.undefined
+    }
+
+    private func render() -> Value {
+        let r = api("render")
+        checar("render.passNames", r.invoke("passNames").count > 0)
+        checar("render.stats", r.path("stats.drawCalls").isNumber)
+        checar("render.frame", r.path("frame.width").isNumber)
+        assinar(r.invoke("onAfterFrame", Value.function { [self] _ in renders += 1; return Value.undefined }))
+        r["showGrid"] = false
+        checar("render.showGrid", falso(r["showGrid"]))
+        checar("render.pixelRatio", numero(r, "pixelRatio") > 0)
+        return Value.undefined
+    }
+
+                                                                                               
+
+    private func fisica() -> Value {
+        let ph = api("physics")
+        let s = api("scene")
+        checar("physics.enabled", verdadeiro(ph["enabled"]))
+        checar("physics.gravity", numero(ph["gravity"], "y") < 0)
+        checar("physics.settings", numero(ph["settings"], "fixedTimestep") > 0)
+        for i in 1...5 {
+            let indice = Double(i - 1)
+            let caixa = s.invoke("spawnPrimitive", "box", obj([
+                "name": "Caixa\(i)",
+                "position": v3(-2 + indice * 1.1, 3 + indice * 1.2, 3),
+                "rigidBody": obj(["type": "dynamic", "collider": "box", "mass": 2, "restitution": 0.3]),
+                "tags": lista(["caixa"]),
+            ]))
+            api("material").invoke("setColor", caixa, api("math.color").invoke("hsl", 30 + Double(i) * 12, 0.7, 0.5))
+        }
+        let caixas = s.invoke("byTag", "caixa")
+        let primeira = caixas[0]
+        checar("caixas dinâmicas", caixas.count == 5 && ph.invoke("hasBody", primeira).bool)
+        let corpo = ph.invoke("bodyOf", primeira)
+        checar("bodyOf", verdadeiro(corpo["isDynamic"]) && numero(corpo, "mass") > 0)
+        corpo.invoke("applyImpulse", v3(0, 2, 0))
+        corpo.invoke("applyTorque", v3(0, 1, 0))
+        corpo.invoke("setMaterial", obj(["friction": 0.8]))
+        corpo.invoke("wake")
+        checar("body.linearVelocity", !corpo["linearVelocity"].isNone)
+        checar("bodies()", ph.invoke("bodies").count >= 6)
+        let hit = ph.invoke("raycast", v3(0, 5, 0), v3(0, -1, 0), 20)
+        checar("physics.raycast", !hit.isNone && !hit["entity"].isNone)
+        checar("raycastAll", ph.invoke("raycastAll", v3(0, 5, 0), v3(0, -1, 0), 20).count >= 1)
+        checar("overlapSphere", ph.invoke("overlapSphere", v3(0, 3, 3), 4).isArray)
+        checar("massProperties", numero(ph.invoke("massProperties", primeira), "mass") > 0)
+        checar("colliderVolume", ph.invoke("colliderVolume", primeira).number > 0)
+        let formas = ph["shapes"]
+        checar("shapes.sphere volume", aprox(formas.invoke("volume", formas.invoke("sphere", 1)).number, 4.18879, 0.01))
+        assinar(ph.invoke("onCollisionBegin", Value.function { [self] args in
+            colisoes += 1
+            if colisoes <= 3 {
+                let e = arg(args, 0)
+                info("Colisão: \(nomeDe(e["a"])) × \(nomeDe(e["b"])) (impulso \(arred(numero(e["contact"], "impulse"))))")
+            }
+            return Value.undefined
+        }))
+        assinar(ph.invoke("onOutOfBounds", Value.function { [self] args in aviso("\(nomeDe(arg(args, 0))) caiu do mundo"); return Value.undefined }))
+        let gatilho = s.invoke("spawn", "group", obj(["name": "Gatilho", "position": v3(0, 1, 3), "trigger": obj(["shape": "box", "size": v3(3, 2, 3)])]))
+        checar("trigger spawn", !gatilho.isNone && s.invoke("isAttached", gatilho).bool)
+        checar("physics.stats", ph.path("stats.bodies").isNumber)
+        return Value.undefined
+    }
+
+    private func personagem() -> Value {
+        let ch = api("character")
+        let pl = api("player")
+        let novo = ch.invoke("spawn", obj(["name": "Heroi", "position": v3(0, 1.2, 8), "character": obj(["walkSpeed": 4, "runSpeed": 7, "jumpHeight": 1.4])]))
+        heroi = novo
+        checar("character.spawn", !novo["character"].isNone && ch.invoke("has", novo).bool)
+        let c = ch.invoke("of", novo)
+        checar("character.of", c["isGrounded"].isBool)
+        checar("settingsOf", numero(ch.invoke("settingsOf", novo), "walkSpeed") == 4)
+        pl.invoke("possess", novo)
+        checar("player.possess", pl["possessed"] == novo && verdadeiro(pl["isPossessing"]))
+        assinar(ch.invoke("onJumped", Value.function { [self] args in info("\(nomeDe(arg(args, 0)["entity"])) pulou"); return Value.undefined }))
+        assinar(pl.invoke("onPossessed", Value.function { [self] args in info("Possuindo \(nomeDe(arg(args, 0)))"); return Value.undefined }))
+        checar("character.all", ch.invoke("all").count >= 1)
+        checar("player.spawnPoint", !pl["spawnPoint"].isNone)
+        checar("character.velocity", !c["velocity"].isNone && !c["position"].isNone)
+        return Value.undefined
+    }
+
+    private func terreno() -> Value {
+        let te = api("terrain")
+        checar("terrain.presets", te.invoke("presets").count > 0)
+        let colinas = te.invoke("spawn", obj(["name": "Colinas", "size": 48, "resolution": 65, "preset": "hills", "seed": 7, "position": v3(0, -6, -70)]))
+        checar("terrain.spawn", !colinas["terrain"].isNone && te.invoke("all").count >= 1)
+        checar("terrain.of", numero(te.invoke("of", colinas), "resolution") == 65)
+        checar("heightAt", te.invoke("heightAt", v3(0, 0, -70), colinas).isNumber)
+        checar("contains", te.invoke("contains", v3(0, 0, -70), colinas).bool && !te.invoke("contains", v3(500, 0, 0), colinas).bool)
+        te.invoke("sculpt", colinas, "raise", v3(5, 0, -70), obj(["radius": 6, "strength": 1]), 1)
+        te.invoke("markDirty", colinas)
+        let grama = te["grass"]
+        grama.invoke("set", colinas, obj(["enabled": true, "density": 0.5]))
+        checar("grass.set", verdadeiro(grama.invoke("settingsOf", colinas)["enabled"]))
+        let agua = te["water"]
+        agua.invoke("set", colinas, obj(["enabled": true, "level": -2]))
+        checar("water.set", verdadeiro(agua.invoke("settingsOf", colinas)["enabled"]))
+        checar("terrain.raycast", !te.invoke("raycast", v3(0, 50, -70), v3(0, -1, 0), colinas).isNone)
+        return Value.undefined
+    }
+
+                                                                                               
+
+    private func soltarCaixa() {
+        let random = api("math.random")
+        let caixa = api("scene").invoke("spawnPrimitive", "box", obj([
+            "name": "CaixaSolta",
+            "position": v3(random.invoke("range", -3, 3).number, 6, random.invoke("range", 0, 4).number),
+            "rigidBody": obj(["type": "dynamic", "collider": "box", "mass": 1]),
+            "tags": lista(["caixa"]),
+        ]))
+        api("material").invoke("setColor", caixa, random.invoke("color"))
+        pontos += 1
+        api("gui").invoke("bind", "pontos", pontos)
+        api("events").invoke("emit", "debug.caixa", obj(["nome": caixa["name"]]))
+    }
+
+    private func interfaceGrafica() -> Value {
+        let g = api("gui")
+        g.invoke("css", "DebugEstilo")
+        let hud = g.invoke("html", "DebugHud", obj(["id": "debug-hud"]))
+        checar("gui.html", !hud.isNone && !g.invoke("element", "#debug-hud").isNone)
+        let icone = g.invoke("svg", "DebugIcone", obj(["id": "debug-icone"]))
+        checar("gui.svg", !icone.isNone)
+        let slot = g.invoke("element", "[data-slot=icone]")
+        if !slot.isNone && !icone.isNone { slot.invoke("appendChild", icone) }
+        checar("gui.bind", g.invoke("bind", "linguagem", linguagem).number >= 1)
 `;
 }
