@@ -273,3 +273,12 @@ export function updateRotate(session: RotateSession, point: GuiPoint, modifiers:
     }
     return { rotations, display };
 }
+export function sessionEntries(layout: GuiLayoutResult, ids: Iterable<string>): GuiLayoutEntry[] {
+    const entries: GuiLayoutEntry[] = [];
+    for (const id of ids) {
+        const entry = layout.entries.get(id);
+        if (entry)
+            entries.push(entry);
+    }
+    return entries;
+}
