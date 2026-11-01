@@ -6,7 +6,8 @@ import type { Entity } from '@/engine/core/scene/entity';
 import type { Scene } from '@/engine/core/scene/scene';
 import { cloneEntity, uniqueEntityName } from '@/engine/core/scene/entity-utils';
 import { createMaterial } from '@/engine/core/scene/material';
-import { createAmbientLight, createDirectionalLight } from '@/engine/core/scene/light';
+import { createAmbientLight, createDirectionalLight, createLocalLight, LOCAL_LIGHT_TYPES, type LocalLightType } from '@/engine/core/scene/light';
+import { getLightPreset, type LightPresetId } from '@/engine/core/scene/light-presets';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import type { Material } from '@/engine/core/scene/material';
 import { getLocalBounds } from '@/engine/renderer/geometry/bounds';
@@ -16,7 +17,16 @@ import { AddEntityCommand, RemoveEntityCommand, ReparentEntityCommand } from '@/
 import { CompositeCommand, SetValueCommand } from '@/engine/editor/commands/set-value-command';
 import { getPrimitive, type PrimitiveKind } from '@/engine/editor/primitives/primitive-catalog';
 import { snapValue } from './transform-operations';
-export type LightKind = 'directional' | 'ambient';
+export type LightKind = 'directional' | 'ambient' | LocalLightType;
+const LOCAL_LIGHT_NAME: Record<LocalLightType, string> = {
+    point: 'LuzPontual',
+    spot: 'LuzConica',
+    rect: 'PainelDeLuz',
+    disc: 'DiscoDeLuz',
+    tube: 'TuboDeLuz',
+};
+const LOCAL_LIGHT_SPAWN_HEIGHT: Record<LocalLightType, number> = { point: 2, spot: 3, rect: 2.5, disc: 2.5, tube: 2.5 };
+const FACING_DOWN = vec3.create(-90, 0, 0);
 const inverseParent = mat4.create();
 const localMatrix = mat4.create();
 const groupWorld = mat4.create();
@@ -57,7 +67,22 @@ export function addMeshInstance(session: EditorSession, name: string, mesh: Mesh
     vec3.copy(entity.transform.position, spawnPosition(session, mesh));
     return addEntity(session, entity);
 }
+function isLocalLightKind(kind: LightKind): kind is LocalLightType {
+    return (LOCAL_LIGHT_TYPES as readonly string[]).includes(kind);
+}
+function placeLocalLight(session: EditorSession, entity: Entity, type: LocalLightType): void {
+    const position = spawnPosition(session, null);
+    position[1] += LOCAL_LIGHT_SPAWN_HEIGHT[type];
+    vec3.copy(entity.transform.position, position);
+    if (type !== 'point' && type !== 'tube')
+        vec3.copy(entity.transform.rotation, FACING_DOWN);
+}
 export function addLight(session: EditorSession, kind: LightKind): Entity {
+    if (isLocalLightKind(kind)) {
+        const entity = session.scene.createEntity({ name: LOCAL_LIGHT_NAME[kind], kind: 'light', light: createLocalLight(kind) }, null);
+        placeLocalLight(session, entity, kind);
+        return addEntity(session, entity);
+    }
     const entity = kind === 'directional'
         ? session.scene.createEntity({ name: 'LuzDirecional', kind: 'light', light: createDirectionalLight() }, null)
         : session.scene.createEntity({ name: 'LuzAmbiente', kind: 'light', light: createAmbientLight() }, null);
@@ -65,6 +90,12 @@ export function addLight(session: EditorSession, kind: LightKind): Entity {
         vec3.set(entity.transform.position, 0, 5, 0);
         vec3.set(entity.transform.rotation, -50, 30, 0);
     }
+    return addEntity(session, entity);
+}
+export function addLightFromPreset(session: EditorSession, presetId: LightPresetId): Entity {
+    const preset = getLightPreset(presetId);
+    const entity = session.scene.createEntity({ name: preset.label.replace(/\s+/g, ''), kind: 'light', light: preset.create() }, null);
+    placeLocalLight(session, entity, preset.type);
     return addEntity(session, entity);
 }
 export function addGroup(session: EditorSession): Entity {
