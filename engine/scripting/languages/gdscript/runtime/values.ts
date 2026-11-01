@@ -1258,3 +1258,203 @@ export interface SignalConnection {
     readonly callable: (...args: unknown[]) => unknown;
     readonly once: boolean;
 }
+export class Signal {
+    private readonly connections: SignalConnection[] = [];
+    private readonly waiters: Array<(value: unknown) => void> = [];
+    constructor(readonly object: object | null, readonly name: string) { }
+    get connectionCount(): number {
+        return this.connections.length;
+    }
+    connect(callable: unknown, flags = 0): number {
+        if (typeof callable !== 'function')
+            fail(`Signal.connect(): "${this.name}" precisa de um Callable (uma função ou um método), não ${describeTypeOf(callable)}.`);
+        if (this.connections.some((connection) => sameCallable(connection.callable, callable)))
+            fail(`Signal.connect(): "${this.name}" já está conectado a esse Callable.`);
+        this.connections.push({ callable: callable as (...args: unknown[]) => unknown, once: (flags & 4) !== 0 });
+        return 0;
+    }
+    disconnect(callable: unknown): void {
+        const index = this.connections.findIndex((connection) => sameCallable(connection.callable, callable));
+        if (index === -1)
+            fail(`Signal.disconnect(): "${this.name}" não está conectado a esse Callable.`);
+        this.connections.splice(index, 1);
+    }
+    is_connected(callable: unknown): boolean {
+        return this.connections.some((connection) => sameCallable(connection.callable, callable));
+    }
+    has_connections(): boolean {
+        return this.connections.length > 0;
+    }
+    get_connections(): Dictionary[] {
+        return this.connections.map((connection) => new Dictionary({ signal: this, callable: connection.callable, flags: connection.once ? 4 : 0 }));
+    }
+    get_name(): string {
+        return this.name;
+    }
+    get_object(): object | null {
+        return this.object;
+    }
+    is_null(): boolean {
+        return false;
+    }
+    emit(...args: unknown[]): void {
+        for (const connection of Array.from(this.connections)) {
+            if (connection.once)
+                this.connections.splice(this.connections.indexOf(connection), 1);
+            connection.callable(...args);
+        }
+        const waiters = this.waiters.splice(0);
+        const value = args.length === 0 ? null : args.length === 1 ? args[0] : args;
+        for (const resolve of waiters)
+            resolve(value);
+    }
+    wait(): Promise<unknown> {
+        return new Promise((resolve) => this.waiters.push(resolve));
+    }
+    clearConnections(): void {
+        this.connections.length = 0;
+        this.waiters.length = 0;
+    }
+}
+const CALLABLE_META = Symbol('gdscript.callable');
+export interface CallableMeta {
+    readonly object: unknown;
+    readonly method: string | null;
+    readonly bound: unknown[];
+}
+type CallableFunction = ((...args: unknown[]) => unknown) & {
+    [CALLABLE_META]?: CallableMeta;
+};
+export function makeCallable(object: unknown, method: string, fn: (...args: unknown[]) => unknown, bound: unknown[] = []): CallableFunction {
+    const callable: CallableFunction = bound.length === 0 ? (...args: unknown[]) => fn.apply(object, args) : (...args: unknown[]) => fn.apply(object, [...args, ...bound]);
+    callable[CALLABLE_META] = { object, method, bound };
+    return callable;
+}
+export function callableMeta(value: unknown): CallableMeta | null {
+    return typeof value === 'function' ? ((value as CallableFunction)[CALLABLE_META] ?? null) : null;
+}
+export function sameCallable(a: unknown, b: unknown): boolean {
+    if (a === b)
+        return true;
+    const metaA = callableMeta(a);
+    const metaB = callableMeta(b);
+    return metaA !== null && metaB !== null && metaA.object === metaB.object && metaA.method === metaB.method && metaA.method !== null && metaA.bound.length === 0 && metaB.bound.length === 0;
+}
+export function describeTypeOf(value: unknown): string {
+    if (value === null || value === undefined)
+        return 'Nil';
+    switch (typeof value) {
+        case 'boolean':
+            return 'bool';
+        case 'number':
+            return Number.isInteger(value) ? 'int' : 'float';
+        case 'string':
+            return 'String';
+        case 'function':
+            return isScriptClass(value) ? `classe ${(value as {
+                __gdName?: string;
+            }).__gdName ?? value.name}` : 'Callable';
+        case 'object': {
+            if (Array.isArray(value))
+                return 'Array';
+            if (value instanceof Dictionary)
+                return 'Dictionary';
+            if (value instanceof Vector2i)
+                return 'Vector2i';
+            if (value instanceof Vector2)
+                return 'Vector2';
+            if (value instanceof Vector3i)
+                return 'Vector3i';
+            if (value instanceof Vector3)
+                return 'Vector3';
+            if (value instanceof Vector4)
+                return 'Vector4';
+            if (value instanceof Quaternion)
+                return 'Quaternion';
+            if (value instanceof Basis)
+                return 'Basis';
+            if (value instanceof Transform3D)
+                return 'Transform3D';
+            if (value instanceof Color)
+                return 'Color';
+            if (value instanceof Rect2)
+                return 'Rect2';
+            if (value instanceof AABB)
+                return 'AABB';
+            if (value instanceof Signal)
+                return 'Signal';
+            if (ArrayBuffer.isView(value)) {
+                const length = (value as unknown as ArrayLike<number>).length;
+                if (value instanceof Float32Array && length === 3)
+                    return 'Vector3';
+                if (value instanceof Float32Array && length === 4)
+                    return 'Quaternion';
+                if (value instanceof Float32Array && length === 2)
+                    return 'Vector2';
+                return value instanceof Float32Array ? 'PackedFloat32Array' : value instanceof Uint8Array ? 'PackedByteArray' : value instanceof Int32Array ? 'PackedInt32Array' : 'Array';
+            }
+            if (value instanceof Map)
+                return 'Dictionary';
+            if (value instanceof Promise)
+                return 'Coroutine';
+            const name = scriptClassName(value);
+            return name ?? 'Object';
+        }
+        default:
+            return 'Object';
+    }
+}
+const SCRIPT_CLASS = Symbol.for('helix.gdscript.class');
+export function markScriptClass(ctor: Function, name: string): void {
+    Object.defineProperty(ctor, SCRIPT_CLASS, { value: true });
+    Object.defineProperty(ctor, '__gdName', { value: name });
+}
+export function isScriptClass(value: unknown): boolean {
+    return typeof value === 'function' && (value as {
+        [SCRIPT_CLASS]?: boolean;
+    })[SCRIPT_CLASS] === true;
+}
+export function isScriptInstance(value: unknown): boolean {
+    return value !== null && typeof value === 'object' && isScriptClass((value as object).constructor);
+}
+export function scriptClassName(value: object): string | null {
+    const ctor = value.constructor as (Function & {
+        __gdName?: string;
+        [SCRIPT_CLASS]?: boolean;
+    }) | undefined;
+    if (!ctor || ctor[SCRIPT_CLASS] !== true)
+        return null;
+    return ctor.__gdName ?? ctor.name;
+}
+export function isVecLike(value: unknown): value is VecLike {
+    if (value === null || typeof value !== 'object')
+        return false;
+    if (value instanceof Vector2 || value instanceof Vector3 || value instanceof Vector4)
+        return true;
+    const candidate = value as {
+        x?: unknown;
+        y?: unknown;
+    };
+    return typeof candidate.x === 'number' && typeof candidate.y === 'number' && !(value instanceof Quaternion);
+}
+export function vectorArity(value: VecLike): 2 | 3 | 4 {
+    if (value instanceof Vector2)
+        return 2;
+    if (value instanceof Vector4)
+        return 4;
+    if (value instanceof Vector3)
+        return 3;
+    if (ArrayBuffer.isView(value)) {
+        const length = (value as unknown as ArrayLike<number>).length;
+        return length === 2 ? 2 : length === 4 ? 4 : 3;
+    }
+    if (typeof value.w === 'number')
+        return 4;
+    return typeof value.z === 'number' ? 3 : 2;
+}
+export function makeVector(arity: 2 | 3 | 4, x: number, y: number, z = 0, w = 0): Vector2 | Vector3 | Vector4 {
+    return arity === 2 ? new Vector2(x, y) : arity === 3 ? new Vector3(x, y, z) : new Vector4(x, y, z, w);
+}
+export function isValueType(value: unknown): boolean {
+    return value instanceof Vector2 || value instanceof Vector3 || value instanceof Vector4 || value instanceof Color || value instanceof Quaternion || value instanceof Rect2 || value instanceof AABB || value instanceof Basis || value instanceof Transform3D;
+}
