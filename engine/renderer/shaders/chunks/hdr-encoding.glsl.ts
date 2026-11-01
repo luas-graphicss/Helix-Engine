@@ -1,6 +1,7 @@
 export const HDR_RANGE_SKY = 32;
 export const HDR_RANGE_LIGHTING = 4;
 export const HDR_RANGE_SCATTERING = 1;
+export const HDR_RANGE_SCENE = 8;
 export const HDR_ENCODING_CHUNK = `
 #ifdef HDR_ENCODED
 vec4 encodeHdr(vec3 color, float alpha, float range) {
