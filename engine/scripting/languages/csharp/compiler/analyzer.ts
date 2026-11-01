@@ -814,4 +814,276 @@ class Analyzer {
             visit(cls);
         return ordered;
     }
+    typeFromRef(ref: TypeRef, cls: ClassInfo | null): StaticType {
+        if (ref.tupleElements) {
+            const elements = ref.tupleElements.map((element) => ({ name: null, type: this.typeFromRef(element, cls) }));
+            return ref.arrayRank > 0 ? this.wrapArray({ kind: 'tuple', elements }, ref.arrayRank) : { kind: 'tuple', elements };
+        }
+        let base: StaticType;
+        const primitive = PRIMITIVE_TYPE_KEYWORDS.get(ref.name);
+        if (primitive) {
+            switch (primitive) {
+                case 'int':
+                    base = STATIC_TYPES.int;
+                    break;
+                case 'float':
+                    base = STATIC_TYPES.float;
+                    break;
+                case 'bool':
+                    base = STATIC_TYPES.bool;
+                    break;
+                case 'string':
+                    base = STATIC_TYPES.string;
+                    break;
+                case 'char':
+                    base = STATIC_TYPES.char;
+                    break;
+                case 'void':
+                    base = STATIC_TYPES.void;
+                    break;
+                default: base = STATIC_TYPES.dynamic;
+            }
+        }
+        else
+            base = this.namedType(ref, cls);
+        return ref.arrayRank > 0 ? this.wrapArray(base, ref.arrayRank) : base;
+    }
+    private wrapArray(element: StaticType, rank: number): StaticType {
+        let type = element;
+        for (let level = 0; level < rank; level++)
+            type = { kind: 'array', element: type };
+        return type;
+    }
+    private namedType(ref: TypeRef, cls: ClassInfo | null): StaticType {
+        const { name } = ref;
+        const args = ref.typeArguments.map((argument) => this.typeFromRef(argument, cls));
+        switch (name) {
+            case 'var':
+            case 'dynamic':
+            case 'object':
+            case 'Object':
+                return STATIC_TYPES.dynamic;
+            case 'Int32':
+            case 'Int64':
+            case 'Int16':
+            case 'Byte':
+            case 'UInt32':
+            case 'UInt64':
+                return STATIC_TYPES.int;
+            case 'Single':
+            case 'Double':
+                return STATIC_TYPES.float;
+            case 'Boolean':
+                return STATIC_TYPES.bool;
+            case 'String':
+                return STATIC_TYPES.string;
+            case 'Char':
+                return STATIC_TYPES.char;
+            case 'Task':
+            case 'ValueTask':
+                return { kind: 'task', result: args[0] ?? null };
+            case 'Action':
+                return { kind: 'delegate', params: args, returns: STATIC_TYPES.void };
+            case 'Func':
+                return { kind: 'delegate', params: args.slice(0, -1), returns: args[args.length - 1] ?? null };
+            case 'Predicate':
+                return { kind: 'delegate', params: args, returns: STATIC_TYPES.bool };
+            case 'Comparison':
+                return { kind: 'delegate', params: [args[0] ?? STATIC_TYPES.dynamic, args[0] ?? STATIC_TYPES.dynamic], returns: STATIC_TYPES.int };
+            case 'Delegate':
+            case 'EventHandler':
+                return STATIC_TYPES.delegate;
+            case 'KeyValuePair':
+                return { kind: 'class', name: 'KeyValuePair', script: null, runtime: true };
+            case 'ActorScript':
+            case 'MonoBehaviour':
+                return STATIC_TYPES.dynamic;
+            default:
+                break;
+        }
+        const collection = COLLECTION_ALIASES.get(name);
+        if (collection)
+            return { kind: 'collection', name: collection, args };
+        if (cls?.typeParameters.has(name))
+            return STATIC_TYPES.dynamic;
+        for (let outer = cls?.outer ?? null; outer; outer = outer.outer)
+            if (outer.typeParameters.has(name))
+                return STATIC_TYPES.dynamic;
+        const found = this.lookupType(name, cls, cls?.script ?? null);
+        if (found) {
+            this.useType(found);
+            return this.typeRefOf(found);
+        }
+        if (RUNTIME_CLASSES.has(name))
+            return { kind: 'class', name, script: null, runtime: true };
+        if (this.interfaces.has(name) || this.fileDelegates().has(name))
+            return name.startsWith('I') ? STATIC_TYPES.dynamic : STATIC_TYPES.delegate;
+        return STATIC_TYPES.dynamic;
+    }
+    private fileDelegates(): Set<string> {
+        const names = new Set<string>();
+        for (const declaration of this.input.unit.types)
+            if (declaration.kind === 'delegate')
+                names.add(declaration.name);
+        return names;
+    }
+    private classOf(type: StaticType | undefined): ClassInfo | null {
+        if (!type || type.kind !== 'class' || type.runtime)
+            return null;
+        const found = type.script === null ? this.fileTypes.get(type.name) ?? this.nestedByName(type.name, this.fileTypes) : this.siblingTypes.get(type.name) ?? this.nestedByName(type.name, this.siblingTypes);
+        return found?.kind === 'class' ? found : null;
+    }
+    private nestedByName(name: string, roots: Map<string, TypeInfo>): TypeInfo | null {
+        for (const root of roots.values()) {
+            if (root.kind !== 'class')
+                continue;
+            const found = this.searchNested(root, name);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+    private searchNested(cls: ClassInfo, name: string): TypeInfo | null {
+        const direct = cls.nested.get(name);
+        if (direct)
+            return direct;
+        for (const nested of cls.nested.values()) {
+            if (nested.kind !== 'class')
+                continue;
+            const found = this.searchNested(nested, name);
+            if (found)
+                return found;
+        }
+        return null;
+    }
+    private enumOf(type: StaticType | undefined): EnumInfo | null {
+        if (!type || type.kind !== 'enum')
+            return null;
+        const found = type.script === null ? this.fileTypes.get(type.name) ?? this.nestedByName(type.name, this.fileTypes) : this.siblingTypes.get(type.name) ?? this.nestedByName(type.name, this.siblingTypes);
+        return found?.kind === 'enum' ? found : null;
+    }
+    private typeRefOf(info: TypeInfo): StaticType {
+        return info.kind === 'class' ? { kind: 'class', name: info.name, script: info.script, jsName: info.jsName } : { kind: 'enum', name: info.name, script: info.script, jsName: info.jsName };
+    }
+    private typeTestOf(ref: TypeRef, cls: ClassInfo | null): TypeTest {
+        if (ref.arrayRank > 0)
+            return { kind: 'array' };
+        const primitive = PRIMITIVE_TYPE_KEYWORDS.get(ref.name);
+        if (primitive)
+            return primitive === 'object' ? { kind: 'any' } : { kind: 'primitive', name: ref.name };
+        switch (ref.name) {
+            case 'Int32': return { kind: 'primitive', name: 'int' };
+            case 'Double': return { kind: 'primitive', name: 'double' };
+            case 'Single': return { kind: 'primitive', name: 'float' };
+            case 'Boolean': return { kind: 'primitive', name: 'bool' };
+            case 'String': return { kind: 'primitive', name: 'string' };
+            case 'Char': return { kind: 'primitive', name: 'char' };
+            case 'Array': return { kind: 'array' };
+            case 'Object':
+            case 'dynamic':
+                return { kind: 'any' };
+            default:
+                break;
+        }
+        const collection = COLLECTION_ALIASES.get(ref.name);
+        if (collection)
+            return { kind: 'runtime', name: collection };
+        const found = this.lookupType(ref.name, cls, cls?.script ?? null);
+        if (found) {
+            this.useType(found);
+            return { kind: 'script', name: found.name, jsName: found.jsName, sibling: found.script };
+        }
+        if (RUNTIME_CLASSES.has(ref.name))
+            return { kind: 'runtime', name: ref.name };
+        if (cls?.typeParameters.has(ref.name))
+            return { kind: 'any' };
+        this.error(ref.span, `Tipo desconhecido no padrão: "${ref.name}".${hint(ref.name, this.typeNames())}`);
+        return { kind: 'any' };
+    }
+    private typeOfTest(test: TypeTest, ref: TypeRef, cls: ClassInfo | null): StaticType {
+        return test.kind === 'any' ? STATIC_TYPES.dynamic : this.typeFromRef(ref, cls);
+    }
+    private analyzeClass(cls: ClassInfo): void {
+        const staticContext: FunctionContext = { cls, isStatic: true, returnType: null, usesAwait: false, usesYield: false, catchDepth: 0 };
+        const instanceContext: FunctionContext = { cls, isStatic: false, returnType: null, usesAwait: false, usesYield: false, catchDepth: 0 };
+        if (cls.isStatic) {
+            for (const member of cls.decl.members) {
+                if ((member.kind === 'field' || member.kind === 'property' || member.kind === 'method' || member.kind === 'event') && !member.modifiers.includes('static') && !member.modifiers.includes('const')) {
+                    this.error(member.span, `"${cls.name}" é uma classe estática: todos os membros precisam ser static.`);
+                }
+            }
+        }
+        for (const member of cls.decl.members) {
+            switch (member.kind) {
+                case 'field':
+                case 'event': {
+                    const isStatic = member.modifiers.includes('static') || member.modifiers.includes('const') || cls.isStatic;
+                    const type = this.typeFromRef(member.type, cls);
+                    for (const declarator of member.declarators) {
+                        declarator.jsName = memberJsName(declarator.name);
+                        declarator.staticType = type;
+                        if (declarator.initializer)
+                            this.expression(declarator.initializer, new Scope(null, isStatic ? staticContext : instanceContext), type);
+                    }
+                    break;
+                }
+                case 'property': {
+                    const isStatic = member.modifiers.includes('static') || cls.isStatic;
+                    const type = this.typeFromRef(member.type, cls);
+                    const context = isStatic ? staticContext : instanceContext;
+                    if (member.initializer)
+                        this.expression(member.initializer, new Scope(null, context), type);
+                    if (member.expressionBody)
+                        this.functionBody(null, member.expressionBody, [], { cls, isStatic, returnType: type, usesAwait: false, usesYield: false, catchDepth: 0 });
+                    if (member.getter?.body || member.getter?.expressionBody)
+                        this.functionBody(member.getter.body, member.getter.expressionBody, [], { cls, isStatic, returnType: type, usesAwait: false, usesYield: false, catchDepth: 0 });
+                    if (member.setter?.body || member.setter?.expressionBody) {
+                        const fn: FunctionContext = { cls, isStatic, returnType: STATIC_TYPES.void, usesAwait: false, usesYield: false, catchDepth: 0 };
+                        const scope = new Scope(null, fn);
+                        scope.declare('value', type);
+                        this.functionBody(member.setter.body, member.setter.expressionBody, [], fn, scope);
+                    }
+                    break;
+                }
+                case 'indexer': {
+                    const type = this.typeFromRef(member.type, cls);
+                    const params = member.parameters.map((parameter) => this.paramInfo(parameter, cls));
+                    if (member.expressionBody)
+                        this.functionBody(null, member.expressionBody, params, { cls, isStatic: false, returnType: type, usesAwait: false, usesYield: false, catchDepth: 0 });
+                    if (member.getter?.body || member.getter?.expressionBody)
+                        this.functionBody(member.getter.body, member.getter.expressionBody, params, { cls, isStatic: false, returnType: type, usesAwait: false, usesYield: false, catchDepth: 0 });
+                    if (member.setter?.body || member.setter?.expressionBody) {
+                        const fn: FunctionContext = { cls, isStatic: false, returnType: STATIC_TYPES.void, usesAwait: false, usesYield: false, catchDepth: 0 };
+                        const scope = new Scope(null, fn);
+                        scope.declare('value', type);
+                        this.functionBody(member.setter.body, member.setter.expressionBody, params, fn, scope);
+                    }
+                    break;
+                }
+                case 'method':
+                    this.analyzeMethod(member, cls);
+                    break;
+                case 'constructor':
+                    this.analyzeConstructor(member, cls);
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+    private analyzeMethod(method: MethodMember, cls: ClassInfo | null): void {
+        const isStatic = method.modifiers.includes('static') || (cls?.isStatic ?? false);
+        const declaredReturn = this.typeFromRef(method.returnType, cls);
+        const info = cls ? this.findMember(cls, method.name, method.parameters.length) : null;
+        const params = info?.decl === method ? info.params : method.parameters.map((parameter) => this.paramInfo(parameter, cls));
+        const fn: FunctionContext = { cls, isStatic, returnType: bodyReturnType(declaredReturn, method.modifiers.includes('async')), usesAwait: false, usesYield: false, catchDepth: 0 };
+        this.functionBody(method.body, method.expressionBody, params, fn);
+        method.isIterator = fn.usesYield;
+        method.isAsync = method.modifiers.includes('async') || fn.usesAwait;
+        if (fn.usesAwait && !method.modifiers.includes('async'))
+            this.warn(method.nameSpan, `"${method.name}" usa await sem o modificador async; a engine o trata como async mesmo assim.`);
+        if (cls && !isStatic && HOOK_METHOD_NAMES.has(method.name) && !this.isActorClass(cls) && cls.script === null) {
+            this.warn(method.nameSpan, `"${method.name}" só é chamado pela engine em classes de ator (: ActorScript); em "${cls.name}" é um método comum.`);
+        }
+    }
 }
