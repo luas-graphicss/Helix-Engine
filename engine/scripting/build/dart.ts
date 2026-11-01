@@ -257,3 +257,227 @@ function conversion(type: string, expr: string): string | null {
         return wrap(`(${expr}.raw as ${type})`);
     return null;
 }
+function exportSource(declared: TopLevelFunction): {
+    lines: string[];
+} | {
+    problem: string;
+} {
+    const named = declared.parameters.find((parameter) => parameter.named);
+    if (named)
+        return { problem: `o parâmetro nomeado {${named.name}} não tem equivalente em JavaScript; use parâmetros posicionais.` };
+    const conversions: string[] = [];
+    for (const parameter of declared.parameters) {
+        if (parameter.name.startsWith('this.') || /\bFunction\b/.test(parameter.type))
+            return { problem: `o parâmetro ${parameter.name} do tipo ${parameter.type || 'dynamic'} não atravessa para os outros scripts; use ${SUPPORTED_TYPES}.` };
+        const converted = conversion(parameter.type, `helix.Runtime.arg(args, ${conversions.length})`);
+        if (converted === null)
+            return { problem: `o parâmetro ${parameter.name} do tipo ${parameter.type} não atravessa para os outros scripts; use ${SUPPORTED_TYPES}.` };
+        conversions.push(converted);
+    }
+    const required = declared.parameters.filter((parameter) => !parameter.optional).length;
+    const isVoid = declared.returnType === 'void';
+    const call = (count: number): string => `script.${declared.name}(${conversions.slice(0, count).join(', ')})`;
+    const returning = (count: number): string => (isVoid ? `{ ${call(count)}; return null; }` : `return helix.Runtime.result(${call(count)});`);
+    const lines = [`  JSAny? export_${declared.name}(JSArray<JSAny?> args) {`];
+    if (required < conversions.length) {
+        lines.push('    final count = helix.Runtime.argCount(args);');
+        for (let count = required; count < conversions.length; count++)
+            lines.push(`    if (count <= ${count}) ${returning(count)}`);
+    }
+    lines.push(`    ${returning(conversions.length)}`, '  }');
+    return { lines };
+}
+export function blankDart(source: string): string {
+    const out = source.split('');
+    const n = source.length;
+    const blank = (k: number): void => {
+        if (out[k] !== '\n')
+            out[k] = ' ';
+    };
+    const isQuote = (k: number): boolean => source[k] === "'" || source[k] === '"';
+    const startsRaw = (k: number): boolean => source[k] === 'r' && isQuote(k + 1) && !/[\w$]/.test(source[k - 1] ?? '');
+    function skipLineComment(start: number): number {
+        let i = start;
+        while (i < n && source[i] !== '\n')
+            blank(i++);
+        return i;
+    }
+    function skipBlockComment(start: number): number {
+        let depth = 0;
+        let i = start;
+        while (i < n) {
+            if (source.startsWith('/*', i)) {
+                depth++;
+                blank(i);
+                blank(i + 1);
+                i += 2;
+            }
+            else if (source.startsWith('*/', i)) {
+                depth--;
+                blank(i);
+                blank(i + 1);
+                i += 2;
+                if (depth === 0)
+                    return i;
+            }
+            else {
+                blank(i++);
+            }
+        }
+        return i;
+    }
+    function skipString(start: number): number {
+        let i = start;
+        const raw = source[i] === 'r';
+        if (raw)
+            blank(i++);
+        const quote = source[i];
+        const triple = source.startsWith(quote.repeat(3), i);
+        const quoteLength = triple ? 3 : 1;
+        for (let k = 0; k < quoteLength; k++)
+            blank(i + k);
+        i += quoteLength;
+        while (i < n) {
+            const c = source[i];
+            if (!raw && c === '\\') {
+                blank(i);
+                if (i + 1 < n)
+                    blank(i + 1);
+                i += 2;
+                continue;
+            }
+            if (!raw && c === '$' && source[i + 1] === '{') {
+                blank(i);
+                blank(i + 1);
+                i = skipInterpolation(i + 2);
+                continue;
+            }
+            if (triple ? source.startsWith(quote.repeat(3), i) : c === quote) {
+                for (let k = 0; k < quoteLength; k++)
+                    blank(i + k);
+                return i + quoteLength;
+            }
+            if (!triple && c === '\n')
+                return i;
+            blank(i++);
+        }
+        return i;
+    }
+    function skipInterpolation(start: number): number {
+        let depth = 1;
+        let i = start;
+        while (i < n && depth > 0) {
+            const c = source[i];
+            if (c === '{') {
+                depth++;
+                blank(i++);
+            }
+            else if (c === '}') {
+                depth--;
+                blank(i++);
+            }
+            else if (isQuote(i) || startsRaw(i)) {
+                i = skipString(i);
+            }
+            else if (c === '/' && source[i + 1] === '/') {
+                i = skipLineComment(i);
+            }
+            else if (c === '/' && source[i + 1] === '*') {
+                i = skipBlockComment(i);
+            }
+            else {
+                blank(i++);
+            }
+        }
+        return i;
+    }
+    let i = 0;
+    while (i < n) {
+        const c = source[i];
+        if (c === '/' && source[i + 1] === '/')
+            i = skipLineComment(i);
+        else if (c === '/' && source[i + 1] === '*')
+            i = skipBlockComment(i);
+        else if (isQuote(i) || startsRaw(i))
+            i = skipString(i);
+        else
+            i++;
+    }
+    return out.join('');
+}
+const PRELUDE = [
+    controlledGlobalDeclaration('__helixSelf'),
+    '__helixSelf.scheduleImmediate = queueMicrotask;',
+    'function __helixTranslate(error) {',
+    '  if (error === null || typeof error !== "object" || !("dartException" in error)) return error;',
+    '  var dart = error.dartException;',
+    '  var isObject = dart !== null && typeof dart === "object";',
+    '  var name = isObject && dart.constructor && typeof dart.constructor.name === "string" ? dart.constructor.name.replace(/^_+/, "").replace(/Impl$/, "") : "";',
+    '  if (!name || name.length < 3 || /^minified:/.test(name)) name = "Error";',
+    '  if (name === "JSNoSuchMethodError") name = "NoSuchMethodError";',
+    '  var message;',
+    '  try { message = String(dart); } catch (_) { message = "erro Dart"; }',
+    '  if (message.slice(0, name.length + 2) === name + ": ") message = message.slice(name.length + 2);',
+    '  var translated = new Error(message);',
+    '  translated.name = name;',
+    '  var frames = String(error.stack || "").split("\\n").filter(function (line) { return /^\\s+at /.test(line) && !/\\b(?:wrapException|throwExpression|__helixGuard)\\b/.test(line); });',
+    '  translated.stack = name + ": " + message + "\\n" + frames.join("\\n");',
+    '  translated.dartException = dart;',
+    '  return translated;',
+    '}',
+    'function __helixGuard(fn) { return function () { try { return fn.apply(undefined, arguments); } catch (error) { throw __helixTranslate(error); } }; }',
+    'function __helixText(value) {',
+    '  if (typeof value === "string") return value;',
+    '  if (value === undefined) return "undefined";',
+    '  if (value === null) return "null";',
+    '  if (typeof value === "function") return "[função " + (value.name || "anônima") + "]";',
+    '  if (typeof value === "object") {',
+    '    try { var text = String(value); if (text !== "[object Object]") return text; var json = JSON.stringify(value); return typeof json === "string" ? json : text; } catch (_) { return "[objeto]"; }',
+    '  }',
+    '  return String(value);',
+    '}',
+    '__helixSelf.__helixHost = {',
+    '  helix: helix, console: console, require: require,',
+    '  typeOf: function (value) { return value === undefined ? "undefined" : value === null ? "null" : Array.isArray(value) ? "array" : typeof value; },',
+    '  read: function (target, key) { return target[key]; },',
+    '  write: function (target, key, value) { target[key] = value; },',
+    '  contains: function (target, key) { return key in Object(target); },',
+    '  remove: function (target, key) { return delete target[key]; },',
+    '  names: function (target) { return Object.keys(Object(target)); },',
+    '  apply: function (target, receiver, args) { return Reflect.apply(target, receiver, args); },',
+    '  construct: function (target, args) { return Reflect.construct(target, args); },',
+    '  text: __helixText,',
+    '  callback: function (variadic) { return function () { try { return variadic(Array.prototype.slice.call(arguments)); } catch (error) { throw __helixTranslate(error); } }; },',
+    '};',
+    shadowedGlobalsBlock('__helixSelf'),
+    '  const dartPrint = function (message) { console.info(String(message)); };',
+    '',
+].join('\n');
+const EPILOGUE = [
+    '',
+    '}',
+    'var __helixModule = __helixSelf.__helixDart;',
+    'delete __helixSelf.__helixDart;',
+    'if (!__helixModule) throw new Error("o programa Dart não se registrou na engine; o arquivo não tem a forma que o serviço de build esperava.");',
+    'if (__helixModule.boot) module.exports.default = function helixCreate(inject) {',
+    '  var hooks = __helixGuard(__helixModule.boot)(inject);',
+    '  var wrapped = {};',
+    '  for (var name in hooks) if (typeof hooks[name] === "function") wrapped[name] = __helixGuard(hooks[name]);',
+    '  return wrapped;',
+    '};',
+    'Object.keys(__helixModule.exports).forEach(function (name) {',
+    '  var exported = __helixGuard(__helixModule.exports[name]);',
+    '  module.exports[name] = function () { return exported(Array.prototype.slice.call(arguments)); };',
+    '});',
+    '',
+].join('\n');
+function wrapModule(js: string): {
+    code: string;
+    prefixLines: number;
+} {
+    const body = js.replace(/^\/\/# sourceMappingURL=.*$/m, '');
+    return { code: `${PRELUDE}${body}${EPILOGUE}`, prefixLines: PRELUDE.split('\n').length - 1 };
+}
+function toolchainError(message: string): CompileDiagnostic {
+    return { severity: 'error', message, line: 1, column: 1, code: 'toolchain', source: 'Dart' };
+}
