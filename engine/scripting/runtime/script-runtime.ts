@@ -273,4 +273,280 @@ export class ScriptRuntime implements RuntimeHost {
         this.starting = false;
         this.session.notify();
     }
+    private planLink(mode: RuntimeMode): NetLink {
+        const { scripting } = this.session.scene;
+        if (mode !== 'play' || !isAuthoritative(scripting))
+            return NO_LINK;
+        if (engineSettings.get('simulation.net.server') === 'hosted') {
+            if (scripting.server.url)
+                return { kind: 'websocket', url: scripting.server.url, room: engineSettings.get('simulation.net.room'), ticket: parseTicket(engineSettings.get('simulation.net.ticket')) };
+            this.say('warn', 'As preferências pedem o servidor hospedado, mas o projeto não tem endereço em Código ▸ Servidor do jogo; o playtest usa o servidor simulado.');
+        }
+        return { kind: 'local', conditions: { latencyMs: engineSettings.get('simulation.net.latency'), jitterMs: engineSettings.get('simulation.net.jitter'), loss: engineSettings.get('simulation.net.loss') / 100 } };
+    }
+    private startNet(link: NetLink): void {
+        const { server } = this.session.scene.scripting;
+        this.net.start({ link, tickRate: server.tickRate, maxPlayers: server.maxPlayers });
+    }
+    private runsHere(assetId: string): boolean {
+        const asset = this.session.library.get(assetId);
+        const context = asset?.kind === 'script' && asset.details.kind === 'script' ? asset.details.runContext : 'shared';
+        return this.net.runsHere(context);
+    }
+    private abortStart(cause: unknown): void {
+        const mapped = this.stacks.map(cause instanceof Error ? cause : null);
+        const details = this.stacks.format(mapped) || (cause instanceof Error ? cause.stack : undefined);
+        const where = this.mode === 'play' ? 'neste playtest' : 'nesta execução';
+        this.say('error', `O runtime de scripts não iniciou: ${describeThrown(cause)}. Nenhum script rodou ${where}; corrija e inicie de novo.`, { details: details || undefined });
+        this.session.code.setCompileState('failed', 'O runtime de scripts não iniciou; veja o console.');
+        this.stop();
+    }
+    get instanceCount(): number {
+        return this.instances.length;
+    }
+    stop(): void {
+        const wasRunning = this.running;
+        const wasStarting = this.starting;
+        if (!wasRunning && !wasStarting)
+            return;
+        this.runToken++;
+        this.running = false;
+        this.starting = false;
+        for (const instance of this.instances.slice().reverse()) {
+            if (instance.destroyed)
+                continue;
+            if (instance.wasActive) {
+                instance.wasActive = false;
+                this.callHook(instance, 'onDisable');
+            }
+            if (instance.started)
+                this.callHook(instance, 'onStop');
+            this.callHook(instance, 'onDestroy');
+            instance.dispose();
+            this.scriptDebugger.untrackInstance(instance);
+        }
+        this.instances.length = 0;
+        this.byActor.clear();
+        this.pendingActors.clear();
+        this.scriptDebugger.runEnded();
+        for (const dispose of Array.from(this.disposers)) {
+            try {
+                dispose();
+            }
+            catch (cause) {
+                this.say('warn', `Uma limpeza falhou ao parar: ${describeThrown(cause)}`);
+            }
+        }
+        this.disposers.clear();
+        this.updaters.clear();
+        this.loader.clear();
+        this.foreign.dispose();
+        this.pendingCompiles.clear();
+        this.net.reset();
+        this.scheduler.reset();
+        this.bus.clear();
+        this.input.dispose();
+        this.web.clear();
+        this.web.dispose();
+        this.restoreScene();
+        this.renderState.reset();
+        this.shaders.clear();
+        this.cameraEffects.reset();
+        this.debug.clear();
+        this.props.clear();
+        this.locks.clear();
+        this.contacts.reset();
+        this.sky.reset();
+        this.stacks.clear();
+        for (const url of this.objectUrls.values())
+            URL.revokeObjectURL(url);
+        this.objectUrls.clear();
+        this.warnedAssets.clear();
+        this.current = null;
+        if (wasRunning && this.mode === 'editor' && this.entryName)
+            this.say('info', `${this.entryName} encerrado.`);
+        this.entryName = null;
+        this.session.notify();
+    }
+    private get idle(): boolean {
+        if (this.instances.some((instance) => !instance.faulted && PERSISTENT_HOOKS.some((hook) => instance.has(hook))))
+            return false;
+        if (this.scheduler.pendingTimers > 0 || this.scheduler.runningTasks > 0)
+            return false;
+        if (this.bus.names().length > 0)
+            return false;
+        if (this.web.hasContent)
+            return false;
+        if (this.updaters.size > 0)
+            return false;
+        const hooks = this.frameHooks;
+        if (hooks.before.length > 0 || hooks.after.length > 0 || hooks.custom.length > 0 || hooks.beforePass.size > 0 || hooks.afterPass.size > 0)
+            return false;
+        return this.renderState.customPost.length === 0;
+    }
+    private startTool(entry: LibraryAsset, startedAt: number): void {
+        const compiled = this.compiled.get(entry.id);
+        if (!compiled) {
+            this.say('error', `${entry.name} não é um script compilável.`);
+            this.stop();
+            return;
+        }
+        if (!isExecutableKind(compiled.kind)) {
+            this.say('error', `${entry.name} é ${compiled.kind.toUpperCase()}: só scripts de código executam (${formatLanguageLabels(EXECUTABLE_LANGUAGES)}). HTML, CSS e SVG entram na tela por helix.gui.html/css/svg a partir de um deles.`);
+            this.stop();
+            return;
+        }
+        if (compiled.errorCount > 0) {
+            this.say('error', `${entry.name} tem ${compiled.errorCount} ${compiled.errorCount === 1 ? 'erro' : 'erros'} de compilação; corrija-os antes de executar.`);
+            this.stop();
+            return;
+        }
+        const instance = this.createInstance(compiled, null, null, 'entry');
+        if (!instance) {
+            this.stop();
+            return;
+        }
+        this.load(instance);
+        this.starting = false;
+        this.updateActivation();
+        const duration = Math.max(1, Math.round(performance.now() - startedAt));
+        if (instance.faulted) {
+            this.say('warn', `${entry.name} parou com erro (${duration} ms).`);
+            this.stop();
+            return;
+        }
+        if (this.idle) {
+            this.say('info', `${entry.name} executado (${duration} ms).`);
+            this.entryName = null;
+            this.stop();
+            return;
+        }
+        this.say('info', `${entry.name} em execução (${duration} ms); ele continua até terminar o que agendou ou até você parar.`);
+    }
+    async reload(asset: LibraryAsset): Promise<boolean> {
+        if (!this.running)
+            return false;
+        const token = this.runToken;
+        const { inputs, skipped } = await collectScriptSources(this.session);
+        if (token !== this.runToken || !this.running)
+            return false;
+        const result = await this.compiler.compile(inputs, { roots: new Set([...this.compiled.keys(), asset.id]) });
+        if (token !== this.runToken || !this.running)
+            return false;
+        publishCompileResult(this.session, result, { source: LOG_SOURCE, skipped, silent: true });
+        const compiled = result.compiled.find((script) => script.assetId === asset.id);
+        if (!compiled) {
+            this.say('warn', `${asset.name} não está entre os scripts compiláveis; nada a recarregar.`);
+            return false;
+        }
+        if (compiled.errorCount > 0) {
+            this.say('warn', `${asset.name} não recarregou: ${compiled.errorCount} ${compiled.errorCount === 1 ? 'erro' : 'erros'} de compilação.${this.loader.get(asset.id) ? ' A versão anterior continua rodando.' : ''}`);
+            return false;
+        }
+        for (const script of result.compiled)
+            this.compiled.set(script.assetId, script);
+        await this.foreign.ensureAll(foreignLanguagesOf(result.compiled));
+        if (token !== this.runToken || !this.running)
+            return false;
+        const previous = this.loader.get(asset.id);
+        if (!previous) {
+            if (compiled.kind === 'shader') {
+                const swapped = this.shaders.reload(compiled);
+                this.say('info', swapped > 0 ? `${asset.name} recarregado em ${swapped} ${swapped === 1 ? 'ligação' : 'ligações'} (material ou efeito de pós).` : `${asset.name} atualizado; nada no jogo o usa ainda.`);
+                this.session.notify();
+                return true;
+            }
+            if (!isExecutableKind(compiled.kind)) {
+                this.say('info', `${asset.name} (${compiled.kind.toUpperCase()}) atualizado; as telas que o usam pegam a nova versão ao montar de novo.`);
+                return true;
+            }
+            const instance = this.createInstance(compiled, null, null, 'entry');
+            if (!instance)
+                return false;
+            this.load(instance);
+            this.updateActivation();
+            this.say('info', `${asset.name} carregado no jogo em execução.`);
+            this.session.notify();
+            return true;
+        }
+        const affected = [previous, ...this.dependentsClosure(asset.id)];
+        const affectedIds = new Set(affected.map((module) => module.compiled.assetId));
+        const states = new Map<string, unknown>();
+        const rebuild: Array<{
+            assetId: string;
+            actor: Entity | null;
+            self: Entity | null;
+            role: 'entry' | 'actor';
+            key: string;
+        }> = [];
+        for (const instance of this.instances.slice()) {
+            if (!affectedIds.has(instance.assetId))
+                continue;
+            const key = `${instance.assetId}:${instance.actor?.id ?? 'entry'}`;
+            if (instance.has('onBeforeHotReload')) {
+                const state = this.invoke(instance, 'onBeforeHotReload', () => instance.hook('onBeforeHotReload')!());
+                if (state !== undefined)
+                    states.set(key, state);
+            }
+            rebuild.push({ assetId: instance.assetId, actor: instance.actor, self: instance.self, role: instance.role, key });
+            this.removeInstance(instance, { destroy: false });
+        }
+        for (const module of affected.slice().reverse()) {
+            this.props.clear(module.compiled.assetId);
+            this.scriptDebugger.forgetModule(module.compiled.assetId);
+            this.loader.unload(module.compiled.assetId);
+        }
+        let rebuilt = 0;
+        for (const entry of rebuild) {
+            const script = this.compiled.get(entry.assetId);
+            if (!script)
+                continue;
+            const instance = this.createInstance(script, entry.actor, entry.self, entry.role);
+            if (!instance)
+                continue;
+            rebuilt++;
+            this.load(instance);
+            if (instance.has('onHotReload')) {
+                instance.started = true;
+                instance.wasActive = instance.active;
+                this.callHook(instance, 'onHotReload', [states.get(entry.key)]);
+            }
+        }
+        this.sortInstances();
+        this.updateActivation();
+        const others = affected.length - 1;
+        this.say('info', `${asset.name} recarregado a quente: ${rebuilt} ${rebuilt === 1 ? 'instância' : 'instâncias'}${others > 0 ? `, ${others} ${others === 1 ? 'módulo dependente' : 'módulos dependentes'}` : ''}.`);
+        this.session.notify();
+        return true;
+    }
+    beforePhysics(delta: number, unscaledDelta: number): void {
+        if (!this.running || this.starting)
+            return;
+        this.scriptDebugger.frameBegin();
+        const { time } = this;
+        time.delta = delta;
+        time.unscaledDelta = unscaledDelta;
+        time.now += delta;
+        time.frame++;
+        this.debug.expire(time.now);
+        this.scheduler.tick(delta);
+        this.net.tick(unscaledDelta * 1000);
+        this.input.pollGamepads();
+        this.web.beginFrame();
+        this.sky.tick();
+        this.syncActorsIfNeeded();
+        this.updateActivation();
+        for (const instance of this.instances)
+            if (instance.wasActive && instance.has('onUpdate'))
+                this.callHook(instance, 'onUpdate', [delta]);
+    }
+    fixedStep(fixedDelta: number): void {
+        if (!this.running || this.starting)
+            return;
+        this.time.fixedDelta = fixedDelta;
+        for (const instance of this.instances)
+            if (instance.wasActive && instance.has('onFixedUpdate'))
+                this.callHook(instance, 'onFixedUpdate', [fixedDelta]);
+        this.locks.apply();
+    }
 }
