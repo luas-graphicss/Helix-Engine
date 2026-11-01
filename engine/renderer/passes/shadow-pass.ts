@@ -19,8 +19,10 @@ import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 export const SHADOW_MAP_TEXTURE_UNIT = 0;
 const MATRIX_FLOATS = 16;
-const SHADOW_INSTANCE_LAYOUT = new InstanceLayout(MODEL_MATRIX_ATTRIBUTES, MATRIX_FLOATS);
+export const SHADOW_INSTANCE_LAYOUT = new InstanceLayout(MODEL_MATRIX_ATTRIBUTES, MATRIX_FLOATS);
 const FAR_CASCADE_RADIUS_PADDING = 1.15;
+const DYNAMIC_MARGIN_TEXELS = 6;
+const FULL_COPY_AREA_FRACTION = 0.5;
 const FIT_MARGIN_TEXELS = 4;
 const FORCE_REFIT_DRIFT_METERS = 1;
 export interface ShadowMapBinding {
@@ -61,12 +63,16 @@ interface CascadeState {
     staticLayerValid: boolean;
     finalHasDynamics: boolean;
     renderStatic: boolean;
+    deferred: boolean;
+    readonly dynamicRect: Int32Array;
+    dynamicRectValid: boolean;
 }
 export interface ShadowPassStats {
     drawCalls: number;
     instances: number;
     triangles: number;
     staticCascadesRendered: number;
+    cascadesPending: number;
 }
 function createGroup(): CascadeGroup {
     return { batches: [], virtual: [], skinned: [] };
@@ -75,7 +81,7 @@ function groupIsEmpty(group: CascadeGroup): boolean {
     return group.batches.length === 0 && group.virtual.length === 0 && group.skinned.length === 0;
 }
 export class ShadowPass {
-    readonly stats: ShadowPassStats = { drawCalls: 0, instances: 0, triangles: 0, staticCascadesRendered: 0 };
+    readonly stats: ShadowPassStats = { drawCalls: 0, instances: 0, triangles: 0, staticCascadesRendered: 0, cascadesPending: 0 };
     readonly binding: ShadowMapBinding;
     maxDistance = 350;
     private readonly program: ShaderProgram;
@@ -91,8 +97,14 @@ export class ShadowPass {
     private readonly batchPool: ShadowBatch[] = [];
     private readonly byMesh = new Map<MeshData, ShadowBatch>();
     private readonly scratch = vec3.create();
+    private readonly rectScratch = new Int32Array(4);
+    private readonly unionScratch = new Int32Array(4);
+    private readonly rectAccumulator = new Float64Array(4);
     private frame = 0;
     private poolIndex = 0;
+    periodScale = 1;
+    staticCascadesPerFrame = 2;
+    private nextBudgetCascade = 1;
     constructor(private readonly gl: GL, private readonly meshes: GpuMeshCache, private readonly skins: GpuSkinCache, private readonly terrainShadows: TerrainShadowRenderer, private readonly profile: RenderProfile) {
         const size = profile.shadowMapSize;
         this.program = new ShaderProgram(gl, SHADOW_DEPTH_VERTEX_SHADER, SHADOW_DEPTH_FRAGMENT_SHADER);
@@ -104,7 +116,16 @@ export class ShadowPass {
         for (let i = 0; i < MAX_SHADOW_CASCADES; i++) {
             this.staticGroups.push(createGroup());
             this.dynamicGroups.push(createGroup());
-            this.states.push({ committed: false, staticDirty: true, staticLayerValid: false, finalHasDynamics: false, renderStatic: false });
+            this.states.push({
+                committed: false,
+                staticDirty: true,
+                staticLayerValid: false,
+                finalHasDynamics: false,
+                renderStatic: false,
+                deferred: false,
+                dynamicRect: new Int32Array(4),
+                dynamicRectValid: false,
+            });
         }
         this.binding = {
             texture: this.target.texture,
@@ -153,15 +174,26 @@ export class ShadowPass {
                     this.target.bindLayer(cascade);
                     this.renderStatic(cascade, input);
                     state.staticLayerValid = false;
+                    state.dynamicRectValid = false;
                 }
                 state.staticDirty = false;
                 this.stats.staticCascadesRendered++;
             }
             if (separate) {
-                this.target.copyLayerFrom(this.staticTarget, cascade, cascade);
+                if (!state.renderStatic && !state.staticLayerValid)
+                    continue;
+                const rect = this.rectScratch;
+                const hasRect = hasDynamics && this.dynamicRect(cascade, dynamic, rect);
+                if (state.renderStatic)
+                    this.target.copyLayerFrom(this.staticTarget, cascade, cascade);
+                else
+                    this.restoreStatic(cascade, state, hasRect ? rect : null);
                 if (hasDynamics)
                     this.renderGroup(dynamic, cascade, input);
                 state.finalHasDynamics = hasDynamics;
+                if (hasRect)
+                    state.dynamicRect.set(rect);
+                state.dynamicRectValid = hasRect;
             }
         }
         gl.enable(gl.CULL_FACE);
@@ -172,25 +204,54 @@ export class ShadowPass {
     private scheduleCascades(lightDirection: Vec3): void {
         const { cascades, casters, states, profile } = this;
         const boundsChanged = casters.staticChanged || casters.dynamicChanged;
-        for (let cascade = 0; cascade < cascades.count; cascade++) {
+        const count = cascades.count;
+        let budget = Math.max(1, Math.floor(this.staticCascadesPerFrame));
+        const others = count - 1;
+        const first = others > 0 ? 1 + ((this.nextBudgetCascade - 1) % others) : 1;
+        for (let i = 0; i < count; i++) {
+            const cascade = i === 0 ? 0 : 1 + ((first - 1 + (i - 1)) % others);
             const state = states[cascade];
-            const period = cascade === 0 ? 1 : cascade === 1 ? profile.midCascadePeriod : profile.farCascadePeriod;
-            const scheduled = this.frame % period === 0;
+            const period = cascade === 0 ? 1 : (cascade === 1 ? profile.midCascadePeriod : profile.farCascadePeriod) * this.periodScale;
+            const scheduled = this.frame % period === 0 || state.deferred;
             let refit = !state.committed || casters.lightChanged;
             if (!refit) {
                 const fits = cascades.desiredFitsCommitted(cascade, FIT_MARGIN_TEXELS);
                 const depthOk = !boundsChanged || cascades.depthRangeCovers(cascade, casters.bounds);
                 refit = !fits || !depthOk;
             }
-            if (refit && (scheduled || cascade === 0 || !state.committed || cascades.drift(cascade) > FORCE_REFIT_DRIFT_METERS)) {
-                cascades.commit(cascade, lightDirection, casters.bounds, cascade === 0 ? 1 : FAR_CASCADE_RADIUS_PADDING);
-                state.committed = true;
-                state.staticDirty = true;
-            }
+            const commitNow = refit && (scheduled || cascade === 0 || !state.committed || cascades.drift(cascade) > FORCE_REFIT_DRIFT_METERS);
             if (casters.staticChanged)
                 state.staticDirty = true;
             const needsStaticLayer = !state.staticLayerValid && casters.dynamicCasters.length > 0;
-            state.renderStatic = state.staticDirty || needsStaticLayer;
+            const wantsStatic = commitNow || state.staticDirty || needsStaticLayer;
+            if (!wantsStatic) {
+                state.renderStatic = false;
+                state.deferred = false;
+                if (refit)
+                    this.stats.cascadesPending++;
+                continue;
+            }
+            const affordable = cascade === 0 || !state.committed || budget > 0;
+            if (!affordable) {
+                state.renderStatic = false;
+                state.deferred = true;
+                this.stats.cascadesPending++;
+                continue;
+            }
+            if (commitNow) {
+                cascades.commit(cascade, lightDirection, casters.bounds, cascade === 0 ? profile.nearCascadePadding : FAR_CASCADE_RADIUS_PADDING);
+                state.committed = true;
+                state.staticDirty = true;
+            }
+            else if (refit) {
+                this.stats.cascadesPending++;
+            }
+            state.renderStatic = true;
+            state.deferred = false;
+            if (cascade !== 0) {
+                budget--;
+                this.nextBudgetCascade = cascade + 1;
+            }
         }
     }
     private renderStatic(cascade: number, input: ShadowPassInput): void {
@@ -198,6 +259,81 @@ export class ShadowPass {
         gl.clear(gl.DEPTH_BUFFER_BIT);
         this.renderGroup(this.staticGroups[cascade], cascade, input);
         terrainShadows.renderCascade(input.terrainCasters, cascades.viewProjection[cascade], cascades.texelWorldSizes[cascade]);
+    }
+    private restoreStatic(cascade: number, state: CascadeState, current: Int32Array | null): void {
+        const union = this.unionScratch;
+        let valid = false;
+        if (current) {
+            union.set(current);
+            valid = true;
+        }
+        if (state.dynamicRectValid) {
+            const previous = state.dynamicRect;
+            if (valid) {
+                union[0] = Math.min(union[0], previous[0]);
+                union[1] = Math.min(union[1], previous[1]);
+                union[2] = Math.max(union[2], previous[2]);
+                union[3] = Math.max(union[3], previous[3]);
+            }
+            else {
+                union.set(previous);
+                valid = true;
+            }
+        }
+        if (!valid) {
+            this.target.bindLayer(cascade);
+            return;
+        }
+        const width = union[2] - union[0];
+        const height = union[3] - union[1];
+        const { size } = this.binding;
+        if (width * height >= size * size * FULL_COPY_AREA_FRACTION)
+            this.target.copyLayerFrom(this.staticTarget, cascade, cascade);
+        else
+            this.target.copyLayerRegionFrom(this.staticTarget, cascade, cascade, union[0], union[1], width, height);
+    }
+    private dynamicRect(cascade: number, group: CascadeGroup, out: Int32Array): boolean {
+        const acc = this.rectAccumulator;
+        acc[0] = Infinity;
+        acc[1] = Infinity;
+        acc[2] = -Infinity;
+        acc[3] = -Infinity;
+        for (const batch of group.batches) {
+            for (const item of batch.items)
+                this.accumulateRect(item, cascade);
+        }
+        for (const item of group.skinned)
+            this.accumulateRect(item, cascade);
+        for (const item of group.virtual)
+            this.accumulateRect(item, cascade);
+        if (acc[0] === Infinity)
+            return false;
+        const { size } = this.binding;
+        out[0] = Math.max(0, Math.floor(acc[0]));
+        out[1] = Math.max(0, Math.floor(acc[1]));
+        out[2] = Math.min(size, Math.ceil(acc[2]));
+        out[3] = Math.min(size, Math.ceil(acc[3]));
+        return out[2] > out[0] && out[3] > out[1];
+    }
+    private accumulateRect(candidate: ShadowCasterCandidate, cascade: number): void {
+        const { cascades, rectAccumulator: acc } = this;
+        const vp = cascades.viewProjection[cascade];
+        const { size } = this.binding;
+        const center = candidate.bounds.center;
+        const cx = center[0];
+        const cy = center[1];
+        const cz = center[2];
+        const px = ((vp[0] * cx + vp[4] * cy + vp[8] * cz + vp[12]) * 0.5 + 0.5) * size;
+        const py = ((vp[1] * cx + vp[5] * cy + vp[9] * cz + vp[13]) * 0.5 + 0.5) * size;
+        const radius = candidate.bounds.radius / cascades.texelWorldSizes[cascade] + DYNAMIC_MARGIN_TEXELS;
+        if (px - radius < acc[0])
+            acc[0] = px - radius;
+        if (py - radius < acc[1])
+            acc[1] = py - radius;
+        if (px + radius > acc[2])
+            acc[2] = px + radius;
+        if (py + radius > acc[3])
+            acc[3] = py + radius;
     }
     private renderGroup(group: CascadeGroup, cascade: number, input: ShadowPassInput): void {
         const { gl, program, instances, cascades } = this;
@@ -313,6 +449,7 @@ export class ShadowPass {
         this.stats.instances = 0;
         this.stats.triangles = 0;
         this.stats.staticCascadesRendered = 0;
+        this.stats.cascadesPending = 0;
     }
     skip(): void {
         this.resetStats();
