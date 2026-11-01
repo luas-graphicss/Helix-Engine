@@ -2,15 +2,21 @@ import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import * as mat4 from '@/engine/core/math/mat4';
 import type { Mat4 } from '@/engine/core/math/mat4';
-import type { Terrain } from '@/engine/terrain/core/terrain';
+import type { WaterSettings } from '@/engine/terrain/water/water-settings';
 import { WaveSpectrum, type WaterSample } from '@/engine/terrain/water/water-surface';
 const localPoint = vec3.create();
 const worldPoint = vec3.create();
+export interface WaterTerrain {
+    readonly water: WaterSettings;
+    readonly size: number;
+    containsLocal(x: number, z: number): boolean;
+    heightAtLocal(x: number, z: number): number;
+}
 export class WaterVolume {
     private readonly inverse = mat4.create();
     private readonly spectrum = new WaveSpectrum();
     private readonly displacement = vec3.create();
-    constructor(readonly terrain: Terrain, private readonly matrix: Mat4) {
+    constructor(readonly terrain: WaterTerrain, private readonly matrix: Mat4) {
         mat4.invert(this.inverse, matrix);
     }
     get enabled(): boolean {
