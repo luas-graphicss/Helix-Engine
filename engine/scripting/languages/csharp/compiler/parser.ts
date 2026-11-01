@@ -1819,4 +1819,25 @@ class Parser {
         this.expect('}', 'fechando o inicializador de coleção');
         return elements;
     }
+    private interpolated(token: Token): Expression {
+        const parts: InterpolatedPart[] = [];
+        for (const part of token.value as readonly InterpolationPart[]) {
+            if (part.kind === 'text') {
+                parts.push(part);
+                continue;
+            }
+            const expression = parseEmbeddedExpression(part.source, { line: part.line, column: part.column }, this.diagnostics);
+            let alignment: number | null = null;
+            if (part.alignment !== null) {
+                alignment = Number(part.alignment);
+                if (!Number.isInteger(alignment)) {
+                    this.report(`Alinhamento inválido na interpolação: "${part.alignment}" (esperado um inteiro).`, token.span);
+                    alignment = null;
+                }
+            }
+            parts.push({ kind: 'expression', expression, alignment, format: part.format });
+        }
+        return { kind: 'interpolated', parts, span: token.span };
+    }
 }
+export { type SourceSpan } from './tokens';
