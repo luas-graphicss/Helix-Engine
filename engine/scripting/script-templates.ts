@@ -520,3 +520,266 @@ function rustBody(template: ScriptTemplateId, name: string, tab: string): string
             ].join('\n');
     }
 }
+function goBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'module':
+            return [
+                'package main',
+                '',
+                'import "helix"',
+                '',
+                '                                                                               ' + name + '");',
+                '                                                                                     ',
+                '',
+                '                     ',
+                'func hello(who uint32) uint32 {',
+                `${tab}return helix.From("Olá, " + helix.Wrap(who).String()).Handle()`,
+                '}',
+                '',
+                'func main() {}',
+                '',
+            ].join('\n');
+        case 'game':
+            return [
+                'package main',
+                '',
+                'import "helix"',
+                '',
+                '                                                                 ',
+                '',
+                '                        ',
+                'func onStart() {',
+                `${tab}scene := helix.Root().Get("scene")`,
+                `${tab}helix.Printf("${name}: a partida começou com %v atores", scene.Invoke("count").Number())`,
+                `${tab}helix.Root().Get("input").Invoke("onKeyDown", func(args []helix.Value) {`,
+                `${tab}${tab}if args[0].Get("code").String() == "KeyR" {`,
+                `${tab}${tab}${tab}helix.Root().Get("play").Invoke("restart")`,
+                `${tab}${tab}}`,
+                `${tab}})`,
+                '}',
+                '',
+                '                         ',
+                'func onUpdate(dt float64) {',
+                `${tab}_ = dt`,
+                '}',
+                '',
+                'func main() {}',
+                '',
+            ].join('\n');
+        default:
+            return [
+                'package main',
+                '',
+                'import "helix"',
+                '',
+                '                                                                                        ',
+                'var (',
+                `${tab}velocidade = 1.0`,
+                `${tab}quadros    int`,
+                ')',
+                '',
+                '                        ',
+                'func onStart() {',
+                `${tab}helix.Printf("%s acordou", helix.Self().Get("name"))`,
+                '}',
+                '',
+                '                         ',
+                'func onUpdate(dt float64) {',
+                `${tab}quadros++`,
+                `${tab}posicao := helix.Self().Path("transform.position")`,
+                `${tab}posicao.Set("x", posicao.Get("x").Number()+velocidade*dt)`,
+                '}',
+                '',
+                '                          ',
+                'func onDestroy() {',
+                `${tab}helix.Printf("tchau depois de %d quadros", quadros)`,
+                '}',
+                '',
+                'func main() {}',
+                '',
+            ].join('\n');
+    }
+}
+function javaBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'module':
+            return [
+                'import helix.*;',
+                '',
+                '                                                                                              ',
+                `public final class ${name} {`,
+                `${tab}private ${name}() {}`,
+                '',
+                `${tab}public static String hello(String who) {`,
+                `${tab}${tab}return "Olá, " + who;`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+        case 'game':
+            return [
+                'import helix.*;',
+                '',
+                '                                                                 ',
+                `public class ${name} extends Script {`,
+                `${tab}@Override`,
+                `${tab}public void onStart() {`,
+                `${tab}${tab}Value scene = helix().get("scene");`,
+                `${tab}${tab}log("${name}: a partida começou com", scene.call("count"), "atores");`,
+                `${tab}${tab}helix().get("input").call("onKeyDown", (Fn1) event -> {`,
+                `${tab}${tab}${tab}if ("KeyR".equals(event.get("code").asString())) helix().get("play").call("restart");`,
+                `${tab}${tab}${tab}return null;`,
+                `${tab}${tab}});`,
+                `${tab}}`,
+                '',
+                `${tab}@Override`,
+                `${tab}public void onUpdate(double dt) {`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+        default:
+            return [
+                'import helix.*;',
+                '',
+                '                                                                               ',
+                `public class ${name} extends Script {`,
+                `${tab}private double velocidade = 1.0;`,
+                `${tab}private int quadros;`,
+                '',
+                `${tab}@Override`,
+                `${tab}public void onStart() {`,
+                `${tab}${tab}log(self().get("name"), "acordou");`,
+                `${tab}}`,
+                '',
+                `${tab}@Override`,
+                `${tab}public void onUpdate(double dt) {`,
+                `${tab}${tab}quadros++;`,
+                `${tab}${tab}Value posicao = self().get("transform").get("position");`,
+                `${tab}${tab}posicao.set("x", posicao.get("x").asDouble() + velocidade * dt);`,
+                `${tab}}`,
+                '',
+                `${tab}@Override`,
+                `${tab}public void onDestroy() {`,
+                `${tab}${tab}log("tchau depois de", quadros, "quadros");`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+    }
+}
+function kotlinBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'module':
+            return [
+                'import helix.*',
+                '',
+                '                                                                                   ',
+                '@JsExport',
+                'fun hello(who: String): String = "Olá, $who"',
+                '',
+            ].join('\n');
+        case 'game':
+            return [
+                'import helix.*',
+                '',
+                '                                                                 ',
+                `class ${name} : Script() {`,
+                `${tab}override fun onStart() {`,
+                `${tab}${tab}val scene = helix["scene"]`,
+                `${tab}${tab}log("${name}: a partida começou com", scene.invoke("count"), "atores")`,
+                `${tab}${tab}helix["input"].invoke("onKeyDown", Helix.fn { args ->`,
+                `${tab}${tab}${tab}if (args[0]["code"].string == "KeyR") helix["play"].invoke("restart")`,
+                `${tab}${tab}${tab}null`,
+                `${tab}${tab}})`,
+                `${tab}}`,
+                '',
+                `${tab}override fun onUpdate(dt: Double) {`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+        default:
+            return [
+                'import helix.*',
+                '',
+                '                                                                                     ',
+                `class ${name} : Script() {`,
+                `${tab}private var velocidade = 1.0`,
+                `${tab}private var quadros = 0`,
+                '',
+                `${tab}override fun onStart() {`,
+                `${tab}${tab}log(self["name"], "acordou")`,
+                `${tab}}`,
+                '',
+                `${tab}override fun onUpdate(dt: Double) {`,
+                `${tab}${tab}quadros++`,
+                `${tab}${tab}val posicao = self["transform"]["position"]`,
+                `${tab}${tab}posicao["x"] = posicao["x"].number + velocidade * dt`,
+                `${tab}}`,
+                '',
+                `${tab}override fun onDestroy() {`,
+                `${tab}${tab}log("tchau depois de", quadros, "quadros")`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+    }
+}
+function swiftBody(template: ScriptTemplateId, name: string, tab: string): string {
+    switch (template) {
+        case 'module':
+            return [
+                '                                                                                                    ',
+                'public func hello(_ who: String) -> String {',
+                `${tab}"Olá, \\(who)"`,
+                '}',
+                '',
+            ].join('\n');
+        case 'game':
+            return [
+                '                                                                 ',
+                `final class ${name}: Script {`,
+                `${tab}override func onStart() {`,
+                `${tab}${tab}let scene = helix["scene"]`,
+                `${tab}${tab}log("${name}: a partida começou com", scene.invoke("count"), "atores")`,
+                `${tab}${tab}helix["input"].invoke("onKeyDown", Value.function { args in`,
+                `${tab}${tab}${tab}if args[0]["code"].string == "KeyR" { Helix.root["play"].invoke("restart") }`,
+                `${tab}${tab}${tab}return Value.undefined`,
+                `${tab}${tab}})`,
+                `${tab}}`,
+                '',
+                `${tab}override func onUpdate(_ dt: Double) {`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+        default:
+            return [
+                '                                                                                                        ',
+                `final class ${name}: Script {`,
+                `${tab}var velocidade = 1.0`,
+                `${tab}var quadros = 0`,
+                '',
+                `${tab}override func onStart() {`,
+                `${tab}${tab}log(entity["name"], "acordou")`,
+                `${tab}}`,
+                '',
+                `${tab}override func onUpdate(_ dt: Double) {`,
+                `${tab}${tab}quadros += 1`,
+                `${tab}${tab}let posicao = entity["transform"]["position"]`,
+                `${tab}${tab}posicao.set("x", posicao["x"].number + velocidade * dt)`,
+                `${tab}}`,
+                '',
+                `${tab}override func onDestroy() {`,
+                `${tab}${tab}log("tchau depois de", quadros, "quadros")`,
+                `${tab}}`,
+                '}',
+                '',
+            ].join('\n');
+    }
+}
+export interface WatString {
+    readonly offset: number;
+    readonly length: number;
+}
