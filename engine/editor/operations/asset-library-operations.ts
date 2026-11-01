@@ -3,12 +3,16 @@ import type { Vec3 } from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { ImportedScene } from '@/engine/assets/import/import-types';
 import { decodeImage, mimeTypeFromFileName } from '@/engine/assets/image-decoder';
-import { ingestFiles } from '@/engine/assets/library/asset-ingest';
-import { LIBRARY_ACCEPT, LIBRARY_FORMAT_SUMMARY } from '@/engine/assets/library/asset-kinds';
+import { ingestFiles, type IngestReport } from '@/engine/assets/library/asset-ingest';
+import { assetKindAccept, LIBRARY_ACCEPT, LIBRARY_FORMAT_SUMMARY } from '@/engine/assets/library/asset-kinds';
 import { normalizeTags } from '@/engine/assets/library/asset-library';
-import type { AssetThumbnail, LibraryAsset } from '@/engine/assets/library/asset-types';
+import type { AssetKind, AssetThumbnail, LibraryAsset } from '@/engine/assets/library/asset-types';
 import { renderAnimationThumbnail } from '@/engine/assets/library/thumbnails/animation-thumbnail';
+import { renderFontThumbnail } from '@/engine/assets/library/thumbnails/font-thumbnail';
+import { renderGuiThumbnail } from '@/engine/assets/library/thumbnails/gui-thumbnail';
 import { renderImageThumbnail } from '@/engine/assets/library/thumbnails/image-thumbnail';
+import { renderScriptThumbnail } from '@/engine/assets/library/thumbnails/script-thumbnail';
+import { probeVideo } from '@/engine/assets/library/video-asset';
 import { AddAssetCommand, RemoveAssetCommand } from '@/engine/editor/commands/asset-library-commands';
 import { CompositeCommand, SetValueCommand } from '@/engine/editor/commands/set-value-command';
 import { pickFiles } from '@/engine/editor/files/file-picker';
@@ -18,9 +22,19 @@ import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { pickEntity, pickSurfacePoint } from '@/engine/editor/viewport/pick-entity';
 import type { DropPoint } from '@/engine/editor/viewport/use-file-drop';
 import { loadAnimationAsset, openAnimationAssetInEditor } from './animation-operations';
+import { openAudioAssetInEditor, renderAudioAssetThumbnail } from './audio-operations';
+import { placeAudioAssetAsSource } from './audio-world-operations';
+import { applyFontAssetToSelection, loadGuiAsset, openGuiAssetInDesigner } from './gui-operations';
+import { attachGuiAssetToFace, placeGuiAssetAsSurface } from './gui-surface-operations';
 import { DEFAULT_IMPORT_OPTIONS, instantiateImportedScene } from './import-operations';
+import { placePrefabAsset } from './prefab-operations';
+import { loadScriptAsset, openScriptAssetInEditor } from './script-operations';
 import { loadTextureIntoSlot } from './texture-operations';
+import { openVfxAssetInEditor, renderVfxAssetThumbnail } from './vfx-operations';
+import { attachVfxAssetToEntity, placeVfxAssetAsActor } from './vfx-world-operations';
 const LOG_SOURCE = 'Biblioteca';
+const DROPPED_SOURCE_HEIGHT = 0.5;
+const DROPPED_SURFACE_HEIGHT = 1.2;
 function describeError(cause: unknown): string {
     return cause instanceof Error ? cause.message : String(cause);
 }
@@ -32,10 +46,8 @@ function listNames(items: ReadonlyArray<{
 export interface AddToLibraryOptions {
     parsedScenes?: ReadonlyMap<File, ImportedScene>;
 }
-export async function addFilesToLibrary(session: EditorSession, files: File[], options: AddToLibraryOptions = {}): Promise<LibraryAsset[]> {
+async function ingestIntoLibrary(session: EditorSession, files: File[], options: AddToLibraryOptions): Promise<IngestReport> {
     const { library } = session;
-    if (files.length === 0)
-        return [];
     library.setBusy(`Lendo ${files.length} ${files.length === 1 ? 'arquivo' : 'arquivos'}…`);
     let report;
     try {
@@ -59,9 +71,27 @@ export async function addFilesToLibrary(session: EditorSession, files: File[], o
     if (report.unsupported.length > 0) {
         session.log.warn(LOG_SOURCE, `${report.unsupported.length === 1 ? 'Arquivo ignorado' : 'Arquivos ignorados'} (aceitos: ${LIBRARY_FORMAT_SUMMARY}): ${listNames(report.unsupported)}.`);
     }
+    for (const { file, message } of report.warnings)
+        session.log.warn(LOG_SOURCE, `"${file.name}" entrou sem análise: ${message}`);
     for (const { file, message } of report.failures)
         session.log.error(LOG_SOURCE, `Falha ao ler "${file.name}": ${message}`);
+    return report;
+}
+export async function addFilesToLibrary(session: EditorSession, files: File[], options: AddToLibraryOptions = {}): Promise<LibraryAsset[]> {
+    if (files.length === 0)
+        return [];
+    const report = await ingestIntoLibrary(session, files, options);
     return report.added.map((item) => item.snapshot.asset);
+}
+export async function importLibraryAssetOfKind(session: EditorSession, kind: AssetKind, accept = assetKindAccept(kind)): Promise<LibraryAsset | null> {
+    const [file] = await pickFiles({ accept });
+    if (!file)
+        return null;
+    const report = await ingestIntoLibrary(session, [file], {});
+    const added = report.added.find((item) => item.snapshot.asset.kind === kind);
+    if (added)
+        return added.snapshot.asset;
+    return report.duplicates.find(({ existing }) => existing.kind === kind)?.existing ?? null;
 }
 export function pickFilesForLibrary(session: EditorSession): void {
     void pickFiles({ accept: LIBRARY_ACCEPT, multiple: true }).then((files) => addFilesToLibrary(session, files));
@@ -110,17 +140,36 @@ export function pickLibraryAssetThumbnail(session: EditorSession, asset: Library
             return setLibraryAssetThumbnailFromFile(session, asset, file);
     });
 }
+async function renderAutomaticThumbnail(session: EditorSession, asset: LibraryAsset): Promise<Blob | null> {
+    const { library } = session;
+    switch (asset.kind) {
+        case 'model':
+            return (await renderModelThumbnail(await library.loadModel(asset)))?.blob ?? null;
+        case 'texture':
+            return renderImageThumbnail(await decodeImage(await library.primaryFile(asset)));
+        case 'video':
+            return (await probeVideo(await library.primaryFile(asset))).thumbnail;
+        case 'font':
+            return renderFontThumbnail(await library.primaryFile(asset));
+        case 'animation':
+            return renderAnimationThumbnail(await loadAnimationAsset(session, asset));
+        case 'audio':
+            return renderAudioAssetThumbnail(session, asset);
+        case 'vfx':
+            return renderVfxAssetThumbnail(session, asset);
+        case 'gui':
+            return renderGuiThumbnail(await loadGuiAsset(session, asset));
+        case 'script':
+            return renderScriptThumbnail(await loadScriptAsset(session, asset));
+        default:
+            return null;
+    }
+}
 export async function regenerateLibraryAssetThumbnail(session: EditorSession, asset: LibraryAsset): Promise<void> {
     const { library } = session;
     library.setBusy(`Gerando miniatura de ${asset.name}…`);
     try {
-        let blob: Blob | null = null;
-        if (asset.kind === 'model')
-            blob = (await renderModelThumbnail(await library.loadModel(asset)))?.blob ?? null;
-        else if (asset.kind === 'texture')
-            blob = await renderImageThumbnail(await decodeImage(await library.primaryFile(asset)));
-        else if (asset.kind === 'animation')
-            blob = await renderAnimationThumbnail(await loadAnimationAsset(session, asset));
+        const blob = await renderAutomaticThumbnail(session, asset);
         if (!blob) {
             session.log.warn(LOG_SOURCE, `Não há miniatura automática para ${asset.name}.`);
             return;
@@ -186,43 +235,6 @@ export async function createMaterialFromLibraryTexture(session: EditorSession, a
         session.log.error(LOG_SOURCE, `Não foi possível criar um material com ${asset.name}: ${describeError(cause)}`);
     }
 }
-let audioPreview: {
-    assetId: string;
-    element: HTMLAudioElement;
-    url: string;
-} | null = null;
-export function playingLibraryAudioId(): string | null {
-    return audioPreview?.assetId ?? null;
-}
-function stopAudioPreview(session: EditorSession): void {
-    if (!audioPreview)
-        return;
-    audioPreview.element.pause();
-    URL.revokeObjectURL(audioPreview.url);
-    audioPreview = null;
-    session.notify();
-}
-export async function toggleLibraryAudioPreview(session: EditorSession, asset: LibraryAsset): Promise<void> {
-    if (asset.kind !== 'audio')
-        return;
-    if (audioPreview?.assetId === asset.id) {
-        stopAudioPreview(session);
-        return;
-    }
-    stopAudioPreview(session);
-    try {
-        const url = URL.createObjectURL(await session.library.primaryFile(asset));
-        const element = new Audio(url);
-        element.onended = () => stopAudioPreview(session);
-        audioPreview = { assetId: asset.id, element, url };
-        session.notify();
-        await element.play();
-    }
-    catch (cause) {
-        stopAudioPreview(session);
-        session.log.error(LOG_SOURCE, `Não foi possível reproduzir ${asset.name}: ${describeError(cause)}`);
-    }
-}
 export async function activateLibraryAsset(session: EditorSession, asset: LibraryAsset): Promise<void> {
     switch (asset.kind) {
         case 'model':
@@ -237,10 +249,28 @@ export async function activateLibraryAsset(session: EditorSession, asset: Librar
             break;
         }
         case 'audio':
-            await toggleLibraryAudioPreview(session, asset);
+            await openAudioAssetInEditor(session, asset);
             break;
         case 'animation':
             await openAnimationAssetInEditor(session, asset);
+            break;
+        case 'gui':
+            await openGuiAssetInDesigner(session, asset);
+            break;
+        case 'vfx':
+            await openVfxAssetInEditor(session, asset);
+            break;
+        case 'prefab':
+            await placePrefabAsset(session, asset);
+            break;
+        case 'script':
+            await openScriptAssetInEditor(session, asset, { pin: true });
+            break;
+        case 'font':
+            if (session.gui.isOpen)
+                applyFontAssetToSelection(session, asset);
+            else
+                session.log.info(LOG_SOURCE, `Abra uma tela na área de trabalho Interface e selecione um texto para aplicar ${asset.name}.`);
             break;
     }
 }
@@ -260,8 +290,33 @@ export async function dropLibraryAssetOnViewport(session: EditorSession, assetId
                 session.log.info(LOG_SOURCE, `Solte ${asset.name} sobre um ator com material próprio para aplicá-la.`);
             break;
         }
-        case 'audio':
-            session.log.info(LOG_SOURCE, `${asset.name} é um áudio: use a prévia na biblioteca (duplo clique).`);
+        case 'audio': {
+            const surface = pickSurfacePoint(vec3.create(), session.scene, session.camera, point.u, point.v);
+            if (surface)
+                surface[1] += DROPPED_SOURCE_HEIGHT;
+            placeAudioAssetAsSource(session, asset, surface);
+            break;
+        }
+        case 'gui':
+        case 'video': {
+            const surface = pickSurfacePoint(vec3.create(), session.scene, session.camera, point.u, point.v);
+            const entity = pickEntity(session.scene, session.camera, point.u, point.v);
+            if (entity && attachGuiAssetToFace(session, entity, asset, surface))
+                break;
+            if (surface)
+                surface[1] += DROPPED_SURFACE_HEIGHT;
+            placeGuiAssetAsSurface(session, asset, surface);
+            break;
+        }
+        case 'vfx': {
+            const entity = pickEntity(session.scene, session.camera, point.u, point.v);
+            if (entity && !entity.terrain && attachVfxAssetToEntity(session, entity, asset))
+                break;
+            placeVfxAssetAsActor(session, asset, pickSurfacePoint(vec3.create(), session.scene, session.camera, point.u, point.v));
+            break;
+        }
+        case 'prefab':
+            await placePrefabAsset(session, asset, { position: pickSurfacePoint(vec3.create(), session.scene, session.camera, point.u, point.v) });
             break;
     }
 }
