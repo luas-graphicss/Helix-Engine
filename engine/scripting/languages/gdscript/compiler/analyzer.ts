@@ -1043,4 +1043,258 @@ class Analyzer {
             }
         }
     }
+    private checkMembersAgainstBase(cls: ClassInfo): void {
+        for (const member of cls.members.values()) {
+            const decl = member.decl;
+            if (!decl)
+                continue;
+            if (member.kind === 'func' && member.func) {
+                const virtualArity = GODOT_VIRTUALS[member.name];
+                if (virtualArity !== undefined) {
+                    if (member.isStatic)
+                        this.error(member.span, `"${member.name}" é um callback do nó e não pode ser static.`);
+                    if (virtualArity !== null && member.func.params.length !== virtualArity) {
+                        this.error(member.span, virtualArity === 0 ? `"${member.name}" não recebe parâmetros.` : `"${member.name}" precisa de exatamente ${virtualArity} parâmetro${virtualArity > 1 ? 's' : ''} (${member.name === '_process' || member.name === '_physics_process' ? 'delta' : member.name === '_notification' ? 'what' : 'event'}).`);
+                    }
+                    continue;
+                }
+            }
+            const base = this.baseMember(member.name, cls.godotBase);
+            if (base) {
+                this.error(member.span, `"${member.name}" já existe na classe base ${cls.godotBase} (${base.what}); escolha outro nome.`);
+                continue;
+            }
+            for (const p of ancestorsOf(cls)) {
+                const inherited = p.members.get(member.name);
+                if (!inherited)
+                    continue;
+                if (member.kind === 'func' && inherited.kind === 'func') {
+                    const own = member.func!;
+                    const theirs = inherited.func!;
+                    if (own.params.length < theirs.params.filter((param) => !param.defaultValue).length || own.params.length > theirs.params.length) {
+                        this.error(member.span, `"${member.name}" sobrescreve o método de ${p.name} com uma assinatura diferente (${theirs.params.length} parâmetro${theirs.params.length === 1 ? '' : 's'} lá, ${own.params.length} aqui).`);
+                    }
+                    if (own.isStatic !== theirs.isStatic)
+                        this.error(member.span, `"${member.name}" é ${theirs.isStatic ? 'static' : 'de instância'} em ${p.name} e precisa continuar assim aqui.`);
+                }
+                else {
+                    this.error(member.span, `"${member.name}" já existe na classe pai ${p.name} como ${this.describeMemberKind(inherited.kind)}.`);
+                }
+                break;
+            }
+        }
+    }
+    private describeMemberKind(kind: MemberKind): string {
+        switch (kind) {
+            case 'var':
+                return 'variável';
+            case 'const':
+                return 'constante';
+            case 'enum':
+                return 'enum';
+            case 'enum_value':
+                return 'valor de enum';
+            case 'signal':
+                return 'sinal';
+            case 'func':
+                return 'função';
+            case 'class':
+                return 'classe interna';
+        }
+    }
+    private baseMember(name: string, godotBase: string): {
+        readonly kind: 'property' | 'method' | 'signal';
+        readonly type: StaticType;
+        readonly readonly: boolean;
+        readonly min: number;
+        readonly max: number;
+        readonly what: string;
+    } | null {
+        if (!baseMemberVisible(name, godotBase))
+            return null;
+        const property = NODE_PROPERTIES[name];
+        if (property)
+            return { kind: 'property', type: property.type, readonly: property.readonly ?? false, min: 0, max: 0, what: 'propriedade do nó' };
+        const method = NODE_METHODS[name];
+        if (method)
+            return { kind: 'method', type: method.returns, readonly: true, min: method.min, max: method.max, what: 'método do nó' };
+        if (NODE_SIGNALS.includes(name))
+            return { kind: 'signal', type: 'Signal', readonly: true, min: 0, max: 0, what: 'sinal do nó' };
+        return null;
+    }
+    private withFunction<T>(fn: FunctionContext, body: () => T): T {
+        const previousFn = this.fn;
+        const previousScope = this.scope;
+        this.fn = fn;
+        this.scope = { locals: new Map(), parent: fn.isLambda ? previousScope : null, fn };
+        try {
+            return body();
+        }
+        finally {
+            this.fn = previousFn;
+            this.scope = previousScope;
+        }
+    }
+    private pushScope(): void {
+        this.scope = { locals: new Map(), parent: this.scope, fn: this.fn! };
+    }
+    private popScope(): void {
+        const scope = this.scope!;
+        for (const local of scope.locals.values()) {
+            if (!local.used && !local.name.startsWith('_')) {
+                this.warn(local.span, local.isParam ? `O parâmetro "${local.name}" nunca é usado (prefixe com _ para silenciar).` : `A variável local "${local.name}" nunca é usada.`);
+            }
+        }
+        this.scope = scope.parent;
+    }
+    private initializerContext(cls: ClassInfo, isStatic: boolean): FunctionContext {
+        return { cls, isStatic, name: null, returnType: null, isLambda: false, parent: null, captures: new Set(), assigned: new Set(), accessorOf: null, isInitializer: true, loopDepth: 0, hasAwait: false };
+    }
+    private declareLocal(name: string, span: SourceSpan, type: StaticType, isConst: boolean, isParam: boolean): LocalInfo {
+        const fn = this.fn!;
+        const existing = this.lookupLocalInFunction(name);
+        if (existing)
+            this.error(span, `Já existe uma variável chamada "${name}" nesta função (declarada na linha ${existing.span.line}).`);
+        else if (this.findMember(fn.cls, name))
+            this.warn(span, `"${name}" esconde o membro de mesmo nome da classe.`);
+        const local: LocalInfo = { name, jsName: jsIdentifier(name), type, isConst, isParam, span, used: false };
+        this.scope!.locals.set(name, local);
+        return local;
+    }
+    private lookupLocalInFunction(name: string): LocalInfo | null {
+        for (let scope = this.scope; scope && scope.fn === this.fn; scope = scope.parent) {
+            const local = scope.locals.get(name);
+            if (local)
+                return local;
+        }
+        return null;
+    }
+    private lookupLocal(name: string): LocalInfo | null {
+        let scope: Scope | null = this.scope;
+        while (scope) {
+            const local = scope.locals.get(name);
+            if (local) {
+                if (scope.fn !== this.fn) {
+                    let fn: FunctionContext | null = this.fn;
+                    while (fn && fn !== scope.fn) {
+                        fn.captures.add(local.jsName);
+                        fn = fn.parent;
+                    }
+                }
+                return local;
+            }
+            scope = scope.parent;
+        }
+        return null;
+    }
+    private ensureStaticInit(member: MemberInfo): void {
+        const state = this.staticState.get(member);
+        if (state === 'done')
+            return;
+        if (state === 'doing') {
+            this.error(member.span, `A constante "${member.name}" depende dela mesma (ciclo entre constantes).`);
+            return;
+        }
+        this.staticState.set(member, 'doing');
+        const cls = member.owner;
+        const decl = member.decl;
+        if (cls.isSibling)
+            this.silent++;
+        try {
+            this.withFunction(this.initializerContext(cls, true), () => {
+                if (!decl)
+                    return;
+                if (decl.kind === 'constant') {
+                    const valueType = this.expression(decl.value);
+                    if (decl.type)
+                        this.checkAssignable(valueType, member.type, decl.value.span, `a constante "${member.name}"`);
+                    else
+                        member.type = valueType === 'null' ? 'Variant' : valueType;
+                    decl.staticType = member.type;
+                    if (!this.isConstantExpression(decl.value))
+                        this.error(decl.value.span, `O valor de const ${member.name} precisa ser uma expressão constante (literais, outras constantes, Vector3(…), preload…).`);
+                    member.constValue = this.evaluateConstant(decl.value);
+                }
+                else if (decl.kind === 'enum') {
+                    this.evaluateEnum(decl, member, cls);
+                }
+                else if (decl.kind === 'variable') {
+                    this.analyzeVariableInitializer(decl, member, cls);
+                }
+            });
+        }
+        finally {
+            if (cls.isSibling)
+                this.silent--;
+        }
+        this.staticState.set(member, 'done');
+        if (!cls.isSibling)
+            this.staticInits.push({ owner: cls, member });
+    }
+    private evaluateEnum(decl: EnumMember, member: MemberInfo, cls: ClassInfo): void {
+        let next = 0;
+        const seen = new Map<string, number>();
+        for (const value of decl.values) {
+            if (seen.has(value.name))
+                this.error(value.span, `O valor "${value.name}" aparece duas vezes no enum.`);
+            let number = next;
+            if (value.value) {
+                this.expression(value.value);
+                const evaluated = this.evaluateConstant(value.value);
+                if (typeof evaluated === 'number' && Number.isInteger(evaluated))
+                    number = evaluated;
+                else
+                    this.error(value.value.span, `O valor de ${value.name} precisa ser um inteiro constante.`);
+            }
+            seen.set(value.name, number);
+            next = number + 1;
+            if (!decl.name) {
+                const valueMember = cls.members.get(value.name);
+                if (valueMember && valueMember.decl === decl) {
+                    valueMember.constValue = number;
+                    this.staticState.set(valueMember, 'done');
+                }
+            }
+        }
+        if (member.enumValues)
+            for (const [name, number] of seen)
+                member.enumValues.set(name, number);
+    }
+    private analyzeVariableInitializer(decl: VariableMember, member: MemberInfo, cls: ClassInfo): void {
+        if (decl.onReady && decl.isStatic)
+            this.error(decl.nameSpan, '@onready não se aplica a variáveis static.');
+        if (decl.onReady && 'kind' in cls.decl)
+            this.error(decl.nameSpan, '@onready só funciona na classe principal do script (a que fica no ator).');
+        if (decl.value) {
+            if (decl.onReady)
+                this.onReadyDepth++;
+            const valueType = this.expression(decl.value);
+            if (decl.onReady)
+                this.onReadyDepth--;
+            if (decl.type)
+                this.checkAssignable(valueType, member.type, decl.value.span, `a variável "${member.name}"`);
+            else if (decl.inferred) {
+                if (valueType === 'null' || valueType === 'void')
+                    this.error(decl.value.span, `Não dá para inferir o tipo de "${member.name}" a partir de ${valueType === 'null' ? 'null' : 'uma chamada sem retorno'}; declare o tipo.`);
+                else
+                    member.type = valueType;
+            }
+        }
+        else if (decl.inferred) {
+            this.error(decl.nameSpan, `"${member.name}" usa := mas não tem valor para inferir o tipo.`);
+        }
+        if (decl.exported && member.type === 'Variant')
+            this.error(decl.nameSpan, `Não dá para exportar "${member.name}" sem tipo: declare-o (var ${member.name}: int = …) ou use :=.`);
+        decl.staticType = member.type;
+    }
+    private analyzeInstanceInitializers(cls: ClassInfo): void {
+        for (const member of cls.members.values()) {
+            const decl = member.decl;
+            if (!decl || decl.kind !== 'variable' || decl.isStatic)
+                continue;
+            this.withFunction(this.initializerContext(cls, false), () => this.analyzeVariableInitializer(decl, member, cls));
+            if (decl.accessors)
+                this.analyzeAccessors(decl, member, cls);
+        }
+    }
 }
