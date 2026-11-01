@@ -1,22 +1,26 @@
 import { TERRAIN_MATERIAL_CHUNK } from './chunks/terrain-material.glsl';
+import { TERRAIN_VIRTUAL_TEXTURE_CHUNK } from './chunks/terrain-virtual-texture.glsl';
 import { OCTAHEDRAL_CHUNK } from './chunks/octahedral.glsl';
-export const TERRAIN_MATERIAL_BAKE_FRAGMENT_SHADER = `#version 300 es
+export function terrainMaterialBakeFragmentShader(virtualTexture: boolean): string {
+    return `#version 300 es
 precision highp float;
 precision highp sampler2DArray;
-
+precision highp usampler2DArray;
+${virtualTexture ? '#define TERRAIN_VIRTUAL_TEXTURE 1' : ''}
+${virtualTexture ? TERRAIN_VIRTUAL_TEXTURE_CHUNK : ''}
 ${TERRAIN_MATERIAL_CHUNK}
 ${OCTAHEDRAL_CHUNK}
 
 uniform highp sampler2D u_heightMap;
 uniform float u_halfSize;
 uniform float u_cellSize;
-
+                                                            
 uniform int u_lastSample;
-
+                                                                                             
 uniform vec4 u_tile;
-
+                                     
 uniform float u_texelSize;
-
+                                                         
 uniform float u_far;
 
 layout(location = 0) out vec4 outAlbedoRoughness;
@@ -26,7 +30,7 @@ float heightAt(ivec2 grid) {
   return texelFetch(u_heightMap, clamp(grid, ivec2(0), ivec2(u_lastSample)), 0).r;
 }
 
-
+                                                                                               
 vec3 vertexNormal(ivec2 grid) {
   float left = heightAt(grid + ivec2(-1, 0));
   float right = heightAt(grid + ivec2(1, 0));
@@ -48,7 +52,7 @@ void main() {
   float height = mix(mix(heightAt(cell), heightAt(cellX), t.x), mix(heightAt(cellZ), heightAt(cellXZ), t.x), t.y);
   vec3 Ng = normalize(mix(mix(vertexNormal(cell), vertexNormal(cellX), t.x), mix(vertexNormal(cellZ), vertexNormal(cellXZ), t.x), t.y));
 
-
+                                                                                                          
   float invY = 1.0 / max(Ng.y, 0.05);
   vec3 dx = vec3(1.0, -Ng.x * invY, 0.0) * u_texelSize;
   vec3 dy = vec3(0.0, -Ng.z * invY, 1.0) * u_texelSize;
@@ -60,3 +64,4 @@ void main() {
   outNormalOcclusion = vec4(octEncode(m.normal) * 0.5 + 0.5, m.occlusion, 1.0);
 }
 `;
+}
