@@ -2,7 +2,7 @@ import type { GL } from '@/engine/renderer/gl/context';
 import { ShaderProgram } from '@/engine/renderer/gl/shader-program';
 import { withDefines, type ShaderDefines } from '@/engine/renderer/gl/shader-source';
 import { GRASS_VERTEX_SHADER, GRASS_FRAGMENT_SHADER } from '@/engine/renderer/shaders/grass.glsl';
-import { bindSceneLightingUniforms, type SceneLightingInput } from '@/engine/renderer/lighting/scene-lighting-uniforms';
+import { bindSceneLightingUniforms, sceneLightingDefines, type SceneLightingInput } from '@/engine/renderer/lighting/scene-lighting-uniforms';
 import type { Frustum } from '@/engine/renderer/culling/frustum';
 import { GrassChunkCache, UNBUILT_TIER, type GrassChunk, type TerrainGrassResources } from '@/engine/renderer/foliage/grass-chunk-cache';
 import { GrassInteractors } from '@/engine/renderer/foliage/grass-interactors';
@@ -27,6 +27,7 @@ export interface GrassPassStats {
     chunks: number;
     pending: number;
     interactors: number;
+    animated: boolean;
 }
 interface BladeStrip {
     vao: WebGLVertexArrayObject;
@@ -56,7 +57,9 @@ function drawFraction(distance: number): number {
     return Math.max(Math.pow(LOD_REFERENCE_DISTANCE / distance, LOD_FALLOFF), MIN_DRAW_FRACTION);
 }
 export class GrassPass {
-    readonly stats: GrassPassStats = { drawCalls: 0, triangles: 0, blades: 0, chunks: 0, pending: 0, interactors: 0 };
+    readonly stats: GrassPassStats = { drawCalls: 0, triangles: 0, blades: 0, chunks: 0, pending: 0, interactors: 0, animated: false };
+    densityScale = 1;
+    buildBudgetScale = 1;
     private readonly program: ShaderProgram;
     private readonly cache: GrassChunkCache;
     private readonly trample: GrassTrampleMaps;
@@ -67,7 +70,8 @@ export class GrassPass {
     private readonly chunkPool: VisibleChunk[] = [];
     private readonly visibleChunks: VisibleChunk[] = [];
     constructor(private readonly gl: GL, triangle: FullscreenTriangle, trampleFormat: ColorFormat, defines: ShaderDefines = {}) {
-        this.program = new ShaderProgram(gl, GRASS_VERTEX_SHADER, withDefines(GRASS_FRAGMENT_SHADER, defines));
+        const grassDefines = sceneLightingDefines(defines, 'direct');
+        this.program = new ShaderProgram(gl, withDefines(GRASS_VERTEX_SHADER, grassDefines), withDefines(GRASS_FRAGMENT_SHADER, grassDefines));
         this.cache = new GrassChunkCache(gl);
         this.trample = new GrassTrampleMaps(gl, triangle, trampleFormat);
         this.strips = GRASS_TIERS.map((tier) => this.createStrip(tier.segments));
@@ -127,6 +131,7 @@ export class GrassPass {
         stats.blades = 0;
         stats.chunks = 0;
         stats.pending = 0;
+        stats.animated = this.trample.recovering > 0;
         let bound = false;
         for (const entity of terrains) {
             const terrain = entity.terrain;
@@ -134,11 +139,14 @@ export class GrassPass {
                 continue;
             if (!bound) {
                 program.use();
-                bindSceneLightingUniforms(gl, program, input);
+                bindSceneLightingUniforms(gl, program, input, 'direct');
                 gl.disable(gl.CULL_FACE);
                 bound = true;
             }
+            const before = stats.blades;
             this.draw(entity, terrain, input);
+            if (stats.blades > before && terrain.grass.windStrength > 0 && terrain.grass.windSpeed !== 0)
+                stats.animated = true;
         }
         if (bound) {
             gl.bindVertexArray(null);
@@ -175,7 +183,7 @@ export class GrassPass {
             const { chunk, distance } = this.visibleChunks[i];
             if (chunk.count === 0 || !chunk.buffer || chunk.tier === UNBUILT_TIER)
                 continue;
-            const fraction = drawFraction(distance);
+            const fraction = drawFraction(distance) * this.densityScale;
             const count = Math.min(chunk.count, Math.max(1, Math.round((chunk.count * fraction) / GRASS_TIERS[chunk.tier].fraction)));
             const widthBoost = Math.min(1 / Math.sqrt(fraction), MAX_WIDTH_BOOST);
             gl.uniform4f(lodUniform, widthBoost, count, metersPerPixel, MIN_BLADE_PIXELS);
@@ -241,7 +249,9 @@ export class GrassPass {
     private rebuildPending(terrain: Terrain, resources: TerrainGrassResources, visible: number): void {
         const started = performance.now();
         let builds = 0;
-        const exhausted = (): boolean => builds >= MAX_BUILDS_PER_FRAME || (builds > 0 && performance.now() - started > BUILD_BUDGET_MS);
+        const budgetMs = BUILD_BUDGET_MS * this.buildBudgetScale;
+        const maxBuilds = Math.max(1, Math.round(MAX_BUILDS_PER_FRAME * this.buildBudgetScale));
+        const exhausted = (): boolean => builds >= maxBuilds || (builds > 0 && performance.now() - started > budgetMs);
         for (let i = 0; i < visible; i++) {
             const { chunk, tier } = this.visibleChunks[i];
             if (!chunk.dirty && chunk.tier <= tier)
