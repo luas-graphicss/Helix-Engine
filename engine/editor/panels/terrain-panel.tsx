@@ -2,7 +2,7 @@
 import { Locate, Mountain, Pickaxe, Plus } from 'lucide-react';
 import { IconButton } from '@/engine/ui/icon-button';
 import { ActionButton } from '@/engine/ui/action-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { addTerrain } from '@/engine/editor/operations/terrain-operations';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { Terrain } from '@/engine/terrain/core/terrain';
@@ -19,7 +19,7 @@ export interface TerrainTarget {
     terrain: Terrain;
 }
 function NoTerrain() {
-    const session = useEditorState();
+    const session = useEditorSession();
     return (<div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center text-muted-foreground">
       <Mountain className="size-5 opacity-60" aria-hidden/>
       <p className="text-2xs leading-relaxed text-pretty">Nenhum terreno na cena. Adicione um para esculpir, pintar camadas, plantar grama e colocar água.</p>
@@ -29,7 +29,7 @@ function NoTerrain() {
     </div>);
 }
 export function TerrainPanel() {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection', 'tool', 'resources', 'assets');
     const entity = session.terrain.target;
     const terrain = entity?.terrain;
     if (!entity || !terrain)
@@ -43,7 +43,7 @@ export function TerrainPanel() {
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
           <span className="truncate text-xs font-semibold text-foreground">{entity.name}</span>
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
+          <span className="truncate font-mono text-3xs text-muted-foreground">
             {integer(terrain.size)} m · {terrain.resolution}² vértices · {terrain.layers.length} camada{terrain.layers.length === 1 ? '' : 's'}
           </span>
         </div>
