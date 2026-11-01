@@ -267,3 +267,268 @@ export async function closeCodeWorkspace(session: EditorSession): Promise<void> 
         session.setWorkspace('scene');
     session.code.closeWindow();
 }
+export function syncCodeEditorWithLibrary(session: EditorSession): void {
+    const { code, library } = session;
+    if (library.status !== 'ready')
+        return;
+    for (const tab of code.tabs) {
+        const asset = library.get(tab.assetId);
+        if (!asset) {
+            code.close(tab.assetId);
+            continue;
+        }
+        if (asset.name !== tab.document.name)
+            code.syncName(tab.assetId, asset.name);
+    }
+    if (code.tabs.length === 0 && session.workspace === 'code' && code.openCount > 0) {
+    }
+}
+export async function duplicateScriptAsset(session: EditorSession, asset: LibraryAsset): Promise<LibraryAsset | null> {
+    const { library } = session;
+    library.setBusy(`Duplicando ${asset.name}…`);
+    try {
+        const open = session.code.tab(asset.id);
+        const source = open ? open.document : await loadScriptAsset(session, asset);
+        const result = await ingestScriptDocument(library, { ...source, name: `Cópia de ${asset.name}`, entry: false, createdAt: Date.now() }, { forceNew: true });
+        if (!result.added)
+            return null;
+        session.history.execute(new AddAssetCommand(library, result.added.snapshot, null));
+        session.log.info(LOG_SOURCE, `${result.added.snapshot.asset.name} criado.`);
+        return result.added.snapshot.asset;
+    }
+    catch (cause) {
+        session.log.error(LOG_SOURCE, `Não foi possível duplicar ${asset.name}: ${describeError(cause)}`);
+        return null;
+    }
+    finally {
+        library.setBusy(null);
+    }
+}
+export function exportScriptDocument(document: ScriptDocument): void {
+    const file = scriptDocumentToFile(document);
+    void downloadBlob(file, file.name, 'Script Helix');
+}
+export async function exportScriptAsset(session: EditorSession, asset: LibraryAsset): Promise<void> {
+    const open = session.code.tab(asset.id);
+    exportScriptDocument(open ? open.document : await loadScriptAsset(session, asset));
+}
+export async function importScripts(session: EditorSession): Promise<void> {
+    const files = await pickFiles({ accept: SCRIPT_ACCEPT, multiple: true });
+    const added = await addFilesToLibrary(session, files);
+    const scripts = added.filter((asset) => asset.kind === 'script');
+    const mismatched = scripts.filter((asset) => asset.details.kind === 'script' && !canUseLanguage(session, asset.details.language));
+    if (mismatched.length > 0) {
+        session.log.warn(LOG_SOURCE, `${mismatched.length === 1 ? `${mismatched[0].name} está` : `${mismatched.length} scripts estão`} fora da linguagem base do jogo; para usá-los, ${MIX_LANGUAGES_HINT}.`);
+    }
+    if (scripts[0])
+        await openScriptAssetInEditor(session, scripts[0], { pin: true });
+}
+export function canCarryScript(entity: Entity): boolean {
+    return entity.kind !== 'script' && !entity.csgBrush;
+}
+export function scriptActorsFor(session: EditorSession, assetId: string): Entity[] {
+    const actors: Entity[] = [];
+    session.scene.traverse((entity) => {
+        if (entity.script?.assetId === assetId)
+            actors.push(entity);
+    });
+    return actors;
+}
+export function allScriptActors(session: EditorSession): Entity[] {
+    const actors: Entity[] = [];
+    session.scene.traverse((entity) => {
+        if (entity.kind === 'script')
+            actors.push(entity);
+    });
+    return actors;
+}
+export function scriptActorName(session: EditorSession, assetId: string | null): string {
+    return assetId ? (session.library.get(assetId)?.name ?? 'Script ausente') : 'Script';
+}
+export interface AttachScriptOptions {
+    silent?: boolean;
+    name?: string;
+}
+export function attachScriptToEntity(session: EditorSession, target: Entity, assetId: string | null, options: AttachScriptOptions = {}): Entity | null {
+    if (!canCarryScript(target))
+        return null;
+    const name = options.name ?? scriptActorName(session, assetId);
+    const entity = session.scene.createEntity({ name, kind: 'script', script: createScriptSettings({ assetId }), castShadows: false, receiveShadows: false }, null);
+    const added = addEntity(session, entity, target, `Anexar script ${name} a ${target.name}`);
+    if (!options.silent && assetId)
+        session.log.info(LOG_SOURCE, `${added.name} passou a controlar ${target.name}.`);
+    if (!assetId)
+        session.log.warn(LOG_SOURCE, `${added.name} ainda não aponta para um script: escolha um na seção Script do inspetor.`);
+    return added;
+}
+export function defaultScriptParent(session: EditorSession): Entity {
+    const selected = session.selectedEntity;
+    return selected && canCarryScript(selected) ? selected : session.scene.root;
+}
+export function addScriptActor(session: EditorSession, assetId: string | null = defaultScriptAssetId(session)): Entity | null {
+    return attachScriptToEntity(session, defaultScriptParent(session), assetId);
+}
+export function defaultScriptAssetId(session: EditorSession): string | null {
+    return session.code.activeId ?? session.library.byKind('script')[0]?.id ?? null;
+}
+export function placeScriptAssetAsActor(session: EditorSession, asset: LibraryAsset, target: Entity | null = null): Entity | null {
+    if (asset.kind !== 'script')
+        return null;
+    if (target)
+        return attachScriptToEntity(session, target, asset.id);
+    return addScriptActor(session, asset.id);
+}
+export function setScriptAsset(session: EditorSession, entity: Entity, assetId: string | null): void {
+    const current = entity.script;
+    if (!current || current.assetId === assetId)
+        return;
+    const name = scriptActorName(session, assetId);
+    session.history.execute(new SetValueCommand<ScriptSettings>(`Trocar o script de ${entity.name}`, (value) => {
+        entity.script = { ...value };
+        if (entity.kind === 'script')
+            entity.name = value.assetId ? scriptActorName(session, value.assetId) : entity.name;
+    }, { ...current }, { ...current, assetId }));
+    session.log.info(LOG_SOURCE, `${entity.name} agora aponta para ${name}.`);
+}
+export function setScriptEnabled(session: EditorSession, entity: Entity, enabled: boolean): void {
+    const current = entity.script;
+    if (!current || current.enabled === enabled)
+        return;
+    session.history.execute(new SetValueCommand<ScriptSettings>(`${enabled ? 'Ativar' : 'Desativar'} ${entity.name}`, (value) => {
+        entity.script = { ...value };
+    }, { ...current }, { ...current, enabled }));
+}
+export function detachScript(session: EditorSession, entity: Entity): void {
+    if (entity.kind !== 'script')
+        return;
+    deleteEntity(session, entity);
+}
+export function scriptAssetOf(session: EditorSession, entity: Entity): LibraryAsset | null {
+    const assetId = entity.script?.assetId;
+    if (!assetId)
+        return null;
+    const asset = session.library.get(assetId);
+    return asset && asset.kind === 'script' ? asset : null;
+}
+export async function openScriptActor(session: EditorSession, entity: Entity, options: {
+    presentation?: CodePresentation;
+} = {}): Promise<boolean> {
+    const asset = scriptAssetOf(session, entity);
+    if (!asset) {
+        session.log.warn(LOG_SOURCE, `${entity.name} não aponta para um script da biblioteca.`);
+        return false;
+    }
+    return openScriptAssetInEditor(session, asset, { pin: true, presentation: options.presentation });
+}
+export function setBaseLanguage(session: EditorSession, language: ScriptLanguageId | null): void {
+    const { scripting } = session.scene;
+    if (scripting.baseLanguage === language)
+        return;
+    const before = scripting.baseLanguage;
+    session.history.execute(new SetValueCommand<ScriptLanguageId | null>(language ? `Linguagem base: ${scriptLanguage(language).label}` : 'Remover a linguagem base', (value) => {
+        scripting.baseLanguage = value;
+        session.notify();
+    }, before, language));
+    if (language) {
+        const existing = session.library.byKind('script').length;
+        const outside = languageMismatches(session).length;
+        session.log.info(LOG_SOURCE, `${scriptLanguage(language).label} é a linguagem base do jogo${outside > 0 ? `; ${outside} de ${existing} scripts ficam fora dela` : ''}.`);
+    }
+}
+export function setEntryScript(session: EditorSession, assetId: string | null, options: {
+    silent?: boolean;
+} = {}): void {
+    const { scripting } = session.scene;
+    if (scripting.entryScriptId === assetId)
+        return;
+    const name = assetId ? scriptActorName(session, assetId) : null;
+    session.history.execute(new SetValueCommand<string | null>(name ? `Script de entrada: ${name}` : 'Sem script de entrada', (value) => {
+        scripting.entryScriptId = value;
+        session.notify();
+    }, scripting.entryScriptId, assetId));
+    if (!options.silent)
+        session.log.info(LOG_SOURCE, name ? `${name} é o script de entrada do jogo.` : 'O jogo começa pela ordem da hierarquia.');
+}
+export function setScriptRunContext(session: EditorSession, assetId: string, runContext: ScriptRunContext): void {
+    session.code.updateDocument(assetId, { runContext });
+}
+export function setScriptLanguage(session: EditorSession, assetId: string, language: ScriptLanguageId): boolean {
+    if (!canUseLanguage(session, language)) {
+        session.log.warn(LOG_SOURCE, `Para usar ${scriptLanguage(language).label} neste jogo, ${MIX_LANGUAGES_HINT}.`);
+        return false;
+    }
+    session.code.updateDocument(assetId, { language });
+    return true;
+}
+export async function runScript(session: EditorSession, asset: LibraryAsset): Promise<void> {
+    if (asset.kind !== 'script' || asset.details.kind !== 'script')
+        return;
+    const { code, scripts } = session;
+    const tab = code.tab(asset.id);
+    const saved = tab && code.isDirty(tab) ? await saveScriptTab(session, asset.id, { silent: true }) : null;
+    const entry = saved ?? session.library.get(asset.id) ?? asset;
+    if (entry.details.kind !== 'script')
+        return;
+    if (!isCompilableLanguage(entry.details.language)) {
+        const language = scriptLanguage(entry.details.language);
+        code.setCompileState('unavailable', `${entry.name}: ${SCRIPT_COMPILER_STATUS_LABEL[language.compiler].toLowerCase()} (${language.label}).`);
+        session.log.warn(LOG_SOURCE, `${entry.name} é ${language.label}: ${SCRIPT_COMPILER_STATUS_LABEL[language.compiler].toLowerCase()}. Linguagens executáveis: ${formatLanguageLabels(EXECUTABLE_LANGUAGES)}.`);
+        return;
+    }
+    if (session.playtest.state === 'playing' && scripts.running && scripts.mode === 'play') {
+        await scripts.reload(entry);
+        return;
+    }
+    await scripts.start('editor', { entry });
+}
+export function stopScript(session: EditorSession): void {
+    const { scripts } = session;
+    if (!scripts.running && !scripts.starting)
+        return;
+    if (scripts.mode === 'play') {
+        session.log.warn(LOG_SOURCE, 'Os scripts do jogo param junto com o jogo: use Parar na barra de playtest.');
+        return;
+    }
+    scripts.stop();
+}
+export async function runActiveScript(session: EditorSession): Promise<void> {
+    const active = session.code.activeTab;
+    if (!active) {
+        session.log.warn(LOG_SOURCE, 'Nenhum script aberto para executar.');
+        return;
+    }
+    const asset = session.library.get(active.assetId);
+    if (asset)
+        await runScript(session, asset);
+}
+export async function compileProject(session: EditorSession): Promise<void> {
+    const { code, scripts } = session;
+    await saveAllScripts(session, { silent: true });
+    const assets = session.library.byKind('script');
+    const { scripting } = session.scene;
+    if (assets.length === 0) {
+        code.setCompileState('unavailable', 'Nenhum script no projeto.');
+        session.log.info(LOG_SOURCE, 'Nada para compilar: o projeto ainda não tem scripts.');
+        return;
+    }
+    const mismatches = languageMismatches(session);
+    if (mismatches.length > 0) {
+        session.log.warn(LOG_SOURCE, `${mismatches.length} ${mismatches.length === 1 ? 'script foge' : 'scripts fogem'} da linguagem base (${scripting.baseLanguage ? scriptLanguage(scripting.baseLanguage).label : '—'}): ${mismatches.map((asset) => asset.name).join(', ')}.`);
+    }
+    code.setCompileState('compiling', `Compilando ${assets.length} ${assets.length === 1 ? 'script' : 'scripts'}…`);
+    warmLanguageEngines(assets.flatMap((asset) => (asset.details.kind === 'script' ? [asset.details.language] : [])));
+    const { inputs, skipped } = await collectScriptSources(session);
+    if (inputs.length === 0) {
+        code.setCompileState('unavailable', `${skipped.length} ${skipped.length === 1 ? 'script' : 'scripts'} sem compilador.`);
+        session.log.warn(LOG_SOURCE, `Nenhum script compilável: ${skipped.map((asset) => `${asset.name} (${asset.details.kind === 'script' ? scriptLanguage(asset.details.language).label : '?'})`).join(', ')}. Por enquanto compilam ${formatLanguageLabels(Array.from(COMPILABLE_LANGUAGES))}.`);
+        return;
+    }
+    try {
+        const result = await scripts.compiler.compile(inputs);
+        publishCompileResult(session, result, { source: LOG_SOURCE, skipped });
+    }
+    catch (cause) {
+        code.setCompileState('failed', 'Compilador indisponível nesta aba; veja o console.');
+        session.log.error(LOG_SOURCE, `O compilador não pôde ser carregado: ${describeError(cause)}`);
+    }
+}
