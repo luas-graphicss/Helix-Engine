@@ -5,9 +5,9 @@ import { SliderField } from '@/engine/ui/slider-field';
 import { ToggleField, ToggleSwitch } from '@/engine/ui/toggle-field';
 import { IconButton } from '@/engine/ui/icon-button';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { addCharacter, type CharacterScalar } from '@/engine/editor/operations/character-operations';
-import { applyPlayerProfileToActors, hasPossessableActor, independentCharacterActors, resetPlayerSettings, setPlayerCameraInvertY, setPlayerCameraScalar, setPlayerCharacterScalar, setPlayerEnabled, setPlayerSpawnIfMissing, type PlayerCameraScalar, } from '@/engine/editor/operations/player-operations';
+import { applyPlayerProfileToActors, hasPossessableActor, independentCharacterActors, playerCharacterActor, playerCharacterSettings, resetPlayerSettings, setPlayerCameraInvertY, setPlayerCameraScalar, setPlayerCharacterScalar, setPlayerEnabled, setPlayerSpawnIfMissing, type PlayerCameraScalar, } from '@/engine/editor/operations/player-operations';
 import { ModelSection } from './character/model-section';
 import { AnimationSection } from './character/animation-section';
 import { useCharacterModels } from './character/character-model-select';
@@ -71,8 +71,8 @@ function CharacterSliders({ sliders, disabled }: {
     sliders: readonly CharacterSlider[];
     disabled: boolean;
 }) {
-    const session = useEditorState();
-    const { character } = session.scene.player;
+    const session = useEditorSession();
+    const character = playerCharacterSettings(session);
     return (<>
       {sliders.map(({ field, label, min, max, step, format }) => (<SliderField key={field} label={label} value={character[field]} min={min} max={max} step={step} format={format} disabled={disabled} onChange={(value) => setPlayerCharacterScalar(session, field, value)}/>))}
     </>);
@@ -81,7 +81,7 @@ function CameraSliders({ sliders, disabled }: {
     sliders: readonly CameraSlider[];
     disabled: boolean;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { camera } = session.scene.player;
     return (<>
       {sliders.map(({ field, label, min, max, step, format }) => (<SliderField key={field} label={label} value={camera[field]} min={min} max={max} step={step} format={format} disabled={disabled} onChange={(value) => setPlayerCameraScalar(session, field, value)}/>))}
@@ -90,7 +90,7 @@ function CameraSliders({ sliders, disabled }: {
 function SceneSection({ disabled }: {
     disabled: boolean;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { scene } = session;
     const { player } = scene;
     const actors = independentCharacterActors(scene);
@@ -98,13 +98,7 @@ function SceneSection({ disabled }: {
     const running = session.playtest.isRunning;
     return (<CollapsibleSection title="Na cena">
       <ToggleField label="Criar no início se faltar" on={player.spawnIfMissing} onToggle={() => setPlayerSpawnIfMissing(session, !player.spawnIfMissing)}/>
-      <Hint>
-        {possessable
-            ? 'Há um ator com auto-posse na cena: a simulação possui esse ator e não cria o personagem padrão. As configurações dele ficam no Inspetor.'
-            : player.spawnIfMissing
-                ? 'Sem ator possuível na cena, o personagem do jogador nasce no ponto de início ao simular e some ao parar.'
-                : 'Nada é criado ao simular; coloque um ator de personagem na cena para possuí-lo.'}
-      </Hint>
+      {possessable && <Hint>Ator com auto-posse na cena: este painel edita esse ator.</Hint>}
       <ActionRow>
         <ActionButton icon={Plus} variant="primary" disabled={disabled || running} onClick={() => addCharacter(session)}>
           Adicionar à cena
@@ -113,11 +107,10 @@ function SceneSection({ disabled }: {
           Aplicar a {actors.length} {actors.length === 1 ? 'ator' : 'atores'}
         </ActionButton>
       </ActionRow>
-      <Hint>Atores adicionados começam como cópia deste perfil e depois são editados um a um no Inspetor; "Aplicar" copia o perfil de volta para todos (com desfazer).</Hint>
     </CollapsibleSection>);
 }
 function RuntimeSection() {
-    const session = useEditorState();
+    const session = useEditorSession();
     const possessed = session.playtest.characters?.possessed ?? null;
     if (!possessed)
         return null;
@@ -126,10 +119,11 @@ function RuntimeSection() {
     </CollapsibleSection>);
 }
 export function CharacterPanel() {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection', 'playtest', 'assets');
     const models = useCharacterModels();
     const { player } = session.scene;
-    const { character } = player;
+    const actor = playerCharacterActor(session);
+    const character = actor?.character ?? player.character;
     const asset = models.find((model) => model.id === character.model) ?? null;
     const disabled = !player.enabled;
     const running = session.playtest.isRunning;
@@ -139,9 +133,10 @@ export function CharacterPanel() {
           <PersonStanding className="size-4" aria-hidden/>
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="text-xs font-semibold text-foreground">Personagem do jogador</span>
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
+          <span className="truncate text-xs font-semibold text-foreground">Personagem do jogador</span>
+          <span className="truncate font-mono text-3xs text-muted-foreground">
             {player.enabled ? `${asset?.label ?? 'Modelo ausente'} · ${Number(character.height.toFixed(2))} m · ${Number(character.runSpeed.toFixed(1))} m/s` : 'desligado · controle por código'}
+            {player.enabled && actor ? ` · ${actor.name}` : ''}
             {running && player.enabled ? ' · em simulação' : ''}
           </span>
         </div>
@@ -153,14 +148,12 @@ export function CharacterPanel() {
 
       <div className="flex-1 overflow-auto">
         {disabled && (<div className="border-b border-border">
-            <Hint>Desligado: a simulação não cria nem possui personagem algum e os atores de personagem da cena ficam inertes. O projeto assume o controle por código, do zero, pela API de script da engine (em breve). Religue para voltar ao personagem padrão.</Hint>
           </div>)}
 
         <ModelSection disabled={disabled}/>
 
         <CollapsibleSection title="Cápsula">
           <CharacterSliders sliders={CAPSULE_SLIDERS} disabled={disabled}/>
-          <Hint>A altura também dimensiona o modelo: cápsula e malha crescem juntas.</Hint>
         </CollapsibleSection>
 
         <CollapsibleSection title="Locomoção">
@@ -179,7 +172,6 @@ export function CharacterPanel() {
           <SliderField label="Sensibilidade" value={player.camera.sensitivity} min={0.02} max={0.5} step={0.01} format={degreesPerPixel} disabled={disabled} onChange={(value) => setPlayerCameraScalar(session, 'sensitivity', value)}/>
           <SliderField label="Altura do pivô" value={player.camera.pivotHeight} min={0.3} max={1.2} step={0.01} format={percent} disabled={disabled} onChange={(value) => setPlayerCameraScalar(session, 'pivotHeight', value)}/>
           <ToggleField label="Inverter eixo Y" on={player.camera.invertY} onToggle={() => setPlayerCameraInvertY(session, !player.camera.invertY)}/>
-          <Hint>Fração da altura do personagem onde fica o pivô da câmera; 85% aproxima os ombros. Mudanças valem na hora, mesmo durante a simulação.</Hint>
         </CollapsibleSection>
 
         <AnimationSection />
