@@ -841,5 +841,159 @@ class DebugJogo : Script() {
     }
 
                                                                                               
+
+    override fun onLoad() {
+        info("onLoad do script de entrada")
+    }
+
+    override fun onStart() {
+        info("Jogo de teste em " + linguagem + ": percorrendo a API…")
+        var promessa = api("time").invoke("wait", 0)
+        for (a in areas) promessa = encadear(promessa, a)
+        promessa.invoke("then", Helix.fn { finalizar(); null })
+    }
+
+    override fun onUpdate(dt: Double) {
+        quadros++
+        torus?.let { api("transform").invoke("rotate", it, v3(0.0, 40 * dt, 0.0)) }
+        val d = api("debug")
+        d.invoke("line", v3(-6.0, 0.05, -6.0), v3(6.0, 0.05, -6.0), "#ff006e")
+        d.invoke("box", mapOf("center" to v3(0.0, 1.0, 3.0), "size" to v3(3.0, 2.0, 3.0)), "#ffbe0b")
+        heroi?.let { h ->
+            d.invoke("axes", h, 1)
+            val acima = api("math.vec3").invoke("add", api("transform").invoke("worldPosition", h), v3(0.0, 2.2, 0.0))
+            d.invoke("text", acima, "Heroi · " + pontos + " pts", "#ffffff")
+        }
+        d.invoke("ray", v3(0.0, 3.0, 0.0), v3(0.0, -1.0, 0.0), 3, "#06d6a0")
+        hudTimer += dt
+        if (hudTimer >= 0.5) {
+            hudTimer = 0.0
+            val g = api("gui")
+            g.invoke("bind", "fps", round(numero(api("render")["stats"], "fps")))
+            g.invoke("bind", "checagens", checagens)
+            g.invoke("bind", "falhas", falhas)
+        }
+    }
+
+    override fun onFixedUpdate(h: Double) {
+        passosFisica++
+        if (passosFisica == 1) checar("onFixedUpdate recebe o passo", h > 0 && h < 1, h)
+    }
+
+    override fun onLateUpdate(dt: Double) {
+        lateUpdates++
+    }
+
+                                                                                   
+    override fun onBeforeHotReload(): Any? = mapOf("pontos" to pontos)
+
+    override fun onHotReload(previousState: Value) {
+        pontos = if (previousState.isObject) previousState["pontos"].int(0) else 0
+        info("Recarga a quente: " + pontos + " pontos preservados")
+    }
+
+    override fun onStop() {
+        for (desligar in assinaturas) desligar.call()
+        assinaturas.clear()
+        info("Parou: " + quadros + " quadros, " + passosFisica + " passos de física, " + lateUpdates + " lateUpdates, " + renders + " frames (onAfterFrame), " + colisoes + " colisões.")
+        torus = null
+        heroi = null
+        efeito = null
+        tela = null
+    }
+}
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+import helix.*
+import kotlin.math.round
+import kotlin.math.sin
+
+class DebugGirador : Script() {
+                                                                                         
+    private var angulo = 0.0
+    private var contatos = 0
+    private var quadros = 0
+    private var desligar: Value? = null
+
+    private fun registrar(metodo: String, mensagem: String) {
+        helix["log"].invoke(metodo, "Girador", mensagem)
+    }
+
+    private fun nomeDe(entidade: Value) = entidade["name"].string
+
+    override fun onLoad() {
+        helix["props"].invoke("define", mapOf(
+            "velocidade" to mapOf("type" to "range", "default" to 90, "min" to 0, "max" to 360, "step" to 1, "label" to "Velocidade (°/s)"),
+            "cor" to mapOf("type" to "color", "default" to "#ff8800", "label" to "Cor"),
+            "pulsar" to mapOf("type" to "boolean", "default" to true, "label" to "Pulsar")
+        ))
+    }
+
+    override fun onStart() {
+        val props = helix["props"]
+        val lg = helix["log"]
+        registrar("info", nomeDe(self) + " acordou com velocidade " + props.invoke("get", "velocidade").string + "°/s")
+        helix["material"].invoke("setColor", self, props.invoke("get", "cor"))
+        desligar = props.invoke("onChanged", "cor", Helix.fn { args ->
+            if (args.isNotEmpty()) helix["material"].invoke("setColor", self, args[0])
+            null
+        })
+        val proprio = helix["self"]
+        lg.invoke("assert", !proprio.isNullish && proprio == self, "helix.self deveria ser o ator deste script")
+        lg.invoke("assert", props.invoke("has", "velocidade").boolean && props.invoke("definitions").size == 3, "props.define deveria registrar 3 propriedades")
+    }
+
+    override fun onUpdate(dt: Double) {
+        val props = helix["props"]
+        val tr = helix["transform"]
+        quadros++
+        angulo += props.invoke("get", "velocidade").number * dt
+        tr.invoke("setRotation", self, Vec3(0.0, angulo, 0.0))
+        if (props.invoke("get", "pulsar").boolean) tr.invoke("setScale", self, 1 + sin(helix.path("time.now").number * 3) * 0.1)
+    }
+
+    override fun onCollisionBegin(other: Value, contact: Value) {
+        contatos++
+        if (contatos > 3) return
+        registrar("info", nomeDe(self) + " tocou " + nomeDe(other) + " (impulso " + round(contact["impulse"].number * 100) / 100 + ")")
+    }
+
+    override fun onTriggerEnter(other: Value) {
+        registrar("info", nomeDe(other) + " entrou no gatilho de " + nomeDe(self))
+    }
+
+    override fun onEnable() {
+        registrar("debug", nomeDe(self) + " ativo")
+    }
+
+    override fun onDisable() {
+        registrar("debug", nomeDe(self) + " inativo")
+    }
+
+    override fun onStop() {
+        registrar("info", nomeDe(self) + ": " + quadros + " quadros, " + contatos + " contatos")
+    }
+
+    override fun onDestroy() {
+        desligar?.call()
+        desligar = null
+    }
+}
+`;
+    const module = String.raw `                                     
+                                                                                                            
+                                                                                        
+
+@JsExport
+fun soma(a: Double, b: Double): Double = a + b
+
+@JsExport
+fun saudacao(quem: String): String = "Olá, " + quem
+
+@JsExport
+fun limitar(valor: Double, minimo: Double, maximo: Double): Double = valor.coerceIn(minimo, maximo)
+`;
+    return { entry, actor, module };
 }
