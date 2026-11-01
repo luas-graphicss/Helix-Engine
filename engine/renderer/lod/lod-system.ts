@@ -2,6 +2,7 @@ import type { Entity } from '@/engine/core/scene/entity';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import type { ShadowCasterCandidate, VisibleMesh } from '@/engine/renderer/culling/visible-set';
 import type { ShadowMapBinding } from '@/engine/renderer/passes/shadow-pass';
+import { entityLodOverride } from '@/engine/renderer/render-overrides';
 import { LodChainCache, MAX_LOD_LEVELS } from './lod-chain';
 import { MESH_LOD_THRESHOLD_PIXELS, selectLodLevel, type LodSettings } from './lod-selector';
 export interface LodStats {
@@ -20,13 +21,14 @@ export class LodSystem {
         this.stats.pending = this.chains.pending;
     }
     readonly resolveMesh = (visible: VisibleMesh): MeshData => {
-        if (!this.settings.enabled) {
+        const override = entityLodOverride(visible.entity);
+        if (!this.settings.enabled || (override && !override.enabled)) {
             this.stats.perLevel[0]++;
             return visible.mesh;
         }
         const chain = this.chains.resolve(visible.mesh);
         const previous = this.levelByEntity.get(visible.entity) ?? -1;
-        const level = selectLodLevel(visible.pixelSize, MESH_LOD_THRESHOLD_PIXELS, chain.levels.length, this.settings.bias, previous);
+        const level = selectLodLevel(visible.pixelSize, MESH_LOD_THRESHOLD_PIXELS, chain.levels.length, this.settings.bias + (override?.bias ?? 0), previous);
         this.levelByEntity.set(visible.entity, level);
         this.stats.perLevel[level]++;
         return chain.levels[level];
