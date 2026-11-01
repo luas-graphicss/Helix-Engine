@@ -30,7 +30,7 @@ export function ImportPreview({ model, texturesVisible, onTexturesVisibleChange,
 
       {error && (<div className="absolute inset-0 flex items-center justify-center p-6 text-center text-2xs text-muted-foreground">{error}</div>)}
 
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-1.5">
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start justify-between gap-1.5 p-1.5">
         <div className="pointer-events-auto flex items-center gap-0.5 rounded-sm border border-border bg-surface-sunken/85 p-0.5 backdrop-blur-sm">
           <IconButton label={texturesVisible ? 'Ocultar texturas' : 'Mostrar texturas'} size="sm" active={texturesVisible} onClick={() => onTexturesVisibleChange(!texturesVisible)}>
             <ImageIcon />
