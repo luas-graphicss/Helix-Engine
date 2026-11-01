@@ -561,5 +561,285 @@ Value interfaceGrafica() {
   Value declarativa = gui.call("create", "DebugTela", obj({{"referenceSize", xy(1280, 720)}}));
   Value painel = gui.call("add", declarativa, "frame",
     obj({{"name", "Painel"},
+      {"rect", obj({{"position", obj({{"x", escala(1, -236)}, {"y", escala(0, 16)}})}, {"size", obj({{"x", escala(0, 220)}, {"y", escala(0, 48)}})}})}}));
+  gui.call("add", declarativa, "text", obj({{"name", "Rotulo"}, {"text", "Tela declarativa OK"}}), painel["node"]["id"]);
+  checar("gui.add/find", eh(gui.call("find", declarativa, "Rotulo")["kind"], "text"));
+  gui.call("setText", declarativa, "Rotulo", std::string("Tela declarativa OK · ") + LINGUAGEM);
+                                                                                     
+  return gui.call("show", declarativa, "debug-tela").call("then", helix::function([](const Args& a) {
+    g.tela = a[0];
+    checar("gui.show/isShown", !g.tela.isNone() && api("gui").call("isShown", g.tela).truthy());
+    checar("gui.kinds", contem(api("gui").call("kinds"), "button"));
+  }));
+}
+
+Value audio() {
+  Value a = api("audio"), s = api("scene");
+  checar("audio.supported", a["supported"].isBoolean());
+  Value mixer = a["mixer"];
+  mixer.call("setVolumeDb", "sfx", -3);
+  checar("mixer.setVolumeDb", numero(mixer.call("bus", "sfx"), "volumeDb") == -3);
+  checar("audio.clips", a.call("clips").isArray());
+  Value fonte = s.call("spawn", "sound", obj({{"name", "FonteSonora"}, {"position", v3(3, 1, 3)}, {"audioSource", obj({{"trigger", "manual"}, {"spatial", true}})}}));
+  checar("spawn sound", !fonte["audioSource"].isNone());
+  Value fontes = a["sources"];
+  fontes.call("set", fonte, obj({{"volumeDb", -4}}));
+  checar("sources.set", numero(fonte["audioSource"], "volumeDb") == -4);
+  checar("sources.isPlaying", falso(fontes.call("isPlaying", fonte)));
+  return Value();
+}
+
+Value vfx() {
+  Value v = api("vfx");
+  Value ids = v["templates"].call("ids");
+  checar("vfx.templates", ids.length() > 0);
+  checar("vfx.moduleKinds", v.call("moduleKinds").length() > 0);
+  Value doc = v.call("fromTemplate", ids[0], "DebugFaiscas");
+  doc = v.call("addEmitter", doc, obj({{"name", "Extra"}, {"maxParticles", 50}}));
+  doc = v.call("set", doc, obj({{"loop", true}}));
+  checar("vfx.fromTemplate/addEmitter", doc["emitters"].length() >= 2 && verdadeiro(doc["loop"]));
+  return v.call("save", doc, "DebugFaiscas").call("then", helix::function([](const Args& a) {
+    Value vfx = api("vfx"), ativo = a[0];
+    checar("vfx.save", !ativo.isNone() && eh(ativo["kind"], "vfx"));
+    Value ator = vfx.call("emitAt", ativo, v3(0, 1.5, -8), obj({{"destroyWhenFinished", false}}));
+    checar("vfx.emitAt", verdadeiro(vfx.call("has", ator)));
+    vfx.call("burst", ator, 20);
+    checar("vfx.stats", vfx.call("stats")["effects"].isNumber());
+  }));
+}
+
+                                                                                       
+
+void aoTeclar(const Value& e) {
+  if (e["repeat"].truthy()) return;
+  std::string code = e["code"].str();
+  if (code == "KeyR") {
+    api("play").call("restart");
+  } else if (code == "KeyB") {
+    soltarCaixa();
+  } else if (code == "KeyE") {
+    api("events").call("emit", "debug.ping", obj({{"origem", "teclado"}, {"quadro", api("time")["frame"]}}));
+  } else if (code == "KeyF") {
+    api("camera").call("shake", 0.4, 0.6);
+  } else if (code == "KeyG") {
+    if (!g.efeito.isNone()) {
+      bool ligado = !g.efeito["enabled"].truthy();
+      g.efeito.set("enabled", ligado);
+      info(std::string("Efeito DebugPost ") + (ligado ? "ligado" : "desligado"));
+    }
+  } else if (code == "KeyT") {
+    Value relogio = api("time");
+    relogio.set("scale", numero(relogio, "scale") == 1 ? 0.3 : 1.0);
+    info(fmt("time.scale = %g", numero(relogio, "scale")));
+  } else if (code == "KeyH") {
+    if (!g.tela.isNone()) {
+      Value gui = api("gui");
+      if (gui.call("isShown", g.tela).truthy()) gui.call("hide", g.tela);
+      else gui.call("show", g.tela, "debug-tela");
+    }
+  } else if (code == "KeyL") {
+    Value luzesLocais = api("light").call("all", obj({{"local", true}}));
+    std::string lista;
+    for (int i = 0, n = luzesLocais.length(); i < n; i++) {
+      if (i > 0) lista += ", ";
+      lista += luzesLocais[i]["entity"]["name"].str();
+    }
+    info("Luzes locais: " + lista);
+  }
+}
+
+void cliqueNaCena(double x, double y) {
+  Value c = api("camera");
+  Value alvo = c.call("pick", x, y), ponto = c.call("pickPoint", x, y);
+  if (!alvo.isNone()) info("Clique em " + alvo["name"].str());
+  if (!ponto.isNone()) api("debug").call("sphere", ponto, 0.3, "#ff006e", 2);
+}
+
+Value entrada() {
+  Value in = api("input"), acoes = in["actions"];
+  acoes.call("define", "pular", arr({"Space", "Gamepad:0"}));
+  acoes.call("define", "soltar", arr({"KeyB"}));
+  checar("actions.define/bindings", acoes.call("bindings", "pular").length() >= 1);
+  checar("action()", eh(in.call("action", "pular")["name"], "pular") && acoes.call("down", "pular").isBoolean());
+  checar("isDown", falso(in.call("isDown", "KeyW")));
+  checar("pointer", in["pointer"]["x"].isNumber());
+  checar("gamepads", in.call("gamepads").isArray());
+  checar("axis2d", in.call("axis2d", obj({{"up", "KeyW"}, {"down", "KeyS"}, {"left", "KeyA"}, {"right", "KeyD"}}))["x"].isNumber());
+  checar("keysDown", in.call("keysDown").isObject());
+  assinar(in.call("onKeyDown", helix::function([](const Args& a) { aoTeclar(a[0]); })));
+  assinar(in.call("onPointerDown", helix::function([](const Args& a) {
+    Value e = a[0];
+    if (e["button"].toInt() == 0) cliqueNaCena(e["x"].number(), e["y"].number());
+  })));
+  assinar(in.call("onGamepadButtonDown", helix::function([](const Args& a) {
+    info(fmt("Gamepad %g botão %g", a[0]["pad"].number(), a[0]["button"].number()));
+  })));
+  return Value();
+}
+
+Value eventos() {
+  Value ev = api("events"), play = api("play");
+  Value desligar = ev.call("on", "debug.ping", helix::function([](const Args& a) { g.recebido = a[0]; }));
+  checar("events.emit conta ouvintes", ev.call("emit", "debug.ping", obj({{"origem", "teste"}})).number() == 1);
+  checar("events.on recebe", !g.recebido.isNone() && eh(g.recebido["origem"], "teste"));
+  g.recebido = Value();
+  checar("listenerCount", ev.call("listenerCount", "debug.ping").number() == 1);
+  desligar();
+  checar("unsubscribe", ev.call("listenerCount", "debug.ping").number() == 0);
+  int umaVez = 0;
+  ev.call("once", "debug.once", helix::function([&umaVez] { umaVez++; }));
+  ev.call("emit", "debug.once");
+  ev.call("emit", "debug.once");
+  checar("events.once", umaVez == 1);
+  assinar(ev.call("on", "debug.ping", helix::function([](const Args& a) { info("ping de " + a[0]["origem"].str()); })));
+  assinar(ev.call("on", "debug.caixa", helix::function([](const Args& a) { depurar("caixa " + a[0]["nome"].str()); })));
+  g.toques = 0;
+  assinar(ev.call("onEntity", g.torus, "toque", helix::function([] { g.toques++; })));
+  ev.call("emitEntity", g.torus, "toque");
+  checar("onEntity/emitEntity", g.toques == 1);
+  assinar(play.call("onStopped", helix::function([] { info("play.onStopped disparou"); })));
+  assinar(play.call("onPaused", helix::function([] { info("pausado"); })));
+  assinar(play.call("onResumed", helix::function([] { info("retomado"); })));
+  return Value();
+}
+
+                                                                                 
+Value tempo() {
+  Value relogio = api("time");
+  checar("time.now", numero(relogio, "now") >= 0 && numero(relogio, "frame") >= 0);
+  checar("time.delta", numero(relogio, "delta") >= 0 && numero(relogio, "fixedDelta") > 0);
+  double inicio = numero(relogio, "now");
+  return relogio.call("wait", 0.1).call("then", helix::function([inicio]() -> Value {
+    Value relogio = api("time");
+    double decorrido = numero(relogio, "now") - inicio;
+    checar("time.wait", decorrido >= 0.09, fmt("%.3f", decorrido));
+    int quadro = relogio["frame"].toInt();
+    return relogio.call("waitFrames", 2).call("then", helix::function([quadro]() -> Value {
+      Value relogio = api("time");
+      int agora = relogio["frame"].toInt();
+      checar("time.waitFrames", agora >= quadro + 2, fmt("%d", agora - quadro));
+      assinar(relogio.call("every", 2, helix::function([] { api("gui").call("bind", "atores", api("scene").call("count")); })));
+      g.atrasoDisparou = false;
+      relogio.call("delay", 0.2, helix::function([] { g.atrasoDisparou = true; }));
+      return relogio.call("wait", 0.3).call("then", helix::function([] { checar("time.delay", g.atrasoDisparou); }));
+    }));
+  }));
+}
+
+Value dados() {
+  return api("storage").call("ready").call("then", helix::function([]() -> Value {
+    Value st = api("storage");
+    Value atual = st.call("get", "execucoes", 0);
+    g.execucoes = (atual.isNumber() ? atual.toInt() : 0) + 1;
+    return st.call("set", "execucoes", g.execucoes).call("then", helix::function([]() -> Value {
+      Value st = api("storage");
+      checar("storage.get/set", st.call("get", "execucoes").toInt() == g.execucoes && st.call("has", "execucoes").truthy(), fmt("%d", g.execucoes));
+      info(fmt("Execução nº %d deste jogo de teste neste projeto.", g.execucoes));
+      return api("assets").call("data", "DebugConfig").call("then", helix::function([](const Args& a) -> Value {
+        Value cfg = a[0];
+        checar("assets.data (TOML)", !cfg.isNone() && !cfg["jogador"].isNone() && numero(cfg["jogador"], "velocidade") == 6.5);
+        return api("assets").call("text", "DebugConfig").call("then", helix::function([](const Args& a) {
+          std::string texto = a[0].str();
+          checar("assets.text", texto.find("velocidade") != std::string::npos);
+          Value ativos = api("assets");
+          checar("assets.byName", !ativos.call("byName", "DebugJogo", "script").isNone());
+          checar("assets.exists", ativos.call("exists", "DebugUtil").truthy() && !ativos.call("exists", "NaoExiste").truthy());
+          checar("assets.search", ativos.call("search", "Debug").length() >= 5);
+          checar("project.name", api("project")["name"].isString());
+          checar("project.stats", numero(api("project")["stats"], "entities") > 0);
+          checar("net.localPlayer", verdadeiro(api("net")["localPlayer"]["local"]));
+          checar("play.state", eh(api("play")["state"], "playing") && verdadeiro(api("play")["isRunning"]));
+        }));
+      }));
+    }));
+  }));
+}
+
+                                                                                              
+Value lancar() {
+  helix::fail("erro proposital: helix::fail interrompe a área e vira ERRO na cadeia");
+}
+
+                                                                                        
+
+struct Area {
+  const char* nome;
+  Value (*fn)();
+                                                                                            
+  bool esperaErro;
+};
+
+const Area AREAS[] = {
+  {"Núcleo", nucleo, false},
+  {"Módulo (#include + helix::require)", modulo, false},
+  {"Matemática", matematica, false},
+  {"Cena", cena, false},
+  {"Transformações", transformacao, false},
+  {"Malhas e CSG", malhas, false},
+  {"Materiais", materiais, false},
+  {"Luzes", luzes, false},
+  {"Céu e mundo", ceu, false},
+  {"Câmera", camera, false},
+  {"Pós-processamento", pos, false},
+  {"Render", render, false},
+  {"Física", fisica, false},
+  {"Personagem e jogador", personagem, false},
+  {"Terreno", terreno, false},
+  {"Interface", interfaceGrafica, false},
+  {"Áudio", audio, false},
+  {"VFX", vfx, false},
+  {"Entrada", entrada, false},
+  {"Eventos", eventos, false},
+  {"Tempo e tarefas", tempo, false},
+  {"Dados, projeto e rede", dados, false},
+  {"Erro proposital (helix::fail)", lancar, true},
+};
+
+                                                                                               
+Value encadear(const Value& promessa, Area area) {
+  Value depois = promessa.call("then", helix::function([area] { return area.fn(); }));
+  return depois.call("then",
+    helix::function([area] {
+      if (area.esperaErro) checar("helix::fail deveria ter rejeitado a área", false);
+      else depurar(std::string("ok ") + area.nome);
+    }),
+    helix::function([area](const Args& a) {
+      Value causa = a[0];
+      std::string mensagem = (causa.isObject() ? causa["message"] : causa).str();
+      if (area.esperaErro) {
+        checar("helix::fail chega como rejeição da promessa", mensagem.find("proposital") != std::string::npos, mensagem);
+        return;
+      }
+      g.falhas++;
+      erro(fmt("ERRO em %s: %s", area.nome, mensagem.c_str()));
+    }));
+}
+
+void finalizar() {
+  Value girador = api("assets").call("byName", "DebugGirador", "script");
+  if (!girador.isNone()) {
+    Value extra = api("scene").call("spawnPrimitive", "box",
+      obj({{"name", "GiradorDinamico"}, {"position", v3(-2, 0.5, -3)},
+        {"rigidBody", obj({{"type", "kinematic"}, {"collider", "box"}})},
+        {"script", obj({{"assetId", girador["id"]}, {"props", obj({{"velocidade", 180}, {"cor", "#00b4d8"}})}})}}));
+    checar("spawn com script", !extra["script"].isNone() && extra["script"]["assetId"] == girador["id"]);
+  } else {
+    checar("ativo DebugGirador", false, "não está na biblioteca");
+  }
+  const char* dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.";
+  if (g.falhas == 0) info(fmt("API percorrida em %s: %d checagens, nenhuma falha. %s", LINGUAGEM, g.checagens, dica));
+  else aviso(fmt("API percorrida em %s: %d checagens, %d falhas (veja FALHOU/ERRO acima). %s", LINGUAGEM, g.checagens, g.falhas, dica));
+  api("gui").call("bind", "checagens", g.checagens);
+  api("gui").call("bind", "falhas", g.falhas);
+}
+
+}              
+
+                                                                                       
+
+                                                                                       
+int main() {
+  std::printf("DebugJogo.cpp: main rodou antes dos hooks (stdout da WASI)\n");
+  return 0;
 `;
 }
