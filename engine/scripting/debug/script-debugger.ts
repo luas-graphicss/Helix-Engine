@@ -799,4 +799,112 @@ export class ScriptDebugger {
         if (activity)
             activity.state = 'destroyed';
     }
+    refreshWatches(): void {
+        if (this.watches.length === 0) {
+            this.watchValues = [];
+            return;
+        }
+        let scope: Record<string, unknown> = {};
+        let instance: ScriptInstance | null = null;
+        if (this.paused && this.pausedScope) {
+            scope = this.pausedScope;
+            instance = this.pausedInstance;
+        }
+        else if (this.host.running) {
+            const target = this.liveScopeTarget();
+            if (target) {
+                try {
+                    scope = target.scope.scope();
+                }
+                catch {
+                    scope = {};
+                }
+                instance = target.instance;
+            }
+        }
+        else {
+            this.watchValues = this.watches.map((watch) => ({ id: watch.id, expression: watch.expression, value: null, error: null }));
+            return;
+        }
+        this.watchValues = this.watches.map((watch) => {
+            const outcome = this.evaluate(watch.expression, scope, instance);
+            return { id: watch.id, expression: watch.expression, value: outcome.error ? null : formatValue(outcome.value), error: outcome.error };
+        });
+    }
+    evaluate(expression: string, scope: Record<string, unknown>, instance: ScriptInstance | null): {
+        value: unknown;
+        error: string | null;
+    } {
+        const names = Object.keys(scope).filter((name) => /^[A-Za-z_$][\w$]*$/.test(name) && !RESERVED_NAMES.has(name));
+        const extras = ['helix', 'self', 'actor', 'script'];
+        const parameters = [...names, ...extras.filter((name) => !names.includes(name))];
+        const key = `${parameters.join(',')}\0${expression}`;
+        let evaluator = this.evaluators.get(key);
+        if (!evaluator) {
+            try {
+                evaluator = new Function(...parameters, `"use strict";\nreturn (${expression}\n);`) as Evaluator;
+            }
+            catch (cause) {
+                return { value: undefined, error: cause instanceof Error ? cause.message : String(cause) };
+            }
+            if (this.evaluators.size > 256)
+                this.evaluators.clear();
+            this.evaluators.set(key, evaluator);
+        }
+        const helix = this.host.helixOf(instance);
+        const extraValues: Record<string, unknown> = { helix, self: instance?.self ?? null, actor: instance?.self ?? null, script: instance?.handle ?? null };
+        const values = parameters.map((name) => (name in scope && names.includes(name) ? scope[name] : extraValues[name]));
+        try {
+            return { value: evaluator(...values), error: null };
+        }
+        catch (cause) {
+            return { value: undefined, error: cause instanceof Error ? cause.message : String(cause) };
+        }
+    }
+    private interpolate(template: string, scope: Record<string, unknown>, instance: ScriptInstance | null): string {
+        return template.replace(/\{([^{}]+)\}/g, (_, expression: string) => {
+            const outcome = this.evaluate(expression, scope, instance);
+            return outcome.error ? `{${expression}: ${outcome.error}}` : formatValue(outcome.value).text;
+        });
+    }
+    get variables(): readonly Variable[] {
+        if (this.paused)
+            return this.paused.locals;
+        if (!this.host.running)
+            return [];
+        const target = this.liveScopeTarget();
+        if (!target)
+            return [];
+        let scope: Record<string, unknown>;
+        try {
+            scope = target.scope.scope();
+        }
+        catch {
+            return [];
+        }
+        return Object.entries(scope).map(([name, value]) => ({ name, value: formatValue(value) }));
+    }
+}
+const RESERVED_NAMES = new Set(['this', 'arguments', 'eval', 'helix', 'self', 'actor', 'script']);
+const HOOK_PHASES = new Set<string>(['onLoad', 'onStart', 'onUpdate', 'onFixedUpdate', 'onLateUpdate', 'onRender', 'onEnable', 'onDisable', 'onStop', 'onDestroy', 'onBeforeHotReload', 'onHotReload', 'onCollisionBegin', 'onCollisionStay', 'onCollisionEnd', 'onTriggerEnter', 'onTriggerStay', 'onTriggerExit']);
+function isHookPhase(phase: string): boolean {
+    return HOOK_PHASES.has(phase);
+}
+function stateOf(instance: ScriptInstance): ActivityState {
+    if (instance.destroyed)
+        return 'destroyed';
+    if (instance.faulted)
+        return 'faulted';
+    return instance.active ? 'active' : 'inactive';
+}
+function normalizeText(text: string | null | undefined): string | null {
+    const trimmed = text?.trim() ?? '';
+    return trimmed.length > 0 ? trimmed : null;
+}
+const JS_TARGET_LANGUAGES: ReadonlySet<ScriptLanguageId> = new Set<ScriptLanguageId>(['javascript', 'typescript', 'csharp', 'gdscript', 'java', 'kotlin', 'dart', 'haxe']);
+export function isJavaScriptTarget(language: ScriptLanguageId): boolean {
+    return JS_TARGET_LANGUAGES.has(language);
+}
+export function debugFileName(name: string, language: ScriptLanguageId): string {
+    return scriptFileName(name, language);
 }
