@@ -526,4 +526,232 @@ export function createSceneApi(host: RuntimeHost) {
         const m = entity.worldMatrix;
         return vec3.normalize(out, vec3.set(out, m[column] * sign, m[column + 1] * sign, m[column + 2] * sign));
     }
+    function lookAt(entity: Entity, targetValue: unknown, upValue?: unknown): void {
+        const target = toVec3(targetValue, 'helix.transform.lookAt');
+        const up = upValue === undefined ? vec3.create(0, 1, 0) : toVec3(upValue, 'helix.transform.lookAt');
+        const position = worldPosition(entity);
+        const forward = vec3.subtract(vec3.create(), target, position);
+        if (vec3.length(forward) < 1e-8)
+            return;
+        vec3.normalize(forward, forward);
+        const right = vec3.cross(vec3.create(), up, forward);
+        if (vec3.length(right) < 1e-6)
+            vec3.cross(right, vec3.create(1, 0, 0), forward);
+        vec3.normalize(right, right);
+        const trueUp = vec3.cross(vec3.create(), forward, right);
+        const scale = worldScale(entity);
+        const m = mat4.identity(mat4.create());
+        m[0] = right[0] * scale[0];
+        m[1] = right[1] * scale[0];
+        m[2] = right[2] * scale[0];
+        m[4] = trueUp[0] * scale[1];
+        m[5] = trueUp[1] * scale[1];
+        m[6] = trueUp[2] * scale[1];
+        m[8] = -forward[0] * scale[2];
+        m[9] = -forward[1] * scale[2];
+        m[10] = -forward[2] * scale[2];
+        m[12] = position[0];
+        m[13] = position[1];
+        m[14] = position[2];
+        setWorldMatrix(entity, m);
+    }
+    const transformApi = {
+        position: (value: unknown) => requireEntity(value, 'helix.transform.position').transform.position,
+        rotation: (value: unknown) => requireEntity(value, 'helix.transform.rotation').transform.rotation,
+        scale: (value: unknown) => requireEntity(value, 'helix.transform.scale').transform.scale,
+        setPosition: (value: unknown, position: unknown) => {
+            toVec3(position, 'helix.transform.setPosition', requireEntity(value, 'helix.transform.setPosition').transform.position);
+        },
+        setRotation: (value: unknown, rotation: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.setRotation');
+            const candidate = rotation as ArrayLike<number> | {
+                w?: unknown;
+            };
+            if ((candidate as {
+                w?: unknown;
+            })?.w !== undefined || (ArrayBuffer.isView(rotation) && (rotation as Float32Array).length === 4) || (Array.isArray(rotation) && rotation.length === 4)) {
+                quat.toEulerDegrees(entity.transform.rotation, toQuat(rotation, 'helix.transform.setRotation', scratchQuat));
+            }
+            else {
+                toVec3(rotation, 'helix.transform.setRotation', entity.transform.rotation);
+            }
+        },
+        setScale: (value: unknown, scale: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.setScale');
+            if (typeof scale === 'number')
+                vec3.set(entity.transform.scale, scale, scale, scale);
+            else
+                toVec3(scale, 'helix.transform.setScale', entity.transform.scale);
+        },
+        localMatrix: (value: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.localMatrix');
+            entity.transform.updateLocalMatrix();
+            return entity.transform.localMatrix;
+        },
+        worldMatrix: (value: unknown) => {
+            world();
+            return requireEntity(value, 'helix.transform.worldMatrix').worldMatrix;
+        },
+        updateLocalMatrix: (value: unknown) => requireEntity(value, 'helix.transform.updateLocalMatrix').transform.updateLocalMatrix(),
+        worldPosition: (value: unknown) => worldPosition(requireEntity(value, 'helix.transform.worldPosition')),
+        worldRotation: (value: unknown) => worldRotation(requireEntity(value, 'helix.transform.worldRotation')),
+        worldRotationEuler: (value: unknown) => quat.toEulerDegrees(vec3.create(), worldRotation(requireEntity(value, 'helix.transform.worldRotationEuler'))),
+        worldScale: (value: unknown) => worldScale(requireEntity(value, 'helix.transform.worldScale')),
+        setWorldPosition: (value: unknown, position: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.setWorldPosition');
+            const target = toVec3(position, 'helix.transform.setWorldPosition');
+            world();
+            if (!entity.parent) {
+                vec3.copy(entity.transform.position, target);
+                return;
+            }
+            const inverse = mat4.invert(scratchParentInverse, entity.parent.worldMatrix);
+            if (!inverse)
+                throw new HelixError('helix.transform.setWorldPosition: a matriz do pai não é invertível.');
+            mat4.transformPoint(entity.transform.position, inverse, target);
+            entity.worldMatrixStale = true;
+        },
+        setWorldRotation: (value: unknown, rotation: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.setWorldRotation');
+            const q = (rotation as {
+                w?: unknown;
+            })?.w !== undefined || (ArrayBuffer.isView(rotation) && (rotation as Float32Array).length === 4) ? toQuat(rotation, 'helix.transform.setWorldRotation') : quat.fromEulerDegrees(quat.create(), toVec3(rotation, 'helix.transform.setWorldRotation'));
+            const position = worldPosition(entity);
+            const scale = worldScale(entity);
+            const m = mat4.fromTranslationRotationScale(mat4.create(), position, quat.toEulerDegrees(vec3.create(), q), scale);
+            setWorldMatrix(entity, m);
+        },
+        setWorldMatrix: (value: unknown, matrix: unknown) => {
+            if (!(matrix instanceof Float32Array) || matrix.length !== 16)
+                throw new HelixArgumentError('helix.transform.setWorldMatrix', 'esperava uma Mat4.');
+            setWorldMatrix(requireEntity(value, 'helix.transform.setWorldMatrix'), matrix);
+        },
+        forward: (value: unknown) => worldAxis(requireEntity(value, 'helix.transform.forward'), 8, -1),
+        back: (value: unknown) => worldAxis(requireEntity(value, 'helix.transform.back'), 8, 1),
+        right: (value: unknown) => worldAxis(requireEntity(value, 'helix.transform.right'), 0, 1),
+        left: (value: unknown) => worldAxis(requireEntity(value, 'helix.transform.left'), 0, -1),
+        up: (value: unknown) => worldAxis(requireEntity(value, 'helix.transform.up'), 4, 1),
+        down: (value: unknown) => worldAxis(requireEntity(value, 'helix.transform.down'), 4, -1),
+        translate: (value: unknown, deltaValue: unknown, space: unknown = 'local') => {
+            const entity = requireEntity(value, 'helix.transform.translate');
+            const delta = toVec3(deltaValue, 'helix.transform.translate');
+            const mode = requireOneOf(space, ['local', 'world'] as const, 'helix.transform.translate', 'o espaço');
+            if (mode === 'local') {
+                entity.transform.updateLocalMatrix();
+                const rotated = quat.rotateVec3(scratchVec, quat.fromEulerDegrees(scratchQuat, entity.transform.rotation), delta);
+                vec3.add(entity.transform.position, entity.transform.position, rotated);
+                return;
+            }
+            world();
+            if (!entity.parent) {
+                vec3.add(entity.transform.position, entity.transform.position, delta);
+                return;
+            }
+            const inverse = mat4.invert(scratchParentInverse, entity.parent.worldMatrix);
+            if (!inverse)
+                throw new HelixError('helix.transform.translate: a matriz do pai não é invertível.');
+            const localDelta = mat4.transformDirection(scratchVec, inverse, delta);
+            vec3.add(entity.transform.position, entity.transform.position, localDelta);
+        },
+        rotate: (value: unknown, eulerDelta: unknown, space: unknown = 'local') => {
+            const entity = requireEntity(value, 'helix.transform.rotate');
+            const delta = toVec3(eulerDelta, 'helix.transform.rotate');
+            const mode = requireOneOf(space, ['local', 'world'] as const, 'helix.transform.rotate', 'o espaço');
+            const current = quat.fromEulerDegrees(quat.create(), entity.transform.rotation);
+            const change = quat.fromEulerDegrees(quat.create(), delta);
+            const result = mode === 'local' ? quat.multiply(quat.create(), current, change) : quat.multiply(quat.create(), change, current);
+            const expected = vec3.add(vec3.create(), entity.transform.rotation, delta);
+            quat.toEulerDegreesNear(entity.transform.rotation, quat.normalize(result, result), expected);
+        },
+        rotateAround: (value: unknown, pointValue: unknown, axisValue: unknown, degrees: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.rotateAround');
+            const point = toVec3(pointValue, 'helix.transform.rotateAround');
+            const axis = vec3.normalize(vec3.create(), toVec3(axisValue, 'helix.transform.rotateAround'));
+            const angle = (requireNumber(degrees, 'helix.transform.rotateAround', 'o ângulo') * Math.PI) / 180;
+            const position = worldPosition(entity);
+            const offset = vec3.subtract(vec3.create(), position, point);
+            vec3.rotateAroundAxis(offset, offset, axis, angle);
+            const rotation = quat.multiply(quat.create(), quat.fromAxisAngle(quat.create(), axis, angle), worldRotation(entity));
+            const m = mat4.fromTranslationRotationScale(mat4.create(), vec3.add(offset, point, offset), quat.toEulerDegrees(vec3.create(), rotation), worldScale(entity));
+            setWorldMatrix(entity, m);
+        },
+        lookAt: (value: unknown, target: unknown, up?: unknown) => lookAt(requireEntity(value, 'helix.transform.lookAt'), target instanceof Entity ? worldPosition(target) : target, up),
+        setParentKeepWorld: (value: unknown, parentValue: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.setParentKeepWorld');
+            const parent = resolveParent(parentValue, 'helix.transform.setParentKeepWorld');
+            if (entity.contains(parent))
+                throw new HelixError('helix.transform.setParentKeepWorld: o novo pai está dentro do ator.');
+            world();
+            const matrix = mat4.copy(mat4.create(), entity.worldMatrix);
+            const previous = entity.parent;
+            parent.add(entity);
+            setWorldMatrix(entity, matrix);
+            host.bus.emit('scene.reparented', { entity, oldParent: previous });
+            session.notify();
+        },
+        localToWorld: (value: unknown, point: unknown) => {
+            world();
+            return mat4.transformPoint(vec3.create(), requireEntity(value, 'helix.transform.localToWorld').worldMatrix, toVec3(point, 'helix.transform.localToWorld'));
+        },
+        worldToLocal: (value: unknown, point: unknown) => {
+            world();
+            const inverse = mat4.invert(mat4.create(), requireEntity(value, 'helix.transform.worldToLocal').worldMatrix);
+            if (!inverse)
+                throw new HelixError('helix.transform.worldToLocal: a matriz de mundo não é invertível.');
+            return mat4.transformPoint(vec3.create(), inverse, toVec3(point, 'helix.transform.worldToLocal'));
+        },
+        localToWorldDirection: (value: unknown, direction: unknown) => {
+            world();
+            return mat4.transformDirection(vec3.create(), requireEntity(value, 'helix.transform.localToWorldDirection').worldMatrix, toVec3(direction, 'helix.transform.localToWorldDirection'));
+        },
+        worldToLocalDirection: (value: unknown, direction: unknown) => {
+            world();
+            const inverse = mat4.invert(mat4.create(), requireEntity(value, 'helix.transform.worldToLocalDirection').worldMatrix);
+            if (!inverse)
+                throw new HelixError('helix.transform.worldToLocalDirection: a matriz de mundo não é invertível.');
+            return mat4.transformDirection(vec3.create(), inverse, toVec3(direction, 'helix.transform.worldToLocalDirection'));
+        },
+        bounds: (value: unknown) => host.boundsOf(requireEntity(value, 'helix.transform.bounds')),
+        distance: (a: unknown, b: unknown) => vec3.distance(worldPosition(requireEntity(a, 'helix.transform.distance')), b instanceof Entity ? worldPosition(b) : toVec3(b, 'helix.transform.distance')),
+        directionTo: (a: unknown, b: unknown) => {
+            const from = worldPosition(requireEntity(a, 'helix.transform.directionTo'));
+            const to = b instanceof Entity ? worldPosition(b) : toVec3(b, 'helix.transform.directionTo');
+            return vec3.normalize(vec3.create(), vec3.subtract(vec3.create(), to, from));
+        },
+        reset: (value: unknown) => {
+            const entity = requireEntity(value, 'helix.transform.reset');
+            vec3.set(entity.transform.position, 0, 0, 0);
+            vec3.set(entity.transform.rotation, 0, 0, 0);
+            vec3.set(entity.transform.scale, 1, 1, 1);
+        },
+    };
+    return { scene: sceneApi, transform: transformApi };
 }
+function defaultNameFor(kind: EntityKind): string {
+    switch (kind) {
+        case 'group':
+            return 'Grupo';
+        case 'mesh':
+            return 'Malha';
+        case 'light':
+            return 'Luz';
+        case 'camera':
+            return 'Câmera';
+        case 'terrain':
+            return 'Terreno';
+        case 'character':
+            return 'Personagem';
+        case 'sound':
+            return 'Som';
+        case 'gui':
+            return 'Interface';
+        case 'vfx':
+            return 'Efeito';
+        case 'script':
+            return 'Script';
+    }
+}
+export type SceneApi = ReturnType<typeof createSceneApi>['scene'];
+export type TransformApi = ReturnType<typeof createSceneApi>['transform'];
+export { isLocalLight };
+export type { LibraryAsset };
