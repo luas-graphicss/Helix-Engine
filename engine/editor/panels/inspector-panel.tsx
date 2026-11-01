@@ -1,5 +1,5 @@
 'use client';
-import { Box, Sun, Camera, Folder, MousePointer2, RotateCcw, Locate, Copy, Trash2, Mountain, PersonStanding, Pickaxe } from 'lucide-react';
+import { Box, Sun, Camera, FileCode2, Folder, LayoutTemplate, MousePointer2, Locate, Copy, Trash2, Mountain, PersonStanding, Pickaxe, Sparkles, Volume2 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { CollapsibleSection } from '@/engine/ui/collapsible-section';
 import { ActionButton, ActionRow } from '@/engine/ui/action-button';
@@ -7,30 +7,52 @@ import { ToggleField } from '@/engine/ui/toggle-field';
 import { PropertyRow } from '@/engine/ui/property-row';
 import { FieldInput } from '@/engine/ui/field-input';
 import { IconButton } from '@/engine/ui/icon-button';
+import { PanelToolbar } from '@/engine/ui/panel-toolbar';
 import { SliderField } from '@/engine/ui/slider-field';
 import { ColorField } from '@/engine/ui/color-field';
 import { SegmentedControl } from '@/engine/ui/segmented-control';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import type { Entity, EntityKind } from '@/engine/core/scene/entity';
 import { MATERIAL_TEXTURE_SLOTS, type AlphaMode } from '@/engine/core/scene/material';
+import { GUI_SURFACE_CONTENT_LABEL } from '@/engine/gui/world/gui-surface-settings';
 import { getLocalBounds } from '@/engine/renderer/geometry/bounds';
 import { getTriangleCount, getVertexCount } from '@/engine/renderer/geometry/mesh-data';
 import { deleteEntity, duplicateEntity, renameEntity, setEntityVisibility, setShadowFlag } from '@/engine/editor/operations/entity-operations';
-import { resetTransform, setTransformComponent, type TransformField } from '@/engine/editor/operations/transform-operations';
 import { setMaterialAlphaMode, setMaterialColor, setMaterialDoubleSided, setMaterialScalar, setMaterialTexture, } from '@/engine/editor/operations/material-operations';
-import { setLightColor, setLightIntensity, setLightShadows } from '@/engine/editor/operations/light-operations';
 import { loadTextureIntoSlot } from '@/engine/editor/operations/texture-operations';
 import { TextureSlotRow } from './inspector/texture-slot-row';
+import { LightSection } from './inspector/light-section';
 import { RigidBodySection } from './inspector/rigid-body-section';
 import { CsgSection } from './inspector/csg-section';
 import { CharacterSection } from './inspector/character-section';
+import { AudioSourceSection } from './inspector/audio-source-section';
+import { AudioZoneSection } from './inspector/audio-zone-section';
+import { AudioAttachSection } from './inspector/audio-attach-section';
+import { GuiSurfaceSection } from './inspector/gui-surface-section';
+import { GuiAttachSection } from './inspector/gui-attach-section';
+import { VfxSection } from './inspector/vfx-section';
+import { VfxAttachSection } from './inspector/vfx-attach-section';
+import { ScriptAttachSection, ScriptSection } from './inspector/script-section';
 import { BoneSection, RigSection } from './inspector/rig-section';
 import { LibraryMaterialSection, MaterialPickerButton, OwnMaterialRow } from './inspector/material-library-section';
-import { formatNumber, ScalarField, Vector3Input } from './inspector/number-fields';
+import { TransformSection } from './inspector/transform-section';
+import { formatNumber, ScalarField } from './inspector/number-fields';
 import { INSPECTOR_NAME_INPUT_ID } from '@/engine/editor/shortcuts/focus-targets';
+import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
 const AXES = ['x', 'y', 'z'] as const;
-const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain, character: PersonStanding };
-const KIND_LABEL: Record<EntityKind, string> = { group: 'Grupo', mesh: 'Malha estática', light: 'Luz', camera: 'Câmera', terrain: 'Terreno', character: 'Personagem' };
+const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain, character: PersonStanding, sound: Volume2, gui: LayoutTemplate, vfx: Sparkles, script: FileCode2 };
+const KIND_LABEL: Record<EntityKind, string> = { group: 'Grupo', mesh: 'Malha estática', light: 'Luz', camera: 'Câmera', terrain: 'Terreno', character: 'Personagem', sound: 'Som', gui: 'Interface no mundo', vfx: 'Efeito visual', script: 'Script' };
+function kindLabel(entity: Entity): string {
+    if (entity.kind === 'gui' && entity.guiSurface)
+        return `Interface · ${GUI_SURFACE_CONTENT_LABEL[entity.guiSurface.content.kind].toLowerCase()}`;
+    if (entity.kind === 'script')
+        return 'Script';
+    if (entity.kind !== 'sound')
+        return KIND_LABEL[entity.kind];
+    if (entity.audioSource && entity.audioZone)
+        return 'Fonte de som + zona';
+    return entity.audioZone ? 'Zona acústica' : 'Fonte de som';
+}
 const ALPHA_MODES: ReadonlyArray<{
     value: AlphaMode;
     label: string;
@@ -39,19 +61,6 @@ const ALPHA_MODES: ReadonlyArray<{
     { value: 'mask', label: 'Recorte' },
     { value: 'blend', label: 'Mistura' },
 ];
-function Vector3Fields({ entity, field, suffix }: {
-    entity: Entity;
-    field: TransformField;
-    suffix?: string;
-}) {
-    const session = useEditorState();
-    return (<>
-      <Vector3Input label={field} values={entity.transform[field]} suffix={suffix} onCommit={(axis, value) => setTransformComponent(session, entity, field, axis, value)}/>
-      <IconButton label={`Redefinir ${field}`} size="sm" className="size-5 [&_svg]:size-3" onClick={() => resetTransform(session, entity, field)}>
-        <RotateCcw />
-      </IconButton>
-    </>);
-}
 function EmptySelection() {
     return (<div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
       <MousePointer2 className="size-5 opacity-60" aria-hidden/>
@@ -84,7 +93,7 @@ function MeshSection({ entity }: {
 function MaterialSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const material = entity.material;
     if (!material)
         return null;
@@ -114,7 +123,7 @@ function MaterialSection({ entity }: {
 function TexturesSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const material = entity.material;
     if (!material || material.libraryId)
         return null;
@@ -125,30 +134,10 @@ function TexturesSection({ entity }: {
       {material.occlusionMap && (<SliderField label="Força oclusão" value={material.occlusionStrength} min={0} max={1} onChange={(value) => setMaterialScalar(session, entity, 'occlusionStrength', value)}/>)}
     </CollapsibleSection>);
 }
-function LightSection({ entity }: {
-    entity: Entity;
-}) {
-    const session = useEditorState();
-    const light = entity.light;
-    if (!light)
-        return null;
-    return (<CollapsibleSection title={light.type === 'directional' ? 'Luz direcional' : 'Luz ambiente'}>
-      <PropertyRow label="Intensidade">
-        <ScalarField label="Intensidade" value={light.intensity} onCommit={(value) => setLightIntensity(session, entity, value)}/>
-      </PropertyRow>
-      {light.type === 'directional' ? (<>
-          <ColorField label="Cor" value={light.color} onChange={(rgb) => setLightColor(session, entity, 'color', rgb)}/>
-          <ToggleField label="Projeta sombras" on={light.castShadows} onToggle={() => setLightShadows(session, entity, !light.castShadows)}/>
-        </>) : (<>
-          <ColorField label="Céu" value={light.skyColor} onChange={(rgb) => setLightColor(session, entity, 'skyColor', rgb)}/>
-          <ColorField label="Chão" value={light.groundColor} onChange={(rgb) => setLightColor(session, entity, 'groundColor', rgb)}/>
-        </>)}
-    </CollapsibleSection>);
-}
 function TerrainSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const terrain = entity.terrain;
     if (!terrain)
         return null;
@@ -171,55 +160,47 @@ function TerrainSection({ entity }: {
     </CollapsibleSection>);
 }
 export function InspectorPanel() {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection', 'resources', 'assets', 'playtest', 'view');
+    const hint = useShortcutHint();
     const entity = session.selectedEntity;
     if (!entity)
         return <EmptySelection />;
     const Icon = KIND_ICON[entity.kind];
+    const kind = kindLabel(entity);
     return (<div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border p-2">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-surface-raised text-muted-foreground">
-          <Icon className="size-4" aria-hidden/>
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <input key={`${entity.id}-${entity.name}`} id={INSPECTOR_NAME_INPUT_ID} defaultValue={entity.name} aria-label="Nome do ator" onBlur={(event) => renameEntity(session, entity, event.currentTarget.value)} onKeyDown={(event) => {
+      
+      <PanelToolbar className="gap-1.5 pl-2">
+        <Icon className="size-3.5 shrink-0 text-primary" aria-hidden/>
+        <input key={`${entity.id}-${entity.name}`} id={INSPECTOR_NAME_INPUT_ID} defaultValue={entity.name} aria-label="Nome do ator" title="Nome do ator (F2 para editar)" onBlur={(event) => renameEntity(session, entity, event.currentTarget.value)} onKeyDown={(event) => {
             if (event.key === 'Enter')
                 event.currentTarget.blur();
             if (event.key === 'Escape') {
                 event.currentTarget.value = entity.name;
                 event.currentTarget.blur();
             }
-        }} className="h-5 w-full min-w-0 bg-transparent text-xs font-semibold text-foreground outline-none"/>
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
-            {KIND_LABEL[entity.kind]} · ID {entity.id.toString(16).toUpperCase().padStart(4, '0')}
-          </span>
-        </div>
+        }} className="h-full min-w-20 flex-1 rounded-xs bg-transparent px-1 text-2xs font-semibold text-foreground outline-none hover:bg-highlight focus-visible:bg-surface-sunken focus-visible:shadow-focus"/>
+        <span className="max-w-[40%] shrink truncate font-mono text-3xs text-muted-foreground" title={kind}>
+          {kind}
+        </span>
         <IconButton label="Enquadrar (F)" size="sm" onClick={() => session.focusEntity(entity)}>
           <Locate />
         </IconButton>
-        <IconButton label="Duplicar (Ctrl+D)" size="sm" onClick={() => duplicateEntity(session, entity)}>
+        <IconButton label={hint('Duplicar', 'edit.duplicate')} size="sm" onClick={() => duplicateEntity(session, entity)}>
           <Copy />
         </IconButton>
         <IconButton label="Excluir (Del)" size="sm" className="hover:text-destructive" onClick={() => deleteEntity(session, entity)}>
           <Trash2 />
         </IconButton>
-      </div>
+      </PanelToolbar>
 
       <div className="flex-1 overflow-auto">
-        <CollapsibleSection title="Transformação" trailing={<IconButton label="Redefinir transformação" size="sm" className="size-5 [&_svg]:size-3" onClick={() => resetTransform(session, entity)}>
-              <RotateCcw />
-            </IconButton>}>
-          <PropertyRow label="Posição">
-            <Vector3Fields entity={entity} field="position"/>
-          </PropertyRow>
-          <PropertyRow label="Rotação">
-            <Vector3Fields entity={entity} field="rotation" suffix="°"/>
-          </PropertyRow>
-          <PropertyRow label="Escala">
-            <Vector3Fields entity={entity} field="scale"/>
-          </PropertyRow>
-        </CollapsibleSection>
+        <ScriptSection entity={entity}/>
+        {entity.kind !== 'script' && <TransformSection entity={entity}/>}
 
+        <GuiSurfaceSection entity={entity}/>
+        <VfxSection entity={entity}/>
+        <AudioSourceSection entity={entity}/>
+        <AudioZoneSection entity={entity}/>
         <CharacterSection entity={entity}/>
         <RigSection entity={entity}/>
         <BoneSection entity={entity}/>
@@ -230,14 +211,18 @@ export function InspectorPanel() {
         <MaterialSection entity={entity}/>
         <TexturesSection entity={entity}/>
         <LightSection entity={entity}/>
+        <GuiAttachSection entity={entity}/>
+        <VfxAttachSection entity={entity}/>
+        <AudioAttachSection entity={entity}/>
+        <ScriptAttachSection entity={entity}/>
 
-        <CollapsibleSection title="Renderização">
+        {entity.kind !== 'script' && (<CollapsibleSection title="Renderização">
           <ToggleField label="Visível" on={entity.visible} onToggle={() => setEntityVisibility(session, entity, !entity.visible)}/>
           {(entity.mesh || entity.terrain) && (<>
               <ToggleField label="Projeta sombras" on={entity.castShadows} onToggle={() => setShadowFlag(session, entity, 'castShadows', !entity.castShadows)}/>
               <ToggleField label="Recebe sombras" on={entity.receiveShadows} onToggle={() => setShadowFlag(session, entity, 'receiveShadows', !entity.receiveShadows)}/>
             </>)}
-        </CollapsibleSection>
+        </CollapsibleSection>)}
       </div>
     </div>);
 }
