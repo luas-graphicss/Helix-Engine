@@ -779,4 +779,91 @@ class Renderer {
         }
         context.restore();
     }
+    private drawNineSlice(source: GuiImageSource | HTMLCanvasElement, slice: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    }, box: GuiBox): void {
+        const { context } = this;
+        const sw = source.width;
+        const sh = source.height;
+        const left = Math.min(slice.left, sw / 2);
+        const right = Math.min(slice.right, sw / 2);
+        const top = Math.min(slice.top, sh / 2);
+        const bottom = Math.min(slice.bottom, sh / 2);
+        const s = this.layout.offsetScale;
+        const dl = Math.min(left * s, box.width / 2);
+        const dr = Math.min(right * s, box.width / 2);
+        const dt = Math.min(top * s, box.height / 2);
+        const db = Math.min(bottom * s, box.height / 2);
+        const columns: Array<[
+            number,
+            number,
+            number,
+            number
+        ]> = [
+            [0, left, box.x, dl],
+            [left, sw - left - right, box.x + dl, box.width - dl - dr],
+            [sw - right, right, box.x + box.width - dr, dr],
+        ];
+        const rows: Array<[
+            number,
+            number,
+            number,
+            number
+        ]> = [
+            [0, top, box.y, dt],
+            [top, sh - top - bottom, box.y + dt, box.height - dt - db],
+            [sh - bottom, bottom, box.y + box.height - db, db],
+        ];
+        for (const [sy, sHeight, dy, dHeight] of rows) {
+            for (const [sx, sWidth, dx, dWidth] of columns) {
+                if (sWidth <= 0 || sHeight <= 0 || dWidth <= 0 || dHeight <= 0)
+                    continue;
+                context.drawImage(source, sx, sy, sWidth, sHeight, dx, dy, dWidth, dHeight);
+            }
+        }
+    }
+    private tint(source: GuiImageSource, color: string): HTMLCanvasElement {
+        const scratch = this.scratch ?? document.createElement('canvas');
+        this.scratch = scratch;
+        scratch.width = source.width;
+        scratch.height = source.height;
+        const context = scratch.getContext('2d');
+        if (!context)
+            return scratch;
+        context.globalCompositeOperation = 'source-over';
+        context.drawImage(source, 0, 0);
+        context.globalCompositeOperation = 'multiply';
+        context.fillStyle = color;
+        context.fillRect(0, 0, scratch.width, scratch.height);
+        context.globalCompositeOperation = 'destination-in';
+        context.drawImage(source, 0, 0);
+        context.globalCompositeOperation = 'source-over';
+        return scratch;
+    }
+    private drawImagePlaceholder(box: GuiBox, radii: GuiRadii, failed: boolean): void {
+        const { context } = this;
+        context.save();
+        roundedRectPath(context, box.x, box.y, box.width, box.height, radii);
+        context.clip();
+        context.fillStyle = failed ? 'rgba(255, 92, 108, 0.12)' : 'rgba(255, 255, 255, 0.06)';
+        context.fillRect(box.x, box.y, box.width, box.height);
+        context.strokeStyle = failed ? 'rgba(255, 92, 108, 0.5)' : 'rgba(255, 255, 255, 0.25)';
+        context.lineWidth = 1;
+        context.setLineDash([6, 4]);
+        context.strokeRect(box.x + 0.5, box.y + 0.5, box.width - 1, box.height - 1);
+        context.setLineDash([]);
+        context.beginPath();
+        context.moveTo(box.x, box.y);
+        context.lineTo(box.x + box.width, box.y + box.height);
+        context.moveTo(box.x + box.width, box.y);
+        context.lineTo(box.x, box.y + box.height);
+        context.stroke();
+        context.restore();
+    }
+}
+export function renderGuiLayout(context: CanvasRenderingContext2D, layout: GuiLayoutResult, options: GuiRenderOptions): void {
+    new Renderer(context, layout, options).run();
 }
