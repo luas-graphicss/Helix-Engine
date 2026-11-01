@@ -14,6 +14,7 @@ export class GpuTimer {
     private readonly issued: Int32Array[] = [];
     private frame = 0;
     private active = -1;
+    private measuring = false;
     constructor(private readonly gl: GL) {
         this.ext = (gl.getExtension('EXT_disjoint_timer_query_webgl2') as TimerExtension | null) ?? null;
         this.available = this.ext !== null;
@@ -35,8 +36,21 @@ export class GpuTimer {
             this.issued.push(new Int32Array(RING).fill(-1));
         }
     }
+    get enabled(): boolean {
+        return this.measuring && this.ext !== null;
+    }
+    setEnabled(enabled: boolean): void {
+        if (!this.ext || this.measuring === enabled)
+            return;
+        this.measuring = enabled;
+        if (!enabled) {
+            this.end();
+            for (const slots of this.issued)
+                slots.fill(-1);
+        }
+    }
     begin(stage: FrameStage): void {
-        if (!this.ext)
+        if (!this.ext || !this.measuring)
             return;
         if (this.active >= 0)
             this.end();
@@ -54,7 +68,7 @@ export class GpuTimer {
         this.active = -1;
     }
     endFrame(): void {
-        if (!this.ext)
+        if (!this.ext || !this.measuring)
             return;
         this.end();
         if (this.gl.getParameter(this.ext.GPU_DISJOINT_EXT)) {
