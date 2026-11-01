@@ -564,5 +564,285 @@ async function interfaceGrafica() {
   g.bind("titulo", "Helix · Debug")
   estado.assinaturas.push(g.onAction("caixa", () => soltarCaixa()))
   estado.assinaturas.push(g.onAction("reiniciar", () => helix.play.restart()))
+  checar("gui.elements", g.elements("[data-bind]").length >= 5)
+  checar("gui.size", g.size.width > 0)
+  checar("gui.canvas2d", typeof g.canvas2d.fillRect === "function")
+  checar("gui.domRoot", g.domRoot !== null)
+  checar("gui.pointerEvents", g.pointerEvents === false)
+
+  const tela = g.create("DebugTela", { referenceSize: { x: 1280, y: 720 } })
+  const painel = g.add(tela, "frame", { name: "Painel", rect: { position: { x: { scale: 1, offset: -236 }, y: { scale: 0, offset: 16 } }, size: { x: { scale: 0, offset: 220 }, y: { scale: 0, offset: 48 } } } })
+  g.add(tela, "text", { name: "Rotulo", text: "Tela declarativa OK" }, painel.node.id)
+  checar("gui.add/find", g.find(tela, "Rotulo").kind === "text")
+  g.setText(tela, "Rotulo", "Tela declarativa OK · " + LINGUAGEM)
+  g.setVisible(tela, "Rotulo", true)
+  g.setInteractable(tela, "Painel", false)
+  estado.tela = await g.show(tela, "debug-tela")
+  checar("gui.show/isShown", g.isShown(estado.tela) && g.screens().some((s) => s.name === "DebugTela"))
+  checar("gui.documents", g.documents().length >= 1)
+  checar("gui.kinds", g.kinds().includes("button"))
+  estado.assinaturas.push(g.onEvent((e) => helix.log.debug("Debug", \`GUI \${e.type} em \${e.nodeName}\`)))
+  checar("gui.surfaces", typeof g.surfaces.settingsOf === "function")
+}
+
+async function audio() {
+  const a = helix.audio
+  checar("audio.supported", typeof a.supported === "boolean")
+  checar("mixer.buses", a.mixer.buses().includes("sfx"))
+  a.mixer.setVolumeDb("sfx", -3)
+  checar("mixer.setVolumeDb", a.mixer.bus("sfx").volumeDb === -3)
+  checar("mixer.range", a.mixer.range.minDb < a.mixer.range.maxDb)
+  checar("createClipSettings", a.createClipSettings().bus !== undefined)
+  const clips = a.clips()
+  checar("audio.clips", Array.isArray(clips))
+  if (clips.length > 0 && a.supported) {
+    const voz = await a.playOnce(clips[0], { volumeDb: -6 })
+    checar("audio.playOnce", voz.asset.id === clips[0].id)
+    checar("clipSettingsOf", a.clipSettingsOf(clips[0]).bus !== undefined)
+  } else {
+    helix.log.info("Debug", "Sem ativos de áudio na biblioteca: a reprodução não foi testada (importe um .mp3/.ogg para cobrir).")
+  }
+  const fonte = helix.scene.spawn("sound", { name: "FonteSonora", position: [3, 1, 3], audioSource: { assetId: clips.length ? clips[0].id : null, trigger: "manual", spatial: true } })
+  checar("spawn sound", fonte.audioSource !== null && a.sources.settingsOf(fonte) !== null)
+  a.sources.set(fonte, { volumeDb: -4 })
+  checar("sources.set", fonte.audioSource${t('!')}.volumeDb === -4)
+  checar("sources.all", a.sources.all().includes(fonte))
+  checar("sources.isPlaying", a.sources.isPlaying(fonte) === false)
+  const zona = helix.scene.spawn("group", { name: "ZonaSonora", position: [0, 0, 0], audioZone: { shape: "sphere", radius: 10 } })
+  checar("zones.settingsOf", a.zones.settingsOf(zona).radius === 10 && a.zones.all().includes(zona))
+  estado.assinaturas.push(a.onEnded(() => helix.log.debug("Debug", "áudio terminou")))
+  checar("audio.status", ["idle", "unavailable", "suspended", "running", "closed"].includes(a.status), a.status)
+  checar("audio.stats", typeof a.stats === "object" && typeof a.voiceCount === "number")
+}
+
+function animacao() {
+  const an = helix.animation
+  checar("animation.roles", an.roles().includes("hips"))
+  checar("animation.paths", an.paths().includes("rotation"))
+  let doc = an.create("DebugClipe", { duration: 2, loop: true })
+  doc = an.setKey(doc, "hips", "rotation", 0, [0, 0, 0, 1])
+  doc = an.setKey(doc, "hips", "rotation", 1, helix.math.quat.fromEuler([0, 90, 0]))
+  doc = an.addEvent(doc, 0.5, "passo")
+  doc = an.setDuration(doc, 2.5)
+  checar("animation.create/setKey/addEvent", doc.tracks.length === 1 && doc.events.length === 1 && doc.duration === 2.5)
+  checar("animation.rigged", Array.isArray(an.rigged()))
+  checar("ik.limbs", an.ik.limbs().includes("leftArm"))
+  const rigados = an.rigged()
+  if (rigados.length > 0) {
+    const p = an.player(rigados[0])
+    checar("animation.player", p.entity === rigados[0] && an.hasPlayer(rigados[0]))
+    checar("animation.rig", an.rig(rigados[0]).jointCount > 0)
+  } else {
+    helix.log.info("Debug", "Sem personagens com esqueleto na cena: a reprodução de clipes não foi testada (importe um .glb animado para cobrir).")
+  }
+  checar("animation.playing", typeof an.playing === "number")
+}
+
+async function vfx() {
+  const v = helix.vfx
+  checar("vfx.templates", v.templates.ids().length > 0 && v.templates.list().length > 0)
+  checar("vfx.moduleKinds", v.moduleKinds().includes("gravity") && v.modules().length > 0)
+  checar("vfx.shapes/renderModes/blendModes", v.shapes().length > 0 && v.renderModes().length > 0 && v.blendModes().length > 0)
+  const id = v.templates.ids()[0]
+  let doc = v.fromTemplate(id, "DebugFaiscas")
+  doc = v.addEmitter(doc, { name: "Extra", maxParticles: 50 })
+  const extra = doc.emitters[doc.emitters.length - 1]
+  doc = v.addModule(doc, extra.id, "gravity", {})
+  doc = v.setEmitter(doc, extra.id, { loop: true })
+  doc = v.set(doc, { loop: true })
+  checar("vfx.fromTemplate/addEmitter/addModule", doc.emitters.length >= 2 && doc.loop === true)
+  const json = v.toJson(doc)
+  checar("vfx.toJson/fromJson", v.fromJson(json).emitters.length === doc.emitters.length)
+  checar("vfx.textures", v.textures.list().length > 0)
+  const ativo = await v.save(doc, "DebugFaiscas")
+  checar("vfx.save", ativo.kind === "vfx")
+  const ator = v.emitAt(ativo, [0, 1.5, -8], { destroyWhenFinished: false })
+  checar("vfx.emitAt", v.has(ator) && typeof v.state(ator) === "string")
+  v.burst(ator, 20)
+  checar("vfx.alive/time", typeof v.alive(ator) === "number" && typeof v.time(ator) === "number")
+  const outro = helix.scene.spawn("vfx", { name: "VfxAtor", position: [-6, 1, -8], vfx: { assetId: ativo.id, autoPlay: true } })
+  checar("spawn vfx", v.has(outro) && v.settings(outro).assetId === ativo.id)
+  checar("vfx.document", (await v.document(ativo)).emitters.length >= 2)
+  checar("vfx.stats", typeof v.stats().effects === "number")
+}
+
+// 6. Entrada, eventos, tempo, dados, projeto, salvamentos ----------------------------------------
+
+function entrada() {
+  const i = helix.input
+  i.actions.define("pular", ["Space", "Gamepad:0"])
+  i.actions.define("soltar", ["KeyB"])
+  checar("actions.define/bindings", i.actions.bindings("pular").includes("Space") && i.actions.names().includes("soltar"))
+  checar("action()", i.action("pular").name === "pular" && typeof i.actions.down("pular") === "boolean")
+  checar("isDown", i.isDown("KeyW") === false)
+  checar("pointer", typeof i.pointer.x === "number")
+  checar("cursors", i.cursors().includes("crosshair"))
+  checar("gamepads", Array.isArray(i.gamepads()))
+  checar("axis2d", typeof i.axis2d({ up: "KeyW", down: "KeyS", left: "KeyA", right: "KeyD" }).x === "number")
+  checar("input.capture", ["game", "gui", "both"].includes(i.capture))
+  checar("keysDown", Array.isArray(i.keysDown()))
+  checar("touches", Array.isArray(i.touches))
+  checar("characterFrame", i.characterFrame() === null || typeof i.characterFrame()${t('!')}.x === "number")
+  estado.assinaturas.push(i.onKeyDown((e) => aoTeclar(e)))
+  estado.assinaturas.push(i.onKeyUp(() => {}))
+  estado.assinaturas.push(i.onPointerDown((e) => { if (e.button === 0) cliqueNaCena(e.x, e.y) }))
+  estado.assinaturas.push(i.onWheel(() => {}))
+  estado.assinaturas.push(i.onGamepadButtonDown((e) => helix.log.info("Debug", \`Gamepad \${e.pad} botão \${e.button}\`)))
+}
+
+function aoTeclar(e${t(': { code: string; repeat: boolean }')}) {
+  if (e.repeat) return
+  switch (e.code) {
+    case "KeyR":
+      helix.play.restart()
+      break
+    case "KeyB":
+      soltarCaixa()
+      break
+    case "KeyE":
+      helix.events.emit("debug.ping", { origem: "teclado", quadro: helix.time.frame })
+      break
+    case "KeyF":
+      helix.camera.shake(0.4, 0.6)
+      break
+    case "KeyG":
+      if (estado.efeito) {
+        estado.efeito.enabled = !estado.efeito.enabled
+        helix.log.info("Debug", \`Efeito DebugPost \${estado.efeito.enabled ? "ligado" : "desligado"}\`)
+      }
+      break
+    case "KeyT":
+      helix.time.scale = helix.time.scale === 1 ? 0.3 : 1
+      helix.log.info("Debug", \`time.scale = \${helix.time.scale}\`)
+      break
+    case "KeyH":
+      if (estado.tela) {
+        if (helix.gui.isShown(estado.tela)) helix.gui.hide(estado.tela)
+        else void helix.gui.show(estado.tela, "debug-tela")
+      }
+      break
+    case "KeyL":
+      helix.log.info("Debug", \`Luzes locais: \${helix.light.all({ local: true }).map((l) => l.entity.name).join(", ")}\`)
+      break
+  }
+}
+
+function soltarCaixa() {
+  const caixa = helix.scene.spawnPrimitive("box", { name: "CaixaSolta", position: [helix.math.random.range(-3, 3), 6, helix.math.random.range(0, 4)], rigidBody: { type: "dynamic", collider: "box", mass: 1 }, tags: ["caixa"] })
+  helix.material.setColor(caixa, helix.math.random.color())
+  estado.pontos += 1
+  helix.gui.bind("pontos", estado.pontos)
+  helix.events.emit("debug.caixa", { nome: caixa.name })
+}
+
+function cliqueNaCena(x${t(': number')}, y${t(': number')}) {
+  const alvo = helix.camera.pick(x, y)
+  const ponto = helix.camera.pickPoint(x, y)
+  if (alvo) helix.log.info("Debug", \`Clique em \${alvo.name}\${ponto ? \` @ \${ponto[0].toFixed(1)}, \${ponto[1].toFixed(1)}, \${ponto[2].toFixed(1)}\` : ""}\`)
+  if (ponto) helix.debug.sphere(ponto, 0.3, "#ff006e", 2)
+}
+
+function eventos() {
+  const ev = helix.events
+  let recebido${any} = null
+  const off = ev.on("debug.ping", (p) => { recebido = p })
+  checar("events.emit conta ouvintes", ev.emit("debug.ping", { origem: "teste" }) === 1)
+  checar("events.on recebe", recebido !== null && recebido.origem === "teste")
+  checar("listenerCount", ev.listenerCount("debug.ping") === 1)
+  off()
+  checar("unsubscribe", ev.listenerCount("debug.ping") === 0)
+  let umaVez = 0
+  ev.once("debug.once", () => umaVez++)
+  ev.emit("debug.once")
+  ev.emit("debug.once")
+  checar("events.once", umaVez === 1)
+  const ouvinte = () => {}
+  ev.on("debug.off", ouvinte)
+  ev.off("debug.off", ouvinte)
+  checar("events.off", ev.listenerCount("debug.off") === 0)
+  checar("events.names", Array.isArray(ev.names()))
+  estado.assinaturas.push(ev.on("debug.ping", (p${any}) => helix.log.info("Debug", \`ping de \${p.origem}\`)))
+  estado.assinaturas.push(ev.on("debug.caixa", (p${any}) => helix.log.debug("Debug", \`caixa \${p.nome}\`)))
+  let doAtor = 0
+  estado.assinaturas.push(ev.onEntity(estado.torus, "toque", () => doAtor++))
+  ev.emitEntity(estado.torus, "toque")
+  checar("onEntity/emitEntity", doAtor === 1)
+  estado.assinaturas.push(helix.play.onStopped(() => helix.log.info("Debug", "play.onStopped disparou")))
+  estado.assinaturas.push(helix.play.onPaused(() => helix.log.info("Debug", "pausado")))
+  estado.assinaturas.push(helix.play.onResumed(() => helix.log.info("Debug", "retomado")))
+}
+
+async function tempo() {
+  const t = helix.time
+  checar("time.now", t.now >= 0 && t.frame >= 0)
+  checar("time.delta", t.delta >= 0 && t.fixedDelta > 0 && t.unscaledDelta >= 0)
+  checar("time.realtime", t.realtime >= 0)
+  const inicio = t.now
+  await t.wait(0.1)
+  checar("time.wait", t.now - inicio >= 0.09, (t.now - inicio).toFixed(3))
+  const quadro = t.frame
+  await t.waitFrames(2)
+  checar("time.waitFrames", t.frame >= quadro + 2, t.frame - quadro)
+  estado.assinaturas.push(t.every(2, () => helix.gui.bind("atores", helix.scene.count())))
+  const atraso = { disparou: false }
+  t.delay(0.2, () => { atraso.disparou = true })
+  t.nextFrame(() => {})
+  const tarefa = helix.task.spawn(async () => { await t.wait(0.3) })
+  checar("task.spawn", !tarefa.finished && helix.task.running >= 1)
+  await tarefa.done
+  checar("task.done", tarefa.finished && !tarefa.cancelled)
+  checar("time.delay", atraso.disparou)
+  const cancelada = helix.task.spawn(async () => { await t.wait(10) })
+  helix.task.cancel(cancelada)
+  checar("task.cancel", cancelada.cancelled === true)
+  await helix.task.all([helix.task.spawn(() => 1), helix.task.spawn(() => 2)])
+}
+
+async function dadosEProjeto() {
+  await helix.storage.ready()
+  const execucoes = Number(helix.storage.get("execucoes", 0) ?? 0) + 1
+  await helix.storage.set("execucoes", execucoes)
+  checar("storage.get/set", helix.storage.get("execucoes") === execucoes && helix.storage.has("execucoes"))
+  checar("storage.keys", helix.storage.keys().includes("execucoes"))
+  const slot = helix.storage.slot("debug")
+  await slot.set("linguagem", LINGUAGEM)
+  checar("storage.slot", slot.get("linguagem") === LINGUAGEM && helix.storage.slots().includes("debug"))
+  checar("storage.snapshot", typeof helix.storage.snapshot() === "object")
+  helix.storage.session.set("volatil", 1)
+  checar("storage.session", helix.storage.session.get("volatil") === 1)
+  helix.log.info("Debug", \`Execução nº \${execucoes} deste jogo de teste neste projeto.\`)
+
+  const cfg${any} = await helix.assets.data("DebugConfig")
+  checar("assets.data(toml)", cfg !== null && cfg.jogador && cfg.jogador.velocidade === 6.5, JSON.stringify(cfg))
+  checar("assets.text", (await helix.assets.text("DebugConfig")).includes("velocidade"))
+  checar("assets.bytes", (await helix.assets.bytes("DebugConfig")).length > 0)
+  checar("assets.byName", helix.assets.byName("DebugJogo", "script") !== null)
+  checar("assets.get", helix.assets.get(helix.assets.byName("DebugJogo", "script")${t('!')}.id) !== null)
+  checar("assets.list/kinds", helix.assets.list().length > 0 && helix.assets.kinds().includes("script"))
+  checar("assets.exists", helix.assets.exists("DebugUtil") && !helix.assets.exists("NaoExiste"))
+  checar("assets.search", helix.assets.search("Debug").length >= 5)
+  checar("assets.tags", Array.isArray(helix.assets.tags("DebugUtil")))
+  const script = await helix.assets.script("DebugUtil")
+  checar("assets.script", script.language.length > 0 && script.source.length > 0)
+  checar("assets.file", (await helix.assets.file("DebugConfig")).size > 0)
+  checar("assets.url", (await helix.assets.url("DebugConfig")).length > 0)
+  checar("assets.status/count", helix.assets.count > 0 && ["idle", "loading", "ready", "unavailable"].includes(helix.assets.status))
+  estado.assinaturas.push(helix.assets.onChange((e) => helix.log.debug("Debug", \`ativo \${e.type}: \${e.asset.name}\`)))
+
+  checar("project.name", typeof helix.project.name === "string")
+  checar("project.stats", helix.project.stats.entities > 0)
+  checar("project.settings", helix.project.settings.physics.fixedTimestep > 0)
+  checar("project.info", helix.project.info().id === helix.project.id)
+  checar("autosave", ["clean", "dirty", "saving", "error"].includes(helix.project.autosave.state))
+  checar("project.quota", typeof (await helix.project.quota()).used === "number")
+
+  helix.net.rpc("eco", (x) => x)
+  checar("net.rpc/call", (await helix.net.call("eco", 42)) === 42 && helix.net.hasRpc("eco") && helix.net.rpcs().includes("eco"))
+  checar("net.localPlayer", helix.net.localPlayer.local === true && helix.net.players().length >= 1)
+  checar("net.transport", helix.net.transport === "local" && typeof helix.net.isServer === "boolean")
+  checar("net.replicate", Array.isArray(helix.net.replicate(estado.torus, ["name"])))
+
+  checar("play.state", helix.play.state === "playing" && helix.play.isRunning)
+  checar("play.timeScale", helix.play.timeScale === helix.time.scale)
 `;
 }
