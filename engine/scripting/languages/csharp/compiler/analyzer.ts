@@ -2422,4 +2422,40 @@ class Analyzer {
         }
         return targetType.kind === 'dynamic' || targetType.kind === 'engine' ? valueType : targetType;
     }
+    private checkAssignable(target: Expression): void {
+        if (target.kind === 'identifier') {
+            if (target.resolution?.kind === 'member' && target.resolution.memberKind === 'const')
+                this.error(target.span, `"${target.name}" é uma constante e não pode receber valor.`);
+            if (target.resolution?.kind === 'member' && target.resolution.memberKind === 'method')
+                this.error(target.span, `"${target.name}" é um método e não pode receber valor.`);
+            if (target.resolution?.kind === 'type' || target.resolution?.kind === 'runtimeStatic' || target.resolution?.kind === 'runtimeType' || target.resolution?.kind === 'engine')
+                this.error(target.span, `"${target.name}" não é uma variável.`);
+            return;
+        }
+        if (target.kind === 'member' || target.kind === 'element')
+            return;
+        if (target.kind === 'tuple')
+            return;
+        this.error(target.span, 'O lado esquerdo de uma atribuição precisa ser uma variável, um membro ou um elemento.');
+    }
+}
+export function describeType(type: StaticType): string {
+    switch (type.kind) {
+        case 'int': return 'int';
+        case 'float': return 'float';
+        case 'bool': return 'bool';
+        case 'string': return 'string';
+        case 'char': return 'char';
+        case 'null': return 'null';
+        case 'void': return 'void';
+        case 'array': return `${describeType(type.element)}[]`;
+        case 'collection': return type.args.length > 0 ? `${type.name}<${type.args.map(describeType).join(', ')}>` : type.name;
+        case 'class': return type.name;
+        case 'enum': return type.name;
+        case 'delegate': return 'um delegate';
+        case 'task': return type.result ? `Task<${describeType(type.result)}>` : 'Task';
+        case 'tuple': return `(${type.elements.map((element) => describeType(element.type)).join(', ')})`;
+        case 'engine': return 'um valor da engine';
+        case 'dynamic': return 'dynamic';
+    }
 }
