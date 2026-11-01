@@ -841,5 +841,192 @@ final class DebugJogo: Script {
             Value.function { [self] _ in areaOk(a); return Value.undefined },
             Value.function { [self] args in areaErro(a, arg(args, 0)); return Value.undefined }
         )
+    }
+
+    private func finalizar() {
+        let girador = api("assets").invoke("byName", "DebugGirador", "script")
+        if girador.isNone {
+            checar("ativo DebugGirador", false, "não está na biblioteca")
+        } else {
+            let extra = api("scene").invoke("spawnPrimitive", "box", obj([
+                "name": "GiradorDinamico",
+                "position": v3(-2, 0.5, -3),
+                "rigidBody": obj(["type": "kinematic", "collider": "box"]),
+                "script": obj(["assetId": girador["id"], "props": obj(["velocidade": 180, "cor": "#00b4d8"])]),
+            ]))
+            checar("spawn com script", !extra["script"].isNone && extra.path("script.assetId") == girador["id"])
+        }
+        let dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia."
+        if falhas == 0 {
+            info("API percorrida em \(linguagem): \(checagens) checagens, nenhuma falha. \(dica)")
+        } else {
+            aviso("API percorrida em \(linguagem): \(checagens) checagens, \(falhas) falhas (veja FALHOU/ERRO acima). \(dica)")
+        }
+        api("gui").invoke("bind", "checagens", checagens)
+        api("gui").invoke("bind", "falhas", falhas)
+    }
+
+                                                                                              
+
+    override func onLoad() {
+        info("onLoad do script de entrada")
+    }
+
+    override func onStart() {
+        info("Jogo de teste em \(linguagem): percorrendo a API…")
+        var promessa = api("time").invoke("wait", 0)
+        for a in areas { promessa = encadear(promessa, a) }
+        promessa.invoke("then", Value.function { [self] _ in finalizar(); return Value.undefined })
+    }
+
+    override func onUpdate(_ dt: Double) {
+        quadros += 1
+        if let anel = torus { api("transform").invoke("rotate", anel, v3(0, 40 * dt, 0)) }
+        let d = api("debug")
+        d.invoke("line", v3(-6, 0.05, -6), v3(6, 0.05, -6), "#ff006e")
+        d.invoke("box", obj(["center": v3(0, 1, 3), "size": v3(3, 2, 3)]), "#ffbe0b")
+        if let h = heroi {
+            d.invoke("axes", h, 1)
+            let acima = api("math.vec3").invoke("add", api("transform").invoke("worldPosition", h), v3(0, 2.2, 0))
+            d.invoke("text", acima, "Heroi · \(pontos) pts", "#ffffff")
+        }
+        d.invoke("ray", v3(0, 3, 0), v3(0, -1, 0), 3, "#06d6a0")
+        hudTimer += dt
+        if hudTimer >= 0.5 {
+            hudTimer = 0
+            let g = api("gui")
+            g.invoke("bind", "fps", numero(api("render")["stats"], "fps").rounded())
+            g.invoke("bind", "checagens", checagens)
+            g.invoke("bind", "falhas", falhas)
+        }
+    }
+
+    override func onFixedUpdate(_ h: Double) {
+        passosFisica += 1
+        if passosFisica == 1 { checar("onFixedUpdate recebe o passo", h > 0 && h < 1, h) }
+    }
+
+    override func onLateUpdate(_ dt: Double) {
+        lateUpdates += 1
+    }
+
+                                                                                   
+    override func onBeforeHotReload() -> Value {
+        obj(["pontos": pontos])
+    }
+
+    override func onHotReload(_ previousState: Value) {
+        pontos = previousState.isObject ? previousState["pontos"].int : 0
+        info("Recarga a quente: \(pontos) pontos preservados")
+    }
+
+    override func onStop() {
+        for desligar in assinaturas { desligar.call() }
+        assinaturas.removeAll()
+        info("Parou: \(quadros) quadros, \(passosFisica) passos de física, \(lateUpdates) lateUpdates, \(renders) frames (onAfterFrame), \(colisoes) colisões.")
+        torus = nil
+        heroi = nil
+        efeito = nil
+        tela = nil
+    }
+}
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+
+final class DebugGirador: Script {
+                                                                                         
+    private var angulo = 0.0
+    private var contatos = 0
+    private var quadros = 0
+    private var desligar: Value?
+
+    private func registrar(_ metodo: String, _ mensagem: String) {
+        helix["log"].invoke(metodo, "Girador", mensagem)
+    }
+
+    private func nomeDe(_ entidade: Value) -> String { entidade["name"].string }
+
+                                                                                                        
+    private func pulso(_ t: Double) -> Double { abs((t - t.rounded(.down)) * 2 - 1) }
+
+    override func onLoad() {
+        helix["props"].invoke("define", Value.object([
+            "velocidade": Value.object(["type": "range", "default": 90, "min": 0, "max": 360, "step": 1, "label": "Velocidade (°/s)"]),
+            "cor": Value.object(["type": "color", "default": "#ff8800", "label": "Cor"]),
+            "pulsar": Value.object(["type": "boolean", "default": true, "label": "Pulsar"]),
+        ]))
+    }
+
+    override func onStart() {
+        let props = helix["props"]
+        let lg = helix["log"]
+        registrar("info", "\(nomeDe(entity)) acordou com velocidade \(props.invoke("get", "velocidade").string)°/s")
+        helix["material"].invoke("setColor", entity, props.invoke("get", "cor"))
+        desligar = props.invoke("onChanged", "cor", Value.function { [self] args in
+            if let cor = args.first { helix["material"].invoke("setColor", entity, cor) }
+            return Value.undefined
+        })
+        let proprio = helix["self"]
+        lg.invoke("assert", !proprio.isNone && proprio == entity, "helix.self deveria ser o ator deste script")
+        lg.invoke("assert", props.invoke("has", "velocidade").bool && props.invoke("definitions").count == 3, "props.define deveria registrar 3 propriedades")
+    }
+
+    override func onUpdate(_ dt: Double) {
+        let props = helix["props"]
+        let tr = helix["transform"]
+        quadros += 1
+        angulo += props.invoke("get", "velocidade").number * dt
+        tr.invoke("setRotation", entity, Vec3(0, angulo, 0))
+        if props.invoke("get", "pulsar").bool {
+            tr.invoke("setScale", entity, 0.9 + pulso(helix.path("time.now").number * 1.5) * 0.2)
+        }
+    }
+
+    override func onCollisionBegin(_ other: Value, _ contact: Value) {
+        contatos += 1
+        if contatos > 3 { return }
+        registrar("info", "\(nomeDe(entity)) tocou \(nomeDe(other)) (impulso \((contact["impulse"].number * 100).rounded() / 100))")
+    }
+
+    override func onTriggerEnter(_ other: Value) {
+        registrar("info", "\(nomeDe(other)) entrou no gatilho de \(nomeDe(entity))")
+    }
+
+    override func onEnable() {
+        registrar("debug", "\(nomeDe(entity)) ativo")
+    }
+
+    override func onDisable() {
+        registrar("debug", "\(nomeDe(entity)) inativo")
+    }
+
+    override func onStop() {
+        registrar("info", "\(nomeDe(entity)): \(quadros) quadros, \(contatos) contatos")
+    }
+
+    override func onDestroy() {
+        desligar?.call()
+        desligar = nil
+    }
+}
+`;
+    const module = String.raw `                                     
+                                                                                                            
+                                                                                        
+
+public func soma(_ a: Double, _ b: Double) -> Double {
+    return a + b
+}
+
+public func saudacao(_ quem: String) -> String {
+    return "Olá, \(quem)"
+}
+
+public func limitar(_ valor: Double, _ minimo: Double, _ maximo: Double) -> Double {
+    return max(minimo, min(maximo, valor))
+}
+`;
+    return { entry, actor, module };
 }
