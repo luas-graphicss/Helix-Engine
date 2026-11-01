@@ -6,12 +6,15 @@ import type { Mat4 } from '@/engine/core/math/mat4';
 import type { Scene } from '@/engine/core/scene/scene';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { RigidBody } from '@/engine/physics/body/rigid-body';
-import { cloneRigidBodySettings, createShapeFromSettings, sameRigidBodyShape, type RigidBodySettings, } from '@/engine/physics/body/rigid-body-settings';
+import { cloneRigidBodySettings, createShapeFromSettings, sameCollisionLayers, sameRigidBodyShape, type RigidBodySettings, } from '@/engine/physics/body/rigid-body-settings';
+import { DEFAULT_COLLISION_LAYER } from '@/engine/physics/world/collision-layers';
 import { createHeightfieldShape } from '@/engine/physics/shapes/collider-shape';
 import { getMeshVersion, type MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { BuoyancyField } from '@/engine/physics/fluids/buoyancy-field';
 import { WaterVolume } from '@/engine/physics/fluids/water-volume';
-import { PhysicsWorld } from '@/engine/physics/world/physics-world';
+import { PhysicsWorld, type PhysicsBackend } from '@/engine/physics/world/physics-world';
+import { PhysicsWorkerLink, createPhysicsWorkerChannel, type PhysicsChannel } from '@/engine/physics/worker/physics-worker-link';
+import { copyMatrix, waterSignature, type WaterTerrainRecord } from '@/engine/physics/worker/physics-protocol';
 export interface PhysicsBinding {
     readonly entity: Entity;
     readonly body: RigidBody;
@@ -28,10 +31,18 @@ interface TerrainBinding {
     readonly body: RigidBody;
     readonly water: WaterVolume;
     readonly matrix: Mat4;
+    readonly key: number;
+    waterSignature: string;
 }
 export interface PhysicsSceneEvents {
     onOutOfBounds?(entity: Entity): void;
     onUnstable?(entity: Entity): void;
+    onBackendFallback?(message: string): void;
+    onRemoteFrame?(): void;
+}
+export interface PhysicsSceneOptions {
+    readonly backend?: PhysicsBackend;
+    readonly channel?: () => PhysicsChannel;
 }
 const TERRAIN_FRICTION = 0.8;
 const worldPosition = vec3.create();
@@ -73,7 +84,10 @@ export class PhysicsScene {
     private readonly visited = new Set<Entity>();
     private readonly buoyancy: BuoyancyField;
     private removeBuoyancy: () => void;
-    constructor(readonly scene: Scene, events: PhysicsSceneEvents = {}) {
+    private nextTerrainKey = 1;
+    private waterDirty = false;
+    private readonly waterHeightsPending = new Set<number>();
+    constructor(readonly scene: Scene, private readonly events: PhysicsSceneEvents = {}, options: PhysicsSceneOptions = {}) {
         this.world = new PhysicsWorld(scene.physics, {
             onOutOfBounds: (body) => {
                 const entity = this.entityByBody.get(body);
@@ -85,12 +99,52 @@ export class PhysicsScene {
                 if (entity)
                     events.onUnstable?.(entity);
             },
+            onBackendFallback: (message) => events.onBackendFallback?.(message),
         });
         this.buoyancy = new BuoyancyField(() => this.waterVolumes(), scene.physics);
-        this.removeBuoyancy = this.world.addForceField(this.buoyancy);
+        this.removeBuoyancy = this.world.addForceField(this.buoyancy, { remote: true });
+        const backend = options.backend ?? 'local';
+        if (backend !== 'local')
+            this.attachWorker(backend, options.channel ?? createPhysicsWorkerChannel);
+    }
+    private attachWorker(backend: Exclude<PhysicsBackend, 'local'>, channel: () => PhysicsChannel): void {
+        try {
+            this.world.attachRemote(new PhysicsWorkerLink(this.world, backend, channel()));
+        }
+        catch (cause) {
+            this.events.onBackendFallback?.(cause instanceof Error ? cause.message : String(cause));
+        }
     }
     bindingOf(entity: Entity): PhysicsBinding | null {
         return this.bindings.get(entity) ?? null;
+    }
+    ensureBinding(entity: Entity): PhysicsBinding | null {
+        const existing = this.bindings.get(entity);
+        if (existing)
+            return existing;
+        const settings = entity.rigidBody;
+        if (!settings || entity.terrain || !this.scene.root.contains(entity))
+            return null;
+        this.scene.updateWorldMatrices();
+        return this.createBinding(entity, settings);
+    }
+    ensureBindings(): void {
+        let updated = false;
+        const entities = this.scene.entities;
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
+            const settings = entity.rigidBody;
+            if (!settings || entity.terrain || this.bindings.has(entity))
+                continue;
+            if (!updated) {
+                this.scene.updateWorldMatrices();
+                updated = true;
+            }
+            this.createBinding(entity, settings);
+        }
+    }
+    entityOf(body: RigidBody): Entity | null {
+        return this.entityByBody.get(body) ?? null;
     }
     update(deltaSeconds: number, sceneTime?: number): number {
         this.reconcile();
@@ -102,17 +156,47 @@ export class PhysicsScene {
     }
     stepOnce(): void {
         this.reconcile();
+        const remote = this.world.remoteLink;
+        if (remote) {
+            remote.onceFrame(() => {
+                this.syncToScene(1);
+                this.events.onRemoteFrame?.();
+            });
+        }
         this.world.step();
         this.world.discardAccumulatedTime();
-        this.syncToScene(1);
+        if (!remote)
+            this.syncToScene(1);
     }
     dispose(): void {
         this.removeBuoyancy();
         this.world.clear();
+        this.world.detachRemote();
         this.bindings.clear();
         this.terrains.clear();
         this.entityByBody.clear();
-        this.removeBuoyancy = this.world.addForceField(this.buoyancy);
+        this.removeBuoyancy = this.world.addForceField(this.buoyancy, { remote: true });
+    }
+    private publishWater(withHeights: Set<number> | null): void {
+        const remote = this.world.remoteLink;
+        if (!(remote instanceof PhysicsWorkerLink))
+            return;
+        const records: WaterTerrainRecord[] = [];
+        for (const binding of this.terrains.values()) {
+            const terrain = binding.entity.terrain;
+            if (!terrain)
+                continue;
+            const includeHeights = withHeights === null || withHeights.has(binding.key);
+            records.push({
+                key: binding.key,
+                matrix: copyMatrix(binding.matrix),
+                size: terrain.size,
+                resolution: terrain.resolution,
+                heights: includeHeights ? terrain.heightfield.heights.slice() : undefined,
+                water: terrain.water,
+            });
+        }
+        remote.setWater(records);
     }
     private *waterVolumes(): Iterable<WaterVolume> {
         for (const binding of this.terrains.values()) {
@@ -123,15 +207,17 @@ export class PhysicsScene {
     reconcile(): void {
         this.scene.updateWorldMatrices();
         this.visited.clear();
-        this.scene.traverse((entity) => {
+        const entities = this.scene.entities;
+        for (let i = 0; i < entities.length; i++) {
+            const entity = entities[i];
             if (entity.terrain && entity.visible) {
                 this.visited.add(entity);
                 this.reconcileTerrain(entity);
-                return;
+                continue;
             }
             const settings = entity.rigidBody;
             if (!settings)
-                return;
+                continue;
             this.visited.add(entity);
             let binding = this.bindings.get(entity);
             if (binding && this.needsRebuild(binding, settings)) {
@@ -140,17 +226,19 @@ export class PhysicsScene {
                 binding = this.createBinding(entity, settings);
                 vec3.copy(binding.body.linearVelocity, previous.linearVelocity);
                 vec3.copy(binding.body.angularVelocity, previous.angularVelocity);
-                return;
+                continue;
             }
             if (!binding) {
                 this.createBinding(entity, settings);
-                return;
+                continue;
             }
             binding.body.setMaterial(settings);
+            if (!sameCollisionLayers(binding.applied, settings))
+                this.applyCollisionLayers(binding, settings);
             if (!sameVec3(entity.transform.position, binding.writtenPosition) || !sameVec3(entity.transform.rotation, binding.writtenRotation)) {
                 this.teleportToEntity(binding);
             }
-        });
+        }
         for (const binding of this.bindings.values()) {
             if (!this.visited.has(binding.entity))
                 this.destroyBinding(binding);
@@ -159,11 +247,22 @@ export class PhysicsScene {
             if (!this.visited.has(binding.entity))
                 this.destroyTerrainBinding(binding);
         }
+        if (this.waterDirty) {
+            this.waterDirty = false;
+            this.publishWater(this.waterHeightsPending);
+            this.waterHeightsPending.clear();
+        }
     }
     private reconcileTerrain(entity: Entity): void {
         const existing = this.terrains.get(entity);
-        if (existing && sameMat4(existing.matrix, entity.worldMatrix))
+        if (existing && sameMat4(existing.matrix, entity.worldMatrix)) {
+            const signature = waterSignature(existing.water.terrain.water);
+            if (signature !== existing.waterSignature) {
+                existing.waterSignature = signature;
+                this.waterDirty = true;
+            }
             return;
+        }
         if (existing)
             this.destroyTerrainBinding(existing);
         const terrain = entity.terrain;
@@ -188,13 +287,18 @@ export class PhysicsScene {
             canSleep: true,
         });
         const matrix = mat4.copy(mat4.create(), entity.worldMatrix);
-        this.terrains.set(entity, { entity, body, water: new WaterVolume(terrain, matrix), matrix });
+        const key = this.nextTerrainKey++;
+        this.terrains.set(entity, { entity, body, water: new WaterVolume(terrain, matrix), matrix, key, waterSignature: waterSignature(terrain.water) });
         this.entityByBody.set(body, entity);
+        this.waterHeightsPending.add(key);
+        this.waterDirty = true;
     }
     private destroyTerrainBinding(binding: TerrainBinding): void {
         this.world.removeBody(binding.body);
         this.terrains.delete(binding.entity);
         this.entityByBody.delete(binding.body);
+        this.waterHeightsPending.delete(binding.key);
+        this.waterDirty = true;
     }
     syncToScene(alpha: number): void {
         this.scene.updateWorldMatrices();
@@ -279,6 +383,8 @@ export class PhysicsScene {
             angularDamping: applied.angularDamping,
             gravityScale: applied.gravityScale,
             canSleep: applied.canSleep,
+            layer: this.world.layers.indexOf(applied.layer ?? DEFAULT_COLLISION_LAYER),
+            collisionMask: this.world.layers.maskOf(applied.collidesWith),
         });
         const binding: PhysicsBinding = {
             entity,
@@ -299,6 +405,20 @@ export class PhysicsScene {
         this.world.removeBody(binding.body);
         this.bindings.delete(binding.entity);
         this.entityByBody.delete(binding.body);
+    }
+    private applyCollisionLayers(binding: PhysicsBinding, settings: RigidBodySettings): void {
+        const { body, applied } = binding;
+        body.layer = this.world.layers.indexOf(settings.layer ?? DEFAULT_COLLISION_LAYER);
+        body.collisionMask = this.world.layers.maskOf(settings.collidesWith);
+        if (settings.layer === undefined)
+            delete applied.layer;
+        else
+            applied.layer = settings.layer;
+        if (settings.collidesWith === undefined)
+            delete applied.collidesWith;
+        else
+            applied.collidesWith = settings.collidesWith.slice();
+        body.wake();
     }
     private teleportToEntity(binding: PhysicsBinding): void {
         this.readBodyPose(binding.entity, binding.applied);
