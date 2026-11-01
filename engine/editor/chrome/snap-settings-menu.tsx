@@ -2,7 +2,7 @@
 import { ChevronDown } from 'lucide-react';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { FieldInput } from '@/engine/ui/field-input';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import type { SnapSettings } from '@/engine/editor/session/editor-session';
 import { MENU_CONTENT_CLASS, MENU_LABEL_CLASS } from '@/engine/editor/menus/menu-styles';
 const STEPS: ReadonlyArray<{
@@ -15,10 +15,10 @@ const STEPS: ReadonlyArray<{
     { key: 'scale', label: 'Escalar', unit: '×' },
 ];
 export function SnapSettingsMenu() {
-    const session = useEditorState();
+    const session = useSessionTopic('tool');
     const { snap } = session;
     return (<DropdownMenu>
-      <DropdownMenuTrigger render={<button type="button" aria-label="Incrementos de alinhamento" title="Incrementos de alinhamento" className="ml-0.5 flex h-6 items-center gap-1 rounded-sm border border-border-strong px-1.5 font-mono text-[10px] text-muted-foreground transition-colors hover:bg-highlight hover:text-foreground"/>}>
+      <DropdownMenuTrigger render={<button type="button" aria-label="Incrementos de alinhamento" title="Incrementos de alinhamento" className="ml-0.5 flex h-control items-center gap-1 rounded-sm border border-border bg-surface-sunken px-1.5 font-mono text-3xs text-muted-foreground shadow-well transition-colors duration-100 hover:border-border-strong hover:text-foreground data-[popup-open]:border-primary/60 data-[popup-open]:text-foreground"/>}>
         <span>{snap.translate}u</span>
         <span className="text-muted-foreground/60">·</span>
         <span>{snap.rotate}°</span>
