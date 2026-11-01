@@ -52,8 +52,8 @@ function TexturePathField({ texture, onCommit }: {
     };
     return (<div className="flex min-w-0 flex-col gap-0.5">
       <FieldInput aria-label={`Caminho de ${texture.name}`} value={text} onChange={(event) => setText(event.currentTarget.value)} onBlur={commit} onKeyDown={onKeyDown} spellCheck={false}/>
-      {feedback === 'not-found' && <span className="text-[10px] text-warning">Nenhum arquivo com esse nome entre os adicionados.</span>}
-      {feedback === 'found' && <span className="text-[10px] text-primary">Arquivo encontrado e vinculado.</span>}
+      {feedback === 'not-found' && <span className="text-3xs text-warning">Nenhum arquivo com esse nome entre os adicionados.</span>}
+      {feedback === 'found' && <span className="text-3xs text-primary">Arquivo encontrado e vinculado.</span>}
     </div>);
 }
 function TextureRow({ texture, index, usages, draft, onPickFile }: {
@@ -72,9 +72,9 @@ function TextureRow({ texture, index, usages, draft, onPickFile }: {
       <div className="flex min-w-0 items-center gap-1.5">
         <span className="min-w-0 flex-1 truncate text-2xs text-foreground">{texture.name}</span>
         <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
-        {texture.data && <span className="font-mono text-[10px] text-muted-foreground">{formatBytes(texture.data.size)}</span>}
+        {texture.data && <span className="font-mono text-3xs text-muted-foreground">{formatBytes(texture.data.size)}</span>}
       </div>
-      <p className="truncate text-[10px] text-muted-foreground">
+      <p className="truncate text-3xs text-muted-foreground">
         {usages.length === 0 ? 'Não referenciada por nenhum material' : usages.map((usage) => `${usage.material} · ${usage.slot}`).join(', ')}
       </p>
       <div className="flex min-w-0 items-start gap-1">
@@ -113,12 +113,12 @@ export function ImportTexturesTab({ draft, notice, onDismissNotice, onCompanionF
             Procurar pasta…
           </Button>
         </div>
-        <p className="text-[10px] leading-4 text-muted-foreground">
+        <p className="text-3xs leading-4 text-muted-foreground">
           {missing > 0
             ? `${missing} ${missing === 1 ? 'textura ausente' : 'texturas ausentes'}. Adicione os arquivos (ou arraste-os para esta janela) para vinculá-los pelo nome.`
             : 'Todas as texturas foram resolvidas. Você ainda pode substituir qualquer uma por outro arquivo.'}
         </p>
-        {notice && (<div className="flex items-center gap-1.5 rounded-sm border border-primary/30 bg-primary/10 px-2 py-1 text-[10px] text-foreground">
+        {notice && (<div className="flex items-center gap-1.5 rounded-sm border border-primary/30 bg-primary/10 px-2 py-1 text-3xs text-foreground">
             <span className="min-w-0 flex-1">{notice}</span>
             <button type="button" onClick={onDismissNotice} aria-label="Fechar aviso" className="text-muted-foreground hover:text-foreground">
               <X className="size-3" aria-hidden/>
