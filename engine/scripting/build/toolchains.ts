@@ -269,3 +269,111 @@ async function probeKotlin(): Promise<KotlinToolchain> {
     return { language: 'kotlin', version: `Kotlin ${kotlinVersion} (JDK ${javaVersion})`, java, javac, home, compilerClasspath, stdlib };
 }
 export const SWIFT_TARGET = 'wasm32-unknown-wasip1';
+async function probeSwift(): Promise<SwiftToolchain> {
+    const root = toolchainsDir();
+    const swiftc = await locate([path.join(root, 'swift', 'toolchain', 'usr', 'bin', 'swiftc'), ...(process.env.SWIFT_HOME ? [path.join(process.env.SWIFT_HOME, 'usr', 'bin', 'swiftc')] : [])], 'swiftc');
+    if (!swiftc)
+        throw new ToolchainUnavailable('swift', `swiftc não foi encontrado no servidor. ${INSTALL_HINT}`);
+    const version = await run(swiftc, ['--version'], { cwd: root, timeoutMs: PROBE_TIMEOUT }).catch(() => null);
+    if (!version || version.code !== 0)
+        throw new ToolchainUnavailable('swift', `swiftc existe mas não responde: ${version?.stderr.trim() || 'sem saída'}.`);
+    const swiftVersion = /Swift version (\S+)/.exec(`${version.stdout}\n${version.stderr}`)?.[1] ?? version.stdout.trim().split('\n')[0];
+    const [major, minor] = swiftVersion.split('.').map(Number);
+    if (major < 6 || (major === 6 && minor < 2))
+        throw new ToolchainUnavailable('swift', `o Swift ${swiftVersion} é antigo demais: a engine precisa do Swift 6.2 ou mais novo (Swift SDK para WebAssembly do swift.org).`);
+    const sdk = await locateSwiftSdk(root);
+    if (!sdk) {
+        throw new ToolchainUnavailable('swift', `o Swift SDK para WebAssembly (${SWIFT_TARGET}) não foi encontrado: instale-o com scripts/install-toolchains.sh swift ou "swift sdk install" e, se preciso, aponte HELIX_SWIFT_SDK para a pasta ${SWIFT_TARGET} do artifactbundle.`);
+    }
+    const sysroot = path.join(sdk, 'WASI.sdk');
+    const resourceDir = path.join(sdk, 'swift.xctoolchain', 'usr', 'lib', 'swift_static');
+    const clangResourceDir = path.join(sdk, 'swift.xctoolchain', 'usr', 'lib', 'clang');
+    for (const required of [sysroot, resourceDir, clangResourceDir]) {
+        if (!(await exists(required)))
+            throw new ToolchainUnavailable('swift', `o Swift SDK em ${sdk} está incompleto: falta ${path.relative(sdk, required)}.`);
+    }
+    return { language: 'swift', version: `Swift ${swiftVersion}`, swiftc, target: SWIFT_TARGET, sysroot, resourceDir, clangResourceDir };
+}
+export const ZIG_TARGET = 'wasm32-wasi';
+const ZIG_MIN_MINOR = 17;
+async function probeZig(): Promise<ZigToolchain> {
+    const root = toolchainsDir();
+    const zig = await locate([path.join(root, 'zig', 'zig'), ...(process.env.ZIG_HOME ? [path.join(process.env.ZIG_HOME, 'zig')] : [])], 'zig');
+    if (!zig)
+        throw new ToolchainUnavailable('zig', `zig não foi encontrado no servidor. ${INSTALL_HINT}`);
+    const cacheDir = path.join(root, 'zig-cache');
+    const env: Record<string, string> = { ZIG_GLOBAL_CACHE_DIR: cacheDir, ZIG_LOCAL_CACHE_DIR: cacheDir };
+    const version = await run(zig, ['version'], { cwd: root, env, timeoutMs: PROBE_TIMEOUT }).catch(() => null);
+    if (!version || version.code !== 0)
+        throw new ToolchainUnavailable('zig', `zig existe mas não responde: ${version?.stderr.trim() || 'sem saída'}.`);
+    const tag = version.stdout.trim().split('\n')[0];
+    const [major, minor] = tag.split('.').map(Number);
+    if (major === 0 && minor < ZIG_MIN_MINOR)
+        throw new ToolchainUnavailable('zig', `o Zig ${tag} é antigo demais: a engine precisa do Zig 0.${ZIG_MIN_MINOR} ou mais novo.`);
+    return { language: 'zig', version: `Zig ${tag}`, zig, cacheDir, env };
+}
+const DART_MIN = { major: 3, minor: 3 };
+async function probeDart(): Promise<DartToolchain> {
+    const root = toolchainsDir();
+    const homes = [path.join(root, 'dart-sdk'), ...(process.env.DART_SDK ? [process.env.DART_SDK] : []), ...(process.env.DART_HOME ? [process.env.DART_HOME] : [])];
+    const dart = await locate(homes.map((home) => path.join(home, 'bin', 'dart')), 'dart');
+    if (!dart)
+        throw new ToolchainUnavailable('dart', `o Dart SDK (dart) não foi encontrado no servidor. ${INSTALL_HINT}`);
+    const env: Record<string, string> = { PUB_CACHE: path.join(root, 'pub-cache'), DART_SUPPRESS_ANALYTICS: 'true' };
+    const version = await run(dart, ['--version'], { cwd: root, env, timeoutMs: PROBE_TIMEOUT }).catch(() => null);
+    if (!version || version.code !== 0)
+        throw new ToolchainUnavailable('dart', `dart existe mas não responde: ${version?.stderr.trim() || 'sem saída'}.`);
+    const text = `${version.stdout}\n${version.stderr}`;
+    const tag = /Dart SDK version: (\S+)/.exec(text)?.[1] ?? text.trim().split('\n')[0];
+    const [major, minor] = tag.split('.').map(Number);
+    if (major < DART_MIN.major || (major === DART_MIN.major && minor < DART_MIN.minor)) {
+        throw new ToolchainUnavailable('dart', `o Dart ${tag} é antigo demais: a engine precisa do Dart ${DART_MIN.major}.${DART_MIN.minor} ou mais novo (dart:js_interop estável).`);
+    }
+    return { language: 'dart', version: `Dart ${tag}`, dart, env };
+}
+const HAXE_MIN = { major: 4, minor: 3 };
+async function probeHaxe(): Promise<HaxeToolchain> {
+    const root = toolchainsDir();
+    const homes = [path.join(root, 'haxe'), ...(process.env.HAXE_HOME ? [process.env.HAXE_HOME] : [])];
+    const haxe = await locate(homes.map((home) => path.join(home, 'haxe')), 'haxe');
+    if (!haxe)
+        throw new ToolchainUnavailable('haxe', `o compilador Haxe (haxe) não foi encontrado no servidor. ${INSTALL_HINT}`);
+    const std = process.env.HAXE_STD_PATH ?? path.join(path.dirname(haxe), 'std');
+    if (!(await exists(path.join(std, 'Std.hx'))))
+        throw new ToolchainUnavailable('haxe', `a biblioteca padrão do Haxe não está em ${std} (aponte HAXE_STD_PATH para a pasta std/ da distribuição).`);
+    const env: Record<string, string> = { HAXE_STD_PATH: std };
+    const version = await run(haxe, ['--version'], { cwd: root, env, timeoutMs: PROBE_TIMEOUT }).catch(() => null);
+    if (!version || version.code !== 0)
+        throw new ToolchainUnavailable('haxe', `haxe existe mas não responde: ${version?.stderr.trim() || 'sem saída'}.`);
+    const tag = `${version.stdout}\n${version.stderr}`.trim().split('\n')[0].trim();
+    const [major, minor] = tag.split(/[.+-]/).map(Number);
+    if (major < HAXE_MIN.major || (major === HAXE_MIN.major && minor < HAXE_MIN.minor)) {
+        throw new ToolchainUnavailable('haxe', `o Haxe ${tag} é antigo demais: a engine precisa do Haxe ${HAXE_MIN.major}.${HAXE_MIN.minor} ou mais novo.`);
+    }
+    return { language: 'haxe', version: `Haxe ${tag}`, haxe, std, env };
+}
+async function locateSwiftSdk(root: string): Promise<string | null> {
+    const isSdk = async (dir: string) => exists(path.join(dir, 'swift-sdk.json'));
+    if (process.env.HELIX_SWIFT_SDK)
+        return (await isSdk(process.env.HELIX_SWIFT_SDK)) ? process.env.HELIX_SWIFT_SDK : null;
+    const bundleRoots = [path.join(root, 'swift', 'sdk'), path.join(homedir(), '.swiftpm', 'swift-sdks')];
+    for (const bundles of bundleRoots) {
+        const entries = await readdir(bundles).catch(() => [] as string[]);
+        const direct = path.join(bundles, SWIFT_TARGET);
+        if (entries.includes(SWIFT_TARGET) && (await isSdk(direct)))
+            return direct;
+        for (const entry of entries.sort().reverse()) {
+            const bundle = path.join(bundles, entry);
+            const candidate = path.join(bundle, SWIFT_TARGET);
+            if (await isSdk(candidate))
+                return candidate;
+            const variants = await readdir(bundle).catch(() => [] as string[]);
+            for (const variant of variants.sort().reverse()) {
+                const nested = path.join(bundle, variant, SWIFT_TARGET);
+                if (await isSdk(nested))
+                    return nested;
+            }
+        }
+    }
+    return null;
+}
