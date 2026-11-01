@@ -278,3 +278,283 @@ Ponte: `renderer/camera/perspective-camera.ts`, `renderer/camera/orbit-controlle
 - `screenToRay(x, y): Ray`, `worldToScreen(point): { x, y, depth }`, `viewport: { width, height, pixelRatio }` `expor` (`gizmo/screen-space.ts` tem a conta)
 - `pick(x, y, options?): Entity | null`, `pickPoint(x, y): Vec3 | null` `engine` (`pickEntity`, `pickSurfacePoint`)
 - `shake(amplitude, seconds)`, `fade(color, seconds)` — açúcar sobre pós-processamento. `novo`
+- Câmera do jogador (`PlayerSettings.camera`): `distance, minDistance, maxDistance, pitch, minPitch, maxPitch, sensitivity, invertY, pivotHeight` `engine`
+- `helix.player.cameraControl: 'engine' | 'script'` — desliga a terceira pessoa para o script mover `main`. `expor`
+- Editor (só em `isEditor`): câmera orbital `editor.camera.*` (`settings/engine-settings-schema.ts`), `frame(entity)`. `engine`
+
+---
+
+## 7. Céu, atmosfera e clima — `helix.sky`
+
+Ponte: `core/environment/sky-settings.ts`, `sky-cycle.ts`, `celestial.ts`, `renderer/sky/*`.
+
+- `SkySettings`: `enabled, timeOfDay (0..24), cycleSpeed, latitude, sunAzimuth, haze, sunDiskScale, moonPhase, moonScale, moonlight, starsIntensity, skyLighting` `engine`
+- `clouds: CloudSettings`: `enabled, coverage, density, altitude, thickness, detail, windSpeed, windDirection, shadows, quality: 'low' | 'medium' | 'high'` `engine`
+- `advance(deltaSeconds)` (`advanceSkyCycle`), `wrapTimeOfDay(hours)`, `formatTimeOfDay(hours)` `engine`
+- Astros: `sunDirection(timeOfDay?, latitude?, azimuth?)`, `moonDirection(...)`, `moonPhaseName`, `moonLitFraction`, `hourAngle` `engine` (`celestial.ts`)
+- Presets: `helix.sky.preset('dawn' | 'noon' | 'dusk' | 'night' | 'overcast' | 'storm')` — conjuntos nomeados de `SkySettings` + `CloudSettings`; entram no painel Céu e na API ao mesmo tempo. `novo`
+- Eventos: `sky.hourChanged(hour)`, `sky.sunrise`, `sky.sunset`. `novo`
+- Substituir: `sky.enabled = false` apaga a cúpula e a iluminação do céu; `helix.render.skybox(texture | cubemap)` ou passe custom (seção 8.6). `engine` / `expor`
+- Vento global compartilhado com grama, água e VFX: `helix.world.wind: { direction, speed }` — hoje cada sistema tem o seu; a API unifica e os campos individuais viram overrides. `novo`
+
+---
+
+## 8. Gráficos e pós-processamento — `helix.render`, `helix.post`
+
+Ponte: `core/environment/post-process-settings.ts`, `renderer/renderer.ts`, `renderer/quality/render-profile.ts`, `renderer/post/*`, `renderer/passes/*`, `renderer/lod/*`, `renderer/culling/*`, `renderer/myriad/*`, `renderer/stats/*`, `renderer/gl/*`.
+
+### 8.1 Pós-processamento — `helix.post`
+
+- `PostProcessSettings`: `enabled, exposure, toneMapper: 'aces' | 'agx' | 'filmic' | 'neutral' | 'reinhard' | 'none'` `engine`
+- `whiteBalance { temperature, tint }` `engine`
+- `grading { contrast, saturation, vibrance, shadows, midtones, highlights, shadowTint, highlightTint, toneBalance }` `engine`
+- `bloom { enabled, intensity, threshold, softKnee, radius }` `engine`
+- `depthOfField { enabled, focusDistance, focalLength, aperture, maxBlur }`; `focusOn(entity)` açúcar. `engine` / `novo`
+- `vignette { enabled, intensity, smoothness, roundness }` `engine`
+- `chromaticAberration { enabled, intensity }` `engine`
+- `filmGrain { enabled, intensity, size, luminanceResponse }` `engine`
+- `lensDistortion { enabled, intensity, scale }` `engine`
+- `sharpen { enabled, intensity }` `engine`
+- `presets(): PostProcessPreset[]` (`natural, cinematic, vivid, vintage, noir, dreamy, clean`), `applyPreset(id)`, `assign(target, source)`, `create(options)` `engine`
+- `compareSplit: number | null` — divisão antes/depois (`RenderOptions.postCompareSplit`). `engine`
+- Transições: `helix.post.tween(path, value, seconds, easing)` — açúcar genérico sobre qualquer campo numérico. `novo`
+
+### 8.2 Opções do frame — `helix.render`
+
+- `showGrid, shadows, showCsgBrushes, lightHelpers, soundHelpers, vfxHelpers, skeletons` — overlays (`RenderOptions`). `engine`
+- `culling { frustumCulling, minPixelSize }` `engine`
+- `lod { enabled, bias }` (`renderer/lod/lod-selector.ts`) `engine`
+- `myriad { enabled, pixelError, occlusionCulling, shadowClusters, freeze, debugView: 'none' | 'clusters' | 'groups' | 'levels' | 'triangles' | 'normals' | 'occlusion' | 'hzb', hzbLevel, wireframe }` (`myriad-settings.ts`) `engine`
+- `terrainMaterialCache: boolean` `engine`
+- `profileGpu: boolean` `engine`
+- `pixelRatio`, `resolutionScale` `expor`
+- `antialias: 'smaa' | 'taa' | 'none'`, `shadowMapSize`, `hdrFormat` — hoje vêm do `RenderProfile` por tier; a API deixa sobrescrever por jogo. `expor`
+- `profile: RenderProfile` (só leitura) e `setProfile(partial)`: `tier, cloudStepsPerFrame, cloudInterleave, shadowMapSize, nearCascadePadding, farCascadePeriod, midCascadePeriod, shadowMaskScale, terrainCacheLevels, terrainCacheSize, terrainCacheTilesPerFrame, myriadActivationTriangles, antialias, smaaStencil, maxLocalLights, localShadowMapSize, localShadowFaces, localShadowFacesPerFrame, bloomLevels, bloomStartScale, depthOfFieldTaps, hdrFormat` `engine` / `expor`
+
+### 8.3 Estatísticas — `helix.render.stats`
+
+`FrameStats` só leitura: `drawCalls, triangles, myriad, width, height, pixelRatio, gpuName, gpuTier, softwareRenderer, shadersPending, shadersTotal, cpuMs, cpuStageMs, gpuStageMs, gpuMs, gpuTimerAvailable, meshCandidates, meshesVisible, frustumCulled, sizeCulled, chunks, chunksCulled` `engine`
+
+### 8.4 Passes e ganchos
+
+Ordem fixa dos passes da engine (`renderer/passes/*`): `shadow → localShadow → terrainDepth/depthPrepass → mesh → terrain → grass → water → sky → vfx → guiSurface → post (bloom, dof, composite, sharpen, smaa) → overlays (grid, gizmo, helpers, skeleton)`.
+
+- `helix.render.passes: { [name]: { enabled: boolean } }` — liga/desliga qualquer passe individualmente. `expor`
+- `onBeforePass(name, fn(gl, frame))`, `onAfterPass(name, fn)` — gancho com o `WebGL2RenderingContext` ativo e os alvos do frame. `novo`
+- `onBeforeFrame(fn)`, `onAfterFrame(fn)` `novo`
+- `frame: { sceneColor, sceneDepth, hdr, view, projection, viewProjection, cameraPosition, elapsed, delta }` — alvos e matrizes do frame atual para os ganchos (`renderer/gl/scene-render-target.ts`, `scene-color-capture.ts`). `expor`
+
+### 8.5 Acesso bruto e substituição total
+
+- `helix.render.gl: WebGL2RenderingContext` `expor`
+- `helix.render.canvas: HTMLCanvasElement`, `capabilities` (`gl/capabilities.ts`) `expor`
+- `createProgram(vertexSource, fragmentSource, defines?)` (`gl/shader-program.ts`), `createTexture`, `createRenderTarget(width, height, format)`, `createMesh(meshData)` (`gpu-mesh.ts`), `createInstanceBuffer(layout)`, `fullscreenTriangle()` `expor`
+- `helix.render.enabled = false` — a engine não desenha nada além de limpar; o script desenha tudo com `gl` em `onBeforeFrame`. Passes continuam disponíveis um a um para quem quer "a engine menos o que eu refaço". `expor`
+- `helix.render.custom.add(pass: { name, after: PassName, render(gl, frame) })` — passe próprio inserido na ordem. `novo`
+
+### 8.6 Shaders (GLSL / WGSL como ativos)
+
+- Ativo `script` com linguagem `glsl`/`wgsl` compila para um bundle (`renderer/shaders/custom/shader-bundle.ts`) em dois modelos: `surface` (`void surface(inout HelixSurface s)` em GLSL, `fn surface(s: ptr<function, HelixSurface>)` em WGSL, chamada dentro do fragmento de malha depois dos mapas do material e antes da iluminação) e `post` (`main` / `@fragment` de tela cheia sobre a imagem LDR). `engine`
+- Material com shader de superfície: `helix.material.fromShader(asset, uniforms?)` devolve um `Material` comum mais `uniforms` (`renderer/shaders/custom/material-shader-registry.ts`; o passe de malha troca o programa por estado de material, nas variantes opaca, deformada e transparente). `engine`
+- Chunks da engine disponíveis por `#include`: `brdf, scene-lighting, local-lights, shadow-sampling, noise, color, hdr-encoding, fullscreen, terrain-material, octahedral` (`renderer/shaders/chunks/*`). `engine`
+- Uniformes padrão injetados: `uView, uProjection, uViewProjection, uInverseViewProjection, uCameraPosition, uTime, uDelta, uResolution, uNear, uFar, uSunDirection, uSunColor` e, no modelo `post`, `uSceneColor, uSceneDepth` (em WGSL, a struct `helix` e os bindings do grupo 0). `engine`
+- `material.uniforms.set(name, value)` / `set({ ... })`, `get`, `has`, `list()`; textura por `sampler2D` (`Texture` ou `null`); nomes conferidos contra as declarações do shader, campos homônimos de dois blocos WGSL qualificados por `variavel.campo`. Também `helix.material.uniforms(target)`. `engine`
+- Pós-processamento custom: `helix.post.custom.add({ fragment: asset, name?, uniforms?, enabled? })` entra entre a composição (tone mapping, grading) e o antialiasing, na ordem de adição; cada efeito lê o anterior em `uSceneColor`. Devolve `{ name, enabled, uniforms, remove() }`; `get`, `remove`, `list`, `clear`. Um nome repetido substitui o efeito anterior na mesma posição. `engine`
+- Recarga a quente: salvar o ativo de shader com o jogo rodando troca o bundle nos materiais e efeitos ligados a ele; os valores de uniformes que ainda existem ficam. Um programa recusado pelo driver avisa no console e o lote sai com o material padrão (ou o efeito é pulado). `engine`
+- Substituir shaders da engine: `helix.render.shaders.override('mesh' | 'terrain' | 'water' | 'grass' | 'sky' | 'vfx' | 'gui-surface' | 'post/*', asset)`. `novo`
+
+---
+
+## 9. Física — `helix.physics`
+
+Ponte: `physics/world/physics-world.ts`, `physics/world/physics-settings.ts`, `physics/body/*`, `physics/shapes/*`, `physics/collision/*`, `physics/joints/*`, `physics/forces/*`, `physics/fluids/*`, `physics/scene/physics-scene.ts`, `character/*`.
+
+### 9.1 Mundo
+
+- `PhysicsSettings`: `gravity, fixedTimestep, substeps, solverIterations, relaxIterations, contactHertz, contactDampingRatio, contactPushMaxVelocity, linearSlop, speculativeDistance, restitutionThreshold, jointHertz, jointDampingRatio, jointPushMaxVelocity, maxLinearSpeed, sleepEnabled, sleepLinearThreshold, sleepAngularThreshold, timeToSleep, fallLimitY, warmStarting, waterDensity, waterDrag, waterAngularDrag` `engine`
+- `quality: 'low' | 'medium' | 'high'` (`matchPhysicsQuality`, presets) `engine`
+- `stats: { bodies, awake, manifolds, contactPoints, joints, stepMs, stepsLastAdvance, backend }` `engine`
+- `enabled: boolean` — pausa o `advance`. `expor`
+- `stepOnce()`, `discardAccumulatedTime()`, `interpolation` (alpha do frame) `engine`
+- `onPreStep(fn(h)): Unsubscribe` — `addPreStepHook`. `engine`
+- `addForceField({ wakeAffected(bodies, time), apply(bodies, h, time) }): Unsubscribe` — campo de força próprio, escrito à mão; os prontos estão em `helix.physics.forces` (§9.8). `engine`
+- `fluids`: volumes de água (`water-volume.ts`, `buoyancy-field.ts`) + `waterDensity/Drag` do mundo; `helix.physics.waterAt(point): WaterSample | null`. `engine` / `expor`
+- Backend em worker (`physics/worker/*`): o mundo da thread principal vira espelho e o `PhysicsWorkerCore` integra; corpos, juntas (criação, `markChanged`, remoção, quebra) e forças de scripts (`addForce`/`addTorque`) atravessam como comandos; poses, contatos e o estado das juntas (reação, coordenada, velocidade, quebra) voltam a cada quadro. `engine`
+
+### 9.2 Corpo rígido (componente)
+
+- `RigidBodySettings` no ator: `type: 'static' | 'kinematic' | 'dynamic', collider: 'box' | 'sphere' | 'capsule' | 'mesh', boxSize, radius, height, center, mass, friction, restitution, linearDamping, angularDamping, gravityScale, canSleep` `engine`
+- `fitCollider(entity)` (`collider-fit.ts`), `massProperties(entity)` (`mass-properties.ts`), `colliderRequiresStatic(kind)` `engine`
+- Materiais físicos (`materials/physical-material.ts`): `PhysicalProperties { density, friction, restitution, linearDamping }`; presets `generic, wood, stone, concrete, brick, metal, aluminum, glass, plastic, rubber, ice, fabric, foam, sand` → `physical.presets()`, `applyPhysical(entity, id)` (recalcula a massa por `massForMaterial`), `matchPhysicalPreset(props)`, `colliderVolume(entity)` `engine`
+- Corpo em runtime (`helix.physics.bodyOf(entity): RigidBody`, via `PhysicsScene.bindingOf`): `engine`
+  - leitura: `isStatic, isKinematic, isDynamic, isMoving, isResting, isActive, motionSpeed, position, orientation, mass, invMass` `engine`
+  - `linearVelocity`, `angularVelocity` — leitura e escrita. `expor`
+  - `applyImpulse(impulse, point?)`, `applyForce(force, point?)`, `applyTorque(torque)`, `applyAngularImpulse(...)` `engine` (impulso) / `expor` (demais)
+  - No `RigidBody` cru: `addForce(force)`, `addForceAtPoint(force, point)`, `addTorque(torque)` acumulam para o próximo passo (zerados ao fim dele); `applyImpulseAtPoint(impulse, point)`, `velocityAtPoint(out, point)`. `engine`
+  - `setPose`, `teleport(position, orientation)`, `moveKinematic(position, orientation, h)`, `setMaterial({ friction, restitution, linearDamping, angularDamping, gravityScale, canSleep })` `engine`
+  - `wake()`, `sleep()` `engine`
+  - `lockRotation(x, y, z)`, `lockPosition(x, y, z)` `novo`
+- Formas soltas (sem ator): `createBoxShape, createSphereShape, createCapsuleShape, createMeshShape(mesh, scale), createHeightfieldShape`, `shapeVolume`, `shapeAabb` `engine`
+
+### 9.3 Consultas espaciais
+
+- `raycast(origin, direction, maxDistance?, filter?): Hit | null` — `{ entity, body, point, normal, distance }`; usa BVH de malha, caixa/esfera/cápsula analíticas e heightfield do terreno. `expor` (peças: `mesh-raycast`, `collide-heightfield`, `triangle-mesh-bvh`)
+- `raycastAll(...)`: Hit[] `expor`
+- `overlapAabb(aabb, filter?)` — `PhysicsWorld.queryAabb`. `engine`
+- `overlapSphere(center, radius)`, `overlapBox(center, halfExtents, rotation)` `expor` (`collide-sphere`, `collide-box-box`)
+- `sweep(shape, from, to, filter?)`: Hit | null `novo`
+- `closestPoint(point, body)` (`closest-points.ts`) `engine`
+- `filter`: `{ layers?, exclude?: Entity[], tags?, kinds? }` `novo`
+
+### 9.4 Eventos de contato e gatilhos (triggers)
+
+A engine já computa manifolds e cache de contatos (`collision/manifold.ts`, `contact-cache.ts`); o que falta é entregar isso aos scripts.
+
+- `entity.rigidBody.isTrigger: boolean` — colide só para detectar, sem resposta. `novo`
+- Eventos por ator: `onCollisionBegin(other, contact)`, `onCollisionStay(other, contact)`, `onCollisionEnd(other)` — `contact: { point, normal, impulse, relativeVelocity }`. `expor`
+- `onTriggerEnter(other)`, `onTriggerStay(other)`, `onTriggerExit(other)` `expor`
+- Gatilho sem corpo (volume puro): `spawn('group', { trigger: { shape: 'box' | 'sphere', size | radius } })`. `novo`
+- Mundo: `onOutOfBounds(entity)` (abaixo de `fallLimitY`), `onUnstable(entity)` `engine`
+- Camadas e máscaras: `rigidBody.layer: string` (ausente = `"default"`), `rigidBody.collidesWith: string[]` (máscara própria, além da matriz); `helix.physics.layers.define([...])`, `setCollision(a, b, enabled)`, `collides(a, b)`, `list()`, `of(entity)`. A matriz vale para o mundo em andamento (defina no `onStart`); nomes novos entram ao aparecer; até 32 camadas. As consultas (`raycast`, `overlap*`) aceitam `filter.layers`. `engine`
+
+### 9.5 Personagem e controlador
+
+Ponte: `character/character-settings.ts`, `character-runtime.ts`, `controller/character-controller.ts`, `controller/character-input.ts`, `controller/terrain-collider.ts`.
+
+- `CharacterSettings` no ator: `autoPossess, model (asset), clips { idle, walk, run, crouch }, radius, height, crouchHeight, walkSpeed, runSpeed, crouchSpeed, acceleration, braking, airControl, jumpHeight, maxSlopeDegrees, stepHeight, rotationRate, mass` `engine`
+- `PlayerSettings` (cena): `enabled, spawnIfMissing, character, camera` `engine`
+- Runtime (`helix.character.of(entity)`): `isGrounded, isCrouching, horizontalSpeed, velocity, height, rigidBody, intent` `engine` / `expor`
+- Comandos: `move(x, z)`, `look(dx, dy)`, `jump()`, `run(bool)`, `crouch(bool)`, `teleport(position, yaw?)`, `setIntent(partial: CharacterIntent)` `expor`
+- Posse: `helix.player.possess(entity)`, `unpossess()`, `possessed: Entity | null`, `isPossessing` `engine`
+- Fonte de entrada: `inputSource: 'engine' | 'script'` — com `script`, o controlador só consome `setIntent`. `expor`
+- Eventos: `character.landed(speed)`, `character.jumped`, `character.crouched`, `character.stepped` (eventos de pé da animação). `novo`
+- Substituir: `rigidBody` cinemático + `moveKinematic` + `raycast/sweep` = controlador próprio; `helix.character.controllerClass` para registrar um substituto. `engine` / `novo`
+
+### 9.6 Substituir a física
+
+- `helix.physics.enabled = false` + `onFixedUpdate` + `transform` = física própria. `expor`
+- Ou manter detecção e trocar resposta: `onPreStep` + `applyImpulse`/`setPose` por corpo. `engine`
+- Integração externa (WASM: Rapier, Jolt, Box2D) entra como `PhysicsBackend` registrado: `helix.physics.backend = { createBody, removeBody, step, raycast, … }`. `novo`
+
+### 9.7 Juntas — `helix.physics.joints`
+
+Ponte: `physics/joints/joint-settings.ts` (definição, saneamento), `joint-builder.ts` (coordenadas de mundo → locais), `joint.ts` + um arquivo por tipo, `joint-math.ts` (peças do solver de passo mole), `joint-solver.ts`. As juntas entram antes dos contatos em cada fase do solver (warm start, solução com viés, relaxamento) e participam das ilhas de sono: acordar um corpo acorda quem está preso a ele. Dois corpos ligados não colidem entre si (`collideConnected: false`). Ângulos em radianos, distâncias em metros, forças em N, torques em N·m.
+
+- Tipos: `ball` (âncoras coincidentes, gira livre), `hinge` (um eixo), `slider` (translada num eixo, sem girar), `fixed` (solda; com `spring.hertz > 0` fica flexível), `distance` (haste; `limits` dá folga, `spring` vira amortecedor), `cone-twist` (cone de balanço `coneAngle` + torção em `limits`, para ragdoll), `wheel` (suspensão com mola e curso no `axis`, eixo de rolamento `axle` com `motor`, `brakeTorque` e `steeringAngle`). `engine`
+- Criar: `create(type, a, b | null, options)` ou `ball/hinge/slider/fixed/distance/coneTwist(a, b, options)`, `wheel(chassis, roda, options)`; `a`/`b` são atores ou handles de corpo, `b` nulo prende ao mundo (`PhysicsWorld.ground`, id 0). `options` em coordenadas de mundo: `anchor`, `anchorA`, `anchorB`, `axis`, `secondaryAxis`/`axle` + os parâmetros abaixo. A definição é saneada (`sanitizeJointDefinition`): eixos unitários e perpendiculares, limites ordenados, Hz ≤ ¼ da taxa de subpassos. `engine`
+- Parâmetros (criação, `joint.set(patch)` ou setters do handle, todos ao vivo): `enabled`, `collideConnected`, `limits: [min, max] | { min, max } | null`, `motor: { targetVelocity, maxForce? } | null`, `spring: { hertz, dampingRatio?, target? } | null`, `breakForce`, `breakTorque`, `length`, `coneAngle`, `brakeTorque`, `steeringAngle`. Cada mudança chama `Joint.markChanged()` (saneia, acorda os corpos e, no worker, reenvia a definição). `engine`
+- Leitura no handle: `type`, `isAngular`, `bodyA/bodyB`, `entityA/entityB`, `anchorA/anchorB/axis` (mundo), `isActive`, `isBroken`, `coordinate` (ângulo, translação, comprimento; na roda, a compressão da suspensão), `speed` (na roda, a rotação do eixo), `reactionForce`, `reactionTorque`, `axialForce`, `motorForce`. `engine`
+- Ciclo de vida: `remove()`, `break()` (dispara `onBreak`), `helix.physics.joints.remove(j)`, `all()`, `of(entity)`, `count`, `types`. Remover um corpo remove as juntas dele; as de um script saem quando ele para. `engine`
+- Quebra: a reação acima de `breakForce`/`breakTorque` solta a junta (fica como registro quebrado até `remove`); `helix.physics.joints.onBreak(({ joint, a, b }) => …)` e o evento `physics.jointBreak` no barramento. `engine`
+- Parâmetros globais das travas rígidas no painel Física → Juntas: `jointHertz` (padrão 60), `jointDampingRatio` (2), `jointPushMaxVelocity` (20 m/s). `engine`
+- Teste headless: `pnpm test:physics-joints` (pêndulo, limites, motor, mola, solda, haste, cone, carro, quebra, campos e paridade com o worker).
+
+### 9.8 Campos de força prontos — `helix.physics.forces`
+
+Ponte: `physics/forces/field-region.ts` (regiões), `region-field.ts` (base), `directional-field.ts`, `radial-field.ts`, `vortex-field.ts`, `drag-field.ts`, `explosion.ts`. Agem sobre corpos dinâmicos dentro da região, a cada subpasso, mudando velocidades (impulso = força × subpasso); os que movem corpos parados acordam os adormecidos na região (o arrasto não). Em `mode: 'acceleration'` (padrão) a intensidade é em m/s² e vale para qualquer massa; em `'force'` é em N e os leves sentem mais.
+
+- Regiões: `everywhere()`, `sphere(center, radius, falloff?)`, `box(center, halfExtents, falloff?)`; `falloff` (0 a 1) é a fração do raio em que o efeito cai suavemente até a borda. Também aceitam `{ center, radius }` / `{ center, halfExtents }` direto em `region`. `engine`
+- `directional({ direction, strength, mode?, region? })` — vento, esteira, gravidade extra. `engine`
+- `radial({ center, strength, radius?, falloff?: 'none' | 'linear' | 'inverse-square', mode?, region? })` — `strength > 0` repele, `< 0` atrai; `inverse-square` vale a 1 m e cai com 1/r². `engine`
+- `vortex({ center, axis?, strength, inwardStrength?, liftStrength?, radius?, falloff?, mode?, region? })` — tangencial, para o eixo e ao longo dele. `engine`
+- `drag({ linear?, quadratic?, angular?, region? })` — implícito (divide a velocidade), estável com qualquer coeficiente. `engine`
+- `explode(center, radius, strength, { falloff?, upwardBias?, mode?: 'impulse' | 'velocity' }): number` — impulso radial instantâneo aplicado no ponto do corpo mais próximo do centro (gira os destroços); devolve quantos corpos atingiu. `engine`
+- Handles: `enabled`, `region`, os parâmetros do tipo (todos ao vivo), `attached`, `remove()`; `helix.physics.forces.remove(field)`. Os campos de um script saem quando ele para. Com a física no worker, os campos de scripts rodam na thread principal sobre os espelhos, uma vez por frame, e as velocidades resultantes seguem ao worker. `engine`
+
+---
+
+## 10. Terreno — `helix.terrain`
+
+Ponte: `terrain/core/*`, `terrain/generation/*`, `terrain/sculpt/*`, `terrain/materials/*`, `terrain/foliage/*`, `terrain/water/*`, `terrain/chunks/*`, `editor/commands/terrain-commands.ts`.
+
+### 10.1 Criar e dimensionar
+
+- `spawn('terrain', { terrain: { size, resolution, splatResolution, layers?, shading?, grass?, water? } })` `engine`
+- `Terrain`: `size, resolution, cellSize, halfSize, heightfield, splat, grassMap, layers, shading, grass, water, tiles, localBounds, heightVersion, splatVersion, grassVersion` `engine`
+- `resample(resolution)` (`Heightfield.resampled`), `resize(size)` `engine` / `expor`
+
+### 10.2 Alturas (Heightfield)
+
+- `get(x, z)`, `set(x, z, height)`, `sample(gx, gz)`, `sampleTriangulated`, `normalAt`, `slopeAt`, `minMax()`, `fill(height)`, `clone()`, `copyRegion(region)`, `pasteRegion(region, data)` `engine`
+- Em coordenadas do mundo: `heightAt(point)`, `normalAt(point)`, `contains(point)` (`heightAtLocal` + transform) `engine`
+- `raycast(ray): TerrainHit | null` `engine`
+- `markDirty(region?)` — `heightVersion++`, reconstrói física (`PhysicsScene.reconcileTerrain`) e tiles. `expor`
+- Coordenadas: `localToGrid, gridToLocal, localToTexel, localToSplat, localToGrassTexel`, `gridRegionAround(x, z, radius)` `engine`
+
+### 10.3 Geração procedural
+
+- `TerrainGenerationParams`: `preset: 'flat' | 'hills' | 'mountains' | 'valley' | 'islands' | 'plateau' | 'dunes', seed, amplitude, featureSize, detail, erosion` `engine`
+- `generate(terrain, params)` (`generateTerrainHeights`) `engine`
+- `generateWith(terrain, fn(u, v, x, z) => height)` — função do usuário, mesma malha e mesmo cache. `expor`
+- `autoPaint(terrain)` — regras automáticas das camadas (`generation/auto-paint.ts`). `engine`
+- Ruído disponível em `helix.math.noise` para quem gera o próprio heightmap; `fromImage(image, minHeight, maxHeight)` importa heightmap. `engine` / `expor`
+
+### 10.4 Esculpir
+
+- `BrushSettings`: `radius, strength, falloff: 'smooth' | 'linear' | 'spherical' | 'tip' | 'flat'` `engine`
+- `Stamp`: `cx, cz, radius, falloff` (coordenadas de grade) `engine`
+- `raise(stamp, delta)`, `smooth(stamp, amount)`, `flatten(stamp, target, amount)`, `noise(stamp, amplitude, scaleCells, seed)`, `terrace(stamp, step, amount)`, `erodeThermal(region, talusSlope, amount)` `engine`
+- Atalho em mundo: `helix.terrain.sculpt(terrain, tool, worldPoint, brush, amount)`. `expor`
+- Histórico: `beginStroke()` / `endStroke()` agrupa para o desfazer do editor (`terrain-commands.ts`); em jogo é só marcação de região. `engine`
+
+### 10.5 Camadas e pintura
+
+- `TerrainLayer`: `id, name, material: TerrainMaterial, tiling, tint, normalStrength, roughness, auto: { enabled, slopeMin, slopeMax, heightMin, heightMax, softness }` `engine`
+- `addLayer(terrain, material, overrides?)`, `removeLayer`, `moveLayer`, `cloneLayer` `engine`
+- Materiais: catálogo (`terrain/materials/material-catalog.ts`: `grass, meadow, dirt, mud, rock, gravel, sand, snow`) e biblioteca (`terrainMaterialForDocument`) → `helix.terrain.materials.catalog()`, `fromLibrary(materialId)`, `fromTextures({ albedo, normal, ormh })` (`ormh-packer.ts`). `engine`
+- Splat (`SplatMap`): `weight(tx, tz, layer)`, `readWeights`, `writeWeights`, `blend(tx, tz, layer, amount)`; `paint(worldPoint, layer, brush, amount)` em mundo. `engine` / `expor`
+- `shading: TerrainShading` (`terrain-shading.ts`). `engine`
+
+### 10.6 Grama e vegetação
+
+- `GrassSettings`: `enabled, density, height, heightVariation, width, clumping, bend, viewDistance, maxSlope, windStrength, windSpeed, windDirection, baseColor, tipColor, colorVariation, groundBlend, translucency, trample, recoverySeconds` `engine`
+- `GrassMap`: densidade pintada; `paintGrass(worldPoint, brush, amount)` (`grass-paint-tool.ts`) `engine`
+- Interatores (amassar grama): `helix.terrain.grass.addInteractor(entity, radius)`, automático para personagens e corpos em movimento (`renderer/foliage/grass-interactors.ts`). `expor`
+- Instâncias de vegetação (árvores, pedras) por `scatter(terrain, modelAsset, { density, maxSlope, minHeight, maxHeight, seed, alignToNormal, scaleRange })`. `novo`
+
+### 10.7 Água
+
+- `WaterSettings`: `enabled, level, shallowColor, deepColor, clarity, waveHeight, waveLength, waveSpeed, waveDirection, choppiness, ripples, foam: WaterFoamSettings, reflectivity, roughness, refraction, caustics, subsurface` `engine`
+- `sampleSurface(x, z, time?): WaterSample` (`sampleWaterSurface`) — altura e normal da onda para boias e barcos. `engine`
+- `isUnderwater(point)`, `depthAt(point)` `expor`
+- Volumes de água fora do terreno (piscina, rio): `spawn('group', { water: { size, settings } })`. `novo`
+- Eventos: `water.entered(entity)`, `water.exited(entity)`. `novo`
+
+### 10.8 Streaming e tiles
+
+- `tiles: TerrainTileBounds`, `regionChangeLog` (`chunks/*`) — leitura; `helix.terrain.onRegionChanged(fn)`. `expor`
+- Vários terrenos lado a lado (mundo aberto): `helix.terrain.stitch(a, b, edge)`. `novo`
+
+---
+
+## 11. Interface (GUI) — `helix.gui`
+
+Ponte: `gui/document/*`, `gui/layout/*`, `gui/runtime/gui-runtime.ts`, `gui/render/gui-renderer.ts`, `gui/world/*`, `gui/fonts/*`, `gui/icons/*`, `gui/templates/*`, `editor/playtest/playtest-hud.ts`, `editor/commands/gui-commands.ts`.
+
+### 11.1 Telas (documentos)
+
+- `GuiDocument`: `name, referenceSize, scaleMode: 'none' | 'width' | 'height' | 'shorter' | 'longer', enabled, displayOrder, root` `engine`
+- `load(asset): Screen`, `create(name, referenceSize?)`, `show(screen)`, `hide(screen)`, `screens(): Screen[]`, `setDocuments([...])` `engine` / `expor`
+- Por script, a tela é um handle vivo: `create` devolve um documento que `add`/`find`/`setText` aceitam antes ou depois de `show`; qualquer versão devolvida — ou o nome — identifica a mesma tela, então linguagens que convertem objetos na ponte (Lua, Python) a encontram do mesmo jeito. `hide` a tira da HUD sem esquecê-la. `engine`
+- Atores `gui` na cena (`kind: 'gui'`) são telas ligadas à cena; `spawn('gui', { gui: asset })`. `engine`
+- Serialização: `toJson(screen)`, `fromJson(json)` (`gui-io.ts`); HTML/CSS/SVG como ativos viram documentos pelo conversor da seção 11.9. `engine` / `novo`
+
+### 11.2 Nós (elementos)
+
+- `GuiElementKind`: `frame | text | image | icon | button | toggle | slider | progress | input | scroll | divider | video | viewport` `engine`
+- `GuiNode`: `id, name, kind, visible, locked, interactable, clipsContent, rect, appearance, layout, text, image, icon, control, states, children` `engine`
+- Árvore (`gui-tree.ts`): `find(screen, nameOrId)`, `findAll`, `create(kind, props, parent, index?)`, `remove(node)`, `move(node, parent, index)`, `clone(node)`, `parentOf(node)`, `path(node)` `engine`
+- Toda escrita é imutável por baixo (`GuiNode` é `readonly`): `helix.gui.set(node, { rect: {...} })` devolve o nó novo e a tela atualizada; a ponte esconde isso com setters nas linguagens mutáveis. `engine` / `expor`
+
+### 11.3 Posição e tamanho — `rect`
+
+- `GuiRect`: `position: UDim2, size: UDim2, anchor: GuiPoint, rotation, zIndex, autoSize: 'none' | 'x' | 'y' | 'xy'` `engine`
+- `UDim2 { x: { scale, offset }, y: { scale, offset } }`; helpers `udim(scale, offset)`, `udim2(sx, ox, sy, oy)`, `px(n)`, `pct(n)` `engine`
+- Layout automático: `GuiAutoLayout { kind: 'none' | 'list' | 'grid', direction, gap, padding, mainAlign, crossAlign, wrap }` `engine`
+- Resultado medido: `layoutOf(node): { x, y, width, height }` (`GuiLayoutResult`), `hitTest(screen, x, y)` (`gui-hit-test.ts`) `engine`
+
+### 11.4 Aparência
+
+- `GuiAppearance`: `fill { color, alpha, gradient: { kind: 'linear' | 'radial', angle, stops[] } | null }, stroke { width, color, alpha } | null, radii [tl, tr, br, bl], shadow { color, alpha, blur, offsetX, offsetY } | null, opacity` `engine`
+- `GuiStates`: `hover, pressed, disabled: GuiStateStyle | null, transitionMs` `engine`
+- Texto (`GuiTextStyle`): `content, family, size, weight, italic, color, alpha, align, verticalAlign, lineHeight, letterSpacing, wrap, uppercase, shadow, outline, fitToBox` `engine`
