@@ -1,8 +1,25 @@
 import { readPreference, writePreference } from '@/engine/core/storage/preferences';
 export type DockArea = 'left' | 'right' | 'bottom';
-export type DockPanelId = 'hierarchy' | 'inspector' | 'terrain' | 'character' | 'environment' | 'physics' | 'performance' | 'assets' | 'animation' | 'console';
+export type DockPanelId = 'hierarchy' | 'inspector' | 'lights' | 'terrain' | 'character' | 'environment' | 'postprocess' | 'physics' | 'performance' | 'assets' | 'animation' | 'audio' | 'vfx' | 'interface' | 'scripts' | 'console';
 export const DOCK_AREAS: readonly DockArea[] = ['left', 'right', 'bottom'];
-export const DOCK_PANEL_IDS: readonly DockPanelId[] = ['hierarchy', 'inspector', 'terrain', 'character', 'environment', 'physics', 'performance', 'assets', 'animation', 'console'];
+export const DOCK_PANEL_IDS: readonly DockPanelId[] = [
+    'hierarchy',
+    'inspector',
+    'lights',
+    'terrain',
+    'character',
+    'environment',
+    'postprocess',
+    'physics',
+    'performance',
+    'assets',
+    'animation',
+    'audio',
+    'vfx',
+    'interface',
+    'scripts',
+    'console',
+];
 export const DOCK_AREA_LABELS: Record<DockArea, string> = { left: 'Esquerda', right: 'Direita', bottom: 'Inferior' };
 export interface DockAreaLimits {
     readonly initial: number;
@@ -10,9 +27,9 @@ export interface DockAreaLimits {
     readonly max: number;
 }
 export const DOCK_AREA_LIMITS: Record<DockArea, DockAreaLimits> = {
-    left: { initial: 260, min: 200, max: 480 },
-    right: { initial: 320, min: 240, max: 560 },
-    bottom: { initial: 240, min: 120, max: 520 },
+    left: { initial: 248, min: 200, max: 480 },
+    right: { initial: 300, min: 240, max: 560 },
+    bottom: { initial: 220, min: 120, max: 520 },
 };
 export interface DockAreaState {
     readonly panels: readonly DockPanelId[];
@@ -24,20 +41,27 @@ export interface DockLayoutState {
     readonly maximized: boolean;
     readonly dragging: DockPanelId | null;
 }
+export const DEFAULT_OPEN_PANELS: readonly DockPanelId[] = ['hierarchy', 'inspector', 'assets', 'console'];
 export const DEFAULT_PANEL_AREA: Record<DockPanelId, DockArea> = {
     hierarchy: 'left',
     inspector: 'right',
+    lights: 'right',
     terrain: 'right',
     character: 'right',
     environment: 'right',
+    postprocess: 'right',
     physics: 'right',
     performance: 'right',
     assets: 'bottom',
     animation: 'bottom',
+    audio: 'bottom',
+    vfx: 'bottom',
+    interface: 'bottom',
+    scripts: 'left',
     console: 'bottom',
 };
 const PREFERENCE_KEY = 'dock-layout';
-const PERSIST_VERSION = 1;
+const PERSIST_VERSION = 2;
 const PERSIST_DELAY_MS = 400;
 interface PersistedLayout {
     version: number;
@@ -58,7 +82,7 @@ function defaultAreas(): Record<DockArea, DockAreaState> {
         right: { panels: [], active: null, size: DOCK_AREA_LIMITS.right.initial },
         bottom: { panels: [], active: null, size: DOCK_AREA_LIMITS.bottom.initial },
     };
-    for (const id of DOCK_PANEL_IDS)
+    for (const id of DEFAULT_OPEN_PANELS)
         areas[DEFAULT_PANEL_AREA[id]].panels.push(id);
     for (const area of DOCK_AREAS)
         areas[area].active = areas[area].panels[0] ?? null;
