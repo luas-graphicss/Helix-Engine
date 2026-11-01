@@ -360,8 +360,75 @@ export class Renderer {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         stats.width = canvas.width;
         stats.height = canvas.height;
-        stats.pixelRatio = canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : 1;
+        stats.pixelRatio = this.canvasSize.pixelRatio;
         stats.cpuMs = performance.now() - started;
+        stats.settled = false;
+        stats.transient = true;
+    }
+    private fillShaderInputs(camera: PerspectiveCamera, options: RenderOptions, width: number, height: number): void {
+        const inputs = this.shaderInputs;
+        inputs.time = options.elapsedSeconds;
+        inputs.delta = options.deltaSeconds;
+        inputs.width = width;
+        inputs.height = height;
+        inputs.near = camera.near;
+        inputs.far = camera.far;
+        inputs.view.set(camera.viewMatrix);
+        inputs.projection.set(camera.projectionMatrix);
+        inputs.viewProjection.set(camera.viewProjectionMatrix);
+        inputs.inverseViewProjection.set(camera.inverseViewProjectionMatrix);
+        inputs.cameraPosition.set(camera.position);
+        inputs.sceneColor = null;
+        inputs.sceneDepth = null;
+    }
+    private readonly reportShader = (message: string): void => {
+        if (this.scriptRequest)
+            this.scriptRequest.warn(message);
+        else
+            console.warn(`[helix] ${message}`);
+    };
+    private fillScriptFrame(frame: ScriptFrameTarget, camera: PerspectiveCamera, options: RenderOptions): void {
+        const { canvas } = this;
+        frame.gl = this.gl;
+        frame.width = canvas.width;
+        frame.height = canvas.height;
+        frame.pixelRatio = this.canvasSize.pixelRatio;
+        frame.elapsed = options.elapsedSeconds;
+        frame.view.set(camera.viewMatrix);
+        frame.projection.set(camera.projectionMatrix);
+        frame.viewProjection.set(camera.viewProjectionMatrix);
+        frame.cameraPosition.set(camera.position);
+        frame.sceneColor = null;
+        frame.sceneDepth = null;
+        frame.hdr = true;
+    }
+    private renderScriptsOnly(scripts: ScriptRenderRequest, camera: PerspectiveCamera, started: number): void {
+        const { gl, canvas, stats } = this;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(...CLEAR_COLOR);
+        gl.depthMask(true);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        scripts.frame.hdr = false;
+        let drawCalls = 0;
+        for (const pass of SCRIPT_RENDER_PASSES) {
+            scripts.beforePass(pass);
+            scripts.afterPass(pass);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
+        drawCalls += this.scriptDebugPass.render(scripts.debugLines, camera);
+        scripts.after();
+        this.gpuTimer.endFrame();
+        this.skins.endFrame();
+        this.terrainGpu.endFrame();
+        this.customPrograms.endFrame();
+        stats.drawCalls = drawCalls;
+        stats.width = canvas.width;
+        stats.height = canvas.height;
+        stats.pixelRatio = this.canvasSize.pixelRatio;
+        stats.cpuMs = performance.now() - started;
+        stats.settled = false;
+        stats.transient = false;
     }
     private endCpuStage(stage: FrameStage, stageStart: number): number {
         const now = performance.now();
@@ -370,7 +437,9 @@ export class Renderer {
     }
     private publishStats(drawCalls: number, cloudsEnabled: boolean, started: number): void {
         const { stats, canvas, visible } = this;
-        stats.gpuMs = this.gpuTimer.available ? this.gpuTimer.averages.total() : 0;
+        const timing = this.gpuTimer.enabled;
+        stats.gpuStageMs = timing ? this.gpuTimer.averages.ms : null;
+        stats.gpuMs = timing ? this.gpuTimer.averages.total() : 0;
         stats.drawCalls = drawCalls + this.myriad.stats.drawCalls;
         stats.triangles =
             this.meshPass.stats.triangles + this.terrainPass.stats.triangles + this.myriad.stats.triangles + this.grassPass.stats.triangles + this.waterPass.stats.triangles;
@@ -382,9 +451,17 @@ export class Renderer {
         stats.grassInteractors = grass.interactors;
         stats.waterDrawCalls = this.waterPass.stats.drawCalls;
         stats.waterTriangles = this.waterPass.stats.triangles;
+        stats.vfxParticles = this.vfxPass.stats.particles;
+        stats.vfxDrawCalls = this.vfxPass.stats.drawCalls;
+        const reflections = this.reflections.stats;
+        stats.reflectionProbeFaces = reflections.probeFaces;
+        stats.reflectionProbeValid = this.reflections.binding.probeValid;
+        stats.reflectionScreenTraced = reflections.screenTraced;
+        stats.reflectionDrawCalls = reflections.drawCalls;
         stats.width = canvas.width;
         stats.height = canvas.height;
-        stats.pixelRatio = canvas.clientWidth > 0 ? canvas.width / canvas.clientWidth : 1;
+        stats.pixelRatio = this.canvasSize.pixelRatio;
+        stats.renderScale = this.lastRenderScale;
         stats.cloudWidth = cloudsEnabled ? this.sky.stats.cloudWidth : 0;
         stats.cloudHeight = cloudsEnabled ? this.sky.stats.cloudHeight : 0;
         stats.meshCandidates = visible.stats.candidates;
@@ -395,8 +472,19 @@ export class Renderer {
         stats.chunksCulled = visible.stats.cellsCulled;
         stats.instances = this.meshPass.stats.instances;
         stats.batches = this.meshPass.stats.batches;
-        stats.shadowDrawCalls = this.shadowPass.stats.drawCalls;
-        stats.shadowTriangles = this.shadowPass.stats.triangles;
+        stats.shadowDrawCalls = this.shadowPass.stats.drawCalls + this.localShadowPass.stats.drawCalls;
+        stats.shadowTriangles = this.shadowPass.stats.triangles + this.localShadowPass.stats.triangles;
+        const localLights = this.localLights.stats;
+        stats.localLights = localLights.visible;
+        stats.localLightsCulled = localLights.culled;
+        stats.localLightTilesLit = localLights.tilesLit;
+        stats.localLightTiles = localLights.tiles;
+        const localShadows = this.localShadowPass.stats;
+        stats.localShadowFaces = localShadows.facesUsed;
+        stats.localShadowRendered = localShadows.facesRendered;
+        stats.localShadowPostponed = localShadows.facesPostponed;
+        stats.localShadowDeferred = localShadows.lightsDeferred;
+        stats.localShadowDrawCalls = localShadows.drawCalls;
         for (let level = 0; level < MAX_LOD_LEVELS; level++)
             stats.lodPerLevel[level] = this.lod.stats.perLevel[level];
         stats.lodPending = this.lod.stats.pending;
@@ -415,21 +503,34 @@ export class Renderer {
         stats.cpuMs = performance.now() - started;
     }
     dispose(): void {
+        this.canvasSize.dispose();
         this.gpuTimer.dispose();
         this.lod.dispose();
         this.myriad.dispose();
         this.sky.dispose();
+        this.customPost.dispose();
+        this.customPrograms.dispose();
         this.postPass.dispose();
+        this.scriptDebugPass.dispose();
         this.skeletonPass.dispose();
+        this.lightHelperPass.dispose();
+        this.soundHelperPass.dispose();
         this.gizmoPass.dispose();
         this.gridPass.dispose();
+        this.guiSurfacePass.dispose();
+        this.vfxPass.dispose();
+        this.vfxHelperPass.dispose();
         this.meshPass.dispose();
         this.waterPass.dispose();
         this.grassPass.dispose();
         this.terrainPass.dispose();
         this.terrainCache.dispose();
         this.shadowMaskPass.dispose();
+        this.probeShadowMask.dispose();
+        this.reflections.dispose();
         this.sceneTarget.dispose();
+        this.localShadowPass.dispose();
+        this.localLights.dispose();
         this.shadowPass.dispose();
         this.terrainShadows.dispose();
         this.terrainGpu.dispose();
@@ -440,4 +541,44 @@ export class Renderer {
         this.meshes.dispose();
         this.triangle.dispose();
     }
+}
+type LensEffectKey = 'depthOfField' | 'vignette' | 'chromaticAberration' | 'filmGrain';
+type LiteEffectCache = {
+    [K in LensEffectKey]: PostProcessSettings[K] | null;
+};
+interface LitePostCache {
+    settings: PostProcessSettings | null;
+    effects: LiteEffectCache;
+}
+function createLitePostSettings(): LitePostCache {
+    return { settings: null, effects: { depthOfField: null, vignette: null, chromaticAberration: null, filmGrain: null } };
+}
+function disabledEffect<K extends LensEffectKey>(cache: LitePostCache, key: K, effect: PostProcessSettings[K]): PostProcessSettings[K] {
+    const effects: LiteEffectCache = cache.effects;
+    let copy = effects[key] as PostProcessSettings[K] | null;
+    if (!copy) {
+        copy = { ...effect };
+        effects[key] = copy;
+    }
+    Object.assign(copy, effect);
+    copy.enabled = false;
+    return copy;
+}
+function editorLitePost(cache: LitePostCache, source: PostProcessSettings): PostProcessSettings {
+    if (!source.enabled)
+        return source;
+    const { depthOfField, vignette, chromaticAberration, filmGrain } = source;
+    if (!depthOfField.enabled && !vignette.enabled && !chromaticAberration.enabled && !filmGrain.enabled)
+        return source;
+    const lite = cache.settings ?? (cache.settings = { ...source });
+    Object.assign(lite, source);
+    if (depthOfField.enabled)
+        lite.depthOfField = disabledEffect(cache, 'depthOfField', depthOfField);
+    if (vignette.enabled)
+        lite.vignette = disabledEffect(cache, 'vignette', vignette);
+    if (chromaticAberration.enabled)
+        lite.chromaticAberration = disabledEffect(cache, 'chromaticAberration', chromaticAberration);
+    if (filmGrain.enabled)
+        lite.filmGrain = disabledEffect(cache, 'filmGrain', filmGrain);
+    return lite;
 }
