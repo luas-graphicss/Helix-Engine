@@ -1014,3 +1014,223 @@ export function call(receiver: unknown, name: string, args: unknown[], where?: s
     }
     return missingMethod(object, name, where, methodsOf(object));
 }
+export function callable(receiver: unknown, name: string): Fn {
+    if (receiver !== null && typeof receiver === 'object') {
+        const member = (receiver as Record<string, unknown>)[name];
+        if (typeof member === 'function' && !Array.isArray(receiver))
+            return makeCallable(receiver, name, member as Fn);
+    }
+    return makeCallable(receiver, name, (...args: unknown[]) => call(receiver, name, args));
+}
+export function get(receiver: unknown, name: string, where?: string): unknown {
+    if (receiver === null || receiver === undefined)
+        fail(`Índice "${name}" inválido em null${where ? ` (${where} é null)` : ''}.`);
+    switch (typeof receiver) {
+        case 'string':
+            if (STRING_METHODS[name])
+                return callable(receiver, name);
+            return fail(`String não tem a propriedade "${name}"${where ? ` (${where})` : ''}.`);
+        case 'function': {
+            const member = (receiver as unknown as Record<string, unknown>)[name];
+            if (member !== undefined)
+                return typeof member === 'function' && !isScriptClass(member) ? makeCallable(receiver, name, member as Fn) : member;
+            if (CALLABLE_METHODS[name])
+                return callable(receiver, name);
+            return fail(`${describeTypeOf(receiver)} não tem a propriedade "${name}".${suggestionText(name, Object.keys(receiver as object))}`);
+        }
+        case 'object':
+            break;
+        default:
+            return fail(`${describeTypeOf(receiver)} não tem a propriedade "${name}".`);
+    }
+    const object = receiver as Record<string, unknown>;
+    if (Array.isArray(object)) {
+        if (ARRAY_METHODS[name])
+            return callable(object, name);
+        return fail(`Array não tem a propriedade "${name}"${where ? ` (${where})` : ''}; para um elemento use [índice].`);
+    }
+    if (object instanceof Dictionary) {
+        if (object.has(name))
+            return norm(object.get(name));
+        if (DICT_METHODS[name])
+            return callable(object, name);
+        return fail(`A chave "${name}" não existe no Dictionary${where ? ` ${where}` : ''}.${suggestionText(name, object.keys().filter((key): key is string => typeof key === 'string'))}`);
+    }
+    const value = object[name];
+    if (value === undefined) {
+        if (isVecLike(object) && typeof (vectorPrototype(object) as Record<string, unknown>)[name] === 'function')
+            return callable(object, name);
+        if (isScriptInstance(object)) {
+            if (name in object)
+                return null;
+            return fail(`"${name}" não existe em ${describeReceiver(object, where)}.${suggestionText(name, Object.keys(object).concat(methodsOf(object)))}`);
+        }
+        const view = dictView(object);
+        if (view && DICT_METHODS[name] && !(name in object))
+            return callable(object, name);
+        return null;
+    }
+    if (typeof value === 'function' && !isScriptClass(value))
+        return makeCallable(object, name, value as Fn);
+    return value;
+}
+export function set(receiver: unknown, name: string, value: unknown, where?: string): void {
+    if (receiver === null || receiver === undefined)
+        fail(`Índice "${name}" inválido em null${where ? ` (${where} é null)` : ''}.`);
+    if (typeof receiver !== 'object' && typeof receiver !== 'function')
+        fail(`Não é possível atribuir "${name}" em ${describeTypeOf(receiver)}.`);
+    if (receiver instanceof Dictionary) {
+        receiver.set(name, value);
+        return;
+    }
+    if (Array.isArray(receiver))
+        fail(`Array não tem a propriedade "${name}"; para um elemento use [índice] = valor.`);
+    if (isScriptInstance(receiver) && !(name in (receiver as object)))
+        fail(`"${name}" não existe em ${describeReceiver(receiver, where)}; declare a variável na classe.${suggestionText(name, Object.keys(receiver as object))}`);
+    (receiver as Record<string, unknown>)[name] = value;
+}
+export function setChain(root: unknown, inner: string, name: string, value: unknown, where?: string): void {
+    const target = get(root, inner, where);
+    set(target, name, value, where ? `${where}.${inner}` : inner);
+    if (isValueType(target))
+        set(root, inner, target, where);
+}
+export function index(receiver: unknown, key: unknown, where?: string): unknown {
+    if (receiver === null || receiver === undefined)
+        fail(`Índice ${str(key)} inválido em null${where ? ` (${where} é null)` : ''}.`);
+    if (Array.isArray(receiver) || ArrayBuffer.isView(receiver)) {
+        const list = receiver as ArrayLike<unknown>;
+        if (typeof key !== 'number' || !Number.isInteger(key))
+            fail(`Índice de lista precisa ser um int, recebeu ${describeTypeOf(key)}${where ? ` (${where})` : ''}.`);
+        const at = key < 0 ? list.length + key : key;
+        if (at < 0 || at >= list.length)
+            fail(`Índice ${key} fora dos limites da lista (tamanho ${list.length})${where ? ` em ${where}` : ''}.`);
+        return norm(list[at]);
+    }
+    if (typeof receiver === 'string') {
+        if (typeof key !== 'number' || !Number.isInteger(key))
+            fail(`Índice de String precisa ser um int, recebeu ${describeTypeOf(key)}.`);
+        const at = key < 0 ? receiver.length + key : key;
+        if (at < 0 || at >= receiver.length)
+            fail(`Índice ${key} fora dos limites da String (tamanho ${receiver.length}).`);
+        return receiver[at];
+    }
+    if (receiver instanceof Dictionary) {
+        if (!receiver.has(key))
+            fail(`A chave ${str(key)} não existe no Dictionary${where ? ` ${where}` : ''}; use .get(chave, padrão) para um valor opcional.`);
+        return norm(receiver.get(key));
+    }
+    if (isVecLike(receiver)) {
+        if (typeof key === 'number') {
+            const component = (['x', 'y', 'z', 'w'] as const)[key];
+            if (!component)
+                fail(`Índice ${key} inválido em ${describeTypeOf(receiver)}.`);
+            return (receiver as unknown as Record<string, unknown>)[component];
+        }
+        return get(receiver, str(key), where);
+    }
+    if (typeof key === 'string')
+        return get(receiver, key, where);
+    if (receiver instanceof Map)
+        return norm(receiver.get(key));
+    return fail(`Índice ${str(key)} inválido em ${describeReceiver(receiver, where)}.`);
+}
+export function setIndex(receiver: unknown, key: unknown, value: unknown, where?: string): void {
+    if (receiver === null || receiver === undefined)
+        fail(`Índice ${str(key)} inválido em null${where ? ` (${where} é null)` : ''}.`);
+    if (Array.isArray(receiver) || ArrayBuffer.isView(receiver)) {
+        const list = receiver as unknown as unknown[];
+        if (typeof key !== 'number' || !Number.isInteger(key))
+            fail(`Índice de lista precisa ser um int, recebeu ${describeTypeOf(key)}.`);
+        const at = key < 0 ? list.length + key : key;
+        if (at < 0 || at >= list.length)
+            fail(`Índice ${key} fora dos limites da lista (tamanho ${list.length})${where ? ` em ${where}` : ''}; use append() para crescer a lista.`);
+        list[at] = value;
+        return;
+    }
+    if (typeof receiver === 'string')
+        fail('Strings não podem ser alteradas por índice; monte uma nova String.');
+    if (receiver instanceof Dictionary) {
+        receiver.set(key, value);
+        return;
+    }
+    if (isVecLike(receiver) && typeof key === 'number') {
+        const component = (['x', 'y', 'z', 'w'] as const)[key];
+        if (!component)
+            fail(`Índice ${key} inválido em ${describeTypeOf(receiver)}.`);
+        (receiver as unknown as Record<string, unknown>)[component] = value;
+        return;
+    }
+    if (receiver instanceof Map) {
+        receiver.set(key, value);
+        return;
+    }
+    if (typeof key === 'string') {
+        set(receiver, key, value, where);
+        return;
+    }
+    fail(`Índice ${str(key)} inválido em ${describeReceiver(receiver, where)}.`);
+}
+export function iter(value: unknown, where?: string): Iterable<unknown> {
+    if (value === null || value === undefined)
+        fail(`Não é possível iterar null${where ? ` (${where})` : ''}.`);
+    if (typeof value === 'number') {
+        const count = Math.ceil(value);
+        return {
+            *[Symbol.iterator]() {
+                for (let index = 0; index < count; index++)
+                    yield index;
+            },
+        };
+    }
+    if (typeof value === 'string')
+        return Array.from(value);
+    if (Array.isArray(value))
+        return value;
+    if (value instanceof Dictionary)
+        return value.keys();
+    if (ArrayBuffer.isView(value))
+        return value as unknown as Iterable<unknown>;
+    if (value instanceof Map)
+        return Array.from(value.keys());
+    if (isVecLike(value))
+        return [value.x, value.y, value.z ?? 0, value.w ?? 0].slice(0, vectorArity(value));
+    if (typeof value === 'object') {
+        if (Symbol.iterator in (value as object))
+            return value as Iterable<unknown>;
+        return Object.keys(value as object);
+    }
+    return fail(`Não é possível iterar ${describeTypeOf(value)}${where ? ` (${where})` : ''}.`);
+}
+export function invoke(fn: unknown, args: unknown[], label: string): unknown {
+    if (typeof fn !== 'function')
+        fail(`"${label}" não é um Callable: é ${describeTypeOf(fn)}${fn === null ? '' : ` (${str(fn)})`}.`);
+    if (isScriptClass(fn))
+        fail(`"${label}" é uma classe; para criar uma instância use ${label}.new(...).`);
+    const meta = callableMeta(fn);
+    if (meta && isScriptInstance(meta.object))
+        return norm((fn as Fn)(...args));
+    return norm((fn as Fn)(...toEngineArgs(args)));
+}
+export function construct(ctor: new (inject: unknown) => object, args: unknown[], inject: unknown = null): object {
+    const instance = new ctor(inject) as {
+        _init?: Fn;
+    };
+    if (typeof instance._init === 'function')
+        instance._init(...args);
+    return instance;
+}
+export function lengthOf(value: unknown): number {
+    if (typeof value === 'string')
+        return value.length;
+    if (Array.isArray(value) || ArrayBuffer.isView(value))
+        return (value as ArrayLike<unknown>).length;
+    if (value instanceof Dictionary)
+        return value.size;
+    if (value instanceof Map)
+        return value.size;
+    if (value !== null && typeof value === 'object' && dictView(value))
+        return Object.keys(value as object).length;
+    return fail(`len(): ${describeTypeOf(value)} não tem tamanho.`);
+}
+export { ARRAY_METHODS, DICT_METHODS, STRING_METHODS, CALLABLE_METHODS, dictView };
