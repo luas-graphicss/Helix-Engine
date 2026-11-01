@@ -1020,4 +1020,180 @@ const SCENE_API = `
     skyLighting: number
     readonly clouds: CloudSettings
   }
+  export type SkyPresetId = 'dawn' | 'noon' | 'dusk' | 'night' | 'overcast' | 'storm'
+  export interface SkyApi {
+    readonly settings: SkySettings
+    readonly clouds: CloudSettings
+    set(patch: Partial<Omit<SkySettings, 'clouds'>> & { clouds?: Partial<CloudSettings> }): void
+    enabled: boolean
+    timeOfDay: number
+    cycleSpeed: number
+                                                                                             
+    driveSun: boolean
+    advance(deltaSeconds: number): boolean
+    syncSun(): boolean
+    wrapTimeOfDay(hours: number): number
+    formatTimeOfDay(hours?: number): string
+    sunDirection(timeOfDay?: number, latitude?: number, azimuth?: number): Vec3
+    moonDirection(timeOfDay?: number, latitude?: number, azimuth?: number): Vec3
+    readonly isDay: boolean
+    moonPhaseName(phase?: number): string
+    moonLitFraction(): number
+    hourAngle(timeOfDay?: number): number
+    presets(): { id: SkyPresetId; label: string }[]
+    preset(id: SkyPresetId): void
+    onHourChanged(handler: (hour: number) => void): Unsubscribe
+    onSunrise(handler: (timeOfDay: number) => void): Unsubscribe
+    onSunset(handler: (timeOfDay: number) => void): Unsubscribe
+  }
+  export interface WorldApi {
+    readonly wind: { readonly direction: Vec3; speed: number; set(options: { direction?: Vec3Like | number; speed?: number }): void }
+    readonly gravity: Vec3
+    readonly sky: SkySettings
+    readonly player: PlayerSettings
+  }
+`;
+const RENDER_API = `
+  export type ToneMapper = 'aces' | 'agx' | 'filmic' | 'neutral' | 'reinhard' | 'none'
+  export interface PostProcessSettings {
+    enabled: boolean
+    exposure: number
+    toneMapper: ToneMapper
+    whiteBalance: { temperature: number; tint: number }
+    grading: { contrast: number; saturation: number; vibrance: number; shadows: number; midtones: number; highlights: number; shadowTint: Vec3; highlightTint: Vec3; toneBalance: number }
+    bloom: { enabled: boolean; intensity: number; threshold: number; softKnee: number; radius: number }
+    depthOfField: { enabled: boolean; focusDistance: number; focalLength: number; aperture: number; maxBlur: number }
+    vignette: { enabled: boolean; intensity: number; smoothness: number; roundness: number }
+    chromaticAberration: { enabled: boolean; intensity: number }
+    filmGrain: { enabled: boolean; intensity: number; size: number; luminanceResponse: number }
+    lensDistortion: { enabled: boolean; intensity: number; scale: number }
+    sharpen: { enabled: boolean; intensity: number }
+  }
+  export type Easing = 'linear' | 'easeIn' | 'easeOut' | 'easeInOut'
+  export interface PostApi {
+    readonly settings: PostProcessSettings
+    set(patch: Partial<PostProcessSettings>): void
+    enabled: boolean
+    exposure: number
+    toneMapper: ToneMapper
+    toneMappers(): ToneMapper[]
+    readonly whiteBalance: PostProcessSettings['whiteBalance']
+    readonly grading: PostProcessSettings['grading']
+    readonly bloom: PostProcessSettings['bloom']
+    readonly depthOfField: PostProcessSettings['depthOfField']
+    readonly vignette: PostProcessSettings['vignette']
+    readonly chromaticAberration: PostProcessSettings['chromaticAberration']
+    readonly filmGrain: PostProcessSettings['filmGrain']
+    readonly lensDistortion: PostProcessSettings['lensDistortion']
+    readonly sharpen: PostProcessSettings['sharpen']
+    presets(): { id: string; label: string; description: string }[]
+    applyPreset(id: string): void
+    currentPreset(): string | null
+    assign(target: PostProcessSettings, source: PostProcessSettings): void
+    create(options?: Partial<PostProcessSettings>): PostProcessSettings
+    snapshot(): PostProcessSettings
+                                                                                    
+    focusOn(entity: Entity): number
+    compareSplit: number | null
+                                                                                                  
+    tween(path: string, value: number, seconds: number, easing?: Easing): Promise<void>
+       
+                                                                                                          
+                                                                                                          
+                                                                                                      
+       
+    readonly custom: {
+      add(pass: { fragment: AssetRef; name?: string; uniforms?: Record<string, ShaderUniformValue | null>; enabled?: boolean }): CustomPostEffect
+      get(nameOrEffect: string | CustomPostEffect): CustomPostEffect | null
+      remove(nameOrEffect: string | CustomPostEffect): boolean
+      list(): { name: string; shader: string; enabled: boolean }[]
+      clear(): void
+    }
+  }
+                                                                                                     
+  export interface CustomPostEffect {
+    readonly name: string
+    enabled: boolean
+    readonly uniforms: ShaderUniforms
+    remove(): void
+  }
+
+  export type RenderPassName = 'shadow' | 'localShadow' | 'depthPrepass' | 'mesh' | 'terrain' | 'grass' | 'water' | 'sky' | 'vfx' | 'guiSurface' | 'post' | 'overlays'
+  export type FrameHook = (gl: WebGL2RenderingContext | null, frame: FrameInfo) => void
+  export interface RenderProfile {
+    tier: string
+    shadowMapSize: number
+    antialias: 'smaa' | 'taa' | 'none'
+    maxLocalLights: number
+    hdrFormat: string
+    [key: string]: unknown
+  }
+  export interface RenderStats {
+    drawCalls: number
+    triangles: number
+    width: number
+    height: number
+    pixelRatio: number
+    gpuName: string
+    gpuTier: string
+                                                                                 
+    gpuTierSource: string
+                                                                                                     
+    gpuScore: number
+    softwareRenderer: boolean
+    shadersPending: number
+    shadersTotal: number
+    cpuMs: number
+    gpuMs: number
+    fps: number
+    idle: boolean
+    [key: string]: unknown
+  }
+  export interface ShaderProgram {
+    readonly program: WebGLProgram | null
+    readonly ready: boolean
+    use(): void
+    uniform(name: string): WebGLUniformLocation | null
+    dispose(): void
+  }
+  export interface RenderApi {
+                                                                                                             
+    enabled: boolean
+    readonly passes: Record<RenderPassName, { enabled: boolean }>
+    passNames(): RenderPassName[]
+    showGrid: boolean
+    shadows: boolean
+    showCsgBrushes: boolean
+    lightHelpers: 'all' | 'selected' | 'off'
+    soundHelpers: 'all' | 'selected' | 'off'
+    vfxHelpers: 'all' | 'selected' | 'off'
+    readonly culling: { frustumCulling: boolean; minPixelSize: number }
+    readonly lod: { enabled: boolean; bias: number }
+    readonly myriad: { enabled: boolean; pixelError: number; occlusionCulling: boolean; shadowClusters: boolean; freeze: boolean; debugView: string; hzbLevel: number; wireframe: boolean }
+    terrainMaterialCache: boolean
+    profileGpu: boolean
+    renderOnDemand: boolean
+    readonly pixelRatio: number
+    readonly profile: RenderProfile
+    setProfile(patch: Partial<RenderProfile>): void
+    readonly stats: RenderStats
+    readonly frame: FrameInfo
+    onBeforeFrame(fn: FrameHook): Unsubscribe
+    onAfterFrame(fn: FrameHook): Unsubscribe
+    onBeforePass(name: RenderPassName, fn: FrameHook): Unsubscribe
+    onAfterPass(name: RenderPassName, fn: FrameHook): Unsubscribe
+    readonly custom: { add(pass: { name: string; after: RenderPassName; render: FrameHook }): Unsubscribe; list(): { name: string; after: string }[] }
+    readonly gl: WebGL2RenderingContext
+    readonly canvas: HTMLCanvasElement | null
+    readonly capabilities: Record<string, unknown>
+    createProgram(vertexSource: string, fragmentSource: string, defines?: Record<string, string | number | boolean>): ShaderProgram
+    createTexture(options: Record<string, unknown>): never
+    createRenderTarget(width: number, height: number, format?: string): never
+    createMesh(mesh: MeshData): never
+    fullscreenTriangle(): never
+    readonly shaders: { override(target: string, asset: AssetRef): never }
+    skybox(texture: Texture): never
+  }
+`;
+const PHYSICS_API = `
 `;
