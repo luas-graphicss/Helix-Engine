@@ -263,4 +263,104 @@ export class AudioEditor {
         this.engine.setMixerSettings(this.session.scene.audio);
         this.notify();
     }
+    async toggleQuickPreview(asset: LibraryAsset): Promise<void> {
+        if (!isAudioAsset(asset))
+            return;
+        if (this.quick?.assetId === asset.id) {
+            this.stopQuickPreview();
+            return;
+        }
+        this.stopQuickPreview();
+        const buffer = await this.engine.load(asset.id, () => this.session.library.primaryFile(asset));
+        await this.engine.unlock();
+        const current = this.session.library.get(asset.id);
+        if (!current || !isAudioAsset(current))
+            return;
+        const voice = this.engine.play(buffer, current.details.clip, {
+            randomize: true,
+            onEnded: () => {
+                if (this.quick?.voice === voice)
+                    this.quick = null;
+                this.notify();
+            },
+        });
+        this.quick = { assetId: asset.id, voice };
+        this.notify();
+    }
+    stopQuickPreview(): void {
+        if (!this.quick)
+            return;
+        this.engine.release(this.quick.voice);
+        this.quick = null;
+        this.notify();
+    }
+    effectiveSettings(): AudioClipSettings {
+        const settings = this.settings;
+        if (!settings)
+            throw new Error('Nenhum áudio aberto no editor.');
+        return this.bypass ? neutralizeClip(settings) : settings;
+    }
+    notify(): void {
+        this.version++;
+        for (const listener of this.listeners)
+            listener();
+    }
+    private notifyTime(): void {
+        this.timeVersion++;
+        for (const listener of this.timeListeners)
+            listener();
+    }
+    syncWithLibrary(): void {
+        if (!this.assetId)
+            return;
+        const asset = this.asset;
+        if (!asset) {
+            this.close();
+            return;
+        }
+        const settings = asset.details.clip;
+        if (settings === this.lastSettings)
+            return;
+        this.lastSettings = settings;
+        this.voice?.update(this.effectiveSettings());
+        if (!this.playing && this.duration > 0) {
+            const region = clipRegion(settings, this.duration);
+            this.cursor = Math.min(Math.max(this.cursor, region.start), region.end);
+            this.voice?.seek(this.cursor);
+        }
+        this.notify();
+    }
+    private onVoiceEnded(): void {
+        this.cursor = this.region?.start ?? 0;
+        this.stopClock();
+        this.notify();
+    }
+    private releaseVoice(): void {
+        this.stopClock();
+        if (this.voice) {
+            this.engine.release(this.voice);
+            this.voice = null;
+        }
+    }
+    private startClock(): void {
+        if (this.frame !== null || typeof requestAnimationFrame === 'undefined')
+            return;
+        const tick = () => {
+            this.notifyTime();
+            if (this.playing) {
+                this.frame = requestAnimationFrame(tick);
+            }
+            else {
+                this.frame = null;
+            }
+        };
+        this.frame = requestAnimationFrame(tick);
+    }
+    private stopClock(): void {
+        if (this.frame !== null) {
+            cancelAnimationFrame(this.frame);
+            this.frame = null;
+        }
+        this.notifyTime();
+    }
 }
