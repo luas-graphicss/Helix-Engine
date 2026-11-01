@@ -561,5 +561,285 @@ class DebugJogo : Script() {
         checar("gui.elements", g.invoke("elements", "[data-bind]").size >= 5)
         checar("gui.size", numero(g["size"], "width") > 0)
         fun escala(scale: Double, offset: Double) = mapOf("scale" to scale, "offset" to offset)
+        val declarativa = g.invoke("create", "DebugTela", mapOf("referenceSize" to mapOf("x" to 1280, "y" to 720)))
+        val painel = g.invoke("add", declarativa, "frame", mapOf(
+            "name" to "Painel",
+            "rect" to mapOf(
+                "position" to mapOf("x" to escala(1.0, -236.0), "y" to escala(0.0, 16.0)),
+                "size" to mapOf("x" to escala(0.0, 220.0), "y" to escala(0.0, 48.0))
+            )
+        ))
+        g.invoke("add", declarativa, "text", mapOf("name" to "Rotulo", "text" to "Tela declarativa OK"), painel.path("node.id"))
+        checar("gui.add/find", textoIgual(g.invoke("find", declarativa, "Rotulo")["kind"], "text"))
+        g.invoke("setText", declarativa, "Rotulo", "Tela declarativa OK · " + linguagem)
+                                                                                           
+        return g.invoke("show", declarativa, "debug-tela").invoke("then", Helix.fn { args ->
+            val mostrada = arg(args, 0)
+            tela = mostrada
+            checar("gui.show/isShown", !mostrada.isNullish && api("gui").invoke("isShown", mostrada).boolean)
+            checar("gui.kinds", contem(api("gui").invoke("kinds"), "button"))
+            null
+        })
+    }
+
+    private fun audio(): Any? {
+        val a = api("audio")
+        val s = api("scene")
+        checar("audio.supported", a["supported"].isBoolean)
+        val mixer = a["mixer"]
+        mixer.invoke("setVolumeDb", "sfx", -3)
+        checar("mixer.setVolumeDb", numero(mixer.invoke("bus", "sfx"), "volumeDb") == -3.0)
+        checar("audio.clips", a.invoke("clips").isArray)
+        val fonte = s.invoke("spawn", "sound", mapOf("name" to "FonteSonora", "position" to v3(3.0, 1.0, 3.0), "audioSource" to mapOf("trigger" to "manual", "spatial" to true)))
+        checar("spawn sound", !fonte["audioSource"].isNullish)
+        val fontes = a["sources"]
+        fontes.invoke("set", fonte, mapOf("volumeDb" to -4))
+        checar("sources.set", numero(fonte["audioSource"], "volumeDb") == -4.0)
+        checar("sources.isPlaying", falso(fontes.invoke("isPlaying", fonte)))
+        return null
+    }
+
+    private fun vfx(): Any? {
+        val v = api("vfx")
+        val ids = v["templates"].invoke("ids")
+        checar("vfx.templates", ids.size > 0)
+        checar("vfx.moduleKinds", v.invoke("moduleKinds").size > 0)
+        var doc = v.invoke("fromTemplate", ids[0], "DebugFaiscas")
+        doc = v.invoke("addEmitter", doc, mapOf("name" to "Extra", "maxParticles" to 50))
+        doc = v.invoke("set", doc, mapOf("loop" to true))
+        checar("vfx.fromTemplate/addEmitter", doc["emitters"].size >= 2 && verdadeiro(doc["loop"]))
+        return v.invoke("save", doc, "DebugFaiscas").invoke("then", Helix.fn { args ->
+            val vfx = api("vfx")
+            val ativo = arg(args, 0)
+            checar("vfx.save", !ativo.isNullish && textoIgual(ativo["kind"], "vfx"))
+            val ator = vfx.invoke("emitAt", ativo, v3(0.0, 1.5, -8.0), mapOf("destroyWhenFinished" to false))
+            checar("vfx.emitAt", verdadeiro(vfx.invoke("has", ator)))
+            vfx.invoke("burst", ator, 20)
+            checar("vfx.stats", vfx.invoke("stats")["effects"].isNumber)
+            null
+        })
+    }
+
+                                                                                              
+
+    private fun aoTeclar(e: Value) {
+        if (e["repeat"].boolean) return
+        when (e["code"].string) {
+            "KeyR" -> api("play").invoke("restart")
+            "KeyB" -> soltarCaixa()
+            "KeyE" -> api("events").invoke("emit", "debug.ping", mapOf("origem" to "teclado", "quadro" to api("time")["frame"]))
+            "KeyF" -> api("camera").invoke("shake", 0.4, 0.6)
+            "KeyG" -> efeito?.let { fx ->
+                val ligado = !fx["enabled"].boolean
+                fx["enabled"] = ligado
+                info(if (ligado) "Efeito DebugPost ligado" else "Efeito DebugPost desligado")
+            }
+            "KeyT" -> {
+                val tm = api("time")
+                tm["scale"] = if (numero(tm, "scale") == 1.0) 0.3 else 1
+                info("time.scale = " + numero(tm, "scale"))
+            }
+            "KeyH" -> tela?.let { t ->
+                val g = api("gui")
+                if (g.invoke("isShown", t).boolean) g.invoke("hide", t) else g.invoke("show", t, "debug-tela")
+            }
+            "KeyL" -> info("Luzes locais: " + api("light").invoke("all", mapOf("local" to true)).list.joinToString(", ") { nomeDe(it["entity"]) })
+        }
+    }
+
+    private fun cliqueNaCena(x: Double, y: Double) {
+        val c = api("camera")
+        val alvo = c.invoke("pick", x, y)
+        val ponto = c.invoke("pickPoint", x, y)
+        if (!alvo.isNullish) info("Clique em " + nomeDe(alvo))
+        if (!ponto.isNullish) api("debug").invoke("sphere", ponto, 0.3, "#ff006e", 2)
+    }
+
+    private fun entrada(): Any? {
+        val input = api("input")
+        val acoes = input["actions"]
+        acoes.invoke("define", "pular", listOf("Space", "Gamepad:0"))
+        acoes.invoke("define", "soltar", listOf("KeyB"))
+        checar("actions.define/bindings", acoes.invoke("bindings", "pular").size >= 1)
+        checar("action()", textoIgual(input.invoke("action", "pular")["name"], "pular") && acoes.invoke("down", "pular").isBoolean)
+        checar("isDown", falso(input.invoke("isDown", "KeyW")))
+        checar("pointer", input.path("pointer.x").isNumber)
+        checar("gamepads", input.invoke("gamepads").isArray)
+        checar("axis2d", input.invoke("axis2d", mapOf("up" to "KeyW", "down" to "KeyS", "left" to "KeyA", "right" to "KeyD"))["x"].isNumber)
+        val teclas = input.invoke("keysDown")
+        checar("keysDown", teclas.isObject || teclas.isArray)
+        assinar(input.invoke("onKeyDown", Helix.fn { args -> aoTeclar(arg(args, 0)); null }))
+        assinar(input.invoke("onPointerDown", Helix.fn { args ->
+            val e = arg(args, 0)
+            if (numero(e, "button") == 0.0) cliqueNaCena(numero(e, "x"), numero(e, "y"))
+            null
+        }))
+        assinar(input.invoke("onGamepadButtonDown", Helix.fn { args ->
+            val e = arg(args, 0)
+            info("Gamepad " + numero(e, "pad") + " botão " + numero(e, "button"))
+            null
+        }))
+        return null
+    }
+
+    private fun eventos(): Any? {
+        val ev = api("events")
+        val play = api("play")
+                                                                                        
+        var recebido = Value.undefined
+        val desligar = ev.invoke("on", "debug.ping", Helix.fn { args -> recebido = arg(args, 0); null })
+        checar("events.emit conta ouvintes", ev.invoke("emit", "debug.ping", mapOf("origem" to "teste")).number == 1.0)
+        checar("events.on recebe", !recebido.isNullish && textoIgual(recebido["origem"], "teste"))
+        checar("listenerCount", ev.invoke("listenerCount", "debug.ping").number == 1.0)
+        desligar.call()
+        checar("unsubscribe", ev.invoke("listenerCount", "debug.ping").number == 0.0)
+        var umaVez = 0
+        ev.invoke("once", "debug.once", Helix.fn { umaVez++; null })
+        ev.invoke("emit", "debug.once")
+        ev.invoke("emit", "debug.once")
+        checar("events.once", umaVez == 1)
+        assinar(ev.invoke("on", "debug.ping", Helix.fn { args -> info("ping de " + arg(args, 0)["origem"].string); null }))
+        assinar(ev.invoke("on", "debug.caixa", Helix.fn { args -> depurar("caixa " + arg(args, 0)["nome"].string); null }))
+        var doAtor = 0
+        val anel = torus ?: Value.undefined
+        assinar(ev.invoke("onEntity", anel, "toque", Helix.fn { doAtor++; null }))
+        ev.invoke("emitEntity", anel, "toque")
+        checar("onEntity/emitEntity", doAtor == 1)
+        assinar(play.invoke("onStopped", Helix.fn { info("play.onStopped disparou"); null }))
+        assinar(play.invoke("onPaused", Helix.fn { info("pausado"); null }))
+        assinar(play.invoke("onResumed", Helix.fn { info("retomado"); null }))
+        return null
+    }
+
+                                                                                     
+    private fun tempo(): Any? {
+        val tm = api("time")
+        checar("time.now", numero(tm, "now") >= 0 && numero(tm, "frame") >= 0)
+        checar("time.delta", numero(tm, "delta") >= 0 && numero(tm, "fixedDelta") > 0)
+        val inicio = numero(tm, "now")
+        return tm.invoke("wait", 0.1).invoke("then", Helix.fn {
+            val relogio = api("time")
+            val decorrido = numero(relogio, "now") - inicio
+            checar("time.wait", decorrido >= 0.09, arred(decorrido))
+            val quadro = relogio["frame"].int
+            relogio.invoke("waitFrames", 2).invoke("then", Helix.fn {
+                val depois = api("time")
+                val agora = depois["frame"].int
+                checar("time.waitFrames", agora >= quadro + 2, agora - quadro)
+                assinar(depois.invoke("every", 2, Helix.fn { api("gui").invoke("bind", "atores", api("scene").invoke("count")); null }))
+                var disparou = false
+                depois.invoke("delay", 0.2, Helix.fn { disparou = true; null })
+                depois.invoke("wait", 0.3).invoke("then", Helix.fn { checar("time.delay", disparou); null })
+            })
+        })
+    }
+
+    private fun dados(): Any? {
+        return api("storage").invoke("ready").invoke("then", Helix.fn {
+            val st = api("storage")
+            val atual = st.invoke("get", "execucoes", 0)
+            val execucoes = (if (atual.isNumber) atual.int else 0) + 1
+            st.invoke("set", "execucoes", execucoes).invoke("then", Helix.fn {
+                val storage = api("storage")
+                checar("storage.get/set", storage.invoke("get", "execucoes").int == execucoes && storage.invoke("has", "execucoes").boolean, execucoes)
+                info("Execução nº " + execucoes + " deste jogo de teste neste projeto.")
+                api("assets").invoke("data", "DebugConfig").invoke("then", Helix.fn { config ->
+                    val cfg = arg(config, 0)
+                    checar("assets.data (TOML)", !cfg.isNullish && !cfg["jogador"].isNullish && numero(cfg["jogador"], "velocidade") == 6.5)
+                    api("assets").invoke("text", "DebugConfig").invoke("then", Helix.fn { resposta ->
+                        checar("assets.text", arg(resposta, 0).string.contains("velocidade"))
+                        val ativos = api("assets")
+                        checar("assets.byName", !ativos.invoke("byName", "DebugJogo", "script").isNullish)
+                        checar("assets.exists", ativos.invoke("exists", "DebugUtil").boolean && !ativos.invoke("exists", "NaoExiste").boolean)
+                        checar("assets.search", ativos.invoke("search", "Debug").size >= 5)
+                        checar("project.name", api("project")["name"].isString)
+                        checar("project.stats", numero(api("project")["stats"], "entities") > 0)
+                        checar("net.localPlayer", verdadeiro(api("net").path("localPlayer.local")))
+                        checar("play.state", textoIgual(api("play")["state"], "playing") && verdadeiro(api("play")["isRunning"]))
+                        null
+                    })
+                })
+            })
+        })
+    }
+
+                                                                                                        
+    private fun lancar(): Any? {
+        throw IllegalStateException("erro proposital: a exceção vira ERRO na cadeia")
+    }
+
+                                                                                               
+
+    private val areas = listOf(
+        Area("Núcleo", ::nucleo),
+        Area("Módulo (require)", ::modulo),
+        Area("Matemática", ::matematica),
+        Area("Cena", ::cena),
+        Area("Transformações", ::transformacao),
+        Area("Malhas e CSG", ::malhas),
+        Area("Materiais", ::materiais),
+        Area("Luzes", ::luzes),
+        Area("Céu e mundo", ::ceu),
+        Area("Câmera", ::camera),
+        Area("Pós-processamento", ::pos),
+        Area("Render", ::render),
+        Area("Física", ::fisica),
+        Area("Personagem e jogador", ::personagem),
+        Area("Terreno", ::terreno),
+        Area("Interface", ::interfaceGrafica),
+        Area("Áudio", ::audio),
+        Area("VFX", ::vfx),
+        Area("Entrada", ::entrada),
+        Area("Eventos", ::eventos),
+        Area("Tempo e tarefas", ::tempo),
+        Area("Dados, projeto e rede", ::dados),
+        Area("Erro proposital (exceção Kotlin)", ::lancar, esperaErro = true),
+    )
+
+    private fun areaOk(a: Area) {
+        if (a.esperaErro) {
+            checar("a exceção deveria ter chegado à cadeia", false)
+            return
+        }
+        depurar("ok " + a.nome)
+    }
+
+    private fun areaErro(a: Area, causa: Value) {
+        val mensagem = if (causa.isObject) causa["message"].string else causa.string
+        if (a.esperaErro) {
+            checar("a exceção chega como erro da promessa", mensagem.contains("proposital"), mensagem)
+            return
+        }
+        falhas++
+        erro("ERRO em " + a.nome + ": " + mensagem)
+    }
+
+                                                                                                   
+    private fun encadear(promessa: Value, a: Area): Value {
+        val depois = promessa.invoke("then", Helix.fn { a.rodar() })
+        return depois.invoke("then", Helix.fn { areaOk(a); null }, Helix.fn { args -> areaErro(a, arg(args, 0)); null })
+    }
+
+    private fun finalizar() {
+        val girador = api("assets").invoke("byName", "DebugGirador", "script")
+        if (!girador.isNullish) {
+            val extra = api("scene").invoke("spawnPrimitive", "box", mapOf(
+                "name" to "GiradorDinamico",
+                "position" to v3(-2.0, 0.5, -3.0),
+                "rigidBody" to mapOf("type" to "kinematic", "collider" to "box"),
+                "script" to mapOf("assetId" to girador["id"], "props" to mapOf("velocidade" to 180, "cor" to "#00b4d8"))
+            ))
+            checar("spawn com script", !extra["script"].isNullish && extra.path("script.assetId") == girador["id"])
+        } else {
+            checar("ativo DebugGirador", false, "não está na biblioteca")
+        }
+        val dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia."
+        if (falhas == 0) info("API percorrida em " + linguagem + ": " + checagens + " checagens, nenhuma falha. " + dica)
+        else aviso("API percorrida em " + linguagem + ": " + checagens + " checagens, " + falhas + " falhas (veja FALHOU/ERRO acima). " + dica)
+        api("gui").invoke("bind", "checagens", checagens)
+        api("gui").invoke("bind", "falhas", falhas)
+    }
+
+                                                                                              
 `;
 }
