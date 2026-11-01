@@ -511,4 +511,272 @@ class Renderer {
         if (node.text && entry.textLayout && entry.textBox && control?.iconPosition !== 'only')
             this.drawText(node.text, entry.textLayout, entry.textBox, stateStyle?.textColor ?? null, scale);
     }
+    private drawToggle(node: GuiNode, box: GuiBox): void {
+        const control = node.control?.kind === 'toggle' ? node.control : null;
+        if (!control)
+            return;
+        const { context } = this;
+        const on = this.value(node, control.value);
+        if (control.style === 'checkbox') {
+            const side = Math.min(box.width, box.height);
+            const x = box.x + (box.width - side) / 2;
+            const y = box.y + (box.height - side) / 2;
+            roundedRectPath(context, x, y, side, side, [side * 0.22, side * 0.22, side * 0.22, side * 0.22]);
+            context.fillStyle = on ? control.onColor : withAlpha('#ffffff', 0.12);
+            context.fill();
+            if (!on) {
+                context.lineWidth = Math.max(1, side * 0.08);
+                context.strokeStyle = withAlpha('#ffffff', 0.35);
+                context.stroke();
+            }
+            else {
+                context.beginPath();
+                context.lineCap = 'round';
+                context.lineJoin = 'round';
+                context.lineWidth = Math.max(1.5, side * 0.12);
+                context.strokeStyle = control.knobColor;
+                context.moveTo(x + side * 0.26, y + side * 0.52);
+                context.lineTo(x + side * 0.43, y + side * 0.7);
+                context.lineTo(x + side * 0.75, y + side * 0.32);
+                context.stroke();
+            }
+            return;
+        }
+        const height = Math.min(box.height, box.width / 1.6);
+        const width = height * 1.8;
+        const x = box.x + (box.width - width) / 2;
+        const y = box.y + (box.height - height) / 2;
+        roundedRectPath(context, x, y, width, height, [height / 2, height / 2, height / 2, height / 2]);
+        context.fillStyle = on ? control.onColor : withAlpha('#ffffff', 0.18);
+        context.fill();
+        const knob = height * 0.78;
+        const pad = (height - knob) / 2;
+        const knobX = on ? x + width - pad - knob : x + pad;
+        context.beginPath();
+        context.arc(knobX + knob / 2, y + height / 2, knob / 2, 0, Math.PI * 2);
+        context.fillStyle = control.knobColor;
+        context.shadowColor = 'rgba(0,0,0,0.3)';
+        context.shadowBlur = knob * 0.3;
+        context.fill();
+        clearShadow(context);
+    }
+    private drawSlider(node: GuiNode, box: GuiBox): void {
+        const control = node.control?.kind === 'slider' ? node.control : null;
+        if (!control)
+            return;
+        const { context } = this;
+        const s = this.layout.offsetScale;
+        const value = this.value(node, control.value);
+        const fraction = control.max > control.min ? (value - control.min) / (control.max - control.min) : 0;
+        const thickness = control.trackThickness * s;
+        const knob = control.knobSize * s;
+        const horizontal = control.direction === 'horizontal';
+        const radius: GuiRadii = [thickness / 2, thickness / 2, thickness / 2, thickness / 2];
+        if (horizontal) {
+            const y = box.y + (box.height - thickness) / 2;
+            const x0 = box.x + knob / 2;
+            const length = Math.max(0, box.width - knob);
+            roundedRectPath(context, x0, y, length, thickness, radius);
+            context.fillStyle = withAlpha(control.trackColor, control.trackAlpha);
+            context.fill();
+            roundedRectPath(context, x0, y, length * fraction, thickness, radius);
+            context.fillStyle = control.fillColor;
+            context.fill();
+            this.drawKnob(x0 + length * fraction, box.y + box.height / 2, knob, control.knobColor);
+        }
+        else {
+            const x = box.x + (box.width - thickness) / 2;
+            const y0 = box.y + knob / 2;
+            const length = Math.max(0, box.height - knob);
+            roundedRectPath(context, x, y0, thickness, length, radius);
+            context.fillStyle = withAlpha(control.trackColor, control.trackAlpha);
+            context.fill();
+            roundedRectPath(context, x, y0 + length * (1 - fraction), thickness, length * fraction, radius);
+            context.fillStyle = control.fillColor;
+            context.fill();
+            this.drawKnob(box.x + box.width / 2, y0 + length * (1 - fraction), knob, control.knobColor);
+        }
+    }
+    private drawKnob(x: number, y: number, size: number, color: string): void {
+        const { context } = this;
+        context.beginPath();
+        context.arc(x, y, size / 2, 0, Math.PI * 2);
+        context.fillStyle = color;
+        context.shadowColor = 'rgba(0,0,0,0.35)';
+        context.shadowBlur = size * 0.4;
+        context.shadowOffsetY = size * 0.1;
+        context.fill();
+        clearShadow(context);
+    }
+    private drawProgress(node: GuiNode, entry: GuiLayoutEntry, radii: GuiRadii, box: GuiBox, scale: number): void {
+        const control = node.control?.kind === 'progress' ? node.control : null;
+        if (!control)
+            return;
+        const { context } = this;
+        const value = Math.max(0, Math.min(1, this.value(node, control.value)));
+        const horizontal = control.direction === 'horizontal';
+        context.save();
+        roundedRectPath(context, box.x, box.y, box.width, box.height, radii);
+        context.clip();
+        const fillStyle = control.fillGradient ? gradientStyle(context, control.fillGradient, box) : withAlpha(control.fillColor, control.fillAlpha);
+        context.fillStyle = fillStyle;
+        if (control.segments > 1) {
+            const gap = Math.max(1, 2 * this.layout.offsetScale);
+            const count = control.segments;
+            const length = horizontal ? box.width : box.height;
+            const segment = (length - gap * (count - 1)) / count;
+            const filled = value * count;
+            for (let index = 0; index < count; index++) {
+                const amount = Math.max(0, Math.min(1, filled - index));
+                if (amount <= 0)
+                    continue;
+                const start = index * (segment + gap);
+                if (horizontal) {
+                    const x = control.reverse ? box.x + box.width - start - segment * amount : box.x + start;
+                    context.fillRect(x, box.y, segment * amount, box.height);
+                }
+                else {
+                    const y = control.reverse ? box.y + start : box.y + box.height - start - segment * amount;
+                    context.fillRect(box.x, y, box.width, segment * amount);
+                }
+            }
+        }
+        else if (horizontal) {
+            const width = box.width * value;
+            context.fillRect(control.reverse ? box.x + box.width - width : box.x, box.y, width, box.height);
+        }
+        else {
+            const height = box.height * value;
+            context.fillRect(box.x, control.reverse ? box.y : box.y + box.height - height, box.width, height);
+        }
+        context.restore();
+        if (control.showLabel && node.text && entry.textLayout && entry.textBox) {
+            this.drawText(node.text, entry.textLayout, entry.textBox, null, scale, [`${Math.round(value * 100)}%`]);
+        }
+    }
+    private drawInput(node: GuiNode, entry: GuiLayoutEntry, scale: number): void {
+        const control = node.control?.kind === 'input' ? node.control : null;
+        if (!control || !node.text || !entry.textLayout || !entry.textBox)
+            return;
+        const value = this.value(node, control.value);
+        const focused = this.options.state?.focused === node.id;
+        const shown = control.password ? '•'.repeat(value.length) : value;
+        const empty = shown.length === 0;
+        const lines = empty ? [control.placeholder] : control.multiline ? shown.split('\n') : [shown];
+        const style: GuiTextStyle = empty ? { ...node.text, color: control.placeholderColor, alpha: 0.9 } : node.text;
+        this.drawText(style, entry.textLayout, entry.textBox, null, scale, lines);
+        if (focused && Math.floor((this.options.state?.time ?? 0) * 2) % 2 === 0) {
+            const { context } = this;
+            const lastLine = empty ? '' : lines[lines.length - 1];
+            context.font = entry.textLayout.font;
+            const width = context.measureText(lastLine).width;
+            const align = node.text.align;
+            const box = entry.textBox;
+            const totalHeight = lines.length * entry.textLayout.lineHeight;
+            const startY = node.text.verticalAlign === 'top' ? box.y : node.text.verticalAlign === 'bottom' ? box.y + box.height - totalHeight : box.y + (box.height - totalHeight) / 2;
+            const caretX = align === 'left' ? box.x + width : align === 'right' ? box.x + box.width : box.x + box.width / 2 + width / 2;
+            const caretY = startY + (lines.length - 1) * entry.textLayout.lineHeight;
+            context.fillStyle = control.caretColor;
+            context.fillRect(caretX + 1, caretY + entry.textLayout.lineHeight * 0.12, Math.max(1, 1.5 * this.layout.offsetScale), entry.textLayout.lineHeight * 0.76);
+        }
+    }
+    private drawDivider(node: GuiNode, box: GuiBox): void {
+        const control = node.control?.kind === 'divider' ? node.control : null;
+        if (!control)
+            return;
+        const { context } = this;
+        const thickness = control.thickness * this.layout.offsetScale;
+        context.strokeStyle = withAlpha(control.color, control.alpha);
+        context.lineWidth = thickness;
+        if (control.dashed)
+            context.setLineDash([thickness * 4, thickness * 3]);
+        context.beginPath();
+        if (control.orientation === 'horizontal') {
+            const y = box.y + box.height / 2;
+            context.moveTo(box.x, y);
+            context.lineTo(box.x + box.width, y);
+        }
+        else {
+            const x = box.x + box.width / 2;
+            context.moveTo(x, box.y);
+            context.lineTo(x, box.y + box.height);
+        }
+        context.stroke();
+        context.setLineDash([]);
+    }
+    private drawScrollbar(node: GuiNode, entry: GuiLayoutEntry, matrix: GuiMatrix): void {
+        const control = node.control?.kind === 'scroll' ? node.control : null;
+        if (!control || !entry.canvasSize || control.scrollbarThickness <= 0)
+            return;
+        const { context } = this;
+        context.setTransform(matrix[0], matrix[1], matrix[2], matrix[3], matrix[4], matrix[5]);
+        const thickness = control.scrollbarThickness * this.layout.offsetScale;
+        const scroll = this.options.state?.scroll.get(node.id) ?? { x: 0, y: 0 };
+        const color = withAlpha(control.scrollbarColor, control.scrollbarAlpha);
+        if (control.direction !== 'horizontal' && entry.canvasSize.y > entry.height + 0.5) {
+            const track = entry.height - thickness * 2;
+            const thumb = Math.max(thickness * 3, (entry.height / entry.canvasSize.y) * track);
+            const y = thickness + (scroll.y / (entry.canvasSize.y - entry.height)) * (track - thumb);
+            roundedRectPath(context, entry.width - thickness * 1.5, y, thickness, thumb, [thickness / 2, thickness / 2, thickness / 2, thickness / 2]);
+            context.fillStyle = color;
+            context.fill();
+        }
+        if (control.direction !== 'vertical' && entry.canvasSize.x > entry.width + 0.5) {
+            const track = entry.width - thickness * 2;
+            const thumb = Math.max(thickness * 3, (entry.width / entry.canvasSize.x) * track);
+            const x = thickness + (scroll.x / (entry.canvasSize.x - entry.width)) * (track - thumb);
+            roundedRectPath(context, x, entry.height - thickness * 1.5, thumb, thickness, [thickness / 2, thickness / 2, thickness / 2, thickness / 2]);
+            context.fillStyle = color;
+            context.fill();
+        }
+    }
+    private drawImage(node: GuiNode, box: GuiBox, radii: GuiRadii): void {
+        const image = node.image;
+        if (!image)
+            return;
+        const { context } = this;
+        const source = image.assetId ? this.options.images.get(image.assetId) : null;
+        if (!source) {
+            if (this.options.placeholders)
+                this.drawImagePlaceholder(box, radii, image.assetId !== null && this.options.images.hasFailed(image.assetId));
+            return;
+        }
+        context.save();
+        roundedRectPath(context, box.x, box.y, box.width, box.height, radii);
+        context.clip();
+        context.globalAlpha *= image.tintAlpha;
+        if (image.flipX || image.flipY) {
+            context.translate(image.flipX ? box.x * 2 + box.width : 0, image.flipY ? box.y * 2 + box.height : 0);
+            context.scale(image.flipX ? -1 : 1, image.flipY ? -1 : 1);
+        }
+        const tinted = image.tint !== '#ffffff' ? this.tint(source, image.tint) : source;
+        context.imageSmoothingQuality = 'high';
+        switch (image.fit) {
+            case 'stretch':
+                context.drawImage(tinted, box.x, box.y, box.width, box.height);
+                break;
+            case 'contain':
+            case 'cover': {
+                const ratio = image.fit === 'contain' ? Math.min(box.width / source.width, box.height / source.height) : Math.max(box.width / source.width, box.height / source.height);
+                const width = source.width * ratio;
+                const height = source.height * ratio;
+                context.drawImage(tinted, box.x + (box.width - width) / 2, box.y + (box.height - height) / 2, width, height);
+                break;
+            }
+            case 'tile': {
+                const pattern = context.createPattern(tinted, 'repeat');
+                if (pattern) {
+                    const matrix = new DOMMatrix().translate(box.x, box.y).scale(this.layout.offsetScale);
+                    pattern.setTransform(matrix);
+                    context.fillStyle = pattern;
+                    context.fillRect(box.x, box.y, box.width, box.height);
+                }
+                break;
+            }
+            case 'slice':
+                this.drawNineSlice(tinted, image.slice, box);
+                break;
+        }
+        context.restore();
+    }
 }
