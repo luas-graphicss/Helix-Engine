@@ -263,3 +263,40 @@ function emitter(value: Raw, index: number): VfxEmitter {
         tint: rgb(value.tint, VFX_EMITTER_TINTS[index % VFX_EMITTER_TINTS.length]),
     };
 }
+export function normalizeVfxDocument(raw: unknown, fallbackName = 'Efeito'): VfxDocument {
+    if (!isRecord(raw))
+        throw new Error('O arquivo não contém um efeito Helix.');
+    const base = createVfxDocument({ name: fallbackName });
+    const emitters = Array.isArray(raw.emitters) ? raw.emitters.filter(isRecord).slice(0, VFX_MAX_EMITTERS).map(emitter) : [];
+    return {
+        version: VFX_FORMAT_VERSION,
+        name: str(raw.name, base.name).trim() || base.name,
+        createdAt: num(raw.createdAt, base.createdAt),
+        duration: num(raw.duration, base.duration, 0.1, VFX_MAX_DURATION),
+        loop: bool(raw.loop, base.loop),
+        prewarm: num(raw.prewarm, base.prewarm, 0, 30),
+        scale: num(raw.scale, base.scale, 0.01, 100),
+        cullRadius: num(raw.cullRadius, base.cullRadius, 0, 10000),
+        emitters,
+    };
+}
+export function serializeVfxDocument(document: VfxDocument): string {
+    return JSON.stringify(document, null, 2);
+}
+export function vfxFileName(name: string): string {
+    const safe = name.trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ') || 'Efeito';
+    return `${safe}.${VFX_EXTENSION}`;
+}
+export function vfxDocumentToFile(document: VfxDocument): File {
+    return new File([serializeVfxDocument(document)], vfxFileName(document.name), { type: VFX_MIME_TYPE });
+}
+export async function readVfxDocument(file: File): Promise<VfxDocument> {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(await file.text());
+    }
+    catch {
+        throw new Error(`${file.name} não é um JSON válido.`);
+    }
+    return normalizeVfxDocument(parsed, file.name.replace(/\.[^.]+$/, ''));
+}
