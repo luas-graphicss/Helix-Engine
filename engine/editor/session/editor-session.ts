@@ -112,15 +112,108 @@ export class EditorSession {
     }
     attachViewport(canvas: HTMLCanvasElement | null): void {
         this.viewportCanvas = canvas;
+        this.scripts.attachViewport(canvas);
     }
+    markViewportReady(): void {
+        if (this.viewportReady)
+            return;
+        this.viewportReady = true;
+        this.notify('view');
+    }
+    setWorkspace(workspace: EditorWorkspace): void {
+        if (this.workspace === workspace)
+            return;
+        if (this.code.standalone && workspace !== 'code')
+            return;
+        this.workspace = workspace;
+        this.notify('workspace');
+    }
+    toggleWorkspace(): void {
+        this.setWorkspace(this.workspace === 'gui' ? 'scene' : 'gui');
+    }
+    toggleCodeWorkspace(): void {
+        this.setWorkspace(this.workspace === 'code' ? 'scene' : 'code');
+    }
+    private inTick = false;
+    private readonly deferredTopics = new Set<SessionTopic>();
+    private lastDeferredFlushAt = 0;
     subscribe = (listener: Listener): (() => void) => {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
     };
+    subscribeTopic(topics: SessionTopic | readonly SessionTopic[], listener: Listener): () => void {
+        const list: readonly SessionTopic[] = typeof topics === 'string' ? [topics] : topics;
+        for (const topic of list) {
+            let set = this.topicListeners.get(topic);
+            if (!set)
+                this.topicListeners.set(topic, (set = new Set()));
+            set.add(listener);
+        }
+        return () => {
+            for (const topic of list)
+                this.topicListeners.get(topic)?.delete(listener);
+        };
+    }
     getVersion = (): number => this.version;
-    notify(): void {
+    getSceneVersion = (): number => this.sceneVersion;
+    getTopicVersion(topics: readonly SessionTopic[]): number {
+        let total = 0;
+        for (const topic of topics)
+            total += this.topicVersions.get(topic) ?? 0;
+        return total;
+    }
+    notify(topic: SessionTopic = 'scene', options?: NotifyOptions): void {
+        this.emit(topic === 'scene' ? SCENE_ONLY : [topic], options?.image ?? IMAGE_TOPICS.has(topic));
+    }
+    private emit(topics: readonly SessionTopic[], image: boolean): void {
         this.version++;
-        this.selectedCache = null;
+        if (image) {
+            this.sceneVersion++;
+            this.selectedCache = null;
+        }
+        for (const topic of topics)
+            this.topicVersions.set(topic, (this.topicVersions.get(topic) ?? 0) + 1);
+        if (this.inTick && this.playtest.state === 'playing' && !topics.includes('playtest')) {
+            for (const topic of topics)
+                this.deferredTopics.add(topic);
+            return;
+        }
+        if (this.deferredTopics.size > 0)
+            this.flushDeferredNotifications(true);
+        this.fire(topics);
+    }
+    private flushDeferredNotifications(force = false): void {
+        if (this.deferredTopics.size === 0)
+            return;
+        const now = performance.now();
+        if (!force && now - this.lastDeferredFlushAt < PLAY_UI_INTERVAL_MS)
+            return;
+        this.lastDeferredFlushAt = now;
+        const topics = Array.from(this.deferredTopics);
+        this.deferredTopics.clear();
+        this.fire(topics);
+    }
+    private fire(topics: readonly SessionTopic[]): void {
+        if (topics.length === 1) {
+            const listeners = this.topicListeners.get(topics[0]);
+            if (listeners)
+                for (const listener of listeners)
+                    listener();
+        }
+        else {
+            const fired = new Set<Listener>();
+            for (const topic of topics) {
+                const listeners = this.topicListeners.get(topic);
+                if (!listeners)
+                    continue;
+                for (const listener of listeners) {
+                    if (fired.has(listener))
+                        continue;
+                    fired.add(listener);
+                    listener();
+                }
+            }
+        }
         for (const listener of this.listeners)
             listener();
     }
@@ -134,6 +227,21 @@ export class EditorSession {
         for (const listener of this.statsListeners)
             listener();
     }
+    subscribeLiveEdit = (listener: Listener): (() => void) => {
+        this.liveEditListeners.add(listener);
+        return () => this.liveEditListeners.delete(listener);
+    };
+    getLiveEditVersion = (): number => this.liveEditVersion;
+    notifyLiveEdit(): void {
+        if (this.liveEditFrame !== 0)
+            return;
+        this.liveEditFrame = requestAnimationFrame(() => {
+            this.liveEditFrame = 0;
+            this.liveEditVersion++;
+            for (const listener of this.liveEditListeners)
+                listener();
+        });
+    }
     select(entity: Entity | null): void {
         const nextId = entity?.id ?? null;
         if (nextId === this.selectedId && this.selectedIds.size === (nextId === null ? 0 : 1))
@@ -142,7 +250,7 @@ export class EditorSession {
         if (nextId !== null)
             this.selectedIds.add(nextId);
         this.selectedId = nextId;
-        this.notify();
+        this.notify('selection');
         this.selectedCache = entity;
     }
     setSelection(entities: readonly Entity[], primary: Entity | null = entities[entities.length - 1] ?? null): void {
@@ -154,7 +262,7 @@ export class EditorSession {
         if (primary && !this.selectedIds.has(primary.id))
             primary = entities.find((entity) => this.selectedIds.has(entity.id)) ?? null;
         this.selectedId = primary?.id ?? null;
-        this.notify();
+        this.notify('selection');
         this.selectedCache = primary;
     }
     toggleSelection(entity: Entity): void {
@@ -168,12 +276,12 @@ export class EditorSession {
                     last = id;
                 this.selectedId = last;
             }
-            this.notify();
+            this.notify('selection');
             return;
         }
         this.selectedIds.add(entity.id);
         this.selectedId = entity.id;
-        this.notify();
+        this.notify('selection');
         this.selectedCache = entity;
     }
     selectAll(): void {
@@ -204,19 +312,22 @@ export class EditorSession {
     selectedEntities(): Entity[] {
         if (this.selectedIds.size === 0)
             return [];
+        const { scene } = this;
         const found: Entity[] = [];
-        const seen = new Set<number>();
-        this.scene.traverse((entity) => {
-            if (entity.parent && this.selectedIds.has(entity.id)) {
+        let missing: number[] | null = null;
+        for (const id of this.selectedIds) {
+            const entity = scene.findById(id);
+            if (entity && entity.parent)
                 found.push(entity);
-                seen.add(entity.id);
-            }
-        });
-        if (seen.size !== this.selectedIds.size) {
-            for (const id of Array.from(this.selectedIds))
-                if (!seen.has(id))
-                    this.selectedIds.delete(id);
-            if (this.selectedId !== null && !seen.has(this.selectedId))
+            else
+                (missing ??= []).push(id);
+        }
+        if (found.length > 1)
+            found.sort((a, b) => scene.traversalOrder(a) - scene.traversalOrder(b));
+        if (missing) {
+            for (const id of missing)
+                this.selectedIds.delete(id);
+            if (this.selectedId !== null && !this.selectedIds.has(this.selectedId))
                 this.selectedId = found[found.length - 1]?.id ?? null;
         }
         return found;
@@ -233,30 +344,30 @@ export class EditorSession {
     }
     toggleGrid(): void {
         this.showGrid = !this.showGrid;
-        this.notify();
+        this.notify('view');
     }
     toggleShadows(): void {
         this.shadowsEnabled = !this.shadowsEnabled;
-        this.notify();
+        this.notify('view');
     }
     toggleFrustumCulling(): void {
         this.updateCulling({ frustumCulling: !this.render.culling.frustumCulling });
     }
     updateCulling(patch: Partial<CullingOptions>): void {
         Object.assign(this.render.culling, patch);
-        this.notify();
+        this.notify('view');
     }
     updateLod(patch: Partial<LodSettings>): void {
         Object.assign(this.render.lod, patch);
-        this.notify();
+        this.notify('view');
     }
     updateMyriad(patch: Partial<MyriadSettings>): void {
         Object.assign(this.render.myriad, patch);
-        this.notify();
+        this.notify('view');
     }
     toggleTerrainMaterialCache(): void {
         this.render.terrain.materialCache = !this.render.terrain.materialCache;
-        this.notify();
+        this.notify('view');
     }
     toggleSky(): void {
         this.updateSky({ enabled: !this.scene.sky.enabled });
@@ -275,23 +386,103 @@ export class EditorSession {
         Object.assign(this.scene.sky.clouds, patch);
         this.notify();
     }
-    tick(deltaSeconds: number, elapsedSeconds: number): void {
-        if (advanceSkyCycle(this.scene.sky, deltaSeconds))
-            syncSunLightToSky(this.scene);
-        this.csg.update(this.scene, { deferHeavy: this.csgPreferences.deferHeavyWhileDragging && this.gizmo.active !== null });
-        this.playtest.tick(deltaSeconds, elapsedSeconds);
-        this.terrain.tick(deltaSeconds);
-        this.animation.tick(deltaSeconds);
+    updatePostProcess(patch: Partial<Pick<PostProcessSettings, 'enabled' | 'exposure' | 'toneMapper'>>): void {
+        Object.assign(this.scene.postProcessing, patch);
+        this.notify();
+    }
+    updatePostEffect<K extends PostProcessEffectKey>(effect: K, patch: Partial<PostProcessSettings[K]>): void {
+        const target = this.scene.postProcessing[effect] as unknown as Record<string, unknown>;
+        for (const [key, value] of Object.entries(patch)) {
+            const current = target[key];
+            if (current instanceof Float32Array && value instanceof Float32Array)
+                vec3.copy(current, value);
+            else
+                target[key] = value;
+        }
+        this.notify();
+    }
+    applyPostProcessPreset(presetId: string): void {
+        const preset = findPostProcessPreset(presetId);
+        if (!preset)
+            return;
+        assignPostProcessSettings(this.scene.postProcessing, preset.create());
+        this.notify();
+    }
+    updatePostCompare(patch: Partial<PostCompareSettings>): void {
+        Object.assign(this.render.postCompare, patch);
+        this.notify('view');
+    }
+    setGpuProfiling(enabled: boolean): void {
+        this.render.profileGpu = enabled;
+    }
+    setRenderOnDemand(enabled: boolean): void {
+        if (this.render.renderOnDemand === enabled)
+            return;
+        this.render.renderOnDemand = enabled;
+        this.notify('view');
+    }
+    tick(deltaSeconds: number, elapsedSeconds: number): boolean {
+        this.inTick = true;
+        this.frameProfile.begin('sync');
+        try {
+            const cycleAdvanced = advanceSkyCycle(this.scene.sky, deltaSeconds);
+            if (cycleAdvanced && this.skyDrivesSun)
+                syncSunLightToSky(this.scene);
+            this.csg.update(this.scene, { deferHeavy: this.csgPreferences.deferHeavyWhileDragging && this.gizmo.active !== null });
+            this.playtest.tick(deltaSeconds, elapsedSeconds);
+            this.scripts.tickTool(deltaSeconds);
+            this.terrain.tick(deltaSeconds);
+            this.animation.tick(deltaSeconds);
+            this.audio.world.tick(deltaSeconds);
+            const soundAnimating = this.audio.world.animating && this.render.soundHelpers !== 'off' && this.playtest.state !== 'playing';
+            const guiAnimating = this.guiWorld.tick(deltaSeconds, elapsedSeconds);
+            const vfxAnimating = this.vfxWorld.tick(deltaSeconds);
+            const hudAnimating = this.hud.tick(deltaSeconds);
+            return cycleAdvanced || this.playtest.state === 'playing' || this.scripts.running || this.terrain.isStroking || this.animation.playing || soundAnimating || guiAnimating || vfxAnimating || hudAnimating;
+        }
+        finally {
+            this.inTick = false;
+            this.flushDeferredNotifications(this.playtest.state !== 'playing');
+            this.frameProfile.end('sync');
+        }
+    }
+    togglePerfHud(): void {
+        this.render.perfHud = !this.render.perfHud;
+        this.notify('view');
     }
     toggleCsgBrushes(): void {
         this.render.showCsgBrushes = !this.render.showCsgBrushes;
-        this.notify();
+        this.notify('view');
+    }
+    setLightHelpers(mode: LightHelperMode): void {
+        if (this.render.lightHelpers === mode)
+            return;
+        this.render.lightHelpers = mode;
+        this.notify('view');
+    }
+    setSoundHelpers(mode: SoundHelperMode): void {
+        if (this.render.soundHelpers === mode)
+            return;
+        this.render.soundHelpers = mode;
+        this.notify('view');
+    }
+    setVfxHelpers(mode: VfxHelperMode): void {
+        if (this.render.vfxHelpers === mode)
+            return;
+        this.render.vfxHelpers = mode;
+        this.notify('view');
+    }
+    setSoloLight(id: number | null): void {
+        if (this.render.soloLightId === id)
+            return;
+        this.render.soloLightId = id;
+        this.notify('view');
     }
     updateCsgPreferences(patch: Partial<CsgPreferences>): void {
         Object.assign(this.csgPreferences, patch);
         if (patch.ghostOpacity !== undefined)
             setGhostOpacity(this.csgPreferences.ghostOpacity);
-        this.notify();
+        this.notify('view');
     }
     updatePhysics(patch: Partial<PhysicsSettings>): void {
         const { physics } = this.scene;
@@ -323,7 +514,7 @@ export class EditorSession {
         }
         this.tool = tool;
         this.gizmo.hovered = null;
-        this.notify();
+        this.notify('tool');
     }
     get gizmoMode(): GizmoMode | null {
         return this.tool === 'select' || this.tool === 'terrain' ? null : this.tool;
@@ -335,14 +526,14 @@ export class EditorSession {
         if (this.space === space)
             return;
         this.space = space;
-        this.notify();
+        this.notify('tool');
     }
     toggleSpace(): void {
         this.setSpace(this.space === 'global' ? 'local' : 'global');
     }
     updateSnap(patch: Partial<SnapSettings>): void {
         Object.assign(this.snap, patch);
-        this.notify();
+        this.notify('tool');
     }
     toggleSnap(): void {
         this.updateSnap({ enabled: !this.snap.enabled });
@@ -357,19 +548,20 @@ export class EditorSession {
         else {
             aabb.center(focusCenter, focusBounds);
             const radius = Math.max(aabb.halfDiagonal(focusBounds), 0.25);
-            const distance = (radius / Math.sin(degToRad(this.camera.fovDegrees) / 2)) * 1.1;
+            const distance = (radius / Math.sin(degToRad(this.camera.fovDegrees) / 2)) * this.focusPadding;
             this.orbit.focus(focusCenter, distance);
         }
-        this.notify();
+        this.notify('view');
     }
     focusSelected(): void {
         const entity = this.selectedEntity;
         if (entity)
             this.focusEntity(entity);
     }
-    updateStats(frame: FrameStats, fps: number): void {
+    updateStats(frame: FrameStats, fps: number, idle: boolean): void {
         Object.assign(this.stats, frame);
         this.stats.fps = fps;
+        this.stats.idle = idle;
         this.notifyStats();
     }
     private isAttached(entity: Entity): boolean {
@@ -379,12 +571,7 @@ export class EditorSession {
         return current === this.scene.root;
     }
     findById(id: number): Entity | null {
-        let found: Entity | null = null;
-        this.scene.traverse((entity) => {
-            if (entity.id === id)
-                found = entity;
-        });
-        return found;
+        return this.scene.findById(id);
     }
     findByName(name: string): Entity | null {
         let found: Entity | null = null;
@@ -395,8 +582,6 @@ export class EditorSession {
         return found;
     }
     countEntities(): number {
-        let total = -1;
-        this.scene.traverse(() => total++);
-        return total;
+        return this.scene.entityCount;
     }
 }
