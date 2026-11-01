@@ -272,4 +272,51 @@ export class DebugModeController {
         scene.root.remove(group);
         this.session.select(null);
     }
+    private async writeScripts(specs: readonly DebugScriptSpec[]): Promise<Array<{
+        spec: DebugScriptSpec;
+        asset: LibraryAsset;
+    }>> {
+        const { library } = this.session;
+        const written: Array<{
+            spec: DebugScriptSpec;
+            asset: LibraryAsset;
+        }> = [];
+        for (const spec of specs) {
+            const document = createScriptDocument({ name: spec.name, language: spec.language, source: spec.source, entry: spec.role === 'entry' });
+            const result = await ingestScriptDocument(library, document, { forceNew: true });
+            if (!result.added)
+                throw new Error(`${spec.name} não entrou na biblioteca.`);
+            library.add(result.added.snapshot);
+            written.push({ spec, asset: result.added.snapshot.asset });
+            this.setPhase('writing', `Escrito ${spec.name} (${scriptLanguage(spec.language).label}) · ${written.length}/${specs.length}`);
+        }
+        return written;
+    }
+    private createHierarchyActor(actorAssetId: string): void {
+        const { scene } = this.session;
+        const group = scene.createEntity({ name: DEBUG_GROUP_NAME, kind: 'group' }, scene.root);
+        const box = scene.createEntity({
+            name: DEBUG_ACTOR_NAME,
+            kind: 'mesh',
+            mesh: getPrimitive('box').create(),
+            material: createMaterial({ baseColor: vec3.create(1, 0.53, 0), roughness: 0.5 }),
+            rigidBody: createRigidBodySettings({ type: 'kinematic', collider: 'box' }),
+        }, group);
+        vec3.set(box.transform.position, 2, 0.5, 5);
+        attachScriptToEntity(this.session, box, actorAssetId, { silent: true });
+    }
+    private setPhase(phase: DebugPhase, message: string): void {
+        this.phase = phase;
+        this.message = message;
+        this.session.notify();
+    }
+}
+const controllers = new WeakMap<EditorSession, DebugModeController>();
+export function debugModeOf(session: EditorSession): DebugModeController {
+    let controller = controllers.get(session);
+    if (!controller) {
+        controller = new DebugModeController(session);
+        controllers.set(session, controller);
+    }
+    return controller;
 }
