@@ -10,11 +10,13 @@ type ResizableSizeOptions = {
     inverted?: boolean;
     size?: number;
     onSizeChange?: (size: number) => void;
+    measure?: () => number | undefined;
+    onResizingChange?: (resizing: boolean) => void;
 };
 function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
 }
-export function useResizableSize({ initial, min, max, axis, inverted = false, size: controlledSize, onSizeChange }: ResizableSizeOptions) {
+export function useResizableSize({ initial, min, max, axis, inverted = false, size: controlledSize, onSizeChange, measure, onResizingChange }: ResizableSizeOptions) {
     const [internalSize, setInternalSize] = useState(initial);
     const [isResizing, setIsResizing] = useState(false);
     const dragStart = useRef<{
@@ -22,15 +24,18 @@ export function useResizableSize({ initial, min, max, axis, inverted = false, si
         size: number;
     } | null>(null);
     const size = controlledSize ?? internalSize;
+    const onResizingChangeRef = useRef(onResizingChange);
+    onResizingChangeRef.current = onResizingChange;
     const onPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
         dragStart.current = {
             pointer: axis === 'horizontal' ? event.clientX : event.clientY,
-            size,
+            size: measure?.() ?? size,
         };
         setIsResizing(true);
-    }, [axis, size]);
+        onResizingChangeRef.current?.(true);
+    }, [axis, size, measure]);
     const onPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
         if (!dragStart.current)
             return;
@@ -41,9 +46,13 @@ export function useResizableSize({ initial, min, max, axis, inverted = false, si
         onSizeChange?.(next);
     }, [axis, inverted, min, max, onSizeChange]);
     const onPointerUp = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+        if (!dragStart.current)
+            return;
         dragStart.current = null;
         setIsResizing(false);
-        event.currentTarget.releasePointerCapture(event.pointerId);
+        onResizingChangeRef.current?.(false);
+        if (event.currentTarget.hasPointerCapture(event.pointerId))
+            event.currentTarget.releasePointerCapture(event.pointerId);
     }, []);
     const handleProps = { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp };
     return { size, isResizing, handleProps };
