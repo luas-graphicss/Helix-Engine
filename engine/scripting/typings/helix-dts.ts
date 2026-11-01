@@ -1618,3 +1618,237 @@ const PHYSICS_API = `
     onPossessed(handler: (entity: Entity | null) => void): Unsubscribe
   }
 `;
+const TERRAIN_API = `
+  export type TerrainPreset = 'flat' | 'hills' | 'mountains' | 'valley' | 'islands' | 'plateau' | 'dunes'
+  export interface TerrainGenerationParams { preset: TerrainPreset; seed: number; amplitude: number; featureSize: number; detail: number; erosion: number }
+  export interface TerrainOptions { size: number; resolution: 65 | 129 | 257 | 513; splatResolution?: number; preset?: TerrainPreset; seed?: number }
+  export interface Heightfield {
+    readonly resolution: number
+                                                                                   
+    readonly heights: Float32Array
+    get(x: number, z: number): number
+    set(x: number, z: number, height: number): void
+    sample(gx: number, gz: number): number
+    minMax(): { min: number; max: number }
+    fill(height: number): void
+  }
+  export interface TerrainMaterial { id: string; name: string; [key: string]: unknown }
+  export interface TerrainLayer {
+    id: string
+    name: string
+    material: TerrainMaterial
+    tiling: number
+    tint: Vec3
+    normalStrength: number
+    roughness: number
+    auto: { enabled: boolean; slopeMin: number; slopeMax: number; heightMin: number; heightMax: number; softness: number }
+  }
+  export interface GrassSettings {
+    enabled: boolean
+    density: number
+    height: number
+    heightVariation: number
+    width: number
+    clumping: number
+    bend: number
+    viewDistance: number
+    maxSlope: number
+    windStrength: number
+    windSpeed: number
+    windDirection: number
+    baseColor: Vec3
+    tipColor: Vec3
+    colorVariation: number
+    groundBlend: number
+    translucency: number
+    trample: number
+    recoverySeconds: number
+  }
+  export interface WaterSettings {
+    enabled: boolean
+    level: number
+    shallowColor: Vec3
+    deepColor: Vec3
+    clarity: number
+    waveHeight: number
+    waveLength: number
+    waveSpeed: number
+    waveDirection: number
+    choppiness: number
+    ripples: number
+    foam: Record<string, number | boolean>
+    reflectivity: number
+    roughness: number
+    refraction: number
+    caustics: number
+    subsurface: number
+  }
+  export interface Terrain {
+    readonly size: number
+    readonly resolution: number
+    readonly cellSize: number
+    readonly halfSize: number
+    readonly heightfield: Heightfield
+    readonly layers: TerrainLayer[]
+    readonly grass: GrassSettings
+    readonly water: WaterSettings
+    heightVersion: number
+    splatVersion: number
+    grassVersion: number
+    [key: string]: unknown
+  }
+  export type BrushFalloff = 'smooth' | 'linear' | 'spherical' | 'tip' | 'flat'
+  export interface BrushSettings { radius: number; strength: number; falloff: BrushFalloff }
+  export type SculptTool = 'raise' | 'lower' | 'smooth' | 'flatten' | 'noise' | 'terrace'
+  export interface TerrainApi {
+    all(): Entity[]
+    first(): Entity | null
+    of(entity: Entity): Terrain
+    spawn(options?: Partial<TerrainOptions> & SpawnOptions, parent?: Entity): Entity
+    presets(): { value: TerrainPreset; label: string; description: string }[]
+    resolutions(): (65 | 129 | 257 | 513)[]
+    heightAt(point: Vec3Like, terrain?: Entity): number | null
+    normalAt(point: Vec3Like, terrain?: Entity): Vec3 | null
+    contains(point: Vec3Like, terrain?: Entity): boolean
+    raycast(origin: Vec3Like, direction: Vec3Like, terrain?: Entity): { entity: Entity; point: Vec3; distance: number } | null
+    worldToGrid(point: Vec3Like, terrain?: Entity): { gx: number; gz: number } | null
+    gridToWorld(gx: number, gz: number, terrain?: Entity): Vec3
+    markDirty(terrain: Entity, region?: { x0: number; z0: number; x1: number; z1: number }): void
+    generate(terrain: Entity, params?: Partial<TerrainGenerationParams>): void
+    generateWith(terrain: Entity, fn: (u: number, v: number, x: number, z: number) => number): void
+    fill(terrain: Entity, height?: number): void
+    autoPaint(terrain: Entity): boolean
+    resize(terrain: Entity, patch: Partial<TerrainOptions>): void
+    brush(options?: Partial<BrushSettings>): BrushSettings
+    falloffs(): BrushFalloff[]
+    tools(): SculptTool[]
+    sculpt(terrain: Entity, tool: SculptTool, point: Vec3Like, brush?: Partial<BrushSettings>, amount?: number, extra?: Record<string, number>): void
+    erode(terrain: Entity, region?: { x0: number; z0: number; x1: number; z1: number }, talusSlope?: number, amount?: number): void
+    layers(terrain?: Entity): TerrainLayer[]
+    addLayer(terrain: Entity, materialId: string, overrides?: Partial<TerrainLayer>): TerrainLayer | null
+    removeLayer(terrain: Entity, layer: TerrainLayer | string | number): void
+    moveLayer(terrain: Entity, layer: TerrainLayer | string | number, direction: -1 | 1): void
+    cloneLayer(layer: TerrainLayer): TerrainLayer
+    paint(terrain: Entity, point: Vec3Like, layer: TerrainLayer | string | number, brush?: Partial<BrushSettings>, amount?: number): void
+    weightsAt(point: Vec3Like, terrain?: Entity): number[] | null
+    readonly materials: {
+      catalog(): { id: string; label: string }[]
+      get(id: string): TerrainMaterial | null
+      has(id: string): boolean
+      fromLibrary(id: string): TerrainMaterial
+      fromTextures(textures: { albedo: Texture; normal?: Texture; ormh?: Texture }): never
+    }
+    readonly water: {
+      settingsOf(terrain: Entity): WaterSettings
+      set(terrain: Entity, patch: Partial<WaterSettings>): void
+      sampleSurface(terrain: Entity, x: number, z: number, time?: number): { height: number; normal: Vec3; velocity: Vec3 }
+      isUnderwater(point: Vec3Like, terrain?: Entity): boolean
+      depthAt(point: Vec3Like, terrain?: Entity): number
+    }
+    readonly grass: {
+      settingsOf(terrain: Entity): GrassSettings
+      set(terrain: Entity, patch: Partial<GrassSettings>): void
+      paint(terrain: Entity, point: Vec3Like, brush?: Partial<BrushSettings>, amount?: number): void
+      addInteractor(entity: Entity, radius: number): never
+    }
+    shadingOf(terrain?: Entity): Record<string, unknown>
+    scatter(terrain: Entity, asset: AssetRef, options?: Record<string, unknown>): never
+    stitch(a: Entity, b: Entity, edge: string): never
+    fromImage(image: ImageBitmap | ImageData, minHeight: number, maxHeight: number): never
+    onRegionChanged(handler: (region: unknown) => void): never
+  }
+`;
+const GUI_API = `
+  export type GuiElementKind = 'frame' | 'text' | 'image' | 'icon' | 'button' | 'toggle' | 'slider' | 'progress' | 'input' | 'scroll' | 'divider' | 'video' | 'viewport'
+  export interface UDim { scale: number; offset: number }
+  export interface UDim2 { x: UDim; y: UDim }
+  export interface GuiRect { position: UDim2; size: UDim2; anchor: { x: number; y: number }; rotation: number; zIndex: number; autoSize: 'none' | 'x' | 'y' | 'xy' }
+  export interface GuiNode {
+    readonly id: string
+    readonly name: string
+    readonly kind: GuiElementKind
+    readonly visible: boolean
+    readonly locked: boolean
+    readonly interactable: boolean
+    readonly clipsContent: boolean
+    readonly rect: GuiRect
+    readonly appearance: Record<string, unknown>
+    readonly layout: Record<string, unknown>
+    readonly text: Record<string, unknown> | null
+    readonly image: Record<string, unknown> | null
+    readonly icon: Record<string, unknown> | null
+    readonly control: Record<string, unknown> | null
+    readonly states: Record<string, unknown>
+    readonly children: readonly GuiNode[]
+  }
+  export interface GuiDocument {
+    readonly name: string
+    readonly referenceSize: { x: number; y: number }
+    readonly scaleMode: 'none' | 'width' | 'height' | 'shorter' | 'longer'
+    readonly enabled: boolean
+    readonly displayOrder: number
+    readonly root: GuiNode
+    readonly createdAt: number
+  }
+  export interface GuiEvent { type: 'activate' | 'change' | 'focus' | 'blur'; nodeId: string; nodeName: string; value?: string | number | boolean }
+                                                                                                      
+  export interface GuiActionEvent { action: string; type: string; element: Element; value: string | number | boolean | null }
+  export type ScreenRef = string | GuiDocument
+  export interface GuiApi {
+    readonly visible: boolean
+    readonly interactive: boolean
+    readonly hasFocusedInput: boolean
+    screens(): { name: string; enabled: boolean; displayOrder: number }[]
+                                                                                                                       
+    show(screen: AssetRef | GuiDocument, key?: string): Promise<GuiDocument>
+                                                                                           
+    hide(screen: ScreenRef): boolean
+    isShown(screen: ScreenRef): boolean
+       
+                                                                                        
+                                                                                                   
+       
+    create(name?: string, options?: { referenceSize?: { x: number; y: number } }): GuiDocument
+    kinds(): GuiElementKind[]
+    add(screen: ScreenRef, kind: GuiElementKind, options?: { name?: string; text?: string; rect?: Partial<GuiRect>; appearance?: Record<string, unknown>; visible?: boolean }, parentNameOrId?: string): { document: GuiDocument; node: GuiNode }
+    remove(screen: ScreenRef, nameOrId: string): GuiDocument
+    find(screen: ScreenRef, nameOrId: string): GuiNode
+    setText(screen: ScreenRef, nameOrId: string, text: unknown): GuiDocument
+    setVisible(screen: ScreenRef, nameOrId: string, visible: boolean): GuiDocument
+    setInteractable(screen: ScreenRef, nameOrId: string, interactable: boolean): GuiDocument
+    setRect(screen: ScreenRef, nameOrId: string, rect: Partial<GuiRect>): GuiDocument
+    setAppearance(screen: ScreenRef, nameOrId: string, appearance: Record<string, unknown>): GuiDocument
+    setStyle(screen: ScreenRef, nameOrId: string, style: Record<string, unknown>): GuiDocument
+    value(screen: ScreenRef, nameOrId: string): string | number | boolean | null
+    setValue(screen: ScreenRef, nameOrId: string, value: string | number | boolean): void
+    onEvent(handler: (event: GuiEvent) => void): Unsubscribe
+    onActivate(nameOrId: string, handler: (event: GuiEvent) => void): Unsubscribe
+    onChange(nameOrId: string, handler: (value: string | number | boolean | undefined, event: GuiEvent) => void): Unsubscribe
+    readonly cursor: string | null
+    readonly surfaces: { readonly system: unknown; settingsOf(entity: Entity): GuiSurfaceSettings | null; reset(): void }
+
+                                                                                    
+    readonly domRoot: HTMLElement
+                                                                                               
+    html(markup: string | AssetRef, options?: { id?: string; replace?: boolean; className?: string }): HTMLElement
+                                                                         
+    css(text: string | AssetRef): HTMLStyleElement
+                                                                         
+    svg(markup: string | AssetRef, options?: { id?: string; replace?: boolean; className?: string }): SVGSVGElement
+    element<T extends Element = HTMLElement>(selectorOrId: string): T | null
+    elements<T extends Element = HTMLElement>(selector: string): T[]
+                                                                                             
+    bind(name: string, value: unknown): number
+                                                                                                                         
+    onAction(action: string, handler: (event: GuiActionEvent) => void): Unsubscribe
+    clear(): void
+                                                                                     
+    readonly canvas2d: CanvasRenderingContext2D
+    readonly size: { readonly width: number; readonly height: number; readonly pixelRatio: number }
+                                                                                                                                           
+    pointerEvents: boolean
+    readonly templates: { list(): never }
+                                                                                                                
+    documents(): { key: string; document: GuiDocument; shown: boolean }[]
+  }
+`;
