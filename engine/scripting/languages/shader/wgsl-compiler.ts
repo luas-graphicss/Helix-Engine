@@ -227,3 +227,118 @@ function splitTopLevel(text: string): string[] {
         parts.push(tail);
     return parts;
 }
+function collectResources(text: string, structs: Map<string, WgslStruct>, at: (offset: number) => ShaderOrigin | null, report: (origin: ShaderOrigin | null, severity: CompileDiagnostic['severity'], message: string, code: string) => void): PendingUniform[] {
+    const pending: PendingUniform[] = [];
+    const bindings = new Map<string, string>();
+    RESOURCE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = RESOURCE.exec(text)) !== null) {
+        const origin = at(match.index);
+        const line = origin?.file.includedAt ?? origin?.line ?? 1;
+        const group = Number(/@group\(\s*(\d+)\s*\)/.exec(match[1])?.[1] ?? -1);
+        const binding = Number(/@binding\(\s*(\d+)\s*\)/.exec(match[1])?.[1] ?? -1);
+        const space = (match[2] ?? '').split(',')[0].trim();
+        const name = match[3];
+        const type = match[4].trim();
+        if (group === WGSL_FRAME_GROUP) {
+            report(origin, 'error', `O grupo ${WGSL_FRAME_GROUP} é da engine (${WGSL_FRAME_VARIABLE}, sceneColor, sceneDepth); declare "${name}" no grupo 1 em diante.`, 'shader-binding');
+            continue;
+        }
+        const slot = `${group}:${binding}`;
+        const taken = bindings.get(slot);
+        if (taken) {
+            report(origin, 'error', `@group(${group}) @binding(${binding}) já é de "${taken}".`, 'shader-binding');
+            continue;
+        }
+        bindings.set(slot, name);
+        const glslName = nagaResourceName(group, binding);
+        if (space === 'uniform') {
+            const struct = structs.get(type);
+            if (struct) {
+                for (const field of struct.fields) {
+                    const mapped = glslTypeOf(field.type, structs);
+                    if (!mapped) {
+                        report(origin, 'warning', `"${name}.${field.name}" é ${field.type}, que uniforms.set não preenche (use escalares, vetores, matrizes ou arrays deles).`, 'shader-uniform');
+                        continue;
+                    }
+                    pending.push({ name: field.name, owner: name, glslName: `${glslName}.${field.name}`, type: mapped.type, arraySize: mapped.arraySize, line });
+                }
+                continue;
+            }
+            const mapped = glslTypeOf(type, structs);
+            if (!mapped) {
+                report(origin, 'warning', `"${name}" é ${type}, que uniforms.set não preenche (use escalares, vetores, matrizes, arrays deles ou uma struct com esses campos).`, 'shader-uniform');
+                continue;
+            }
+            pending.push({ name, glslName, type: mapped.type, arraySize: mapped.arraySize, line });
+            continue;
+        }
+        if (space === 'storage') {
+            report(origin, 'error', `"${name}": o WebGL2 não tem storage buffers; use var<uniform> ou uma textura.`, 'shader-binding');
+            continue;
+        }
+        if (space)
+            continue;
+        const sampler = samplerTypeOf(type);
+        if (sampler)
+            pending.push({ name, glslName, type: sampler, arraySize: 1, line });
+    }
+    return pending;
+}
+const SCALARS: Record<string, {
+    glsl: string;
+    vec: string;
+}> = {
+    f32: { glsl: 'float', vec: 'vec' },
+    i32: { glsl: 'int', vec: 'ivec' },
+    u32: { glsl: 'uint', vec: 'uvec' },
+    bool: { glsl: 'bool', vec: 'bvec' },
+};
+const VEC_SUFFIX: Record<string, string> = { f: 'f32', i: 'i32', u: 'u32', h: 'f16' };
+function glslTypeOf(wgslType: string, structs: Map<string, WgslStruct>): {
+    type: string;
+    arraySize: number;
+} | null {
+    const type = wgslType.replace(/\s+/g, '');
+    const array = /^array<(.+),(\d+)>$/.exec(type);
+    if (array) {
+        const element = glslTypeOf(array[1], structs);
+        return element && element.arraySize === 1 ? { type: element.type, arraySize: Number(array[2]) } : null;
+    }
+    const scalar = SCALARS[type];
+    if (scalar)
+        return { type: scalar.glsl, arraySize: 1 };
+    const vector = /^vec([234])(?:<(\w+)>|([fiuh]))$/.exec(type);
+    if (vector) {
+        const inner = vector[2] ?? VEC_SUFFIX[vector[3]];
+        const base = SCALARS[inner];
+        return base ? { type: `${base.vec}${vector[1]}`, arraySize: 1 } : null;
+    }
+    const matrix = /^mat([234])x([234])(?:<(\w+)>|([fh]))$/.exec(type);
+    if (matrix) {
+        const inner = matrix[3] ?? VEC_SUFFIX[matrix[4]];
+        if (inner !== 'f32')
+            return null;
+        return { type: matrix[1] === matrix[2] ? `mat${matrix[1]}` : `mat${matrix[1]}x${matrix[2]}`, arraySize: 1 };
+    }
+    if (structs.has(type))
+        return null;
+    return null;
+}
+function samplerTypeOf(wgslType: string): string | null {
+    const type = wgslType.replace(/\s+/g, '');
+    const texture = /^texture_(2d|2d_array|3d|cube|cube_array)<(f32|i32|u32)>$/.exec(type);
+    if (texture) {
+        const prefix = texture[2] === 'i32' ? 'i' : texture[2] === 'u32' ? 'u' : '';
+        const kind: Record<string, string> = { '2d': 'sampler2D', '2d_array': 'sampler2DArray', '3d': 'sampler3D', cube: 'samplerCube', cube_array: 'samplerCubeArray' };
+        return `${prefix}${kind[texture[1]]}`;
+    }
+    if (type === 'texture_depth_2d')
+        return 'sampler2DShadow';
+    if (type === 'texture_depth_cube')
+        return 'samplerCubeShadow';
+    return null;
+}
+function hasErrors(diagnostics: readonly CompileDiagnostic[]): boolean {
+    return diagnostics.some((diagnostic) => diagnostic.severity === 'error');
+}
