@@ -31,7 +31,8 @@ export function PanelFrame({ tabs, defaultTabId, activeTabId, onActiveTabChange,
     };
     const acceptsDrop = (event: DragEvent<HTMLElement>) => Boolean(onDropTab) && (canDropTab?.(event) ?? true);
     return (<section className={cn('flex min-h-0 min-w-0 flex-1 flex-col bg-surface', className)}>
-      <header className={cn('flex h-7 shrink-0 items-stretch border-b border-border bg-surface-sunken transition-colors', dropHover && 'bg-primary/15')} onDragOver={(event) => {
+      
+      <header className={cn('flex h-tabs shrink-0 items-stretch bg-surface-sunken shadow-[inset_0_-1px_0_0_var(--border)] transition-colors duration-100', dropHover && 'bg-primary/15 shadow-[inset_0_0_0_1px_var(--primary)]')} onDragOver={(event) => {
             if (!acceptsDrop(event))
                 return;
             event.preventDefault();
@@ -49,9 +50,9 @@ export function PanelFrame({ tabs, defaultTabId, activeTabId, onActiveTabChange,
             onDropTab?.(event);
         }}>
         <TabStrip tabs={tabs} activeId={activeId} onChange={selectTab} className="flex-1" compact={tabs.length > COMPACT_TAB_COUNT} onClose={onCloseTab} onDragTab={onDragTab}/>
-        {menu && (<div className="flex items-center px-0.5">
+        {menu && (<div className="flex items-center px-0.5 shadow-[inset_0_-1px_0_0_var(--border)]">
             <DropdownMenu>
-              <DropdownMenuTrigger render={<IconButton label="Opções do painel" size="sm"/>}>
+              <DropdownMenuTrigger render={<IconButton label="Opções do painel" size="xs"/>}>
                 <Ellipsis />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className={MENU_CONTENT_CLASS}>
@@ -60,6 +61,7 @@ export function PanelFrame({ tabs, defaultTabId, activeTabId, onActiveTabChange,
             </DropdownMenu>
           </div>)}
       </header>
-      <div className="min-h-0 flex-1 overflow-auto">{renderTab(activeId)}</div>
+      
+      <div className="@container/panel min-h-0 flex-1 overflow-auto">{renderTab(activeId)}</div>
     </section>);
 }
