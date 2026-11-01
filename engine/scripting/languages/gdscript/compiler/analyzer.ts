@@ -1843,4 +1843,185 @@ class Analyzer {
         if (member.isStatic && (member.kind === 'const' || member.kind === 'enum' || member.kind === 'enum_value' || member.kind === 'var') && this.staticState.get(member) !== 'done')
             this.ensureStaticInit(member);
     }
+    private resolveIdentifier(e: IdentifierExpression, mode: 'read' | 'call' | 'assign'): StaticType {
+        const fn = this.fn!;
+        const name = e.name;
+        const local = this.lookupLocal(name);
+        if (local) {
+            if (mode !== 'assign')
+                local.used = true;
+            e.resolved = { kind: 'local', jsName: local.jsName };
+            return local.type;
+        }
+        const member = this.findMember(fn.cls, name);
+        if (member) {
+            if (fn.isStatic && !member.isStatic)
+                this.error(e.span, `"${name}" é ${this.describeMemberKind(member.kind)} de instância e não pode ser usado em contexto static (static func, const, static var).`);
+            this.touchStatic(member);
+            e.resolved = this.memberResolution(member);
+            return this.memberValueType(member);
+        }
+        const outerStatic = this.findStaticInOuters(fn.cls, name);
+        if (outerStatic) {
+            this.touchStatic(outerStatic);
+            e.resolved = this.memberResolution(outerStatic);
+            return this.memberValueType(outerStatic);
+        }
+        const base = this.baseMember(name, fn.cls.godotBase);
+        if (base) {
+            if (fn.isStatic)
+                this.error(e.span, `"${name}" pertence ao nó e não pode ser usado em contexto static.`);
+            e.resolved = { kind: 'base', name };
+            return base.kind === 'method' ? 'Callable' : base.type;
+        }
+        const cls = this.lookupClass(name, fn.cls);
+        if (cls) {
+            this.useClass(cls);
+            e.resolved = cls.isSibling && cls.scriptName && !cls.outer ? { kind: 'sibling', scriptName: cls.scriptName, className: cls.typeName } : { kind: 'class', jsName: cls.jsName, className: cls.typeName };
+            return `@class:${cls.typeName}`;
+        }
+        if (BUILTIN_TYPE_NAMES.includes(name) && name !== 'Object' && name !== 'Node' && name !== 'Nil' && name !== 'null') {
+            e.resolved = { kind: 'builtin_type', name };
+            return `@type:${name}`;
+        }
+        if (isGodotClass(name) || name === 'Object' || name === 'Node') {
+            e.resolved = { kind: 'builtin_type', name };
+            return `@type:${name}`;
+        }
+        if (SINGLETON_NAMES.includes(name)) {
+            e.resolved = { kind: 'singleton', name };
+            return `@singleton:${name}`;
+        }
+        if (Object.prototype.hasOwnProperty.call(GLOBAL_FUNCTIONS, name)) {
+            e.resolved = { kind: 'global_function', name };
+            return 'Callable';
+        }
+        if (IO_NAMES.includes(name)) {
+            e.resolved = { kind: 'io', name };
+            return 'Callable';
+        }
+        if (Object.prototype.hasOwnProperty.call(CONSTANTS, name) || Object.prototype.hasOwnProperty.call(TYPE_CONSTANTS, name) || Object.prototype.hasOwnProperty.call(GODOT_CONSTANTS, name)) {
+            e.resolved = { kind: 'constant', name };
+            return FLOAT_CONSTANTS.has(name) ? 'float' : 'int';
+        }
+        if (Object.prototype.hasOwnProperty.call(KEY_CODES, name)) {
+            e.resolved = { kind: 'key', name };
+            return 'int';
+        }
+        if (name === 'helix') {
+            e.resolved = { kind: 'helix' };
+            return 'Variant';
+        }
+        const candidates = new Set<string>();
+        for (let scope = this.scope; scope; scope = scope.parent)
+            for (const key of scope.locals.keys())
+                candidates.add(key);
+        for (let c: ClassInfo | null = fn.cls; c; c = c.parent)
+            for (const key of c.members.keys())
+                candidates.add(key);
+        for (const key of Object.keys(NODE_PROPERTIES))
+            if (baseMemberVisible(key, fn.cls.godotBase))
+                candidates.add(key);
+        for (const key of Object.keys(NODE_METHODS))
+            if (baseMemberVisible(key, fn.cls.godotBase))
+                candidates.add(key);
+        for (const key of Object.keys(GLOBAL_FUNCTIONS))
+            candidates.add(key);
+        for (const key of IO_NAMES)
+            candidates.add(key);
+        for (const key of BUILTIN_TYPE_NAMES)
+            candidates.add(key);
+        for (const key of SINGLETON_NAMES)
+            candidates.add(key);
+        for (const key of Object.keys(CONSTANTS))
+            candidates.add(key);
+        for (const key of this.siblingsByClassName.keys())
+            candidates.add(key);
+        candidates.add('self');
+        const hint = this.suggest(name, candidates);
+        const extra = name === 'print' ? '' : name === 'Vector3.ZERO' ? '' : name.includes('.') ? '' : '';
+        this.error(e.span, `O identificador "${name}" não foi declarado neste escopo.${hint}${extra}`);
+        e.resolved = { kind: 'helix' };
+        return 'Variant';
+    }
+    private member(e: MemberExpression, mode: 'read' | 'call' | 'assign'): MemberLookup | null {
+        const object = e.object;
+        const name = e.name;
+        const fn = this.fn!;
+        let lookup: MemberLookup | null = null;
+        if (object.kind === 'self') {
+            if (fn.isStatic)
+                this.error(object.span, 'self não existe em contexto static.');
+            lookup = this.ownMember(fn.cls, name, e.nameSpan, true);
+            object.type = fn.cls.typeName;
+        }
+        else if (object.kind === 'super') {
+            if (mode !== 'call')
+                this.error(e.span, 'super só serve para chamar métodos da classe pai: super.metodo().');
+            lookup = this.superMember(name, e.nameSpan);
+        }
+        else {
+            const objectType = this.expression(object);
+            lookup = this.memberOf(objectType, object, name, e.nameSpan, mode);
+        }
+        if (lookup?.resolution)
+            e.memberResolution = lookup.resolution;
+        e.type = lookup ? lookup.type : 'Variant';
+        return lookup;
+    }
+    private ownMember(cls: ClassInfo, name: string, span: SourceSpan, viaSelf: boolean): MemberLookup | null {
+        const member = this.findMember(cls, name);
+        if (member) {
+            this.touchStatic(member);
+            return this.lookupFromMember(member);
+        }
+        const base = this.baseMember(name, cls.godotBase);
+        if (base)
+            return { type: base.type, callable: base.kind === 'method', min: base.min, max: base.max, resolution: { kind: 'base', name }, readonly: base.readonly, what: base.what };
+        const candidates = new Set<string>();
+        for (let c: ClassInfo | null = cls; c; c = c.parent)
+            for (const key of c.members.keys())
+                candidates.add(key);
+        for (const key of Object.keys(NODE_PROPERTIES))
+            if (baseMemberVisible(key, cls.godotBase))
+                candidates.add(key);
+        for (const key of Object.keys(NODE_METHODS))
+            if (baseMemberVisible(key, cls.godotBase))
+                candidates.add(key);
+        this.error(span, `"${name}" não existe em ${viaSelf ? 'self' : cls.typeName} (classe ${cls.typeName}, base ${cls.godotBase}).${this.suggest(name, candidates)}`);
+        return null;
+    }
+    private lookupFromMember(member: MemberInfo): MemberLookup {
+        const resolution = this.memberResolution(member);
+        if (member.kind === 'func' && member.func) {
+            const params = member.func.params;
+            return { type: member.type, callable: true, min: params.filter((p) => !p.defaultValue).length, max: params.length, resolution, readonly: true, func: member.func, what: 'método' };
+        }
+        return { type: this.memberValueType(member), callable: member.kind === 'var' || member.kind === 'const' ? member.type === 'Callable' || member.type === 'Variant' : false, resolution, readonly: member.kind !== 'var', what: this.describeMemberKind(member.kind) };
+    }
+    private superMember(name: string, span: SourceSpan): MemberLookup | null {
+        const fn = this.fn!;
+        if (fn.isStatic) {
+            this.error(span, 'super não existe em contexto static.');
+            return null;
+        }
+        const parent = fn.cls.parent;
+        if (parent) {
+            const member = this.findMember(parent, name);
+            if (member) {
+                if (member.kind !== 'func') {
+                    this.error(span, `"${name}" em ${parent.name} é ${this.describeMemberKind(member.kind)}, não um método.`);
+                    return null;
+                }
+                return this.lookupFromMember(member);
+            }
+        }
+        const base = this.baseMember(name, fn.cls.godotBase);
+        if (base && base.kind === 'method')
+            return { type: base.type, callable: true, min: base.min, max: base.max, resolution: { kind: 'base', name }, readonly: true, what: base.what };
+        if (GODOT_VIRTUALS[name] !== undefined || name === '_init')
+            return { type: 'void', callable: true, min: 0, max: Infinity, resolution: { kind: 'base', name }, readonly: true, what: 'callback do nó' };
+        this.error(span, `A classe pai não tem o método "${name}".`);
+        return null;
+    }
 }
