@@ -1,11 +1,11 @@
 import type { GL } from '@/engine/renderer/gl/context';
-import { CLUSTER_MAX_TRIANGLES } from '../data/myriad-limits';
+import { CLUSTER_BOUNDS_TEXEL, CLUSTER_INFO_TEXEL, CLUSTER_MAX_TRIANGLES, CLUSTER_TEXELS, CLUSTER_TRIANGLES_TEXEL } from '../data/myriad-limits';
 import { DataTexture } from './data-texture';
 import type { MyriadMeshEntry } from './myriad-mesh-cache';
 import { RangeAllocator } from './range-allocator';
 const INITIAL_VERTEX_ROWS = 64;
-const INITIAL_CLUSTER_ROWS = 4;
-export const BOUNDS_TEXELS_PER_CLUSTER = 2;
+const INITIAL_CLUSTER_ROWS = 4 * CLUSTER_TEXELS;
+const TEXEL_UINTS = 4;
 export interface GeometryPoolStats {
     vertices: number;
     clusters: number;
@@ -15,22 +15,22 @@ export interface GeometryPoolStats {
 export class GeometryPool {
     readonly stats: GeometryPoolStats = { vertices: 0, clusters: 0, bytes: 0, meshes: 0 };
     readonly vertices: DataTexture;
-    readonly triangles: DataTexture;
-    readonly clusterInfo: DataTexture;
-    readonly clusterBounds: DataTexture;
+    readonly clusters: DataTexture;
     private readonly vertexAlloc: RangeAllocator;
     private readonly clusterAlloc: RangeAllocator;
     private readonly residents = new Set<MyriadMeshEntry>();
     private readonly maxRows: number;
+    private staging = new Uint32Array(0);
     constructor(gl: GL, readonly width: number) {
         this.maxRows = Math.max(1, Math.floor(gl.getParameter(gl.MAX_TEXTURE_SIZE) as number));
         this.vertices = new DataTexture(gl, width, 'rgba32ui', INITIAL_VERTEX_ROWS);
-        this.triangles = new DataTexture(gl, width, 'rgba8ui', INITIAL_CLUSTER_ROWS * CLUSTER_MAX_TRIANGLES);
-        this.clusterInfo = new DataTexture(gl, width, 'rgba32ui', INITIAL_CLUSTER_ROWS);
-        this.clusterBounds = new DataTexture(gl, width, 'rgba32f', INITIAL_CLUSTER_ROWS * BOUNDS_TEXELS_PER_CLUSTER);
+        this.clusters = new DataTexture(gl, width, 'rgba32ui', INITIAL_CLUSTER_ROWS);
         this.vertexAlloc = new RangeAllocator(this.vertices.capacityTexels);
-        this.clusterAlloc = new RangeAllocator(this.clusterInfo.capacityTexels);
+        this.clusterAlloc = new RangeAllocator(this.clusterCapacity);
         this.updateStats();
+    }
+    private get clusterCapacity(): number {
+        return Math.floor(this.clusters.capacityTexels / CLUSTER_TEXELS);
     }
     upload(entry: MyriadMeshEntry): boolean {
         const packed = entry.packed;
@@ -78,13 +78,11 @@ export class GeometryPool {
     private reserveClusters(count: number): number {
         let base = this.clusterAlloc.allocate(count);
         while (base < 0) {
-            const rows = this.grownRows(this.clusterInfo.rows, this.clusterAlloc.capacity + count);
-            if (rows < 0 || rows * CLUSTER_MAX_TRIANGLES > this.maxRows)
+            const rows = this.grownRows(this.clusters.rows, (this.clusterAlloc.capacity + count) * CLUSTER_TEXELS);
+            if (rows < 0)
                 return -1;
-            this.clusterInfo.ensureRows(rows);
-            this.triangles.ensureRows(rows * CLUSTER_MAX_TRIANGLES);
-            this.clusterBounds.ensureRows(rows * BOUNDS_TEXELS_PER_CLUSTER);
-            this.clusterAlloc.grow(rows * this.width);
+            this.clusters.ensureRows(rows);
+            this.clusterAlloc.grow(this.clusterCapacity);
             this.reuploadResidents();
             base = this.clusterAlloc.allocate(count);
         }
@@ -105,25 +103,47 @@ export class GeometryPool {
             return;
         const { vertexBase, clusterBase, clusterCount } = residency;
         this.vertices.upload(vertexBase, packed.vertexCount, packed.vertexData);
-        this.triangles.upload(clusterBase * CLUSTER_MAX_TRIANGLES, clusterCount * CLUSTER_MAX_TRIANGLES, packed.triangleData);
-        this.clusterBounds.upload(clusterBase * BOUNDS_TEXELS_PER_CLUSTER, clusterCount * BOUNDS_TEXELS_PER_CLUSTER, packed.clusterBounds);
-        const info = packed.clusterInfo.slice();
-        for (let c = 0; c < clusterCount; c++)
-            info[c * 4] += vertexBase;
-        this.clusterInfo.upload(clusterBase, clusterCount, info);
+        this.clusters.upload(clusterBase * CLUSTER_TEXELS, clusterCount * CLUSTER_TEXELS, this.assembleClusters(packed, vertexBase));
+    }
+    private assembleClusters(packed: NonNullable<MyriadMeshEntry['packed']>, vertexBase: number): Uint32Array {
+        const { clusterCount } = packed;
+        const needed = clusterCount * CLUSTER_TEXELS * TEXEL_UINTS;
+        if (this.staging.length < needed)
+            this.staging = new Uint32Array(needed);
+        const texels = this.staging;
+        const bounds = new Uint32Array(packed.clusterBounds.buffer, packed.clusterBounds.byteOffset, packed.clusterBounds.length);
+        const triangles = triangleWords(packed.triangleData);
+        const boundsUints = 2 * TEXEL_UINTS;
+        for (let c = 0; c < clusterCount; c++) {
+            const base = c * CLUSTER_TEXELS * TEXEL_UINTS;
+            const info = base + CLUSTER_INFO_TEXEL * TEXEL_UINTS;
+            texels[info] = packed.clusterInfo[c * 4] + vertexBase;
+            texels[info + 1] = packed.clusterInfo[c * 4 + 1];
+            texels[info + 2] = packed.clusterInfo[c * 4 + 2];
+            texels[info + 3] = packed.clusterInfo[c * 4 + 3];
+            texels.set(bounds.subarray(c * boundsUints, (c + 1) * boundsUints), base + CLUSTER_BOUNDS_TEXEL * TEXEL_UINTS);
+            texels.set(triangles.subarray(c * CLUSTER_MAX_TRIANGLES, (c + 1) * CLUSTER_MAX_TRIANGLES), base + CLUSTER_TRIANGLES_TEXEL * TEXEL_UINTS);
+        }
+        return texels;
     }
     private updateStats(): void {
         const { stats } = this;
         stats.vertices = this.vertexAlloc.used;
         stats.clusters = this.clusterAlloc.used;
         stats.meshes = this.residents.size;
-        stats.bytes = this.vertices.bytes + this.triangles.bytes + this.clusterInfo.bytes + this.clusterBounds.bytes;
+        stats.bytes = this.vertices.bytes + this.clusters.bytes;
     }
     dispose(): void {
         this.vertices.dispose();
-        this.triangles.dispose();
-        this.clusterInfo.dispose();
-        this.clusterBounds.dispose();
+        this.clusters.dispose();
         this.residents.clear();
     }
+}
+function triangleWords(triangleData: Uint8Array): Uint32Array {
+    const words = triangleData.byteLength >> 2;
+    if (triangleData.byteOffset % 4 === 0)
+        return new Uint32Array(triangleData.buffer, triangleData.byteOffset, words);
+    const aligned = new Uint8Array(words * 4);
+    aligned.set(triangleData.subarray(0, words * 4));
+    return new Uint32Array(aligned.buffer);
 }
