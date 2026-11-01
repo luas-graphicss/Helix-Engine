@@ -1,10 +1,13 @@
+import type { ProjectDatabase } from '@/engine/core/storage/project-database';
 import { FileBundle } from '@/engine/assets/import/file-bundle';
-import { importModelFile } from '@/engine/assets/import/import-registry';
+import { readModelFile } from '@/engine/assets/import/import-worker-client';
 import type { ImportedScene } from '@/engine/assets/import/import-types';
 import { AssetStore } from './asset-store';
-import { primaryFileOf, type AssetKind, type AssetSnapshot, type AssetThumbnail, type LibraryAsset } from './asset-types';
+import { primaryFileOf, type AssetDetails, type AssetKind, type AssetSnapshot, type AssetThumbnail, type LibraryAsset } from './asset-types';
+import { upgradeAudioDetails } from './audio-asset';
 export type AssetLibraryStatus = 'idle' | 'loading' | 'ready' | 'unavailable';
 const MODEL_CACHE_LIMIT = 6;
+const METADATA_SAVE_DELAY_MS = 600;
 function errorMessage(cause: unknown): string {
     return cause instanceof Error ? cause.message : String(cause);
 }
@@ -18,6 +21,9 @@ export function normalizeTags(tags: Iterable<string>): string[] {
     return Array.from(seen).sort();
 }
 function upgradeStoredAsset(asset: LibraryAsset): LibraryAsset {
+    if (asset.kind === 'audio' && asset.details.kind === 'audio') {
+        return { ...asset, details: upgradeAudioDetails(asset.details) };
+    }
     if (asset.kind !== 'model' || asset.details.kind !== 'model')
         return asset;
     const details = asset.details as Partial<typeof asset.details> & {
@@ -29,13 +35,16 @@ function upgradeStoredAsset(asset: LibraryAsset): LibraryAsset {
 }
 export class AssetLibrary {
     private readonly items = new Map<string, LibraryAsset>();
-    private readonly store = AssetStore.supported ? new AssetStore() : null;
+    private readonly store: AssetStore | null;
     private readonly fileCache = new Map<string, Promise<File[]>>();
     private readonly modelCache = new Map<string, Promise<ImportedScene>>();
+    private readonly saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
     status: AssetLibraryStatus = 'idle';
     error: string | null = null;
     busy: string | null = null;
-    constructor(private readonly onChange: () => void) { }
+    constructor(private readonly onChange: () => void, database: ProjectDatabase | null) {
+        this.store = database ? new AssetStore(database) : null;
+    }
     get all(): LibraryAsset[] {
         return Array.from(this.items.values());
     }
@@ -95,11 +104,28 @@ export class AssetLibrary {
         this.items.delete(id);
         this.fileCache.delete(id);
         this.modelCache.delete(id);
+        const pendingSave = this.saveTimers.get(id);
+        if (pendingSave)
+            clearTimeout(pendingSave);
+        this.saveTimers.delete(id);
         this.onChange();
         this.persist(() => this.store?.remove(id), `excluir "${asset.name}"`);
     }
     async snapshot(asset: LibraryAsset): Promise<AssetSnapshot> {
         return { asset, files: await this.files(asset) };
+    }
+    async reload(id: string): Promise<LibraryAsset | null> {
+        if (!this.store)
+            return this.items.get(id) ?? null;
+        const stored = await this.store.load(id);
+        if (!stored)
+            return null;
+        const asset = upgradeStoredAsset(stored);
+        this.items.set(id, asset);
+        this.fileCache.delete(id);
+        this.modelCache.delete(id);
+        this.onChange();
+        return asset;
     }
     rename(asset: LibraryAsset, name: string): void {
         const trimmed = name.trim();
@@ -115,6 +141,21 @@ export class AssetLibrary {
     setThumbnail(asset: LibraryAsset, thumbnail: AssetThumbnail | null): void {
         asset.thumbnail = thumbnail;
         this.touch(asset);
+    }
+    setDetails(asset: LibraryAsset, details: AssetDetails): void {
+        asset.details = details;
+        asset.updatedAt = Date.now();
+        this.onChange();
+        this.scheduleMetadataSave(asset);
+    }
+    flush(): void {
+        for (const [id, timer] of this.saveTimers) {
+            clearTimeout(timer);
+            const asset = this.items.get(id);
+            if (asset)
+                this.persist(() => this.store?.saveMetadata(asset), `salvar "${asset.name}"`);
+        }
+        this.saveTimers.clear();
     }
     setBusy(label: string | null): void {
         if (this.busy === label)
@@ -144,7 +185,7 @@ export class AssetLibrary {
             this.rememberModel(asset.id, cached);
             return cached;
         }
-        const pending = this.files(asset).then((files) => importModelFile(primaryFileOf({ asset, files }), new FileBundle(files)));
+        const pending = this.files(asset).then((files) => readModelFile(primaryFileOf({ asset, files }), new FileBundle(files)));
         this.rememberModel(asset.id, pending);
         pending.catch(() => this.modelCache.delete(asset.id));
         return pending;
@@ -167,6 +208,19 @@ export class AssetLibrary {
         asset.updatedAt = Date.now();
         this.onChange();
         this.persist(() => this.store?.saveMetadata(asset), `salvar "${asset.name}"`);
+    }
+    private scheduleMetadataSave(asset: LibraryAsset): void {
+        if (!this.store)
+            return;
+        const pending = this.saveTimers.get(asset.id);
+        if (pending)
+            clearTimeout(pending);
+        this.saveTimers.set(asset.id, setTimeout(() => {
+            this.saveTimers.delete(asset.id);
+            if (!this.items.has(asset.id))
+                return;
+            this.persist(() => this.store?.saveMetadata(asset), `salvar "${asset.name}"`);
+        }, METADATA_SAVE_DELAY_MS));
     }
     private persist(run: () => Promise<void> | undefined, what: string): void {
         run()?.catch((cause: unknown) => {
