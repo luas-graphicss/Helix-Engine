@@ -549,3 +549,72 @@ export const CONSTANTS: Record<string, unknown> = {
     CLOCKWISE: 0,
     COUNTERCLOCKWISE: 1,
 };
+export const KEY_CODES: Record<string, string> = {
+    KEY_SPACE: 'Space',
+    KEY_ENTER: 'Enter',
+    KEY_KP_ENTER: 'NumpadEnter',
+    KEY_ESCAPE: 'Escape',
+    KEY_TAB: 'Tab',
+    KEY_BACKSPACE: 'Backspace',
+    KEY_DELETE: 'Delete',
+    KEY_INSERT: 'Insert',
+    KEY_HOME: 'Home',
+    KEY_END: 'End',
+    KEY_PAGEUP: 'PageUp',
+    KEY_PAGEDOWN: 'PageDown',
+    KEY_LEFT: 'ArrowLeft',
+    KEY_RIGHT: 'ArrowRight',
+    KEY_UP: 'ArrowUp',
+    KEY_DOWN: 'ArrowDown',
+    KEY_SHIFT: 'ShiftLeft',
+    KEY_CTRL: 'ControlLeft',
+    KEY_ALT: 'AltLeft',
+    KEY_META: 'MetaLeft',
+    KEY_CAPSLOCK: 'CapsLock',
+    KEY_MINUS: 'Minus',
+    KEY_EQUAL: 'Equal',
+    KEY_COMMA: 'Comma',
+    KEY_PERIOD: 'Period',
+    KEY_SLASH: 'Slash',
+    KEY_BACKSLASH: 'Backslash',
+    KEY_SEMICOLON: 'Semicolon',
+    KEY_APOSTROPHE: 'Quote',
+    KEY_BRACKETLEFT: 'BracketLeft',
+    KEY_BRACKETRIGHT: 'BracketRight',
+    KEY_QUOTELEFT: 'Backquote',
+};
+for (let code = 65; code <= 90; code++)
+    KEY_CODES[`KEY_${String.fromCharCode(code)}`] = `Key${String.fromCharCode(code)}`;
+for (let digit = 0; digit <= 9; digit++) {
+    KEY_CODES[`KEY_${digit}`] = `Digit${digit}`;
+    KEY_CODES[`KEY_KP_${digit}`] = `Numpad${digit}`;
+}
+for (let fn = 1; fn <= 12; fn++)
+    KEY_CODES[`KEY_F${fn}`] = `F${fn}`;
+export interface ConsoleLike {
+    log(...args: unknown[]): void;
+    info(...args: unknown[]): void;
+    warn(...args: unknown[]): void;
+    error(...args: unknown[]): void;
+}
+const BBCODE = /\[\/?(?:b|i|u|s|code|color|bgcolor|fgcolor|url|center|right|left|fill|indent|font|font_size|img|p|table|cell|ul|ol|wave|tornado|shake|fade|rainbow|pulse|outline_size|outline_color|lb|rb)(?:=[^\]]*)?\]/g;
+export function io(console: ConsoleLike) {
+    return {
+        print: (...parts: string[]) => console.log(parts.join('')),
+        prints: (...parts: string[]) => console.log(parts.join(' ')),
+        printt: (...parts: string[]) => console.log(parts.join('\t')),
+        printraw: (...parts: string[]) => console.log(parts.join('')),
+        print_rich: (...parts: string[]) => console.log(parts.join('').replace(BBCODE, '')),
+        printerr: (...parts: string[]) => console.error(parts.join('')),
+        push_error: (...parts: string[]) => console.error(parts.join('')),
+        push_warning: (...parts: string[]) => console.warn(parts.join('')),
+        print_verbose: (...parts: string[]) => console.info(parts.join('')),
+    };
+}
+export const IO_NAMES: readonly string[] = ['print', 'prints', 'printt', 'printraw', 'print_rich', 'printerr', 'push_error', 'push_warning', 'print_verbose'];
+export const GLOBAL_FUNCTIONS: Record<string, Fn> = { ...MATH, ...RANDOM, ...UTIL };
+export function isGlobalClass(value: unknown): boolean {
+    return isScriptClass(value);
+}
+export { TYPE_CONSTANTS };
+export type { VecLike };
