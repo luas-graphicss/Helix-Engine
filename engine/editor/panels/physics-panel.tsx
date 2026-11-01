@@ -6,7 +6,7 @@ import { ToggleField } from '@/engine/ui/toggle-field';
 import { SegmentedControl } from '@/engine/ui/segmented-control';
 import { PropertyRow } from '@/engine/ui/property-row';
 import { IconButton } from '@/engine/ui/icon-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import * as vec3 from '@/engine/core/math/vec3';
 import { matchPhysicsQuality, type PhysicsQuality } from '@/engine/physics/world/physics-settings';
 import { Vector3Input } from './inspector/number-fields';
@@ -38,7 +38,7 @@ const ratio = (value: number) => Number(value.toFixed(1)).toString();
 const density = (value: number) => `${Math.round(value)} kg/m³`;
 const multiplier = (value: number) => `${Number(value.toFixed(2))}×`;
 export function PhysicsPanel() {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'selection', 'playtest', 'view');
     const physics = session.scene.physics;
     const quality = matchPhysicsQuality(physics);
     const stepRate = Math.round(1 / physics.fixedTimestep);
@@ -50,8 +50,8 @@ export function PhysicsPanel() {
           <Atom className="size-4" aria-hidden/>
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
-          <span className="text-xs font-semibold text-foreground">Mundo físico</span>
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
+          <span className="truncate text-xs font-semibold text-foreground">Mundo físico</span>
+          <span className="truncate font-mono text-3xs text-muted-foreground">
             {gravityMagnitude.toFixed(2)} m/s² · {stepRate} Hz × {physics.substeps} subpassos
             {running ? ' · em simulação' : ''}
           </span>
@@ -66,7 +66,7 @@ export function PhysicsPanel() {
           <PropertyRow label="Aceleração">
             <Vector3Input label="Gravidade" values={physics.gravity} onCommit={(axis, value) => session.setGravityComponent(axis, value)}/>
           </PropertyRow>
-          <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+          <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
             Terra é −9,81 em Y. Valores positivos invertem a queda; a escala por corpo multiplica este vetor.
           </p>
         </CollapsibleSection>
@@ -95,6 +95,15 @@ export function PhysicsPanel() {
           <SliderField label="Limiar de quique" value={physics.restitutionThreshold} min={0} max={5} step={0.1} format={metersPerSecond} onChange={(value) => session.updatePhysics({ restitutionThreshold: value })}/>
         </CollapsibleSection>
 
+        <CollapsibleSection title="Juntas">
+          <SliderField label="Rigidez" value={physics.jointHertz} min={5} max={240} step={1} format={hertz} onChange={(value) => session.updatePhysics({ jointHertz: value })}/>
+          <SliderField label="Amortecimento" value={physics.jointDampingRatio} min={0} max={20} step={0.5} format={ratio} onChange={(value) => session.updatePhysics({ jointDampingRatio: value })}/>
+          <SliderField label="Correção máx." value={physics.jointPushMaxVelocity} min={1} max={50} step={1} format={metersPerSecond} onChange={(value) => session.updatePhysics({ jointPushMaxVelocity: value })}/>
+          <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
+            Vale para as travas rígidas de todas as juntas (dobradiças, soldas, hastes); molas e motores têm os próprios parâmetros em cada junta, pela API helix.physics.joints. A rigidez é limitada a um quarto da taxa de subpassos.
+          </p>
+        </CollapsibleSection>
+
         <CollapsibleSection title="Repouso">
           <ToggleField label="Adormecer corpos" on={physics.sleepEnabled} onToggle={() => session.updatePhysics({ sleepEnabled: !physics.sleepEnabled })}/>
           <SliderField label="Vel. linear" value={physics.sleepLinearThreshold} min={0.005} max={0.5} step={0.005} disabled={!physics.sleepEnabled} format={metersPerSecond} onChange={(value) => session.updatePhysics({ sleepLinearThreshold: value })}/>
@@ -106,7 +115,7 @@ export function PhysicsPanel() {
           <SliderField label="Densidade" value={physics.waterDensity} min={100} max={3000} step={10} format={density} onChange={(value) => session.updatePhysics({ waterDensity: value })}/>
           <SliderField label="Arrasto" value={physics.waterDrag} min={0} max={3} step={0.05} format={multiplier} onChange={(value) => session.updatePhysics({ waterDrag: value })}/>
           <SliderField label="Arrasto angular" value={physics.waterAngularDrag} min={0} max={3} step={0.05} format={multiplier} onChange={(value) => session.updatePhysics({ waterAngularDrag: value })}/>
-          <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+          <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
             Um corpo boia quando a massa dividida pelo volume do colisor fica abaixo da densidade da água (1000 kg/m³ é água doce) e afunda acima dela. O arrasto freia quem está submerso e o faz acompanhar as ondas.
           </p>
         </CollapsibleSection>
@@ -114,7 +123,7 @@ export function PhysicsPanel() {
         <CollapsibleSection title="Limites">
           <SliderField label="Vel. máxima" value={physics.maxLinearSpeed} min={10} max={500} step={5} format={metersPerSecond} onChange={(value) => session.updatePhysics({ maxLinearSpeed: value })}/>
           <SliderField label="Limite de queda" value={physics.fallLimitY} min={-2000} max={-10} step={10} format={meters} onChange={(value) => session.updatePhysics({ fallLimitY: value })}/>
-          <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+          <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
             Corpos abaixo do limite de queda são desativados e registrados no console, em vez de cair para sempre.
           </p>
         </CollapsibleSection>
