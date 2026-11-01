@@ -509,3 +509,265 @@ export class Vector4 {
 function cubic(from: number, to: number, pre: number, post: number, weight: number): number {
     return 0.5 * (from * 2 + (-pre + to) * weight + (2 * pre - 5 * from + 4 * to - post) * weight * weight + (-pre + 3 * from - 3 * to + post) * weight * weight * weight);
 }
+export class Quaternion {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+    constructor(x: unknown = 0, y: unknown = 0, z: unknown = 0, w: unknown = 1) {
+        if (x !== null && typeof x === 'object' && typeof y === 'number') {
+            const built = Quaternion.fromAxisAngle(x as VecLike, y);
+            this.x = built.x;
+            this.y = built.y;
+            this.z = built.z;
+            this.w = built.w;
+            return;
+        }
+        if (x !== null && typeof x === 'object') {
+            const source = x as VecLike;
+            this.x = Number(source.x ?? 0);
+            this.y = Number(source.y ?? 0);
+            this.z = Number(source.z ?? 0);
+            this.w = Number(source.w ?? 1);
+            return;
+        }
+        this.x = Number(x);
+        this.y = Number(y);
+        this.z = Number(z);
+        this.w = Number(w);
+    }
+    static get IDENTITY() {
+        return new Quaternion(0, 0, 0, 1);
+    }
+    static fromAxisAngle(axis: VecLike, angle: number): Quaternion {
+        const half = angle * 0.5;
+        const sin = Math.sin(half);
+        const length = Math.hypot(axis.x, axis.y, axis.z ?? 0) || 1;
+        return new Quaternion((axis.x / length) * sin, (axis.y / length) * sin, ((axis.z ?? 0) / length) * sin, Math.cos(half));
+    }
+    static from_euler(euler: VecLike): Quaternion {
+        const halfX = euler.x * 0.5;
+        const halfY = euler.y * 0.5;
+        const halfZ = (euler.z ?? 0) * 0.5;
+        const cosX = Math.cos(halfX);
+        const sinX = Math.sin(halfX);
+        const cosY = Math.cos(halfY);
+        const sinY = Math.sin(halfY);
+        const cosZ = Math.cos(halfZ);
+        const sinZ = Math.sin(halfZ);
+        return new Quaternion(sinX * cosY * cosZ + cosX * sinY * sinZ, cosX * sinY * cosZ - sinX * cosY * sinZ, cosX * cosY * sinZ - sinX * sinY * cosZ, cosX * cosY * cosZ + sinX * sinY * sinZ);
+    }
+    length(): number {
+        return Math.hypot(this.x, this.y, this.z, this.w);
+    }
+    length_squared(): number {
+        return this.x * this.x + this.y * this.y + this.z * this.z + this.w * this.w;
+    }
+    normalized(): Quaternion {
+        const length = this.length() || 1;
+        return new Quaternion(this.x / length, this.y / length, this.z / length, this.w / length);
+    }
+    is_normalized(): boolean {
+        return isEqualApprox(this.length_squared(), 1);
+    }
+    inverse(): Quaternion {
+        return new Quaternion(-this.x, -this.y, -this.z, this.w);
+    }
+    dot(other: Quaternion): number {
+        return this.x * other.x + this.y * other.y + this.z * other.z + this.w * other.w;
+    }
+    angle_to(other: Quaternion): number {
+        const dot = this.dot(other);
+        return Math.acos(clampNumber(dot * dot * 2 - 1, -1, 1));
+    }
+    multiply(other: Quaternion): Quaternion {
+        return new Quaternion(this.w * other.x + this.x * other.w + this.y * other.z - this.z * other.y, this.w * other.y + this.y * other.w + this.z * other.x - this.x * other.z, this.w * other.z + this.z * other.w + this.x * other.y - this.y * other.x, this.w * other.w - this.x * other.x - this.y * other.y - this.z * other.z);
+    }
+    xform(vector: VecLike): Vector3 {
+        const u = new Vector3(this.x, this.y, this.z);
+        const v = new Vector3(vector.x, vector.y, vector.z ?? 0);
+        const uv = u.cross(v);
+        const uuv = u.cross(uv);
+        return new Vector3(v.x + (uv.x * this.w + uuv.x) * 2, v.y + (uv.y * this.w + uuv.y) * 2, v.z + (uv.z * this.w + uuv.z) * 2);
+    }
+    slerp(to: Quaternion, weight: number): Quaternion {
+        let cos = this.dot(to);
+        let target = to;
+        if (cos < 0) {
+            cos = -cos;
+            target = new Quaternion(-to.x, -to.y, -to.z, -to.w);
+        }
+        let scale0: number;
+        let scale1: number;
+        if (1 - cos > EPSILON) {
+            const omega = Math.acos(cos);
+            const sin = Math.sin(omega);
+            scale0 = Math.sin((1 - weight) * omega) / sin;
+            scale1 = Math.sin(weight * omega) / sin;
+        }
+        else {
+            scale0 = 1 - weight;
+            scale1 = weight;
+        }
+        return new Quaternion(scale0 * this.x + scale1 * target.x, scale0 * this.y + scale1 * target.y, scale0 * this.z + scale1 * target.z, scale0 * this.w + scale1 * target.w);
+    }
+    get_axis(): Vector3 {
+        if (Math.abs(this.w) > 1 - EPSILON)
+            return new Vector3(this.x, this.y, this.z);
+        const r = 1 / Math.sqrt(1 - this.w * this.w);
+        return new Vector3(this.x * r, this.y * r, this.z * r);
+    }
+    get_angle(): number {
+        return 2 * Math.acos(clampNumber(this.w, -1, 1));
+    }
+    get_euler(): Vector3 {
+        return Basis.from_quaternion(this).get_euler();
+    }
+    is_equal_approx(other: Quaternion): boolean {
+        return isEqualApprox(this.x, other.x) && isEqualApprox(this.y, other.y) && isEqualApprox(this.z, other.z) && isEqualApprox(this.w, other.w);
+    }
+}
+export class Basis {
+    x: Vector3;
+    y: Vector3;
+    z: Vector3;
+    constructor(x?: unknown, y?: unknown, z?: unknown) {
+        if (x instanceof Quaternion) {
+            const built = Basis.from_quaternion(x);
+            this.x = built.x;
+            this.y = built.y;
+            this.z = built.z;
+            return;
+        }
+        if (x !== null && typeof x === 'object' && typeof y === 'number') {
+            const built = Basis.from_quaternion(Quaternion.fromAxisAngle(x as VecLike, y));
+            this.x = built.x;
+            this.y = built.y;
+            this.z = built.z;
+            return;
+        }
+        this.x = x === undefined ? new Vector3(1, 0, 0) : new Vector3(x);
+        this.y = y === undefined ? new Vector3(0, 1, 0) : new Vector3(y);
+        this.z = z === undefined ? new Vector3(0, 0, 1) : new Vector3(z);
+    }
+    static get IDENTITY() {
+        return new Basis();
+    }
+    static from_quaternion(q: Quaternion): Basis {
+        const xx = q.x * q.x;
+        const yy = q.y * q.y;
+        const zz = q.z * q.z;
+        const xy = q.x * q.y;
+        const xz = q.x * q.z;
+        const yz = q.y * q.z;
+        const wx = q.w * q.x;
+        const wy = q.w * q.y;
+        const wz = q.w * q.z;
+        return new Basis(new Vector3(1 - 2 * (yy + zz), 2 * (xy + wz), 2 * (xz - wy)), new Vector3(2 * (xy - wz), 1 - 2 * (xx + zz), 2 * (yz + wx)), new Vector3(2 * (xz + wy), 2 * (yz - wx), 1 - 2 * (xx + yy)));
+    }
+    static from_euler(euler: VecLike): Basis {
+        return Basis.from_quaternion(Quaternion.from_euler(euler));
+    }
+    static from_scale(scale: VecLike): Basis {
+        return new Basis(new Vector3(scale.x, 0, 0), new Vector3(0, scale.y, 0), new Vector3(0, 0, scale.z ?? 0));
+    }
+    static looking_at(target: VecLike, up: VecLike = new Vector3(0, 1, 0)): Basis {
+        const forward = new Vector3(target).normalized();
+        const right = new Vector3(up).cross(forward).normalized();
+        const realUp = forward.cross(right);
+        return new Basis(right, realUp, new Vector3(-forward.x, -forward.y, -forward.z));
+    }
+    private element(row: number, column: number): number {
+        const columnVector = column === 0 ? this.x : column === 1 ? this.y : this.z;
+        return row === 0 ? columnVector.x : row === 1 ? columnVector.y : columnVector.z;
+    }
+    xform(vector: VecLike): Vector3 {
+        const z = vector.z ?? 0;
+        return new Vector3(this.x.x * vector.x + this.y.x * vector.y + this.z.x * z, this.x.y * vector.x + this.y.y * vector.y + this.z.y * z, this.x.z * vector.x + this.y.z * vector.y + this.z.z * z);
+    }
+    multiply(other: Basis): Basis {
+        return new Basis(this.xform(other.x), this.xform(other.y), this.xform(other.z));
+    }
+    transposed(): Basis {
+        return new Basis(new Vector3(this.x.x, this.y.x, this.z.x), new Vector3(this.x.y, this.y.y, this.z.y), new Vector3(this.x.z, this.y.z, this.z.z));
+    }
+    determinant(): number {
+        return this.x.x * (this.y.y * this.z.z - this.z.y * this.y.z) - this.y.x * (this.x.y * this.z.z - this.z.y * this.x.z) + this.z.x * (this.x.y * this.y.z - this.y.y * this.x.z);
+    }
+    inverse(): Basis {
+        const det = this.determinant();
+        if (det === 0)
+            fail('Basis.inverse(): a base não é invertível (determinante zero).');
+        const inv = 1 / det;
+        const m = (r: number, c: number) => this.element(r, c);
+        const cofactor = (r: number, c: number) => {
+            const r1 = (r + 1) % 3;
+            const r2 = (r + 2) % 3;
+            const c1 = (c + 1) % 3;
+            const c2 = (c + 2) % 3;
+            return m(r1, c1) * m(r2, c2) - m(r1, c2) * m(r2, c1);
+        };
+        return new Basis(new Vector3(cofactor(0, 0) * inv, cofactor(0, 1) * inv, cofactor(0, 2) * inv), new Vector3(cofactor(1, 0) * inv, cofactor(1, 1) * inv, cofactor(1, 2) * inv), new Vector3(cofactor(2, 0) * inv, cofactor(2, 1) * inv, cofactor(2, 2) * inv));
+    }
+    orthonormalized(): Basis {
+        const x = this.x.normalized();
+        let y = this.y.slide(x).normalized();
+        const z = x.cross(y);
+        y = z.cross(x);
+        return new Basis(x, y, z);
+    }
+    rotated(axis: VecLike, angle: number): Basis {
+        return Basis.from_quaternion(Quaternion.fromAxisAngle(axis, angle)).multiply(this);
+    }
+    scaled(scale: VecLike): Basis {
+        return new Basis(new Vector3(this.x.x * scale.x, this.x.y * scale.y, this.x.z * (scale.z ?? 0)), new Vector3(this.y.x * scale.x, this.y.y * scale.y, this.y.z * (scale.z ?? 0)), new Vector3(this.z.x * scale.x, this.z.y * scale.y, this.z.z * (scale.z ?? 0)));
+    }
+    get_scale(): Vector3 {
+        const sign = Math.sign(this.determinant()) || 1;
+        return new Vector3(this.x.length() * sign, this.y.length() * sign, this.z.length() * sign);
+    }
+    get_rotation_quaternion(): Quaternion {
+        const b = this.orthonormalized();
+        const trace = b.x.x + b.y.y + b.z.z;
+        if (trace > 0) {
+            const s = Math.sqrt(trace + 1) * 2;
+            return new Quaternion((b.y.z - b.z.y) / s, (b.z.x - b.x.z) / s, (b.x.y - b.y.x) / s, 0.25 * s).normalized();
+        }
+        if (b.x.x > b.y.y && b.x.x > b.z.z) {
+            const s = Math.sqrt(1 + b.x.x - b.y.y - b.z.z) * 2;
+            return new Quaternion(0.25 * s, (b.y.x + b.x.y) / s, (b.z.x + b.x.z) / s, (b.y.z - b.z.y) / s).normalized();
+        }
+        if (b.y.y > b.z.z) {
+            const s = Math.sqrt(1 + b.y.y - b.x.x - b.z.z) * 2;
+            return new Quaternion((b.y.x + b.x.y) / s, 0.25 * s, (b.z.y + b.y.z) / s, (b.z.x - b.x.z) / s).normalized();
+        }
+        const s = Math.sqrt(1 + b.z.z - b.x.x - b.y.y) * 2;
+        return new Quaternion((b.z.x + b.x.z) / s, (b.z.y + b.y.z) / s, 0.25 * s, (b.x.y - b.y.x) / s).normalized();
+    }
+    get_euler(): Vector3 {
+        const m = (r: number, c: number) => this.element(r, c);
+        const sinX = clampNumber(-m(1, 2), -1, 1);
+        const x = Math.asin(sinX);
+        if (Math.abs(sinX) < 1 - EPSILON)
+            return new Vector3(x, Math.atan2(m(0, 2), m(2, 2)), Math.atan2(m(1, 0), m(1, 1)));
+        return new Vector3(x, Math.atan2(-m(2, 0), m(0, 0)), 0);
+    }
+    tdotx(vector: VecLike): number {
+        return this.x.x * vector.x + this.x.y * vector.y + this.x.z * (vector.z ?? 0);
+    }
+    tdoty(vector: VecLike): number {
+        return this.y.x * vector.x + this.y.y * vector.y + this.y.z * (vector.z ?? 0);
+    }
+    tdotz(vector: VecLike): number {
+        return this.z.x * vector.x + this.z.y * vector.y + this.z.z * (vector.z ?? 0);
+    }
+    is_equal_approx(other: Basis): boolean {
+        return this.x.is_equal_approx(other.x) && this.y.is_equal_approx(other.y) && this.z.is_equal_approx(other.z);
+    }
+    slerp(to: Basis, weight: number): Basis {
+        const from = this.get_rotation_quaternion();
+        const result = Basis.from_quaternion(from.slerp(to.get_rotation_quaternion(), weight));
+        const scale = this.get_scale().lerp(to.get_scale(), weight);
+        return result.scaled(scale);
+    }
+}
