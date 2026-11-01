@@ -534,4 +534,284 @@ class Analyzer {
         }
         return values;
     }
+    private constantInt(expression: Expression, known: ReadonlyMap<string, number>): number | null {
+        switch (expression.kind) {
+            case 'literal':
+                return typeof expression.value === 'number' && Number.isInteger(expression.value) ? expression.value : null;
+            case 'identifier':
+                return known.get(expression.name) ?? null;
+            case 'member':
+                return expression.target.kind === 'identifier' ? (known.get(expression.name) ?? null) : null;
+            case 'unary': {
+                const operand = this.constantInt(expression.operand, known);
+                if (operand === null)
+                    return null;
+                return expression.operator === '-' ? -operand : expression.operator === '~' ? ~operand : expression.operator === '+' ? operand : null;
+            }
+            case 'binary': {
+                const left = this.constantInt(expression.left, known);
+                const right = this.constantInt(expression.right, known);
+                if (left === null || right === null)
+                    return null;
+                switch (expression.operator) {
+                    case '+': return left + right;
+                    case '-': return left - right;
+                    case '*': return left * right;
+                    case '/': return right === 0 ? null : Math.trunc(left / right);
+                    case '%': return right === 0 ? null : left % right;
+                    case '&': return left & right;
+                    case '|': return left | right;
+                    case '^': return left ^ right;
+                    case '<<': return left << right;
+                    case '>>': return left >> right;
+                    default: return null;
+                }
+            }
+            case 'cast':
+                return this.constantInt(expression.expression, known);
+            default:
+                return null;
+        }
+    }
+    private resolveBase(cls: ClassInfo): void {
+        const local = cls.script === null;
+        for (const base of cls.decl.bases) {
+            if (base.name === 'ActorScript' || base.name === 'MonoBehaviour') {
+                cls.baseRuntime = 'ActorScript';
+                cls.isActor = true;
+                continue;
+            }
+            const found = this.lookupType(base.name, cls, cls.script);
+            if (found?.kind === 'class') {
+                if (cls.base) {
+                    if (local)
+                        this.error(base.span, `"${cls.name}" só pode ter uma classe base; "${base.name}" é a segunda.`);
+                    continue;
+                }
+                cls.base = found;
+                continue;
+            }
+            if (found?.kind === 'enum') {
+                if (local)
+                    this.error(base.span, `"${base.name}" é um enum e não pode ser classe base.`);
+                continue;
+            }
+            if (RUNTIME_CLASSES.has(base.name)) {
+                cls.baseRuntime = base.name;
+                continue;
+            }
+            if (this.interfaces.has(base.name) || /^I[A-Z]/.test(base.name) || COLLECTION_ALIASES.has(base.name) || DELEGATE_TYPE_NAMES.has(base.name))
+                continue;
+            if (local)
+                this.error(base.span, `Classe base desconhecida: "${base.name}".${hint(base.name, this.typeNames())}`);
+        }
+        if (cls.base) {
+            for (let ancestor: ClassInfo | null = cls.base; ancestor; ancestor = ancestor.base) {
+                if (ancestor === cls) {
+                    if (local)
+                        this.error(cls.decl.nameSpan, `"${cls.name}" herda de si mesma (ciclo de herança).`);
+                    cls.base = null;
+                    break;
+                }
+            }
+        }
+    }
+    private typeNames(): string[] {
+        return [...this.fileTypes.keys(), ...this.siblingTypes.keys(), ...RUNTIME_CLASSES.keys(), ...COLLECTION_ALIASES.keys(), 'ActorScript'];
+    }
+    private lookupType(name: string, from: ClassInfo | null, script: string | null): TypeInfo | null {
+        for (let cls: ClassInfo | null = from; cls; cls = cls.outer) {
+            const nested = cls.nested.get(name);
+            if (nested)
+                return nested;
+            for (let ancestor = cls.base; ancestor; ancestor = ancestor.base) {
+                const inherited = ancestor.nested.get(name);
+                if (inherited)
+                    return inherited;
+            }
+        }
+        const scopeTypes = script === null ? this.fileTypes : this.siblingTypes;
+        const own = scopeTypes.get(name);
+        if (own && (script === null || own.script === script))
+            return own;
+        return this.fileTypes.get(name) ?? this.siblingTypes.get(name) ?? null;
+    }
+    private useType(type: TypeInfo): void {
+        if (type.script === null)
+            return;
+        const root = this.rootOf(type);
+        const key = `${type.script}\u0000${root.name}`;
+        if (!this.usedSiblingTypes.has(key))
+            this.usedSiblingTypes.set(key, { script: type.script, type: root.name, alias: siblingAlias(type.script, root.name) });
+    }
+    private rootOf(type: TypeInfo): TypeInfo {
+        let current: TypeInfo = type;
+        while (current.outer)
+            current = current.outer;
+        return current;
+    }
+    private isActorClass(cls: ClassInfo): boolean {
+        for (let current: ClassInfo | null = cls; current; current = current.base)
+            if (current.isActor || current.baseRuntime === 'ActorScript')
+                return true;
+        return false;
+    }
+    private buildMembers(cls: ClassInfo): void {
+        const local = cls.script === null;
+        const groups = new Map<string, MethodMember[]>();
+        for (const member of cls.decl.members) {
+            switch (member.kind) {
+                case 'field':
+                case 'event':
+                    for (const declarator of member.declarators)
+                        this.addMember(cls, declarator.name, member.kind === 'event' ? 'event' : member.modifiers.includes('const') ? 'const' : 'field', member.modifiers.includes('static') || member.modifiers.includes('const') || cls.isStatic, this.typeFromRef(member.type, cls), [], false, member, declarator.span);
+                    break;
+                case 'property':
+                    this.addMember(cls, member.name, 'property', member.modifiers.includes('static') || cls.isStatic, this.typeFromRef(member.type, cls), [], false, member, member.nameSpan);
+                    break;
+                case 'method': {
+                    const list = groups.get(member.name) ?? [];
+                    list.push(member);
+                    groups.set(member.name, list);
+                    break;
+                }
+                case 'constructor':
+                    break;
+                default:
+                    break;
+            }
+        }
+        if (cls.recordFields && cls.decl.recordParameters) {
+            for (const parameter of cls.decl.recordParameters) {
+                if (!cls.members.has(parameter.name))
+                    this.addMember(cls, parameter.name, 'property', false, parameter.type ? this.typeFromRef(parameter.type, cls) : STATIC_TYPES.dynamic, [], false, cls.decl, parameter.span);
+            }
+        }
+        for (const [name, methods] of groups) {
+            const overloaded = methods.length > 1;
+            const seen = new Map<string, number>();
+            for (const method of methods) {
+                const isStatic = method.modifiers.includes('static') || cls.isStatic;
+                const params = method.parameters.map((parameter) => this.paramInfo(parameter, cls));
+                let jsName = memberJsName(name);
+                if (overloaded) {
+                    const arity = `${jsName}$${method.parameters.length}`;
+                    const count = seen.get(arity) ?? 0;
+                    seen.set(arity, count + 1);
+                    jsName = count === 0 ? arity : `${arity}$${count}`;
+                    if (count > 0 && local)
+                        this.warn(method.nameSpan, `"${name}" tem mais de uma sobrecarga com ${method.parameters.length} parâmetros; a escolha entre elas é pela ordem de declaração, não pelos tipos.`);
+                }
+                method.jsName = jsName;
+                const returnType = this.typeFromRef(method.returnType, cls);
+                const isAsync = method.modifiers.includes('async');
+                const type = isAsync && returnType.kind !== 'task' ? ({ kind: 'task', result: returnType.kind === 'void' ? null : returnType } as StaticType) : returnType;
+                const info: MemberInfo = { name, jsName, kind: 'method', isStatic, type, params, isAsync, owner: cls, decl: method };
+                const list = cls.members.get(name) ?? [];
+                if (list.some((entry) => entry.kind !== 'method')) {
+                    if (local)
+                        this.error(method.nameSpan, `"${name}" já é um campo ou propriedade de "${cls.name}".`);
+                    continue;
+                }
+                list.push(info);
+                cls.members.set(name, list);
+                if (local && RESERVED_MEMBER_NAMES.has(name))
+                    this.warn(method.nameSpan, `"${name}" colide com um nome interno do runtime; no JavaScript gerado o membro se chama "${jsName}".`);
+            }
+        }
+        const ctors = cls.decl.members.filter((member): member is ConstructorMember => member.kind === 'constructor' && !member.modifiers.includes('static'));
+        for (const [index, ctor] of ctors.entries()) {
+            const jsName = ctors.length > 1 ? `$ctor$${ctor.parameters.length}${ctors.filter((other, otherIndex) => otherIndex < index && other.parameters.length === ctor.parameters.length).length > 0 ? `$${index}` : ''}` : '$ctor';
+            ctor.jsName = jsName;
+            cls.ctors.push({ jsName, params: ctor.parameters.map((parameter) => this.paramInfo(parameter, cls)), decl: ctor });
+        }
+        if (cls.recordFields && cls.decl.recordParameters && cls.ctors.length === 0) {
+            cls.ctors.push({ jsName: '$ctor', params: cls.decl.recordParameters.map((parameter) => this.paramInfo(parameter, cls)), decl: null });
+        }
+    }
+    private addMember(cls: ClassInfo, name: string, kind: MemberKind, isStatic: boolean, type: StaticType, params: readonly ParamInfo[], isAsync: boolean, decl: Member, span: SourceSpan): void {
+        if (cls.members.has(name)) {
+            if (cls.script === null)
+                this.error(span, `"${cls.name}" já tem um membro chamado "${name}".`);
+            return;
+        }
+        const jsName = memberJsName(name);
+        cls.members.set(name, [{ name, jsName, kind, isStatic, type, params, isAsync, owner: cls, decl }]);
+        if (cls.script === null && RESERVED_MEMBER_NAMES.has(name))
+            this.warn(span, `"${name}" colide com um nome interno do runtime; no JavaScript gerado o membro se chama "${jsName}".`);
+    }
+    private paramInfo(parameter: Parameter, cls: ClassInfo | null): ParamInfo {
+        parameter.jsName = localJsName(parameter.name);
+        const declared = parameter.type ? this.typeFromRef(parameter.type, cls) : STATIC_TYPES.dynamic;
+        const type = parameter.modifier === 'params' && declared.kind !== 'array' ? ({ kind: 'array', element: declared } as StaticType) : declared;
+        return { name: parameter.name, jsName: parameter.jsName, type, modifier: parameter.modifier, hasDefault: parameter.defaultValue !== null, decl: parameter };
+    }
+    findMember(cls: ClassInfo, name: string, arity: number | null = null): MemberInfo | null {
+        let current: ClassInfo | null = cls;
+        while (current) {
+            const list = current.members.get(name);
+            if (list && list.length > 0) {
+                if (list.length === 1 || arity === null)
+                    return list[0];
+                const exact = list.find((member) => member.params.length === arity);
+                if (exact)
+                    return exact;
+                const flexible = list.find((member) => {
+                    const required = member.params.filter((parameter) => !parameter.hasDefault && parameter.modifier !== 'params').length;
+                    return arity >= required && (arity <= member.params.length || member.params.some((parameter) => parameter.modifier === 'params'));
+                });
+                return flexible ?? list[0];
+            }
+            current = current.base;
+        }
+        return null;
+    }
+    private memberNames(cls: ClassInfo): string[] {
+        const names = new Set<string>();
+        for (let current: ClassInfo | null = cls; current; current = current.base)
+            for (const name of current.members.keys())
+                names.add(name);
+        if (this.isActorClass(cls))
+            for (const name of ACTOR_SCRIPT_MEMBERS.keys())
+                names.add(name);
+        return Array.from(names);
+    }
+    private chooseMain(scriptName: string): void {
+        const top = this.classes.filter((cls) => cls.outer === null);
+        const byName = top.find((cls) => cls.name === scriptName);
+        const actor = top.find((cls) => this.isActorClass(cls));
+        const candidate = byName ?? actor ?? (top.length === 1 && !top[0].isStatic ? top[0] : null);
+        if (!candidate)
+            return;
+        if (candidate.isStatic) {
+            const declaresHooks = Array.from(candidate.members.keys()).some((member) => HOOK_METHOD_NAMES.has(member));
+            if (byName && declaresHooks)
+                this.warn(candidate.decl.nameSpan, `"${candidate.name}" é estática: o script expõe os métodos dela para os outros scripts, mas os hooks de ator declarados nela não serão chamados. Remova "static" para a engine instanciá-la por ator.`);
+            return;
+        }
+        candidate.isMain = true;
+        if (!this.isActorClass(candidate) && !candidate.base && !candidate.baseRuntime) {
+            candidate.baseRuntime = 'ActorScript';
+            candidate.isActor = true;
+        }
+        if (this.isActorClass(candidate) && candidate.ctors.length > 0 && !candidate.ctors.some((ctor) => ctor.params.every((parameter) => parameter.hasDefault))) {
+            this.error(candidate.decl.nameSpan, `"${candidate.name}" é a classe do ator e precisa de um construtor sem parâmetros: a engine cria a instância sem argumentos.`);
+        }
+        this.main = candidate;
+    }
+    private orderClasses(): ClassInfo[] {
+        const ordered: ClassInfo[] = [];
+        const seen = new Set<ClassInfo>();
+        const visit = (cls: ClassInfo) => {
+            if (seen.has(cls))
+                return;
+            seen.add(cls);
+            if (cls.base && cls.base.script === null)
+                visit(cls.base);
+            ordered.push(cls);
+        };
+        for (const cls of this.classes)
+            visit(cls);
+        return ordered;
+    }
 }
