@@ -9,9 +9,9 @@ uniform highp sampler2D u_hzb;
 uniform highp sampler2D u_previousFlags;
 uniform mat4 u_viewProjection;
 uniform int u_entryCount;
- 
+                                                                     
 uniform int u_useHistory;
- 
+                                                                             
 uniform int u_postPass;
 uniform vec2 u_hzbSize;
 uniform int u_hzbMaxLevel;
@@ -48,7 +48,7 @@ void main() {
     vec3 corner = box.min + box.extent * vec3(float(i & 1), float((i >> 1) & 1), float((i >> 2) & 1));
     vec4 clip = mvp * vec4(corner, 1.0);
     if (clip.w <= 1e-6) {
-       
+                                                                          
       fragFlag = vec4(1.0);
       return;
     }
@@ -58,7 +58,7 @@ void main() {
     nearest = min(nearest, ndc.z);
   }
   if (rectMax.x < -1.0 || rectMin.x > 1.0 || rectMax.y < -1.0 || rectMin.y > 1.0 || nearest > 1.0) {
-     
+                                                                                                            
     fragFlag = vec4(u_postPass == 1 ? 0.0 : 1.0);
     return;
   }
