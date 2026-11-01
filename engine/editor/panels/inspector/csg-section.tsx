@@ -13,7 +13,7 @@ import { getTriangleCount } from '@/engine/renderer/geometry/mesh-data';
 import { brushTarget } from '@/engine/geometry/csg/csg-system';
 import { brushesOf, canBeCsgTarget } from '@/engine/geometry/csg/csg-roles';
 import { CSG_OPERATIONS, CSG_OPERATION_LABEL, CSG_PRECISION_LABEL, type CsgOperation, type CsgPrecision, } from '@/engine/geometry/csg/csg-settings';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { addCsgBrush, consolidateCsg, rebuildCsg, releaseBrush, revertCsg, selectBrushTarget, setBrushEnabled, setBrushOperation, setCsgLive, setCsgPrecision, setCsgShowBrushes, } from '@/engine/editor/operations/csg-operations';
 import { BrushList } from './csg/brush-list';
 import { BrushTools } from './csg/brush-tools';
@@ -41,7 +41,7 @@ function CsgPrompt({ entity }: {
     entity: Entity;
 }) {
     return (<CollapsibleSection title="CSG" defaultOpen={false}>
-      <p className="px-2 pt-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pt-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
         Esculpa este ator com pincéis: subtraia para abrir furos e portas, una para fundir formas ou mantenha só a interseção. O resultado é
         reconstruído ao vivo enquanto você move os pincéis, e a colisão acompanha.
       </p>
@@ -49,13 +49,13 @@ function CsgPrompt({ entity }: {
     </CollapsibleSection>);
 }
 function GhostOpacityField() {
-    const session = useEditorState();
+    const session = useEditorSession();
     return (<SliderField label="Fantasmas" value={session.csgPreferences.ghostOpacity} min={0.05} max={1} format={percent} onChange={(value) => session.updateCsgPreferences({ ghostOpacity: value })}/>);
 }
 function CsgTargetSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const settings = entity.csg;
     if (!settings)
         return null;
@@ -63,7 +63,7 @@ function CsgTargetSection({ entity }: {
     const stats = session.csg.statsOf(entity);
     const sourceTriangles = getTriangleCount(settings.sourceMesh);
     const resultTriangles = entity.mesh ? getTriangleCount(entity.mesh) : 0;
-    return (<CollapsibleSection title="CSG" trailing={<IconButton label="Reconstruir agora" size="sm" className="size-5 [&_svg]:size-3" onClick={() => rebuildCsg(session, entity)}>
+    return (<CollapsibleSection title="CSG" trailing={<IconButton label="Reconstruir agora" size="xs" onClick={() => rebuildCsg(session, entity)}>
           <RefreshCw />
         </IconButton>}>
       <ToggleField label="Reconstruir ao vivo" on={settings.live} onToggle={() => setCsgLive(session, entity, !settings.live)}/>
@@ -100,12 +100,12 @@ function CsgTargetSection({ entity }: {
 function CsgBrushSection({ entity }: {
     entity: Entity;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const settings = entity.csgBrush;
     if (!settings)
         return null;
     const target = brushTarget(entity);
-    return (<CollapsibleSection title="Pincel CSG" trailing={<IconButton label="Soltar pincel (volta a ser uma malha comum)" size="sm" className="size-5 [&_svg]:size-3" onClick={() => releaseBrush(session, entity)}>
+    return (<CollapsibleSection title="Pincel CSG" trailing={<IconButton label="Soltar pincel (volta a ser uma malha comum)" size="xs" onClick={() => releaseBrush(session, entity)}>
           <Unlink />
         </IconButton>}>
       <PropertyRow label="Operação">
@@ -113,13 +113,13 @@ function CsgBrushSection({ entity }: {
       </PropertyRow>
       <ToggleField label="Ativo" on={settings.enabled} onToggle={() => setBrushEnabled(session, entity, !settings.enabled)}/>
       <PropertyRow label="Alvo">
-        {target ? (<button type="button" onClick={() => selectBrushTarget(session, entity)} className="flex h-6 min-w-0 flex-1 items-center gap-1.5 truncate rounded-sm border border-border bg-input px-2 text-left text-2xs text-foreground hover:bg-highlight" title={`Selecionar ${target.name}`}>
+        {target ? (<button type="button" onClick={() => selectBrushTarget(session, entity)} className="flex h-control min-w-0 flex-1 items-center gap-1.5 truncate rounded-sm border border-border bg-input px-2 text-left text-2xs text-foreground hover:bg-highlight" title={`Selecionar ${target.name}`}>
             <Diff className="size-3 shrink-0 text-muted-foreground" aria-hidden/>
             <span className="truncate">{target.name}</span>
           </button>) : (<FieldInput readOnly value="Solto (fora de um alvo CSG)" aria-label="Alvo do pincel"/>)}
       </PropertyRow>
       {target && <BrushTools brush={entity} target={target}/>}
-      <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
         {target
             ? 'Mova, gire e escale o pincel com o gizmo: o alvo é reconstruído ao vivo. Pincéis nunca colidem; o que colide é o resultado no alvo.'
             : 'Arraste este ator para dentro de um alvo CSG na hierarquia para que ele volte a esculpir.'}
