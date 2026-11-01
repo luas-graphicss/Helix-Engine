@@ -12,6 +12,7 @@ export interface GizmoRenderRequest {
     mode: GizmoMode;
     worldMatrix: Mat4;
     localAxes: boolean;
+    scale: number;
     hovered: GizmoHandle | null;
     active: GizmoHandle | null;
 }
@@ -64,7 +65,7 @@ export class GizmoPass {
         };
     }
     render(request: GizmoRenderRequest, camera: PerspectiveCamera): number {
-        if (!computeGizmoFrame(this.frame, request.worldMatrix, camera, request.localAxes))
+        if (!computeGizmoFrame(this.frame, request.worldMatrix, camera, request.localAxes, request.scale))
             return 0;
         const { gl, program, frame } = this;
         program.use();
