@@ -691,3 +691,230 @@ interface Entry {
     readonly key: unknown;
     value: unknown;
 }
+export class Dictionary {
+    private readonly $map = new Map<unknown, Entry>();
+    constructor(source?: unknown) {
+        if (source instanceof Dictionary)
+            for (const entry of source.$map.values())
+                this.$map.set(hashKey(entry.key), { key: entry.key, value: entry.value });
+        else if (source !== undefined && source !== null && typeof source === 'object' && typeof (source as Iterable<unknown>)[Symbol.iterator] === 'function') {
+            for (const pair of source as Iterable<unknown>) {
+                if (pair instanceof KeyValuePair)
+                    this.Add(pair.Key, pair.Value);
+                else if (Array.isArray(pair) && pair.length === 2)
+                    this.Add(pair[0], pair[1]);
+                else if (pair instanceof Tuple && pair.$items.length === 2)
+                    this.Add(pair.$items[0], pair.$items[1]);
+            }
+        }
+    }
+    get Count(): number {
+        return this.$map.size;
+    }
+    get Keys(): List {
+        return List.from(Array.from(this.$map.values(), (entry) => entry.key));
+    }
+    get Values(): List {
+        return List.from(Array.from(this.$map.values(), (entry) => entry.value));
+    }
+    $at(key: unknown): unknown {
+        const entry = this.$map.get(hashKey(key));
+        if (!entry)
+            throw new KeyNotFoundException(`A chave "${str(key)}" não está no dicionário.`);
+        return entry.value;
+    }
+    $set(key: unknown, value: unknown): void {
+        if (isNullish(key))
+            throw new ArgumentNullException('key', 'A chave de um dicionário não pode ser nula.');
+        const hashed = hashKey(key);
+        const entry = this.$map.get(hashed);
+        if (entry)
+            entry.value = value;
+        else
+            this.$map.set(hashed, { key, value });
+    }
+    Add(key: unknown, value: unknown): void {
+        if (isNullish(key))
+            throw new ArgumentNullException('key', 'A chave de um dicionário não pode ser nula.');
+        const hashed = hashKey(key);
+        if (this.$map.has(hashed))
+            throw new ArgumentException(`Já existe um item com a chave "${str(key)}" no dicionário.`);
+        this.$map.set(hashed, { key, value });
+    }
+    TryAdd(key: unknown, value: unknown): boolean {
+        if (this.$map.has(hashKey(key)))
+            return false;
+        this.Add(key, value);
+        return true;
+    }
+    Remove(key: unknown, out?: Ref<unknown>): boolean {
+        const hashed = hashKey(key);
+        const entry = this.$map.get(hashed);
+        if (!entry)
+            return false;
+        if (out)
+            out.v = entry.value;
+        this.$map.delete(hashed);
+        return true;
+    }
+    ContainsKey(key: unknown): boolean {
+        return this.$map.has(hashKey(key));
+    }
+    ContainsValue(value: unknown): boolean {
+        for (const entry of this.$map.values())
+            if (equals(entry.value, value))
+                return true;
+        return false;
+    }
+    TryGetValue(key: unknown, out: Ref<unknown>): boolean {
+        const entry = this.$map.get(hashKey(key));
+        if (!out || typeof out !== 'object')
+            throw new ArgumentException('TryGetValue precisa de um parâmetro out (TryGetValue(chave, out var valor)).');
+        out.v = entry ? entry.value : null;
+        return entry !== undefined;
+    }
+    GetValueOrDefault(key: unknown, defaultValue: unknown = null): unknown {
+        const entry = this.$map.get(hashKey(key));
+        return entry ? entry.value : defaultValue;
+    }
+    Clear(): void {
+        this.$map.clear();
+    }
+    Equals(other: unknown): boolean {
+        return this === other;
+    }
+    *[Symbol.iterator](): Iterator<KeyValuePair> {
+        for (const entry of Array.from(this.$map.values()))
+            yield new KeyValuePair(entry.key, entry.value);
+    }
+    GetEnumerator(): Iterator<unknown> {
+        return this[Symbol.iterator]();
+    }
+    ToString(): string {
+        return `{${Array.from(this.$map.values(), (entry) => `[${str(entry.key)}, ${str(entry.value)}]`).join(', ')}}`;
+    }
+    get [TYPE_NAME](): string {
+        return 'Dictionary';
+    }
+}
+export class HashSet {
+    private readonly $map = new Map<unknown, unknown>();
+    constructor(source?: unknown) {
+        if (source !== undefined && source !== null && typeof source !== 'number')
+            for (const item of iterate(source, 'new HashSet'))
+                this.Add(item);
+    }
+    static from(source: Iterable<unknown>): HashSet {
+        const set = new HashSet();
+        for (const item of source)
+            set.Add(item);
+        return set;
+    }
+    get Count(): number {
+        return this.$map.size;
+    }
+    Add(item: unknown): boolean {
+        const hashed = hashKey(item);
+        if (this.$map.has(hashed))
+            return false;
+        this.$map.set(hashed, item);
+        return true;
+    }
+    Remove(item: unknown): boolean {
+        return this.$map.delete(hashKey(item));
+    }
+    Contains(item: unknown): boolean {
+        return this.$map.has(hashKey(item));
+    }
+    Clear(): void {
+        this.$map.clear();
+    }
+    RemoveWhere(predicate: unknown): number {
+        const test = requireFunction(predicate, 'RemoveWhere');
+        let removed = 0;
+        for (const [hashed, item] of Array.from(this.$map.entries())) {
+            if (test(item)) {
+                this.$map.delete(hashed);
+                removed++;
+            }
+        }
+        return removed;
+    }
+    UnionWith(other: unknown): void {
+        for (const item of iterate(other, 'UnionWith'))
+            this.Add(item);
+    }
+    IntersectWith(other: unknown): void {
+        const keep = new Set(toArray(iterate(other, 'IntersectWith')).map((item) => hashKey(item)));
+        for (const hashed of Array.from(this.$map.keys()))
+            if (!keep.has(hashed))
+                this.$map.delete(hashed);
+    }
+    ExceptWith(other: unknown): void {
+        for (const item of iterate(other, 'ExceptWith'))
+            this.$map.delete(hashKey(item));
+    }
+    SymmetricExceptWith(other: unknown): void {
+        for (const item of iterate(other, 'SymmetricExceptWith'))
+            if (!this.Remove(item))
+                this.Add(item);
+    }
+    IsSubsetOf(other: unknown): boolean {
+        const keys = new Set(toArray(iterate(other, 'IsSubsetOf')).map((item) => hashKey(item)));
+        for (const hashed of this.$map.keys())
+            if (!keys.has(hashed))
+                return false;
+        return true;
+    }
+    IsSupersetOf(other: unknown): boolean {
+        for (const item of iterate(other, 'IsSupersetOf'))
+            if (!this.Contains(item))
+                return false;
+        return true;
+    }
+    IsProperSubsetOf(other: unknown): boolean {
+        const items = toArray(iterate(other, 'IsProperSubsetOf'));
+        return this.IsSubsetOf(items) && items.length > this.$map.size;
+    }
+    IsProperSupersetOf(other: unknown): boolean {
+        const items = toArray(iterate(other, 'IsProperSupersetOf'));
+        return this.IsSupersetOf(items) && this.$map.size > new Set(items.map((item) => hashKey(item))).size;
+    }
+    Overlaps(other: unknown): boolean {
+        for (const item of iterate(other, 'Overlaps'))
+            if (this.Contains(item))
+                return true;
+        return false;
+    }
+    SetEquals(other: unknown): boolean {
+        const keys = new Set(toArray(iterate(other, 'SetEquals')).map((item) => hashKey(item)));
+        if (keys.size !== this.$map.size)
+            return false;
+        for (const hashed of this.$map.keys())
+            if (!keys.has(hashed))
+                return false;
+        return true;
+    }
+    CopyTo(array: unknown, arrayIndex: unknown = 0): void {
+        if (!Array.isArray(array))
+            throw new ArgumentException('CopyTo espera um array de destino.');
+        let index = Number(arrayIndex);
+        for (const item of this.$map.values())
+            array[index++] = item;
+    }
+    Equals(other: unknown): boolean {
+        return this === other;
+    }
+    [Symbol.iterator](): Iterator<unknown> {
+        return this.$map.values();
+    }
+    GetEnumerator(): Iterator<unknown> {
+        return this[Symbol.iterator]();
+    }
+    ToString(): string {
+        return `{${Array.from(this.$map.values(), (item) => str(item)).join(', ')}}`;
+    }
+    get [TYPE_NAME](): string {
+        return 'HashSet';
+    }
+}
