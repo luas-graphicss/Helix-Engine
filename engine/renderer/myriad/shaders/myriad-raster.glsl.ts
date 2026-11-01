@@ -11,11 +11,11 @@ layout(location = 4) in vec4 a_world3;
 
 uniform mat4 u_viewProjection;
 uniform highp sampler2D u_cullFlags;
- 
+                                                                  
 uniform int u_cullMode;
- 
+                                                                   
 uniform int u_slotBase;
- 
+                                                                                                            
 uniform uint u_passBits;
 
 ${MYRIAD_POOL_CHUNK}
