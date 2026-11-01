@@ -277,3 +277,279 @@ function isMeta(type: StaticType): boolean {
 function isNumeric(type: StaticType): boolean {
     return type === 'int' || type === 'float';
 }
+function arrayElement(type: StaticType): StaticType {
+    if (type.startsWith('Array['))
+        return type.slice(6, -1);
+    return PACKED_ELEMENTS[type] ?? 'Variant';
+}
+function isArrayType(type: StaticType): boolean {
+    return type === 'Array' || type.startsWith('Array[') || type in PACKED_ELEMENTS;
+}
+function baseTypeName(type: StaticType): string {
+    const generic = type.indexOf('[');
+    return generic === -1 ? type : type.slice(0, generic);
+}
+function describeType(type: StaticType): string {
+    if (type.startsWith('@class:'))
+        return `a classe ${type.slice(7)}`;
+    if (type.startsWith('@type:'))
+        return `o tipo ${type.slice(6)}`;
+    if (type.startsWith('@enum:'))
+        return `o enum ${type.slice(6)}`;
+    if (type.startsWith('@singleton:'))
+        return `o singleton ${type.slice(11)}`;
+    return type;
+}
+export function jsIdentifier(name: string): string {
+    return JS_RESERVED.has(name) || name.startsWith('$') ? `${name}$` : name;
+}
+function spanOf(span: SourceSpan): Pick<CompileDiagnostic, 'line' | 'column' | 'endLine' | 'endColumn'> {
+    return { line: span.line, column: span.column, endLine: span.endLine, endColumn: span.endColumn };
+}
+function containsAwait(block: Block): boolean {
+    let found = false;
+    const visitExpression = (e: Expression | null): void => {
+        if (!e || found)
+            return;
+        switch (e.kind) {
+            case 'await':
+                found = true;
+                return;
+            case 'lambda':
+                return;
+            case 'array':
+                e.elements.forEach(visitExpression);
+                return;
+            case 'dictionary':
+                for (const entry of e.entries) {
+                    visitExpression(entry.key);
+                    visitExpression(entry.value);
+                }
+                return;
+            case 'member':
+                visitExpression(e.object);
+                return;
+            case 'index':
+                visitExpression(e.object);
+                visitExpression(e.index);
+                return;
+            case 'call':
+                visitExpression(e.callee);
+                e.args.forEach(visitExpression);
+                return;
+            case 'unary':
+                visitExpression(e.operand);
+                return;
+            case 'binary':
+                visitExpression(e.left);
+                visitExpression(e.right);
+                return;
+            case 'ternary':
+                visitExpression(e.condition);
+                visitExpression(e.whenTrue);
+                visitExpression(e.whenFalse);
+                return;
+            case 'is':
+            case 'as':
+                visitExpression(e.value);
+                return;
+            default:
+                return;
+        }
+    };
+    const visitPattern = (pattern: Pattern): void => {
+        if (pattern.kind === 'value')
+            visitExpression(pattern.value);
+        else if (pattern.kind === 'array')
+            pattern.elements.forEach(visitPattern);
+        else if (pattern.kind === 'dictionary') {
+            for (const entry of pattern.entries) {
+                visitExpression(entry.key);
+                if (entry.value)
+                    visitPattern(entry.value);
+            }
+        }
+    };
+    const visitBlock = (b: Block): void => {
+        for (const statement of b.statements) {
+            if (found)
+                return;
+            switch (statement.kind) {
+                case 'expression':
+                    visitExpression(statement.expression);
+                    break;
+                case 'assignment':
+                    visitExpression(statement.target);
+                    visitExpression(statement.value);
+                    break;
+                case 'variable':
+                    visitExpression(statement.value);
+                    break;
+                case 'constant':
+                    visitExpression(statement.value);
+                    break;
+                case 'if':
+                    visitExpression(statement.condition);
+                    visitBlock(statement.then);
+                    if (statement.otherwise)
+                        visitBlock(statement.otherwise);
+                    break;
+                case 'while':
+                    visitExpression(statement.condition);
+                    visitBlock(statement.body);
+                    break;
+                case 'for':
+                    visitExpression(statement.iterable);
+                    visitBlock(statement.body);
+                    break;
+                case 'match':
+                    visitExpression(statement.value);
+                    for (const branch of statement.branches) {
+                        branch.patterns.forEach(visitPattern);
+                        visitExpression(branch.guard);
+                        visitBlock(branch.body);
+                    }
+                    break;
+                case 'return':
+                    visitExpression(statement.value);
+                    break;
+                case 'assert':
+                    visitExpression(statement.condition);
+                    visitExpression(statement.message);
+                    break;
+                default:
+                    break;
+            }
+        }
+    };
+    visitBlock(block);
+    return found;
+}
+function collectAssigned(block: Block, into: Set<string>): void {
+    const visitExpression = (e: Expression | null): void => {
+        if (!e)
+            return;
+        switch (e.kind) {
+            case 'lambda':
+                collectAssigned(e.body, into);
+                return;
+            case 'array':
+                e.elements.forEach(visitExpression);
+                return;
+            case 'dictionary':
+                for (const entry of e.entries) {
+                    visitExpression(entry.key);
+                    visitExpression(entry.value);
+                }
+                return;
+            case 'member':
+                visitExpression(e.object);
+                return;
+            case 'index':
+                visitExpression(e.object);
+                visitExpression(e.index);
+                return;
+            case 'call':
+                visitExpression(e.callee);
+                e.args.forEach(visitExpression);
+                return;
+            case 'unary':
+                visitExpression(e.operand);
+                return;
+            case 'binary':
+                visitExpression(e.left);
+                visitExpression(e.right);
+                return;
+            case 'ternary':
+                visitExpression(e.condition);
+                visitExpression(e.whenTrue);
+                visitExpression(e.whenFalse);
+                return;
+            case 'is':
+            case 'as':
+            case 'await':
+                visitExpression(e.value);
+                return;
+            default:
+                return;
+        }
+    };
+    for (const statement of block.statements) {
+        switch (statement.kind) {
+            case 'assignment':
+                if (statement.target.kind === 'identifier')
+                    into.add(statement.target.name);
+                else
+                    visitExpression(statement.target);
+                visitExpression(statement.value);
+                break;
+            case 'expression':
+                visitExpression(statement.expression);
+                break;
+            case 'variable':
+                visitExpression(statement.value);
+                break;
+            case 'constant':
+                visitExpression(statement.value);
+                break;
+            case 'if':
+                visitExpression(statement.condition);
+                collectAssigned(statement.then, into);
+                if (statement.otherwise)
+                    collectAssigned(statement.otherwise, into);
+                break;
+            case 'while':
+                visitExpression(statement.condition);
+                collectAssigned(statement.body, into);
+                break;
+            case 'for':
+                visitExpression(statement.iterable);
+                collectAssigned(statement.body, into);
+                break;
+            case 'match':
+                visitExpression(statement.value);
+                for (const branch of statement.branches) {
+                    visitExpression(branch.guard);
+                    collectAssigned(branch.body, into);
+                }
+                break;
+            case 'return':
+                visitExpression(statement.value);
+                break;
+            case 'assert':
+                visitExpression(statement.condition);
+                visitExpression(statement.message);
+                break;
+            default:
+                break;
+        }
+    }
+}
+interface LocalInfo {
+    readonly name: string;
+    readonly jsName: string;
+    readonly type: StaticType;
+    readonly isConst: boolean;
+    readonly isParam: boolean;
+    readonly span: SourceSpan;
+    used: boolean;
+}
+interface Scope {
+    readonly locals: Map<string, LocalInfo>;
+    readonly parent: Scope | null;
+    readonly fn: FunctionContext;
+}
+interface FunctionContext {
+    readonly cls: ClassInfo;
+    readonly isStatic: boolean;
+    readonly name: string | null;
+    readonly returnType: StaticType | null;
+    readonly isLambda: boolean;
+    readonly parent: FunctionContext | null;
+    readonly captures: Set<string>;
+    readonly assigned: Set<string>;
+    readonly accessorOf: string | null;
+    readonly isInitializer: boolean;
+    loopDepth: number;
+    hasAwait: boolean;
+}
