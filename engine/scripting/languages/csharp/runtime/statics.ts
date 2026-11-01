@@ -776,3 +776,283 @@ export class TimeSpan {
         return ms > 0 ? `${base}.${String(ms).padStart(3, '0')}0000` : base;
     }
 }
+export class DateTime {
+    readonly $date: Date;
+    constructor(...args: unknown[]) {
+        if (args.length === 0)
+            this.$date = new Date(0);
+        else if (args.length === 1 && args[0] instanceof Date)
+            this.$date = new Date(args[0].getTime());
+        else if (args.length === 1 && typeof args[0] === 'number')
+            this.$date = new Date(args[0]);
+        else {
+            const [year, month, day, hour = 0, minute = 0, second = 0, ms = 0] = args.map((value) => Number(value));
+            this.$date = new Date(year, month - 1, day, hour, minute, second, ms);
+        }
+    }
+    static get Now(): DateTime {
+        return new DateTime(new Date());
+    }
+    static get UtcNow(): DateTime {
+        return new DateTime(new Date());
+    }
+    static get Today(): DateTime {
+        const now = new Date();
+        return new DateTime(now.getFullYear(), now.getMonth() + 1, now.getDate());
+    }
+    static get MinValue(): DateTime {
+        return new DateTime(new Date(-8640000000000000));
+    }
+    static get MaxValue(): DateTime {
+        return new DateTime(new Date(8640000000000000));
+    }
+    static Parse(textValue: unknown): DateTime {
+        const parsed = new Date(str(textValue));
+        if (Number.isNaN(parsed.getTime()))
+            throw new FormatException(`DateTime.Parse: "${str(textValue)}" não é uma data válida.`);
+        return new DateTime(parsed);
+    }
+    static TryParse(textValue: unknown, out: Ref<DateTime>): boolean {
+        const parsed = new Date(str(textValue));
+        const ok = !Number.isNaN(parsed.getTime());
+        out.v = ok ? new DateTime(parsed) : new DateTime();
+        return ok;
+    }
+    get Year(): number {
+        return this.$date.getFullYear();
+    }
+    get Month(): number {
+        return this.$date.getMonth() + 1;
+    }
+    get Day(): number {
+        return this.$date.getDate();
+    }
+    get Hour(): number {
+        return this.$date.getHours();
+    }
+    get Minute(): number {
+        return this.$date.getMinutes();
+    }
+    get Second(): number {
+        return this.$date.getSeconds();
+    }
+    get Millisecond(): number {
+        return this.$date.getMilliseconds();
+    }
+    get DayOfWeek(): number {
+        return this.$date.getDay();
+    }
+    get DayOfYear(): number {
+        const start = new Date(this.$date.getFullYear(), 0, 0);
+        return Math.floor((this.$date.getTime() - start.getTime()) / 86400000);
+    }
+    get Ticks(): number {
+        return this.$date.getTime() * 10000 + 621355968000000000;
+    }
+    get Date(): DateTime {
+        return new DateTime(this.Year, this.Month, this.Day);
+    }
+    get TimeOfDay(): TimeSpan {
+        return new TimeSpan(this.$date.getTime() - new Date(this.Year, this.Month - 1, this.Day).getTime());
+    }
+    AddMilliseconds(ms: unknown): DateTime {
+        return new DateTime(this.$date.getTime() + Number(ms));
+    }
+    AddSeconds(seconds: unknown): DateTime {
+        return this.AddMilliseconds(Number(seconds) * 1000);
+    }
+    AddMinutes(minutes: unknown): DateTime {
+        return this.AddMilliseconds(Number(minutes) * 60000);
+    }
+    AddHours(hours: unknown): DateTime {
+        return this.AddMilliseconds(Number(hours) * 3600000);
+    }
+    AddDays(days: unknown): DateTime {
+        return this.AddMilliseconds(Number(days) * 86400000);
+    }
+    AddMonths(months: unknown): DateTime {
+        const copy = new Date(this.$date.getTime());
+        copy.setMonth(copy.getMonth() + Number(months));
+        return new DateTime(copy);
+    }
+    AddYears(years: unknown): DateTime {
+        const copy = new Date(this.$date.getTime());
+        copy.setFullYear(copy.getFullYear() + Number(years));
+        return new DateTime(copy);
+    }
+    Add(span: TimeSpan): DateTime {
+        return this.AddMilliseconds(span.TotalMilliseconds);
+    }
+    Subtract(other: unknown): unknown {
+        if (other instanceof DateTime)
+            return new TimeSpan(this.$date.getTime() - other.$date.getTime());
+        if (other instanceof TimeSpan)
+            return this.AddMilliseconds(-other.TotalMilliseconds);
+        throw new ArgumentException('DateTime.Subtract espera um DateTime ou um TimeSpan.');
+    }
+    CompareTo(other: unknown): number {
+        return other instanceof DateTime ? this.$date.getTime() - other.$date.getTime() : 1;
+    }
+    Equals(other: unknown): boolean {
+        return other instanceof DateTime && other.$date.getTime() === this.$date.getTime();
+    }
+    GetHashKey(): string {
+        return `datetime:${this.$date.getTime()}`;
+    }
+    ToString(specifier?: unknown): string {
+        return typeof specifier === 'string' ? format(this.$date, specifier, null) : format(this.$date, 'MM/dd/yyyy HH:mm:ss', null);
+    }
+    ToShortDateString(): string {
+        return format(this.$date, 'd', null);
+    }
+    ToLongTimeString(): string {
+        return format(this.$date, 'T', null);
+    }
+    ToShortTimeString(): string {
+        return format(this.$date, 't', null);
+    }
+}
+export function createConsoleStatics(console: ConsoleLike): Record<string, unknown> {
+    const write = (level: 'log' | 'info' | 'warn' | 'error', parts: unknown[]) => {
+        const message = parts.length > 1 && typeof parts[0] === 'string' && /\{\d/.test(parts[0]) ? formatString(parts[0], parts.slice(1)) : parts.map((part) => str(part)).join('');
+        console[level](message);
+    };
+    let pending = '';
+    return {
+        WriteLine: (...parts: unknown[]) => {
+            if (pending) {
+                parts.unshift(pending);
+                pending = '';
+            }
+            write('log', parts);
+        },
+        Write: (...parts: unknown[]) => {
+            pending += parts.map((part) => str(part)).join('');
+        },
+        Error: {
+            WriteLine: (...parts: unknown[]) => write('error', parts),
+            Write: (...parts: unknown[]) => write('error', parts),
+        },
+        Out: {
+            WriteLine: (...parts: unknown[]) => write('log', parts),
+            Write: (...parts: unknown[]) => write('log', parts),
+        },
+        ReadLine: () => {
+            throw new InvalidOperationException('Console.ReadLine não existe num jogo: leia a entrada por helix.input.');
+        },
+        Clear: () => undefined,
+        Beep: () => undefined,
+    };
+}
+export function createDebugStatics(console: ConsoleLike): Record<string, unknown> {
+    return {
+        Log: (...parts: unknown[]) => console.log(parts.map((part) => str(part)).join(' ')),
+        LogFormat: (template: unknown, ...args: unknown[]) => console.log(formatString(template, args)),
+        LogWarning: (...parts: unknown[]) => console.warn(parts.map((part) => str(part)).join(' ')),
+        LogWarningFormat: (template: unknown, ...args: unknown[]) => console.warn(formatString(template, args)),
+        LogError: (...parts: unknown[]) => console.error(parts.map((part) => str(part)).join(' ')),
+        LogErrorFormat: (template: unknown, ...args: unknown[]) => console.error(formatString(template, args)),
+        LogException: (error: unknown) => console.error(str(error)),
+        WriteLine: (...parts: unknown[]) => console.log(parts.map((part) => str(part)).join('')),
+        Write: (...parts: unknown[]) => console.log(parts.map((part) => str(part)).join('')),
+        Assert: (condition: unknown, message?: unknown) => {
+            if (!condition)
+                console.error(message === undefined ? 'Debug.Assert falhou.' : `Debug.Assert falhou: ${str(message)}`);
+        },
+        Fail: (message?: unknown) => console.error(message === undefined ? 'Debug.Fail' : str(message)),
+    };
+}
+type Vec = {
+    x: number;
+    y: number;
+    z?: number;
+};
+function vec3(x: unknown = 0, y: unknown = 0, z: unknown = 0): Vec {
+    return { x: Number(x), y: Number(y), z: Number(z) };
+}
+function vec2(x: unknown = 0, y: unknown = 0): Vec {
+    return { x: Number(x), y: Number(y) };
+}
+function component(vector: unknown, key: 'x' | 'y' | 'z'): number {
+    const value = (vector as Record<string, unknown> | null)?.[key];
+    return typeof value === 'number' ? value : 0;
+}
+function vectorStatics(dimensions: 2 | 3): Record<string, unknown> {
+    const make = dimensions === 3 ? vec3 : vec2;
+    const map = (a: unknown, fn: (component: number, key: 'x' | 'y' | 'z') => number): Vec => (dimensions === 3 ? make(fn(component(a, 'x'), 'x'), fn(component(a, 'y'), 'y'), fn(component(a, 'z'), 'z')) : make(fn(component(a, 'x'), 'x'), fn(component(a, 'y'), 'y')));
+    const zip = (a: unknown, b: unknown, fn: (left: number, right: number) => number): Vec => map(a, (value, key) => fn(value, component(b, key)));
+    const length = (a: unknown): number => Math.hypot(component(a, 'x'), component(a, 'y'), dimensions === 3 ? component(a, 'z') : 0);
+    const statics: Record<string, unknown> = {
+        Zero: make(0, 0, 0),
+        One: make(1, 1, 1),
+        Up: dimensions === 3 ? vec3(0, 1, 0) : vec2(0, 1),
+        Down: dimensions === 3 ? vec3(0, -1, 0) : vec2(0, -1),
+        Left: dimensions === 3 ? vec3(-1, 0, 0) : vec2(-1, 0),
+        Right: dimensions === 3 ? vec3(1, 0, 0) : vec2(1, 0),
+        UnitX: dimensions === 3 ? vec3(1, 0, 0) : vec2(1, 0),
+        UnitY: dimensions === 3 ? vec3(0, 1, 0) : vec2(0, 1),
+        Add: (a: unknown, b: unknown) => zip(a, b, (left, right) => left + right),
+        Subtract: (a: unknown, b: unknown) => zip(a, b, (left, right) => left - right),
+        Multiply: (a: unknown, b: unknown) => (typeof b === 'number' ? map(a, (value) => value * b) : zip(a, b, (left, right) => left * right)),
+        Divide: (a: unknown, b: unknown) => (typeof b === 'number' ? map(a, (value) => value / b) : zip(a, b, (left, right) => left / right)),
+        Negate: (a: unknown) => map(a, (value) => -value),
+        Scale: (a: unknown, factor: unknown) => map(a, (value) => value * Number(factor)),
+        Dot: (a: unknown, b: unknown) => component(a, 'x') * component(b, 'x') + component(a, 'y') * component(b, 'y') + (dimensions === 3 ? component(a, 'z') * component(b, 'z') : 0),
+        Length: length,
+        Magnitude: length,
+        LengthSquared: (a: unknown) => length(a) ** 2,
+        Distance: (a: unknown, b: unknown) => length(zip(a, b, (left, right) => left - right)),
+        DistanceSquared: (a: unknown, b: unknown) => length(zip(a, b, (left, right) => left - right)) ** 2,
+        Normalize: (a: unknown) => {
+            const size = length(a);
+            return size === 0 ? make(0, 0, 0) : map(a, (value) => value / size);
+        },
+        Lerp: (a: unknown, b: unknown, t: unknown) => zip(a, b, (left, right) => left + (right - left) * Number(t)),
+        Min: (a: unknown, b: unknown) => zip(a, b, Math.min),
+        Max: (a: unknown, b: unknown) => zip(a, b, Math.max),
+        Clamp: (a: unknown, low: unknown, high: unknown) => map(a, (value, key) => Math.min(component(high, key), Math.max(component(low, key), value))),
+        Abs: (a: unknown) => map(a, Math.abs),
+        Reflect: (a: unknown, normal: unknown) => {
+            const dot = (statics.Dot as Fn)(a, normal) as number;
+            return zip(a, normal, (left, right) => left - 2 * dot * right);
+        },
+    };
+    if (dimensions === 3) {
+        statics.Forward = vec3(0, 0, -1);
+        statics.Back = vec3(0, 0, 1);
+        statics.UnitZ = vec3(0, 0, 1);
+        statics.Cross = (a: unknown, b: unknown) => vec3(component(a, 'y') * component(b, 'z') - component(a, 'z') * component(b, 'y'), component(a, 'z') * component(b, 'x') - component(a, 'x') * component(b, 'z'), component(a, 'x') * component(b, 'y') - component(a, 'y') * component(b, 'x'));
+    }
+    return statics;
+}
+export const VECTOR3 = Object.assign(function Vector3(x?: unknown, y?: unknown, z?: unknown) {
+    return vec3(x, y, z);
+}, vectorStatics(3));
+export const VECTOR2 = Object.assign(function Vector2(x?: unknown, y?: unknown) {
+    return vec2(x, y);
+}, vectorStatics(2));
+export const COLOR = Object.assign(function Color(r: unknown = 0, g: unknown = 0, b: unknown = 0, a: unknown = 1) {
+    return { r: Number(r), g: Number(g), b: Number(b), a: Number(a) };
+}, {
+    White: { r: 1, g: 1, b: 1, a: 1 },
+    Black: { r: 0, g: 0, b: 0, a: 1 },
+    Red: { r: 1, g: 0, b: 0, a: 1 },
+    Green: { r: 0, g: 1, b: 0, a: 1 },
+    Blue: { r: 0, g: 0, b: 1, a: 1 },
+    Yellow: { r: 1, g: 1, b: 0, a: 1 },
+    Cyan: { r: 0, g: 1, b: 1, a: 1 },
+    Magenta: { r: 1, g: 0, b: 1, a: 1 },
+    Gray: { r: 0.5, g: 0.5, b: 0.5, a: 1 },
+    Clear: { r: 0, g: 0, b: 0, a: 0 },
+    Lerp: (a: Record<string, number>, b: Record<string, number>, t: unknown) => {
+        const amount = Number(t);
+        return { r: a.r + (b.r - a.r) * amount, g: a.g + (b.g - a.g) * amount, b: a.b + (b.b - a.b) * amount, a: (a.a ?? 1) + ((b.a ?? 1) - (a.a ?? 1)) * amount };
+    },
+    FromHex: (hex: unknown) => {
+        const match = /^#?([0-9a-f]{6})([0-9a-f]{2})?$/i.exec(str(hex));
+        if (!match)
+            throw new FormatException(`Color.FromHex: "${str(hex)}" não é uma cor hexadecimal.`);
+        const value = parseInt(match[1], 16);
+        return { r: ((value >> 16) & 255) / 255, g: ((value >> 8) & 255) / 255, b: (value & 255) / 255, a: match[2] ? parseInt(match[2], 16) / 255 : 1 };
+    },
+});
