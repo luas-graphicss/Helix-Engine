@@ -146,7 +146,7 @@ export class GizmoDrag {
                 this.updateScale(pointer, snapping);
                 break;
         }
-        this.session.notify();
+        this.session.notifyLiveEdit();
     }
     private updateTranslate(pointer: PointerSample, snapping: boolean): void {
         const { frame, handle } = this;
