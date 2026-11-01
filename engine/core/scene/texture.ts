@@ -16,6 +16,7 @@ export interface Texture {
     sourcePath: string;
     mimeType: string | null;
     version: number;
+    dynamic: boolean;
 }
 export type TextureOptions = Partial<Omit<Texture, 'id' | 'version'>> & {
     name: string;
@@ -36,7 +37,11 @@ export function createTexture(options: TextureOptions): Texture {
         sourcePath: options.sourcePath ?? '',
         mimeType: options.mimeType ?? null,
         version: 0,
+        dynamic: options.dynamic ?? false,
     };
+}
+export function touchTexture(texture: Texture): void {
+    texture.version++;
 }
 export function setTextureImage(texture: Texture, image: TextureImage | null): void {
     texture.image = image;
