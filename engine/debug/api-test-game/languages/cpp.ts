@@ -841,5 +841,187 @@ void finalizar() {
 int main() {
   std::printf("DebugJogo.cpp: main rodou antes dos hooks (stdout da WASI)\n");
   return 0;
+}
+
+HX_HOOK void onLoad() {
+  info("onLoad do script de entrada");
+}
+
+HX_HOOK void onStart() {
+  info(std::string("Jogo de teste em ") + LINGUAGEM + ": percorrendo a API…");
+  Value promessa = api("time").call("wait", 0);
+  for (const Area& area : AREAS) promessa = encadear(promessa, area);
+  promessa.call("then", helix::function([] { finalizar(); }));
+}
+
+HX_HOOK void onUpdate(double dt) {
+  g.quadros++;
+  if (!g.torus.isNone()) api("transform").call("rotate", g.torus, v3(0, 40 * dt, 0));
+  Value d = api("debug");
+  d.call("line", v3(-6, 0.05, -6), v3(6, 0.05, -6), "#ff006e");
+  d.call("box", obj({{"center", v3(0, 1, 3)}, {"size", v3(3, 2, 3)}}), "#ffbe0b");
+  if (!g.heroi.isNone()) {
+    d.call("axes", g.heroi, 1);
+    Value acima = api("math.vec3").call("add", api("transform").call("worldPosition", g.heroi), v3(0, 2.2, 0));
+    d.call("text", acima, fmt("Heroi · %d pts", g.pontos), "#ffffff");
+  }
+  d.call("ray", v3(0, 3, 0), v3(0, -1, 0), 3, "#06d6a0");
+  g.hudTimer += dt;
+  if (g.hudTimer >= 0.5) {
+    g.hudTimer = 0;
+    Value gui = api("gui");
+    gui.call("bind", "fps", std::round(numero(api("render")["stats"], "fps")));
+    gui.call("bind", "checagens", g.checagens);
+    gui.call("bind", "falhas", g.falhas);
+  }
+}
+
+HX_HOOK void onFixedUpdate(double h) {
+  if (++g.passosFisica == 1) checar("onFixedUpdate recebe o passo", h > 0 && h < 1, fmt("%g", h));
+}
+
+HX_HOOK void onLateUpdate() {
+  g.lateUpdates++;
+}
+
+                                                                          
+HX_HOOK double onBeforeHotReload() {
+  return g.pontos;
+}
+
+HX_HOOK void onHotReload(double anterior) {
+  g.pontos = anterior > 0 ? static_cast<int>(anterior) : 0;
+  info(fmt("Recarga a quente: %d pontos preservados", g.pontos));
+}
+
+HX_HOOK void onStop() {
+  for (const Value& desligar : g.assinaturas) desligar();
+  g.assinaturas.clear();
+  info(fmt("Parou: %d quadros, %d passos de física, %d lateUpdates, %d frames (onAfterFrame), %d colisões.",
+    g.quadros, g.passosFisica, g.lateUpdates, g.renders, g.colisoes));
+  g.torus = g.heroi = g.efeito = g.tela = g.util = g.recebido = Value();
+}
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+#include "helix.hpp"
+
+#include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <string>
+
+using helix::Args;
+using helix::Value;
+
+namespace {
+
+struct Girador {
+  double angulo = 0;
+  int contatos = 0, quadros = 0;
+  Value desligar;
+};
+Girador g;
+
+Value api(const char* caminho) { return helix::path(caminho); }
+std::string nomeDe(const Value& entidade) { return entidade["name"].str(); }
+
+std::string fmt(const char* formato, ...) __attribute__((format(printf, 1, 2)));
+std::string fmt(const char* formato, ...) {
+  char buffer[256];
+  va_list ap;
+  va_start(ap, formato);
+  vsnprintf(buffer, sizeof buffer, formato, ap);
+  va_end(ap);
+  return buffer;
+}
+
+void registrar(const char* metodo, const std::string& mensagem) { api("log").call(metodo, "Girador", mensagem); }
+
+}              
+
+HX_HOOK void onLoad() {
+  api("props").call("define", Value{
+    {"velocidade", Value{{"type", "range"}, {"default", 90}, {"min", 0}, {"max", 360}, {"step", 1}, {"label", "Velocidade (°/s)"}}},
+    {"cor", Value{{"type", "color"}, {"default", "#ff8800"}, {"label", "Cor"}}},
+    {"pulsar", Value{{"type", "boolean"}, {"default", true}, {"label", "Pulsar"}}},
+  });
+}
+
+HX_HOOK void onStart() {
+  Value props = api("props"), ator = helix::self(), lg = api("log");
+  registrar("info", nomeDe(ator) + " acordou com velocidade " + props.call("get", "velocidade").str() + "°/s");
+  api("material").call("setColor", ator, props.call("get", "cor"));
+  g.desligar = props.call("onChanged", "cor", helix::function([](const Args& a) {
+    api("material").call("setColor", helix::self(), a[0]);
+  }));
+  lg.call("assert", !helix::root()["self"].isNone() && helix::root()["self"] == ator, "helix.self deveria ser o ator deste script");
+  lg.call("assert", props.call("has", "velocidade").truthy() && props.call("definitions").length() == 3, "props.define deveria registrar 3 propriedades");
+}
+
+HX_HOOK void onUpdate(double dt) {
+  Value props = api("props"), tr = api("transform"), eu = helix::self();
+  g.quadros++;
+  g.angulo += props.call("get", "velocidade").number() * dt;
+  tr.call("setRotation", eu, helix::vec3(0, g.angulo, 0));
+  if (props.call("get", "pulsar").truthy()) tr.call("setScale", eu, 1 + std::sin(api("time")["now"].number() * 3) * 0.1);
+}
+
+                                                                                           
+HX_HOOK void onCollisionBegin(hx_ref outro, hx_ref contato) {
+  if (++g.contatos > 3) return;
+  Value quem = Value::adopt(outro), toque = Value::adopt(contato);
+  registrar("info", fmt("%s tocou %s (impulso %.2f)", nomeDe(helix::self()).c_str(), nomeDe(quem).c_str(), toque["impulse"].number()));
+}
+
+HX_HOOK void onTriggerEnter(hx_ref outro) {
+  registrar("info", nomeDe(Value::adopt(outro)) + " entrou no gatilho de " + nomeDe(helix::self()));
+}
+
+HX_HOOK void onEnable() {
+  registrar("debug", nomeDe(helix::self()) + " ativo");
+}
+
+HX_HOOK void onDisable() {
+  registrar("debug", nomeDe(helix::self()) + " inativo");
+}
+
+HX_HOOK void onStop() {
+  registrar("info", fmt("%s: %d quadros, %d contatos", nomeDe(helix::self()).c_str(), g.quadros, g.contatos));
+}
+
+HX_HOOK void onDestroy() {
+  if (g.desligar.isFunction()) g.desligar();
+  g.desligar = Value();
+}
+`;
+    const module = String.raw `                                     
+                                                                                         
+                                                                                              
+                                                                                                 
+#ifndef DEBUG_UTIL_HPP
+#define DEBUG_UTIL_HPP
+
+#include "helix.hpp"
+
+#include <string>
+
+HX_EXPORT double soma(double a, double b) {
+  return a + b;
+}
+
+                                                                                         
+HX_EXPORT hx_ref saudacao(hx_ref quem) {
+  std::string texto = "Olá, " + helix::Value::adopt(quem).str();
+  return hx_string_n(texto.data(), texto.size());
+}
+
+HX_EXPORT double limitar(double valor, double minimo, double maximo) {
+  return valor > maximo ? maximo : valor < minimo ? minimo : valor;
+}
+
+#endif                     
+`;
+    return { entry, actor, module };
 }
