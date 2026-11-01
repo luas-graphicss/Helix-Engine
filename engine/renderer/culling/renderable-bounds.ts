@@ -29,7 +29,11 @@ function matrixEquals(stored: Float32Array, matrix: Mat4): boolean {
     return true;
 }
 export class RenderableBoundsCache {
+    changes = 0;
     private readonly entries = new WeakMap<Entity, BoundsEntry>();
+    beginFrame(): void {
+        this.changes = 0;
+    }
     resolve(entity: Entity, local: Aabb, localVersion: number): RenderableBounds {
         let entry = this.entries.get(entity);
         if (!entry) {
@@ -39,6 +43,7 @@ export class RenderableBoundsCache {
         const matrix = entity.worldMatrix;
         if (entry.local === local && entry.localVersion === localVersion && matrixEquals(entry.matrix, matrix))
             return entry;
+        this.changes++;
         entry.local = local;
         entry.localVersion = localVersion;
         entry.matrix.set(matrix);
