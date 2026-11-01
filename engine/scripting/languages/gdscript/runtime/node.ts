@@ -1461,3 +1461,256 @@ export class Area3DNode extends CollisionObject3DNode {
 }
 markScriptClass(Area3DNode, 'Area3D');
 setGodotBase(Area3DNode, 'Area3D');
+export class AudioStreamPlayerNode extends NodeBase {
+    autoplay = false;
+    volume_db = 0;
+    pitch_scale = 1;
+    bus = 'Master';
+    stream: unknown = null;
+    private $sources(): AnyRecord | null {
+        const audio = this.$helix.audio as AnyRecord | undefined;
+        return (audio?.sources as AnyRecord | undefined) ?? null;
+    }
+    get finished(): Signal {
+        return this.$builtinSignal('finished');
+    }
+    get playing(): boolean {
+        const sources = this.$sources();
+        if (!sources || !this.$entity?.audioSource)
+            return false;
+        try {
+            return Boolean((sources.isPlaying as Fn)(this.$entity));
+        }
+        catch {
+            return false;
+        }
+    }
+    set playing(value: unknown) {
+        if (value)
+            this.play();
+        else
+            this.stop();
+    }
+    play(_fromPosition = 0): void {
+        const sources = this.$sources();
+        if (!sources || !this.$entity?.audioSource) {
+            this.$context.warnOnce(`audio:${this.name}`, `${this.name}.play(): o ator não tem um componente de áudio; adicione uma Fonte de Som ao ator para o som tocar.`);
+            return;
+        }
+        ;
+        (sources.set as Fn)(this.$entity, { volumeDb: this.volume_db, pitch: this.pitch_scale });
+        (sources.play as Fn)(this.$entity);
+    }
+    stop(): void {
+        const sources = this.$sources();
+        if (sources && this.$entity?.audioSource)
+            (sources.stop as Fn)(this.$entity);
+    }
+    is_playing(): boolean {
+        return this.playing;
+    }
+    get_playback_position(): number {
+        const sources = this.$sources();
+        if (!sources || !this.$entity?.audioSource)
+            return 0;
+        const status = (sources.status as Fn)(this.$entity) as {
+            position?: number;
+            time?: number;
+        } | null;
+        return Number(status?.position ?? status?.time ?? 0);
+    }
+    seek(_toPosition: unknown): void { }
+    $enterTree(): void {
+        super.$enterTree();
+        if (this.autoplay)
+            this.play();
+    }
+}
+markScriptClass(AudioStreamPlayerNode, 'AudioStreamPlayer3D');
+setGodotBase(AudioStreamPlayerNode, 'AudioStreamPlayer3D');
+export class ControlNode extends NodeBase {
+    text = '';
+    value = 0;
+    min_value = 0;
+    max_value = 100;
+    step = 1;
+    disabled = false;
+    modulate = null as unknown;
+    tooltip_text = '';
+    mouse_filter = 0;
+    size = new Vector2();
+    custom_minimum_size = new Vector2();
+    anchor_left = 0;
+    anchor_top = 0;
+    anchor_right = 0;
+    anchor_bottom = 0;
+    offset_left = 0;
+    offset_top = 0;
+    offset_right = 0;
+    offset_bottom = 0;
+    get pressed(): Signal {
+        return this.$builtinSignal('pressed');
+    }
+    get toggled(): Signal {
+        return this.$builtinSignal('toggled');
+    }
+    get text_changed(): Signal {
+        return this.$builtinSignal('text_changed');
+    }
+    get text_submitted(): Signal {
+        return this.$builtinSignal('text_submitted');
+    }
+    get value_changed(): Signal {
+        return this.$builtinSignal('value_changed');
+    }
+    get gui_input(): Signal {
+        return this.$builtinSignal('gui_input');
+    }
+    get mouse_entered(): Signal {
+        return this.$builtinSignal('mouse_entered');
+    }
+    get mouse_exited(): Signal {
+        return this.$builtinSignal('mouse_exited');
+    }
+    get focus_entered(): Signal {
+        return this.$builtinSignal('focus_entered');
+    }
+    get focus_exited(): Signal {
+        return this.$builtinSignal('focus_exited');
+    }
+    get resized(): Signal {
+        return this.$builtinSignal('resized');
+    }
+    get global_position2d(): Vector2 {
+        return new Vector2(this.position.x, this.position.y);
+    }
+    set_text(value: unknown): void {
+        this.text = str(value);
+    }
+    get_text(): string {
+        return this.text;
+    }
+    set_value(value: unknown): void {
+        this.value = Number(value);
+        this.$emit('value_changed', this.value);
+    }
+    get_value(): number {
+        return this.value;
+    }
+    grab_focus(): void {
+        this.$emit('focus_entered');
+    }
+    release_focus(): void {
+        this.$emit('focus_exited');
+    }
+    has_focus(): boolean {
+        return false;
+    }
+    get_rect(): Rect2 {
+        return new Rect2(new Vector2(this.position.x, this.position.y), this.size);
+    }
+    get_global_rect(): Rect2 {
+        return this.get_rect();
+    }
+    set_anchors_preset(_preset: unknown, _keepOffsets = false): void { }
+    set_size(value: unknown): void {
+        if (isVecLike(value))
+            this.size = new Vector2(value.x, value.y);
+        this.$emit('resized');
+    }
+    get_size(): Vector2 {
+        return this.size;
+    }
+    add_theme_color_override(_name: unknown, _color: unknown): void { }
+    add_theme_font_size_override(_name: unknown, _size: unknown): void { }
+}
+markScriptClass(ControlNode, 'Control');
+setGodotBase(ControlNode, 'Control');
+export class TimerNode extends NodeBase {
+    static readonly TIMER_PROCESS_PHYSICS = 0;
+    static readonly TIMER_PROCESS_IDLE = 1;
+    wait_time = 1;
+    one_shot = false;
+    autostart = false;
+    process_callback = 1;
+    private $cancel: (() => void) | null = null;
+    private $startedAt = 0;
+    private $pausedLeft: number | null = null;
+    private $paused = false;
+    private $running = false;
+    get timeout(): Signal {
+        return this.$builtinSignal('timeout');
+    }
+    get paused(): boolean {
+        return this.$paused;
+    }
+    set paused(value: unknown) {
+        const paused = Boolean(value);
+        if (paused === this.$paused)
+            return;
+        this.$paused = paused;
+        if (paused) {
+            this.$pausedLeft = this.time_left;
+            this.$cancel?.();
+            this.$cancel = null;
+        }
+        else if (this.$running) {
+            this.$schedule(this.$pausedLeft ?? this.wait_time);
+        }
+    }
+    get time_left(): number {
+        if (!this.$running)
+            return 0;
+        if (this.$paused)
+            return this.$pausedLeft ?? 0;
+        const now = Number(this.$context.time.now ?? 0);
+        return Math.max(0, this.wait_time - (now - this.$startedAt));
+    }
+    private $schedule(seconds: number): void {
+        this.$cancel?.();
+        this.$startedAt = Number(this.$context.time.now ?? 0) - (this.wait_time - seconds);
+        const delay = this.$context.time.delay as ((seconds: number, fn: () => void) => () => void) | undefined;
+        if (typeof delay !== 'function') {
+            this.$context.warnOnce('timer:delay', 'Timer: helix.time.delay não está disponível neste host.');
+            return;
+        }
+        this.$cancel = delay(Math.max(0, seconds), () => {
+            this.$cancel = null;
+            if (this.$freed || !this.$running)
+                return;
+            if (this.one_shot)
+                this.$running = false;
+            else
+                this.$schedule(this.wait_time);
+            this.$emit('timeout');
+        });
+    }
+    start(timeSec: unknown = -1): void {
+        const seconds = Number(timeSec);
+        if (seconds > 0)
+            this.wait_time = seconds;
+        this.$running = true;
+        this.$paused = false;
+        this.$pausedLeft = null;
+        this.$schedule(this.wait_time);
+    }
+    stop(): void {
+        this.$running = false;
+        this.$cancel?.();
+        this.$cancel = null;
+    }
+    is_stopped(): boolean {
+        return !this.$running;
+    }
+    $enterTree(): void {
+        super.$enterTree();
+        if (this.autostart && !this.$running)
+            this.start();
+    }
+    $exitTree(): void {
+        this.stop();
+        super.$exitTree();
+    }
+}
+markScriptClass(TimerNode, 'Timer');
+setGodotBase(TimerNode, 'Timer');
