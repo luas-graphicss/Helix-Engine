@@ -1,7 +1,7 @@
 'use client';
 import { CollapsibleSection } from '@/engine/ui/collapsible-section';
 import { SliderField } from '@/engine/ui/slider-field';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { updateTerrainShading } from '@/engine/editor/operations/terrain-operations';
 import type { TerrainShading } from '@/engine/terrain/core/terrain-shading';
 import type { TerrainTarget } from '../terrain-panel';
@@ -9,7 +9,7 @@ import { meters, percent, times } from './formatters';
 export function ShadingSection({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { entity, terrain } = target;
     const { shading } = terrain;
     const set = <K extends keyof TerrainShading>(key: K) => (value: TerrainShading[K]) => updateTerrainShading(session, entity, { [key]: value });
