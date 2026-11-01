@@ -265,4 +265,277 @@ export function createPhysicsApi(host: RuntimeHost, locks: AxisLocks) {
             return raw;
         throw new HelixArgumentError(member, 'esperava um corpo rígido (o handle de helix.physics.bodyOf ou body.raw).');
     }
+    function bodyOf(value: unknown, member: string): RigidBody {
+        if (value instanceof RigidBody)
+            return value;
+        const entity = requireEntity(value, member);
+        const physics = physicsScene(member);
+        const binding = physics.ensureBinding(entity);
+        if (binding)
+            return binding.body;
+        const instance = session.playtest.characters?.instanceOf(entity);
+        if (instance)
+            return instance.controller.rigidBody;
+        throw new HelixArgumentError(member, `${entity.name} não tem corpo na simulação (precisa de rigidBody ou character).`);
+    }
+    function wrapBody(body: RigidBody, member: string) {
+        const cached = bodyWrappers.get(body);
+        if (cached)
+            return cached;
+        const h = () => world(member).fixedTimestep;
+        const wrapper = {
+            get raw() {
+                return body;
+            },
+            get entity() {
+                return entityOfBody(body);
+            },
+            get id() {
+                return body.id;
+            },
+            get type() {
+                return body.type;
+            },
+            get isStatic() {
+                return body.isStatic;
+            },
+            get isKinematic() {
+                return body.isKinematic;
+            },
+            get isDynamic() {
+                return body.isDynamic;
+            },
+            get isMoving() {
+                return body.isMoving;
+            },
+            get isResting() {
+                return body.isResting;
+            },
+            get isActive() {
+                return body.isActive;
+            },
+            get isSleeping() {
+                return body.sleeping;
+            },
+            get motionSpeed() {
+                return body.motionSpeed;
+            },
+            get position() {
+                return body.position;
+            },
+            get orientation() {
+                return body.orientation;
+            },
+            get mass() {
+                return body.mass;
+            },
+            get invMass() {
+                return body.invMass;
+            },
+            get aabb() {
+                return body.aabb;
+            },
+            get linearVelocity() {
+                return body.linearVelocity;
+            },
+            set linearVelocity(value: Vec3) {
+                toVec3(value, 'body.linearVelocity', body.linearVelocity);
+                body.wake();
+            },
+            get angularVelocity() {
+                return body.angularVelocity;
+            },
+            set angularVelocity(value: Vec3) {
+                toVec3(value, 'body.angularVelocity', body.angularVelocity);
+                body.wake();
+            },
+            get friction() {
+                return body.friction;
+            },
+            get restitution() {
+                return body.restitution;
+            },
+            get gravityScale() {
+                return body.gravityScale;
+            },
+            set gravityScale(value: number) {
+                body.gravityScale = requireNumber(value, 'body.gravityScale', 'a escala de gravidade');
+            },
+            get layer() {
+                return world(member).layers.nameOf(body.layer);
+            },
+            applyImpulse: (impulse: unknown, point?: unknown) => {
+                const j = toVec3(impulse, 'body.applyImpulse');
+                body.applyImpulse(j);
+                if (point !== undefined && point !== null && body.isDynamic) {
+                    const p = toVec3(point, 'body.applyImpulse');
+                    const r = vec3.subtract(vec3.create(), p, body.position);
+                    const torque = vec3.cross(vec3.create(), r, j);
+                    applyAngularImpulse(body, torque);
+                }
+            },
+            applyAngularImpulse: (impulse: unknown) => applyAngularImpulse(body, toVec3(impulse, 'body.applyAngularImpulse')),
+            applyForce: (force: unknown, point?: unknown) => {
+                const f = toVec3(force, 'body.applyForce');
+                const j = vec3.scale(vec3.create(), f, h());
+                body.applyImpulse(j);
+                if (point !== undefined && point !== null && body.isDynamic) {
+                    const p = toVec3(point, 'body.applyForce');
+                    const r = vec3.subtract(vec3.create(), p, body.position);
+                    applyAngularImpulse(body, vec3.cross(vec3.create(), r, j));
+                }
+            },
+            applyTorque: (torque: unknown) => applyAngularImpulse(body, vec3.scale(vec3.create(), toVec3(torque, 'body.applyTorque'), h())),
+            setPose: (position: unknown, orientation?: unknown) => {
+                body.setPose(toVec3(position, 'body.setPose'), orientation === undefined ? body.orientation : toQuat(orientation, 'body.setPose', scratchQuat));
+            },
+            teleport: (position: unknown, orientation?: unknown) => {
+                world(member).teleport(body, toVec3(position, 'body.teleport'), orientation === undefined ? quat.copy(scratchQuat, body.orientation) : toQuat(orientation, 'body.teleport', scratchQuat));
+            },
+            moveKinematic: (position: unknown, orientation?: unknown, step?: unknown) => {
+                if (!body.isKinematic)
+                    throw new HelixError('body.moveKinematic: só corpos cinemáticos; para dinâmicos use applyImpulse/linearVelocity, para estáticos teleport.');
+                body.moveKinematic(toVec3(position, 'body.moveKinematic'), orientation === undefined || orientation === null ? quat.copy(scratchQuat, body.orientation) : toQuat(orientation, 'body.moveKinematic', scratchQuat), step === undefined ? h() : requireNumber(step, 'body.moveKinematic', 'o passo'));
+            },
+            setMaterial: (material: unknown) => {
+                const patch = requireObject(material, 'body.setMaterial', 'o material');
+                body.setMaterial({
+                    friction: patch.friction === undefined ? body.friction : requireNumber(patch.friction, 'body.setMaterial', 'friction'),
+                    restitution: patch.restitution === undefined ? body.restitution : requireNumber(patch.restitution, 'body.setMaterial', 'restitution'),
+                    linearDamping: patch.linearDamping === undefined ? body.linearDamping : requireNumber(patch.linearDamping, 'body.setMaterial', 'linearDamping'),
+                    angularDamping: patch.angularDamping === undefined ? body.angularDamping : requireNumber(patch.angularDamping, 'body.setMaterial', 'angularDamping'),
+                    gravityScale: patch.gravityScale === undefined ? body.gravityScale : requireNumber(patch.gravityScale, 'body.setMaterial', 'gravityScale'),
+                    canSleep: patch.canSleep === undefined ? body.canSleep : Boolean(patch.canSleep),
+                });
+            },
+            wake: () => body.wake(),
+            sleep: () => body.sleep(),
+            lockRotation: (x: unknown, y: unknown, z: unknown) => {
+                locks.rotation.set(body, [Boolean(x), Boolean(y), Boolean(z)]);
+                if (!x && !y && !z)
+                    locks.rotation.delete(body);
+            },
+            lockPosition: (x: unknown, y: unknown, z: unknown) => {
+                locks.position.set(body, [Boolean(x), Boolean(y), Boolean(z)]);
+                if (!x && !y && !z)
+                    locks.position.delete(body);
+            },
+        };
+        bodyWrappers.set(body, wrapper);
+        return wrapper;
+    }
+    function applyAngularImpulse(body: RigidBody, impulse: Vec3): void {
+        if (!body.isDynamic)
+            return;
+        const m = body.invInertiaWorld;
+        body.angularVelocity[0] += m[0] * impulse[0] + m[3] * impulse[1] + m[6] * impulse[2];
+        body.angularVelocity[1] += m[1] * impulse[0] + m[4] * impulse[1] + m[7] * impulse[2];
+        body.angularVelocity[2] += m[2] * impulse[0] + m[5] * impulse[1] + m[8] * impulse[2];
+        body.wake();
+    }
+    function raycastScene(origin: Vec3, direction: Vec3, maxDistance: number, filter: QueryFilter, all: boolean): RaycastHit[] {
+        scene.updateWorldMatrices();
+        vec3.copy(worldRay.origin, origin);
+        vec3.normalize(worldRay.direction, direction);
+        const hits: RaycastHit[] = [];
+        const visit = (entity: Entity) => {
+            if (!entity.mesh && !entity.terrain)
+                return;
+            if (entity.csgBrush)
+                return;
+            if (!passesFilter(entity, filter))
+                return;
+            if (!mat4.invert(inverseWorld, entity.worldMatrix))
+                return;
+            transformRay(localRay, worldRay, inverseWorld);
+            let distance: number | null = null;
+            let normal: Vec3 | null = null;
+            if (entity.terrain) {
+                const hit = entity.terrain.raycast(localRay.origin, localRay.direction, scratchHit);
+                if (hit) {
+                    distance = hit.distance;
+                    normal = entity.terrain.normalAtLocal(vec3.create(), hit.point[0], hit.point[2]);
+                    quat.fromMat4Rotation(scratchQuat, entity.worldMatrix);
+                    quat.rotateVec3(normal, scratchQuat, normal);
+                }
+            }
+            else if (entity.mesh) {
+                distance = raycastMesh(localRay, entity.mesh, maxDistance);
+            }
+            if (distance === null || distance > maxDistance || distance < 0)
+                return;
+            const point = vec3.scaleAndAdd(vec3.create(), worldRay.origin, worldRay.direction, distance);
+            if (!normal)
+                normal = approximateMeshNormal(vec3.create(), entity, point, worldRay.direction);
+            const physics = session.playtest.physics;
+            const body = physics?.bindingOf(entity)?.body ?? null;
+            hits.push({ entity, body, point, normal, distance });
+        };
+        if (filter.includeInvisible)
+            scene.traverse(visit);
+        else
+            scene.traverseVisible(visit);
+        hits.sort((a, b) => a.distance - b.distance);
+        return all ? hits : hits.slice(0, 1);
+    }
+    function bodiesInAabb(box: Aabb, filter: QueryFilter, member: string): Entity[] {
+        const current = world(member);
+        const result: Entity[] = [];
+        const seen = new Set<Entity>();
+        current.queryAabb(box, null, (body) => {
+            const entity = entityOfBody(body);
+            if (!entity || seen.has(entity) || !passesFilter(entity, filter))
+                return;
+            seen.add(entity);
+            result.push(entity);
+        });
+        return result;
+    }
+    function requireLayerNames(value: unknown, member: string): string[] {
+        const list = typeof value === 'string' ? [value] : Array.isArray(value) ? value : null;
+        if (!list)
+            throw new HelixArgumentError(member, 'esperava uma lista de nomes de camadas (textos).');
+        return list.map((entry) => {
+            if (typeof entry !== 'string' || entry.trim().length === 0)
+                throw new HelixArgumentError(member, `nome de camada inválido: ${String(entry)}.`);
+            return entry;
+        });
+    }
+    const joints = createJointsApi({ host, world, bodyOf, wrapBody, entityOfBody });
+    const forces = createForcesApi({ host, world });
+    return {
+        joints,
+        forces,
+        get settings() {
+            return scene.physics;
+        },
+        set: (patch: unknown) => {
+            const copy: Record<string, unknown> = {};
+            assignSettings(copy, patch, 'helix.physics.set', { allowUnknown: true });
+            session.updatePhysics(copy as Parameters<typeof session.updatePhysics>[0]);
+        },
+        get gravity() {
+            return scene.physics.gravity;
+        },
+        set gravity(value: Vec3) {
+            toVec3(value, 'helix.physics.gravity', scene.physics.gravity);
+            session.notify();
+        },
+        get quality(): PhysicsQuality | null {
+            return matchPhysicsQuality(scene.physics);
+        },
+        set quality(value: PhysicsQuality | null) {
+            session.applyPhysicsQuality(requireOneOf(value, Object.keys(PHYSICS_QUALITY_PRESETS) as PhysicsQuality[], 'helix.physics.quality', 'a qualidade'));
+        },
+        resetSettings: () => session.resetPhysicsSettings(),
+        get running() {
+            return session.playtest.physics !== null;
+        },
+        get enabled() {
+            return host.switches.physics;
+        },
+        set enabled(value: boolean) {
+            host.switches.physics = Boolean(value);
+        },
+    };
 }
