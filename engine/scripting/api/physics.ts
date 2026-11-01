@@ -537,5 +537,268 @@ export function createPhysicsApi(host: RuntimeHost, locks: AxisLocks) {
         set enabled(value: boolean) {
             host.switches.physics = Boolean(value);
         },
+        get stats() {
+            return (session.playtest.physics?.world.stats ?? {
+                bodies: 0,
+                awake: 0,
+                manifolds: 0,
+                contactPoints: 0,
+                joints: 0,
+                stepMs: 0,
+                stepMsAverage: 0,
+                stepsLastAdvance: 0,
+                catchUpSteps: 0,
+                simulatedSeconds: 0,
+                advanceMs: 0,
+                droppedSeconds: 0,
+                backend: 'local' as const,
+            });
+        },
+        get fixedTimestep() {
+            return session.playtest.physics?.world.fixedTimestep ?? scene.physics.fixedTimestep;
+        },
+        get interpolation() {
+            return session.playtest.physics?.world.interpolation ?? 0;
+        },
+        get bodyCount() {
+            const physics = session.playtest.physics;
+            if (!physics)
+                return 0;
+            physics.ensureBindings();
+            return physics.world.bodies.length;
+        },
+        stepOnce: () => physicsScene('helix.physics.stepOnce').stepOnce(),
+        discardAccumulatedTime: () => world('helix.physics.discardAccumulatedTime').discardAccumulatedTime(),
+        onPreStep: (fnValue: unknown) => {
+            const fn = requireFunction<(h: number) => void>(fnValue, 'helix.physics.onPreStep');
+            const owner = host.current;
+            const remove = world('helix.physics.onPreStep').addPreStepHook((h) => {
+                if (owner && !owner.active)
+                    return;
+                host.invoke(owner, 'onPreStep', () => fn(h));
+            });
+            owner?.track(remove);
+            return remove;
+        },
+        addForceField: (fieldValue: unknown) => {
+            const field = requireObject(fieldValue, 'helix.physics.addForceField', 'o campo de força');
+            const apply = requireFunction<ForceField['apply']>(field.apply, 'helix.physics.addForceField', 'apply(bodies, h, time)');
+            const wake = typeof field.wakeAffected === 'function' ? (field.wakeAffected as ForceField['wakeAffected']) : (bodies: readonly RigidBody[]) => bodies.forEach((body) => body.wake());
+            const owner = host.current;
+            const wrapped: ForceField = {
+                wakeAffected: (bodies, time) => void host.invoke(owner, 'forceField.wakeAffected', () => wake(bodies, time)),
+                apply: (bodies, h, time) => void host.invoke(owner, 'forceField.apply', () => apply(bodies, h, time)),
+            };
+            const remove = world('helix.physics.addForceField').addForceField(wrapped);
+            owner?.track(remove);
+            return remove;
+        },
+        bodyOf: (value: unknown) => wrapBody(bodyOf(value, 'helix.physics.bodyOf'), 'helix.physics.bodyOf'),
+        hasBody: (value: unknown) => {
+            const entity = requireEntity(value, 'helix.physics.hasBody');
+            const physics = session.playtest.physics;
+            return Boolean(physics && (physics.ensureBinding(entity) || session.playtest.characters?.instanceOf(entity)));
+        },
+        bodies: () => {
+            const physics = session.playtest.physics;
+            if (!physics)
+                return [];
+            physics.ensureBindings();
+            const result: Array<{
+                entity: Entity;
+                body: object;
+            }> = [];
+            scene.traverse((entity) => {
+                const binding = physics.bindingOf(entity);
+                if (binding)
+                    result.push({ entity, body: wrapBody(binding.body, 'helix.physics.bodies') });
+            });
+            return result;
+        },
+        entityOf: (body: unknown) => entityOfBody(unwrapBody(body, 'helix.physics.entityOf')),
+        raycast: (origin: unknown, direction: unknown, maxDistance?: unknown, filter?: unknown) => {
+            const hits = raycastScene(toVec3(origin, 'helix.physics.raycast'), toVec3(direction, 'helix.physics.raycast'), maxDistance === undefined ? Infinity : requireNumber(maxDistance, 'helix.physics.raycast', 'a distância máxima'), parseFilter(filter, 'helix.physics.raycast'), false);
+            return hits[0] ?? null;
+        },
+        raycastAll: (origin: unknown, direction: unknown, maxDistance?: unknown, filter?: unknown) => raycastScene(toVec3(origin, 'helix.physics.raycastAll'), toVec3(direction, 'helix.physics.raycastAll'), maxDistance === undefined ? Infinity : requireNumber(maxDistance, 'helix.physics.raycastAll', 'a distância máxima'), parseFilter(filter, 'helix.physics.raycastAll'), true),
+        overlapAabb: (box: unknown, filter?: unknown) => {
+            const candidate = requireObject(box, 'helix.physics.overlapAabb', 'a caixa');
+            toVec3(candidate.min, 'helix.physics.overlapAabb.min', scratchBox.min);
+            toVec3(candidate.max, 'helix.physics.overlapAabb.max', scratchBox.max);
+            return bodiesInAabb(scratchBox, parseFilter(filter, 'helix.physics.overlapAabb'), 'helix.physics.overlapAabb');
+        },
+        overlapSphere: (center: unknown, radius: unknown, filter?: unknown) => {
+            const c = toVec3(center, 'helix.physics.overlapSphere');
+            const r = requireNumber(radius, 'helix.physics.overlapSphere', 'o raio');
+            vec3.set(scratchBox.min, c[0] - r, c[1] - r, c[2] - r);
+            vec3.set(scratchBox.max, c[0] + r, c[1] + r, c[2] + r);
+            const physics = physicsScene('helix.physics.overlapSphere');
+            return bodiesInAabb(scratchBox, parseFilter(filter, 'helix.physics.overlapSphere'), 'helix.physics.overlapSphere').filter((entity) => {
+                const body = physics.bindingOf(entity)?.body ?? session.playtest.characters?.instanceOf(entity)?.controller.rigidBody;
+                if (!body)
+                    return false;
+                const closest = vec3.set(scratchVec, Math.min(Math.max(c[0], body.aabb.min[0]), body.aabb.max[0]), Math.min(Math.max(c[1], body.aabb.min[1]), body.aabb.max[1]), Math.min(Math.max(c[2], body.aabb.min[2]), body.aabb.max[2]));
+                return vec3.distance(closest, c) <= r;
+            });
+        },
+        overlapBox: (center: unknown, halfExtents: unknown, _rotation?: unknown, filter?: unknown) => {
+            const c = toVec3(center, 'helix.physics.overlapBox');
+            const e = toVec3(halfExtents, 'helix.physics.overlapBox');
+            vec3.set(scratchBox.min, c[0] - e[0], c[1] - e[1], c[2] - e[2]);
+            vec3.set(scratchBox.max, c[0] + e[0], c[1] + e[1], c[2] + e[2]);
+            return bodiesInAabb(scratchBox, parseFilter(filter, 'helix.physics.overlapBox'), 'helix.physics.overlapBox');
+        },
+        sweep: () => {
+            throw new HelixNotImplementedError('helix.physics.sweep', 'varreduras de forma ainda não existem; combine raycast com overlapSphere por enquanto.');
+        },
+        closestPoint: (point: unknown, target: unknown) => {
+            const p = toVec3(point, 'helix.physics.closestPoint');
+            const body = bodyOf(target, 'helix.physics.closestPoint');
+            return vec3.create(Math.min(Math.max(p[0], body.aabb.min[0]), body.aabb.max[0]), Math.min(Math.max(p[1], body.aabb.min[1]), body.aabb.max[1]), Math.min(Math.max(p[2], body.aabb.min[2]), body.aabb.max[2]));
+        },
+        fitCollider: (value: unknown) => {
+            const entity = requireEntity(value, 'helix.physics.fitCollider');
+            if (!entity.rigidBody)
+                entity.rigidBody = createRigidBodySettings();
+            if (entity.mesh)
+                fitColliderToBounds(entity.rigidBody, getLocalBounds(entity.mesh));
+            session.notify();
+            return entity.rigidBody;
+        },
+        massProperties: (value: unknown) => {
+            const entity = requireEntity(value, 'helix.physics.massProperties');
+            if (!entity.rigidBody)
+                throw new HelixArgumentError('helix.physics.massProperties', `${entity.name} não tem rigidBody.`);
+            scene.updateWorldMatrices();
+            readWorldScale(scratchWorldScale, entity.worldMatrix);
+            return {
+                mass: defaultMassForSettings(entity.rigidBody, scratchWorldScale),
+                density: densityForSettings(entity.rigidBody, scratchWorldScale),
+                volume: colliderVolume(entity.rigidBody, scratchWorldScale),
+            };
+        },
+        colliderRequiresStatic: (kind: unknown) => colliderRequiresStatic(requireOneOf(kind, ['box', 'sphere', 'capsule', 'mesh'] as const, 'helix.physics.colliderRequiresStatic', 'o colisor')),
+        colliderVolume: (value: unknown) => {
+            const entity = requireEntity(value, 'helix.physics.colliderVolume');
+            if (!entity.rigidBody)
+                return 0;
+            scene.updateWorldMatrices();
+            readWorldScale(scratchWorldScale, entity.worldMatrix);
+            return colliderVolume(entity.rigidBody, scratchWorldScale);
+        },
+        physical: {
+            presets: () => PHYSICAL_PRESETS.map((preset) => ({ ...preset })),
+            create: (overrides?: unknown) => createPhysicalProperties(overrides === undefined ? {} : (requireObject(overrides, 'helix.physics.physical.create') as Partial<PhysicalProperties>)),
+            match: (properties: unknown) => matchPhysicalPreset(requireObject(properties, 'helix.physics.physical.match') as unknown as PhysicalProperties),
+            apply: (value: unknown, presetOrProperties: unknown) => {
+                const entity = requireEntity(value, 'helix.physics.physical.apply');
+                if (!entity.rigidBody)
+                    entity.rigidBody = createRigidBodySettings();
+                let properties: PhysicalProperties;
+                if (typeof presetOrProperties === 'string') {
+                    const preset = PHYSICAL_PRESETS.find((entry) => entry.id === presetOrProperties);
+                    if (!preset)
+                        throw new HelixArgumentError('helix.physics.physical.apply', `material físico "${presetOrProperties}" desconhecido. Presets: ${PHYSICAL_PRESETS.map((entry) => entry.id).join(', ')}.`);
+                    properties = preset.properties;
+                }
+                else {
+                    properties = requireObject(presetOrProperties, 'helix.physics.physical.apply') as unknown as PhysicalProperties;
+                }
+                scene.updateWorldMatrices();
+                readWorldScale(scratchWorldScale, entity.worldMatrix);
+                applyPhysicalProperties(entity.rigidBody, properties, scratchWorldScale);
+                session.notify();
+                return entity.rigidBody;
+            },
+        },
+        shapes: {
+            box: (halfX: unknown, halfY: unknown, halfZ: unknown) => createBoxShape(requireNumber(halfX, 'helix.physics.shapes.box'), requireNumber(halfY, 'helix.physics.shapes.box'), requireNumber(halfZ, 'helix.physics.shapes.box')),
+            sphere: (radius: unknown) => createSphereShape(requireNumber(radius, 'helix.physics.shapes.sphere', 'o raio')),
+            capsule: (radius: unknown, halfHeight: unknown) => createCapsuleShape(requireNumber(radius, 'helix.physics.shapes.capsule', 'o raio'), requireNumber(halfHeight, 'helix.physics.shapes.capsule', 'a meia altura')),
+            mesh: (value: unknown, scale?: unknown) => {
+                const entity = value instanceof Entity ? value : null;
+                const mesh = entity ? entity.mesh : (value as Parameters<typeof createMeshShape>[0]);
+                if (!mesh)
+                    throw new HelixArgumentError('helix.physics.shapes.mesh', 'esperava um ator com malha ou uma malha.');
+                return createMeshShape(mesh, scale === undefined ? vec3.create(1, 1, 1) : toVec3(scale, 'helix.physics.shapes.mesh'));
+            },
+            volume: (shape: unknown) => shapeVolume(shape as ColliderShape),
+            aabb: (shape: unknown, position: unknown, orientation?: unknown) => {
+                const rotation = mat3.fromQuat(mat3.create(), orientation === undefined ? quat.identity(scratchQuat) : toQuat(orientation, 'helix.physics.shapes.aabb', scratchQuat));
+                return computeShapeAabb(aabb.create(), shape as ColliderShape, toVec3(position, 'helix.physics.shapes.aabb'), rotation, 0);
+            },
+        },
+        waterAt: (pointValue: unknown) => {
+            const point = toVec3(pointValue, 'helix.physics.waterAt');
+            scene.updateWorldMatrices();
+            let result: {
+                height: number;
+                depth: number;
+                normal: Vec3;
+                velocity: Vec3;
+                entity: Entity;
+            } | null = null;
+            scene.traverse((entity) => {
+                if (result || !entity.terrain || !entity.terrain.water.enabled)
+                    return;
+                if (!mat4.invert(inverseWorld, entity.worldMatrix))
+                    return;
+                mat4.transformPoint(scratchVec, inverseWorld, point);
+                if (!entity.terrain.containsLocal(scratchVec[0], scratchVec[2]))
+                    return;
+                sampleWaterSurface(scratchWater, entity.terrain.water, entity.terrain.size, scratchVec[0], scratchVec[2], host.time.now);
+                const worldHeight = entity.worldMatrix[13] + scratchWater.height;
+                if (point[1] > worldHeight)
+                    return;
+                result = { height: worldHeight, depth: worldHeight - point[1], normal: vec3.copy(vec3.create(), scratchWater.normal), velocity: vec3.copy(vec3.create(), scratchWater.velocity), entity };
+            });
+            return result;
+        },
+        layers: {
+            define: (names: unknown) => {
+                const member = 'helix.physics.layers.define';
+                const list = requireLayerNames(names, member);
+                const current = world(member).layers;
+                try {
+                    current.define(list);
+                }
+                catch (cause) {
+                    throw new HelixArgumentError(member, `${cause instanceof Error ? cause.message : String(cause)} (máximo de ${MAX_COLLISION_LAYERS}).`);
+                }
+                return current.list();
+            },
+            setCollision: (a: unknown, b: unknown, enabled: unknown) => {
+                const member = 'helix.physics.layers.setCollision';
+                const [first] = requireLayerNames(requireString(a, member, 'a primeira camada'), member);
+                const [second] = requireLayerNames(requireString(b, member, 'a segunda camada'), member);
+                const current = world(member);
+                current.layers.setCollision(first, second, enabled === undefined ? true : Boolean(enabled));
+                for (const body of current.bodies)
+                    if (body.layer === current.layers.indexOf(first) || body.layer === current.layers.indexOf(second))
+                        body.wake();
+            },
+            collides: (a: unknown, b: unknown) => {
+                const member = 'helix.physics.layers.collides';
+                return world(member).layers.collidesByName(requireString(a, member, 'a primeira camada'), requireString(b, member, 'a segunda camada'));
+            },
+            list: () => world('helix.physics.layers.list').layers.list(),
+            of: (value: unknown) => requireEntity(value, 'helix.physics.layers.of').rigidBody?.layer ?? DEFAULT_COLLISION_LAYER,
+            get default() {
+                return DEFAULT_COLLISION_LAYER;
+            },
+        },
+        get backend() {
+            return null;
+        },
+        set backend(_value: unknown) {
+            throw new HelixNotImplementedError('helix.physics.backend', 'motores de física externos ainda não podem ser registrados.');
+        },
+        onOutOfBounds: (handler: unknown) => host.bus.on('physics.outOfBounds', handler as (payload: unknown) => void, host.current),
+        onUnstable: (handler: unknown) => host.bus.on('physics.unstable', handler as (payload: unknown) => void, host.current),
+        onCollisionBegin: (handler: unknown) => host.bus.on('physics.collisionBegin', handler as (payload: unknown) => void, host.current),
+        onCollisionEnd: (handler: unknown) => host.bus.on('physics.collisionEnd', handler as (payload: unknown) => void, host.current),
+        _entityOfBody: entityOfBody,
+        _jointBroken: joints._broken,
     };
 }
+export type { RigidBodySettings, Quat, Ray };
