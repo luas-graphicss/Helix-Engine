@@ -544,4 +544,65 @@ export function createMathApi() {
             return vec3.create(srgbToLinear(r + m), srgbToLinear(g + m), srgbToLinear(b + m));
         },
     };
+    const randomApi = {
+        seed: (value: unknown) => random.seed(seedOf(value, 'random.seed')),
+        value: () => random.value(),
+        range: (min: unknown, max: unknown) => random.range(n(min, 'random.range'), n(max, 'random.range')),
+        int: (min: unknown, max: unknown) => random.int(n(min, 'random.int'), n(max, 'random.int')),
+        bool: (probability = 0.5) => random.value() < n(probability, 'random.bool'),
+        pick: <T>(list: unknown): T | undefined => {
+            if (!Array.isArray(list))
+                throw new HelixArgumentError(`${M}.random.pick`, 'esperava uma lista.');
+            return list.length === 0 ? undefined : (list[Math.floor(random.value() * list.length)] as T);
+        },
+        shuffle: <T>(list: unknown): T[] => {
+            if (!Array.isArray(list))
+                throw new HelixArgumentError(`${M}.random.shuffle`, 'esperava uma lista.');
+            const copy = list.slice() as T[];
+            for (let index = copy.length - 1; index > 0; index--) {
+                const swap = Math.floor(random.value() * (index + 1));
+                [copy[index], copy[swap]] = [copy[swap], copy[index]];
+            }
+            return copy;
+        },
+        gaussian: (mean = 0, deviation = 1) => random.gaussian(n(mean, 'random.gaussian'), n(deviation, 'random.gaussian')),
+        unitVector: () => random.unitVector(),
+        insideSphere: (radius = 1) => vec3.scale(vec3.create(), random.unitVector(), Math.cbrt(random.value()) * n(radius, 'random.insideSphere')),
+        onCircle: (radius = 1) => {
+            const angle = random.range(0, Math.PI * 2);
+            const r = n(radius, 'random.onCircle');
+            return vec3.create(Math.cos(angle) * r, 0, Math.sin(angle) * r);
+        },
+        color: () => vec3.create(random.value(), random.value(), random.value()),
+        create: (seed: unknown) => {
+            const generator = new SeededRandom(seedOf(seed, 'random.create'));
+            return {
+                seed: (value: unknown) => generator.seed(seedOf(value, 'random.seed')),
+                value: () => generator.value(),
+                range: (min: unknown, max: unknown) => generator.range(n(min, 'random.range'), n(max, 'random.range')),
+                int: (min: unknown, max: unknown) => generator.int(n(min, 'random.int'), n(max, 'random.int')),
+                gaussian: (mean = 0, deviation = 1) => generator.gaussian(n(mean, 'random.gaussian'), n(deviation, 'random.gaussian')),
+                unitVector: () => generator.unitVector(),
+                pick: <T>(list: T[]): T | undefined => (list.length === 0 ? undefined : list[Math.floor(generator.value() * list.length)]),
+            };
+        },
+    };
+    return {
+        vec3: vec3Api,
+        quat: quatApi,
+        mat4: mat4Api,
+        mat3: mat3Api,
+        aabb: aabbApi,
+        ray: rayApi,
+        scalar: scalarApi,
+        noise: noiseApi,
+        color: colorApi,
+        random: randomApi,
+        clamp: scalarApi.clamp,
+        lerp: scalarApi.lerp,
+        degToRad: scalarApi.degToRad,
+        radToDeg: scalarApi.radToDeg,
+        PI: Math.PI,
+        TAU: Math.PI * 2,
+    };
 }
