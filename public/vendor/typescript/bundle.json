@@ -47,7 +47,8 @@
     "lib.es2018.regexp.d.ts": "interface RegExpMatchArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExpExecArray {\n    groups?: {\n        [key: string]: string;\n    };\n}\ninterface RegExp {\n    readonly dotAll: boolean;\n}\n",
     "lib.es2016.d.ts": "",
     "lib.es2017.arraybuffer.d.ts": "interface ArrayBufferConstructor {\n    new (): ArrayBuffer;\n}\n",
-    "lib.es2017.date.d.ts": "interface DateConstructor {\n    UTC(year: number, monthIndex?: number, date?: number, hours?: number, minutes?: number, seconds?: number, ms?: number): number;\n}\n"
+    "lib.es2017.date.d.ts": "interface DateConstructor {\n    UTC(year: number, monthIndex?: number, date?: number, hours?: number, minutes?: number, seconds?: number, ms?: number): number;\n}\n",
+    "lib.es2017.intl.d.ts": "declare namespace Intl {\n    interface DateTimeFormatPartTypesRegistry {\n        day: any;\n        dayPeriod: any;\n        era: any;\n        hour: any;\n        literal: any;\n        minute: any;\n        month: any;\n        second: any;\n        timeZoneName: any;\n        weekday: any;\n        year: any;\n    }\n    type DateTimeFormatPartTypes = keyof DateTimeFormatPartTypesRegistry;\n    interface DateTimeFormatPart {\n        type: DateTimeFormatPartTypes;\n        value: string;\n    }\n    interface DateTimeFormat {\n        formatToParts(date?: Date | number): DateTimeFormatPart[];\n    }\n}\n"
   },
   "messages": {}
 }
