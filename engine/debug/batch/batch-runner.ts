@@ -268,4 +268,73 @@ export class DebugBatchRunner {
             reloads: attempt - 1,
         };
     }
+    private giveUp(target: BatchTarget, interrupted: PassInProgress): LanguageTestResult {
+        const { entries } = interrupted;
+        return {
+            target,
+            label: targetLabel(target),
+            status: 'interrupted',
+            compileMessage: interrupted.compileMessage,
+            runtimeMessage: `A aba recarregou ${interrupted.attempt} vezes no meio desta passada, a última em "${BATCH_STEP_LABEL[interrupted.step]}"; o lote seguiu sem tentá-la de novo. Abaixo, o que ela disse até cair.`,
+            entries,
+            errors: countLevel(entries, 'error'),
+            warnings: countLevel(entries, 'warn'),
+            durationMs: interrupted.elapsedMs,
+            reloads: interrupted.attempt,
+        };
+    }
+    private async settleDown(capture: LogCapture, signal: AbortSignal): Promise<void> {
+        const profile = settleProfile(this.settle);
+        const startedAt = performance.now();
+        await delay(profile.minMs, signal);
+        while (performance.now() - startedAt < profile.maxMs) {
+            if (!this.session.playtest.isRunning)
+                return;
+            if (capture.quietForMs >= profile.quietMs)
+                return;
+            await delay(250, signal);
+        }
+    }
+    private scheduleCheckpoint(): void {
+        if (this.checkpointTimer !== 0)
+            return;
+        this.checkpointTimer = window.setTimeout(() => {
+            this.checkpointTimer = 0;
+            void this.saveCheckpoint();
+        }, CHECKPOINT_DEBOUNCE_MS);
+    }
+    private cancelScheduledCheckpoint(): void {
+        if (this.checkpointTimer === 0)
+            return;
+        window.clearTimeout(this.checkpointTimer);
+        this.checkpointTimer = 0;
+    }
+    private saveCheckpoint(): Promise<void> {
+        this.cancelScheduledCheckpoint();
+        const { plan } = this;
+        if (!plan)
+            return Promise.resolve();
+        const current = this.current ? { ...this.current, entries: this.capture?.peek().filter(isReportable) ?? this.current.entries, elapsedMs: performance.now() - this.passStartedAt } : null;
+        return writeBatchCheckpoint(this.session.project.id, {
+            targets: plan.targets,
+            settle: this.settle,
+            startedAt: plan.startedAt,
+            elapsedMs: this.elapsedMs(),
+            reloads: plan.reloads,
+            results: this.results,
+            current,
+        });
+    }
+    private publish(result: LanguageTestResult): void {
+        const level: LogLevel = result.status === 'passed' ? 'info' : result.status === 'issues' && result.errors === 0 ? 'warn' : result.status === 'cancelled' ? 'warn' : 'error';
+        this.session.log[level](LOG_SOURCE, `${result.label}: ${describeResult(result)}`, { details: formatLanguageReport(result) });
+    }
+    private finish(): void {
+        const cancelled = this.state === 'cancelled';
+        const summary = summarizeResults(this.results);
+        this.report = formatBatchReport(this.results, { startedAt: this.startedAt ?? new Date(), durationMs: this.durationMs, cancelled, reloads: this.reloads });
+        const level: LogLevel = summary.errors > 0 || hasBrokenPasses(summary) ? 'error' : summary.warnings > 0 ? 'warn' : 'info';
+        this.session.log[level](LOG_SOURCE, `Teste automático ${cancelled ? 'cancelado' : 'concluído'} em ${formatDuration(this.durationMs)}: ${describeSummary(summary)}. O relatório completo está nos detalhes desta entrada e no botão Copiar relatório da janela do modo debug.`, { details: this.report });
+        this.session.notify();
+    }
 }
