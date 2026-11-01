@@ -3,15 +3,17 @@ import { clamp, degToRad } from '@/engine/core/math/scalar';
 import type { PerspectiveCamera } from './perspective-camera';
 const MIN_POLAR = degToRad(1);
 const MAX_POLAR = degToRad(179);
+export const ORBIT_BASE_SPEEDS = { orbit: 0.006, pan: 0.0025, zoom: 0.0015 } as const;
 export class OrbitController {
     azimuth = degToRad(-45);
     polar = degToRad(60);
     distance = 8;
     minDistance = 0.2;
     maxDistance = 200;
-    orbitSpeed = 0.006;
-    panSpeed = 0.0025;
-    zoomSpeed = 0.0015;
+    orbitSpeed: number = ORBIT_BASE_SPEEDS.orbit;
+    panSpeed: number = ORBIT_BASE_SPEEDS.pan;
+    zoomSpeed: number = ORBIT_BASE_SPEEDS.zoom;
+    invertOrbitY = false;
     private readonly scratchForward = vec3.create();
     private readonly scratchRight = vec3.create();
     private readonly scratchUp = vec3.create();
@@ -21,7 +23,8 @@ export class OrbitController {
     }
     orbit(deltaX: number, deltaY: number): void {
         this.azimuth -= deltaX * this.orbitSpeed;
-        this.polar = clamp(this.polar - deltaY * this.orbitSpeed, MIN_POLAR, MAX_POLAR);
+        const tilt = this.invertOrbitY ? -deltaY : deltaY;
+        this.polar = clamp(this.polar - tilt * this.orbitSpeed, MIN_POLAR, MAX_POLAR);
         this.apply();
     }
     pan(deltaX: number, deltaY: number): void {
