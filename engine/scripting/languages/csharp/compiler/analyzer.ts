@@ -1327,4 +1327,283 @@ class Analyzer {
         if (isNumericType(type) || type.kind === 'string' || type.kind === 'char')
             this.error(expression.span, `A condição precisa ser bool, mas é ${describeType(type)}.`);
     }
+    private pattern(pattern: Pattern, valueType: StaticType, scope: Scope): void {
+        switch (pattern.kind) {
+            case 'constant':
+                this.expression(pattern.expression, scope, valueType);
+                if (promoteTypePattern(pattern))
+                    this.pattern(pattern, valueType, scope);
+                return;
+            case 'relational':
+                this.expression(pattern.expression, scope, valueType);
+                return;
+            case 'discard':
+                return;
+            case 'declaration': {
+                const test = this.typeTestOf(pattern.type, scope.fn.cls);
+                pattern.typeTest = test;
+                if (pattern.name)
+                    pattern.jsName = scope.declare(pattern.name, this.typeOfTest(test, pattern.type, scope.fn.cls)).jsName;
+                return;
+            }
+            case 'type':
+                pattern.typeTest = this.typeTestOf(pattern.type, scope.fn.cls);
+                return;
+            case 'var':
+                if (pattern.name)
+                    pattern.jsName = scope.declare(pattern.name, valueType).jsName;
+                if (pattern.names) {
+                    const parts = valueType.kind === 'tuple' ? valueType.elements.map((entry) => entry.type) : [];
+                    pattern.jsNames = pattern.names.map((name, index) => (name === '_' ? `$_${index}` : scope.declare(name, parts[index] ?? STATIC_TYPES.dynamic).jsName));
+                }
+                return;
+            case 'not':
+                this.pattern(pattern.pattern, valueType, scope);
+                return;
+            case 'and':
+            case 'or':
+                this.pattern(pattern.left, valueType, scope);
+                this.pattern(pattern.right, valueType, scope);
+                return;
+            case 'property': {
+                let narrowed = valueType;
+                if (pattern.type) {
+                    pattern.typeTest = this.typeTestOf(pattern.type, scope.fn.cls);
+                    narrowed = this.typeOfTest(pattern.typeTest, pattern.type, scope.fn.cls);
+                }
+                const cls = this.classOf(narrowed);
+                for (const property of pattern.properties) {
+                    const member = cls ? this.findMember(cls, property.name) : null;
+                    if (cls && !member && !ACTOR_SCRIPT_MEMBERS.has(property.name))
+                        this.error(pattern.span, `"${cls.name}" não tem o membro "${property.name}".${hint(property.name, this.memberNames(cls))}`);
+                    this.pattern(property.pattern, member?.type ?? STATIC_TYPES.dynamic, scope);
+                }
+                if (pattern.designation)
+                    pattern.jsName = scope.declare(pattern.designation, narrowed).jsName;
+                return;
+            }
+            case 'positional': {
+                let narrowed = valueType;
+                if (pattern.type) {
+                    pattern.typeTest = this.typeTestOf(pattern.type, scope.fn.cls);
+                    narrowed = this.typeOfTest(pattern.typeTest, pattern.type, scope.fn.cls);
+                }
+                const parts = narrowed.kind === 'tuple' ? narrowed.elements.map((entry) => entry.type) : [];
+                pattern.elements.forEach((element, index) => this.pattern(element, parts[index] ?? STATIC_TYPES.dynamic, scope));
+                if (pattern.designation)
+                    pattern.jsName = scope.declare(pattern.designation, narrowed).jsName;
+                return;
+            }
+        }
+    }
+    expression(expression: Expression, scope: Scope, expected: StaticType | null): StaticType {
+        const type = this.expressionType(expression, scope, expected);
+        expression.staticType = type;
+        return type;
+    }
+    private expressionType(e: Expression, scope: Scope, expected: StaticType | null): StaticType {
+        switch (e.kind) {
+            case 'literal':
+                switch (e.literalType) {
+                    case 'int': return STATIC_TYPES.int;
+                    case 'float': return STATIC_TYPES.float;
+                    case 'string': return STATIC_TYPES.string;
+                    case 'char': return STATIC_TYPES.char;
+                    case 'bool': return STATIC_TYPES.bool;
+                    case 'null': return STATIC_TYPES.null;
+                }
+                return STATIC_TYPES.dynamic;
+            case 'identifier':
+                return this.identifier(e, scope, false);
+            case 'this':
+                if (scope.fn.isStatic)
+                    this.error(e.span, '"this" não existe num contexto estático.');
+                return scope.fn.cls ? this.typeRefOf(scope.fn.cls) : STATIC_TYPES.dynamic;
+            case 'base':
+                if (scope.fn.isStatic)
+                    this.error(e.span, '"base" não existe num contexto estático.');
+                if (scope.fn.cls?.base)
+                    return this.typeRefOf(scope.fn.cls.base);
+                return STATIC_TYPES.dynamic;
+            case 'member':
+                return this.member(e, scope, false);
+            case 'element':
+                return this.element(e, scope);
+            case 'call':
+                return this.call(e, scope);
+            case 'new':
+                return this.construction(e, scope, expected);
+            case 'anonymous':
+                for (const member of e.members)
+                    this.expression(member.value, scope, null);
+                return STATIC_TYPES.dynamic;
+            case 'array': {
+                const element = e.elementType ? this.typeFromRef(e.elementType, scope.fn.cls) : null;
+                for (const size of e.sizes)
+                    this.expression(size, scope, STATIC_TYPES.int);
+                let inferred: StaticType | null = element;
+                if (e.elements) {
+                    for (const item of e.elements) {
+                        const type = this.expression(item, scope, element ?? (expected?.kind === 'array' ? expected.element : null));
+                        if (!element)
+                            inferred = inferred === null ? type : this.commonType(inferred, type);
+                    }
+                }
+                if (!inferred && expected?.kind === 'array')
+                    inferred = expected.element;
+                return { kind: 'array', element: inferred && inferred.kind !== 'null' ? inferred : STATIC_TYPES.dynamic };
+            }
+            case 'lambda':
+                return this.lambda(e, scope, expected);
+            case 'unary':
+                return this.unary(e, scope);
+            case 'binary':
+                return this.binary(e, scope);
+            case 'assign':
+                return this.assignment(e, scope);
+            case 'conditional': {
+                this.condition(e.condition, scope);
+                const whenTrue = this.expression(e.whenTrue, scope, expected);
+                const whenFalse = this.expression(e.whenFalse, scope, expected);
+                return this.commonType(whenTrue, whenFalse);
+            }
+            case 'cast': {
+                this.expression(e.expression, scope, null);
+                return this.typeFromRef(e.type, scope.fn.cls);
+            }
+            case 'is': {
+                const type = this.expression(e.expression, scope, null);
+                this.pattern(e.pattern, type, scope);
+                return STATIC_TYPES.bool;
+            }
+            case 'as': {
+                this.expression(e.expression, scope, null);
+                return this.typeFromRef(e.type, scope.fn.cls);
+            }
+            case 'typeof':
+                e.operandType = this.typeFromRef(e.type, scope.fn.cls);
+                return { kind: 'class', name: 'TypeDescriptor', script: null, runtime: true };
+            case 'nameof':
+                return STATIC_TYPES.string;
+            case 'default':
+                return e.type ? this.typeFromRef(e.type, scope.fn.cls) : (expected ?? STATIC_TYPES.dynamic);
+            case 'await': {
+                scope.fn.usesAwait = true;
+                const type = this.expression(e.expression, scope, null);
+                return type.kind === 'task' ? (type.result ?? STATIC_TYPES.void) : STATIC_TYPES.dynamic;
+            }
+            case 'throwExpression':
+                this.expression(e.expression, scope, null);
+                return expected ?? STATIC_TYPES.dynamic;
+            case 'interpolated':
+                for (const part of e.parts)
+                    if (part.kind === 'expression')
+                        this.expression(part.expression, scope, null);
+                return STATIC_TYPES.string;
+            case 'tuple':
+                return { kind: 'tuple', elements: e.elements.map((element) => ({ name: element.name, type: this.expression(element.value, scope, null) })) };
+            case 'switchExpression': {
+                const valueType = this.expression(e.value, scope, null);
+                let result: StaticType | null = null;
+                for (const arm of e.arms) {
+                    const inner = new Scope(scope, scope.fn);
+                    this.pattern(arm.pattern, valueType, inner);
+                    if (arm.guard)
+                        this.condition(arm.guard, inner);
+                    const armType = this.expression(arm.result, inner, expected);
+                    result = result === null ? armType : this.commonType(result, armType);
+                }
+                return result ?? STATIC_TYPES.dynamic;
+            }
+            case 'range':
+                if (e.start)
+                    this.expression(e.start, scope, STATIC_TYPES.int);
+                if (e.end)
+                    this.expression(e.end, scope, STATIC_TYPES.int);
+                return STATIC_TYPES.dynamic;
+            case 'fromEnd':
+                this.expression(e.operand, scope, STATIC_TYPES.int);
+                return STATIC_TYPES.int;
+        }
+    }
+    private commonType(a: StaticType, b: StaticType): StaticType {
+        if (a.kind === 'null')
+            return b;
+        if (b.kind === 'null')
+            return a;
+        if (sameType(a, b))
+            return a;
+        if (isNumericType(a) && isNumericType(b))
+            return a.kind === 'float' || b.kind === 'float' ? STATIC_TYPES.float : STATIC_TYPES.int;
+        return STATIC_TYPES.dynamic;
+    }
+    private identifier(e: Expression & {
+        kind: 'identifier';
+    }, scope: Scope, inCall: boolean): StaticType {
+        const { name } = e;
+        const local = scope.lookup(name);
+        if (local) {
+            e.resolution = { kind: 'local', jsName: local.jsName, byRef: local.byRef };
+            return local.type;
+        }
+        const cls = scope.fn.cls;
+        if (cls) {
+            const member = this.findMember(cls, name);
+            if (member) {
+                if (!member.isStatic && scope.fn.isStatic)
+                    this.error(e.span, `"${name}" é um membro de instância e não pode ser usado num contexto estático.`);
+                e.resolution = { kind: 'member', owner: member.owner.jsName, jsName: member.jsName, isStatic: member.isStatic, ownerIsSibling: member.owner.script, memberKind: member.kind };
+                if (member.owner.script !== null)
+                    this.useType(member.owner);
+                if (member.kind === 'method' && !inCall)
+                    e.bindThis = !member.isStatic;
+                return member.kind === 'method' ? this.methodGroupType(member) : member.type;
+            }
+            if (this.isActorClass(cls) && ACTOR_SCRIPT_MEMBERS.has(name)) {
+                if (scope.fn.isStatic)
+                    this.error(e.span, `"${name}" é um membro de instância e não pode ser usado num contexto estático.`);
+                e.resolution = { kind: 'member', owner: cls.jsName, jsName: name, isStatic: false, ownerIsSibling: null, memberKind: 'property' };
+                return STATIC_TYPES.engine;
+            }
+        }
+        const type = this.lookupType(name, cls, cls?.script ?? null);
+        if (type) {
+            this.useType(type);
+            e.resolution = { kind: 'type', name: type.name, jsName: type.jsName, sibling: type.script };
+            return this.typeRefOf(type);
+        }
+        if (name === 'helix' || name === 'Helix') {
+            e.resolution = { kind: 'engine' };
+            return STATIC_TYPES.engine;
+        }
+        const collection = COLLECTION_ALIASES.get(name);
+        if (collection) {
+            e.resolution = { kind: 'runtimeType', name: collection };
+            return STATIC_TYPES.dynamic;
+        }
+        if (RUNTIME_CLASSES.has(name)) {
+            e.resolution = { kind: 'runtimeType', name };
+            return STATIC_TYPES.dynamic;
+        }
+        const primitive = PRIMITIVE_STATICS.get(name);
+        if (primitive) {
+            e.resolution = { kind: 'runtimeStatic', name: primitive };
+            return STATIC_TYPES.dynamic;
+        }
+        if (RUNTIME_STATICS.has(name)) {
+            e.resolution = { kind: 'runtimeStatic', name };
+            return STATIC_TYPES.dynamic;
+        }
+        if (name === 'ActorScript' || name === 'MonoBehaviour') {
+            e.resolution = { kind: 'runtimeType', name: 'ActorScript' };
+            return STATIC_TYPES.dynamic;
+        }
+        const candidates = [...scope.names(), ...(cls ? this.memberNames(cls) : []), ...this.fileTypes.keys(), ...this.siblingTypes.keys(), ...RUNTIME_STATICS.keys(), ...RUNTIME_CLASSES.keys(), ...COLLECTION_ALIASES.keys(), 'helix'];
+        this.error(e.span, `O nome "${name}" não existe neste contexto.${hint(name, candidates)}`);
+        e.resolution = { kind: 'dynamic' };
+        return STATIC_TYPES.dynamic;
+    }
+    private methodGroupType(member: MemberInfo): StaticType {
+        return { kind: 'delegate', params: member.params.map((parameter) => parameter.type), returns: member.type };
+    }
 }
