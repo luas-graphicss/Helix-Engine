@@ -180,4 +180,266 @@ export class PhysicsWorkerCore {
         }
         this.publish(world, request.frame, steps, reply);
     }
+    private apply(world: PhysicsWorld, command: PhysicsCommand): void {
+        switch (command.op) {
+            case 'create': {
+                const { body: record } = command;
+                const shape = decodeShape(record.shape);
+                if (!shape)
+                    return;
+                const body = world.createBody({
+                    type: record.type,
+                    shape,
+                    position: new Float32Array(record.position),
+                    orientation: new Float32Array(record.orientation),
+                    mass: record.mass,
+                    friction: record.friction,
+                    restitution: record.restitution,
+                    linearDamping: record.linearDamping,
+                    angularDamping: record.angularDamping,
+                    gravityScale: record.gravityScale,
+                    canSleep: record.canSleep,
+                    layer: record.layer,
+                    collisionMask: record.collisionMask,
+                }, record.id);
+                this.bodies.set(record.id, { body, slot: record.slot });
+                return;
+            }
+            case 'remove': {
+                const entry = this.bodies.get(command.id);
+                if (!entry)
+                    return;
+                for (const [id, joint] of this.joints) {
+                    if (joint.bodyA === entry.body || joint.bodyB === entry.body)
+                        this.joints.delete(id);
+                }
+                world.removeBody(entry.body);
+                this.bodies.delete(command.id);
+                this.kinematicTargets.delete(command.id);
+                this.frameForces.delete(command.id);
+                this.poses?.clearSlot(entry.slot);
+                return;
+            }
+            case 'force': {
+                const entry = this.bodies.get(command.id);
+                if (!entry)
+                    return;
+                const existing = this.frameForces.get(command.id);
+                if (existing) {
+                    existing.force.set(command.force);
+                    existing.torque.set(command.torque);
+                    existing.remaining = Math.max(command.seconds, 0);
+                }
+                else {
+                    this.frameForces.set(command.id, { force: new Float32Array(command.force), torque: new Float32Array(command.torque), remaining: Math.max(command.seconds, 0) });
+                }
+                entry.body.wake();
+                return;
+            }
+            case 'joint-create': {
+                const { joint: record } = command;
+                const bodyA = this.bodies.get(record.bodyA)?.body;
+                if (!bodyA)
+                    return;
+                const bodyB = record.bodyB === 0 ? null : (this.bodies.get(record.bodyB)?.body ?? null);
+                if (record.bodyB !== 0 && !bodyB)
+                    return;
+                this.joints.set(record.id, world.createJoint(record.definition, bodyA, bodyB, record.id));
+                return;
+            }
+            case 'joint-remove': {
+                const joint = this.joints.get(command.id);
+                if (!joint)
+                    return;
+                world.removeJoint(joint);
+                this.joints.delete(command.id);
+                return;
+            }
+            case 'joint-update': {
+                const joint = this.joints.get(command.id);
+                if (!joint)
+                    return;
+                copyJointDefinition(joint.definition, command.definition);
+                joint.markChanged();
+                return;
+            }
+            case 'teleport': {
+                const entry = this.bodies.get(command.id);
+                if (!entry)
+                    return;
+                this.kinematicTargets.delete(command.id);
+                world.teleport(entry.body, new Float32Array(command.position), new Float32Array(command.orientation));
+                return;
+            }
+            case 'pose': {
+                const entry = this.bodies.get(command.id);
+                if (!entry)
+                    return;
+                entry.body.setPose(new Float32Array(command.position), new Float32Array(command.orientation));
+                world.refreshAabb(entry.body);
+                entry.body.wake();
+                return;
+            }
+            case 'velocity': {
+                const entry = this.bodies.get(command.id);
+                if (!entry)
+                    return;
+                vec3.set(entry.body.linearVelocity, command.linear[0], command.linear[1], command.linear[2]);
+                vec3.set(entry.body.angularVelocity, command.angular[0], command.angular[1], command.angular[2]);
+                entry.body.wake();
+                return;
+            }
+            case 'kinematic': {
+                const entry = this.bodies.get(command.id);
+                if (!entry)
+                    return;
+                const existing = this.kinematicTargets.get(command.id);
+                if (existing) {
+                    existing.position.set(command.position);
+                    existing.orientation.set(command.orientation);
+                    existing.remaining = Math.max(command.seconds, 0);
+                }
+                else {
+                    this.kinematicTargets.set(command.id, {
+                        position: new Float32Array(command.position),
+                        orientation: new Float32Array(command.orientation),
+                        remaining: Math.max(command.seconds, 0),
+                    });
+                }
+                return;
+            }
+            case 'material': {
+                const entry = this.bodies.get(command.id);
+                entry?.body.setMaterial(command);
+                return;
+            }
+            case 'layers-of': {
+                const entry = this.bodies.get(command.id);
+                if (!entry)
+                    return;
+                entry.body.layer = command.layer;
+                entry.body.collisionMask = command.collisionMask;
+                entry.body.wake();
+                return;
+            }
+            case 'wake':
+                this.bodies.get(command.id)?.body.wake();
+                return;
+            case 'sleep':
+                this.bodies.get(command.id)?.body.sleep();
+                return;
+            case 'settings': {
+                const target = world.settings as unknown as Record<string, unknown>;
+                for (const [key, value] of Object.entries(command.settings)) {
+                    if (key === 'gravity')
+                        vec3.copy(world.settings.gravity, command.settings.gravity);
+                    else
+                        target[key] = value;
+                }
+                return;
+            }
+            case 'layers':
+                world.layers.restore(command.snapshot);
+                return;
+            case 'water':
+                this.syncWater(command.terrains);
+                return;
+            case 'clear':
+                world.clear();
+                this.bodies.clear();
+                this.joints.clear();
+                this.kinematicTargets.clear();
+                this.frameForces.clear();
+                this.waters.clear();
+                this.installEngineFields(world);
+                return;
+            case 'buffer':
+                this.poses = new PoseBuffer(command.buffer);
+                return;
+            case 'discard':
+                world.discardAccumulatedTime();
+                return;
+            case 'step':
+                return;
+        }
+    }
+    private syncWater(records: readonly WaterTerrainRecord[]): void {
+        const seen = new Set<number>();
+        for (const record of records) {
+            seen.add(record.key);
+            const existing = this.waters.get(record.key);
+            if (!existing) {
+                if (!record.heights)
+                    continue;
+                const terrain = new SnapshotWaterTerrain(record, record.heights);
+                const matrix = new Float32Array(record.matrix);
+                this.waters.set(record.key, { terrain, matrix, volume: new WaterVolume(terrain, matrix as Mat4) });
+                continue;
+            }
+            existing.terrain.update(record);
+            let moved = false;
+            for (let i = 0; i < 16; i++) {
+                if (existing.matrix[i] !== record.matrix[i]) {
+                    moved = true;
+                    break;
+                }
+            }
+            if (moved) {
+                existing.matrix = new Float32Array(record.matrix);
+                existing.volume = new WaterVolume(existing.terrain, existing.matrix as Mat4);
+            }
+        }
+        for (const key of Array.from(this.waters.keys())) {
+            if (!seen.has(key))
+                this.waters.delete(key);
+        }
+    }
+    private publish(world: PhysicsWorld, frame: number, steps: number, reply: PhysicsReplySink): void {
+        const poses = this.ensurePoses();
+        for (const { body, slot } of this.bodies.values()) {
+            if (slot < poses.capacity)
+                poses.writeBody(slot, body);
+        }
+        poses.commit(this.bodies.size, world.interpolation, steps);
+        const contacts = this.collectContacts(world);
+        const joints = this.collectJoints();
+        const { backend: _backend, ...stats } = world.stats;
+        const transfer: Transferable[] = [contacts.buffer, joints.buffer];
+        const base = {
+            type: 'frame' as const,
+            frame,
+            stats: { ...stats },
+            interpolation: world.interpolation,
+            contacts,
+            joints,
+            outOfBounds: this.outOfBounds.splice(0),
+            unstable: this.unstable.splice(0),
+        };
+        if (poses.shared) {
+            reply(base, transfer);
+            return;
+        }
+        const buffer = poses.buffer as ArrayBuffer;
+        this.poses = null;
+        transfer.push(buffer);
+        reply({ ...base, poses: buffer }, transfer);
+    }
+    private ensurePoses(): PoseBuffer {
+        let needed = 0;
+        for (const { slot } of this.bodies.values())
+            needed = Math.max(needed, slot + 1);
+        if (this.poses && this.poses.capacity >= needed)
+            return this.poses;
+        let capacity = this.poses?.capacity ?? 0;
+        while (capacity < needed)
+            capacity = capacity === 0 ? 256 : capacity * 2;
+        let buffer: ArrayBuffer | null = null;
+        while (this.spare.length > 0 && !buffer) {
+            const candidate = this.spare.pop()!;
+            if (PoseBuffer.capacityOf(candidate.byteLength) >= capacity)
+                buffer = candidate;
+        }
+        this.poses = buffer ? new PoseBuffer(buffer) : PoseBuffer.allocate(capacity, false);
+        return this.poses;
+    }
 }
