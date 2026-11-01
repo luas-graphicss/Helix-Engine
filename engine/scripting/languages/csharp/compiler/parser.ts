@@ -1002,4 +1002,274 @@ class Parser {
         this.expect('}', 'fechando o switch');
         return { kind: 'switch', value, sections, span: this.spanFrom(start) };
     }
+    private tryStatement(): Statement {
+        const start = this.expect('try');
+        const block = this.block();
+        const catches: CatchClause[] = [];
+        while (this.at('catch')) {
+            const catchStart = this.advance();
+            let type: TypeRef | null = null;
+            let name: string | null = null;
+            if (this.match('(')) {
+                type = this.type();
+                if (this.current.kind === 'identifier')
+                    name = String(this.advance().value);
+                this.expect(')', 'fechando o catch');
+            }
+            let filter: Expression | null = null;
+            if (this.matchIdentifier('when')) {
+                this.expect('(', 'depois de when');
+                filter = this.expression();
+                this.expect(')');
+            }
+            catches.push({ type, name, filter, block: this.block(), span: this.spanFrom(catchStart) });
+        }
+        const finallyBlock = this.match('finally') ? this.block() : null;
+        if (catches.length === 0 && !finallyBlock)
+            this.fail('try precisa de ao menos um catch ou um finally.', start.span);
+        return { kind: 'try', block, catches, finallyBlock, span: this.spanFrom(start) };
+    }
+    private usingStatement(): Statement {
+        const start = this.expect('using');
+        if (!this.at('(')) {
+            const type = this.type();
+            const declarators = this.declarators('da variável using');
+            this.expect(';', 'depois do using');
+            return { kind: 'using', declaration: { kind: 'local', type, isConst: false, declarators, deconstruction: null, span: this.spanFrom(start) }, expression: null, body: null, span: this.spanFrom(start) };
+        }
+        this.expect('(');
+        const declaration = this.attempt(() => {
+            const localStart = this.current;
+            const type = this.type();
+            if (this.current.kind !== 'identifier')
+                this.fail('não é uma declaração');
+            const declarators = this.declarators('da variável using');
+            if (!this.at(')'))
+                this.fail('não é uma declaração');
+            return { kind: 'local', type, isConst: false, declarators, deconstruction: null, span: this.spanFrom(localStart) } as LocalDeclaration;
+        });
+        const expression = declaration ? null : this.expression();
+        this.expect(')', 'fechando o using');
+        return { kind: 'using', declaration, expression, body: this.statement(), span: this.spanFrom(start) };
+    }
+    pattern(): Pattern {
+        return this.orPattern();
+    }
+    private orPattern(): Pattern {
+        let left = this.andPattern();
+        while (this.atIdentifier('or')) {
+            this.advance();
+            const right = this.andPattern();
+            left = { kind: 'or', left, right, span: spanBetween(left.span, right.span) };
+        }
+        return left;
+    }
+    private andPattern(): Pattern {
+        let left = this.unaryPattern();
+        while (this.atIdentifier('and')) {
+            this.advance();
+            const right = this.unaryPattern();
+            left = { kind: 'and', left, right, span: spanBetween(left.span, right.span) };
+        }
+        return left;
+    }
+    private unaryPattern(): Pattern {
+        const start = this.current;
+        if (this.atIdentifier('not')) {
+            this.advance();
+            const pattern = this.unaryPattern();
+            return { kind: 'not', pattern, span: this.spanFrom(start) };
+        }
+        return this.primaryPattern();
+    }
+    private primaryPattern(): Pattern {
+        const start = this.current;
+        if (this.at('<') || this.at('>') || this.at('<=')) {
+            let operator = this.advance().text;
+            if (operator === '>' && this.at('=') && this.current.adjacent) {
+                this.advance();
+                operator = '>=';
+            }
+            const expression = this.additive();
+            return { kind: 'relational', operator: operator as '<' | '>' | '<=' | '>=', expression, span: this.spanFrom(start) };
+        }
+        if (this.atIdentifier('_') && !this.at('.', this.peek())) {
+            this.advance();
+            return { kind: 'discard', span: this.spanFrom(start) };
+        }
+        if (this.atIdentifier('var')) {
+            this.advance();
+            if (this.at('(')) {
+                const names = this.designationNames();
+                return { kind: 'var', name: null, names, span: this.spanFrom(start) };
+            }
+            const name = String(this.expectIdentifier('do padrão var').value);
+            return { kind: 'var', name: name === '_' ? null : name, names: null, span: this.spanFrom(start) };
+        }
+        if (this.at('(')) {
+            const tuple = this.attempt(() => {
+                this.advance();
+                const elements: Pattern[] = [];
+                do
+                    elements.push(this.pattern());
+                while (this.match(','));
+                this.expect(')');
+                if (elements.length < 2)
+                    this.fail('não é posicional');
+                return elements;
+            });
+            if (tuple) {
+                const designation = this.designationIfAny();
+                return { kind: 'positional', type: null, elements: tuple, designation, span: this.spanFrom(start) };
+            }
+        }
+        if (this.at('{'))
+            return this.propertyPattern(start, null);
+        const typed = this.attempt(() => {
+            const type = this.type(false);
+            if (this.at('{'))
+                return this.propertyPattern(start, type);
+            if (this.at('(')) {
+                this.advance();
+                const elements: Pattern[] = [];
+                if (!this.at(')')) {
+                    do
+                        elements.push(this.pattern());
+                    while (this.match(','));
+                }
+                this.expect(')');
+                const designation = this.designationIfAny();
+                return { kind: 'positional', type, elements, designation, span: this.spanFrom(start) } as Pattern;
+            }
+            if (this.current.kind === 'identifier' && !this.atIdentifier('when') && !this.atIdentifier('and') && !this.atIdentifier('or')) {
+                const name = String(this.advance().value);
+                return { kind: 'declaration', type, name: name === '_' ? null : name, span: this.spanFrom(start) } as Pattern;
+            }
+            const isPrimitive = type.typeArguments.length === 0 && type.tupleElements === null && PRIMITIVE_TYPE_KEYWORDS.has(type.name);
+            if (isPrimitive || type.typeArguments.length > 0 || type.arrayRank > 0)
+                return { kind: 'type', type, span: this.spanFrom(start) } as Pattern;
+            this.fail('pode ser uma constante');
+        });
+        if (typed)
+            return typed;
+        const expression = this.additive();
+        return { kind: 'constant', expression, span: this.spanFrom(start) };
+    }
+    private designationIfAny(): string | null {
+        if (this.current.kind === 'identifier' && !this.atIdentifier('when') && !this.atIdentifier('and') && !this.atIdentifier('or')) {
+            const name = String(this.advance().value);
+            return name === '_' ? null : name;
+        }
+        return null;
+    }
+    private propertyPattern(start: Token, type: TypeRef | null): Pattern {
+        this.expect('{', 'abrindo o padrão de propriedades');
+        const properties: Array<{
+            name: string;
+            pattern: Pattern;
+        }> = [];
+        while (!this.at('}') && !this.atEnd()) {
+            const name = String(this.expectIdentifier('da propriedade no padrão').value);
+            this.expect(':', 'depois do nome da propriedade no padrão');
+            properties.push({ name, pattern: this.pattern() });
+            if (!this.match(','))
+                break;
+        }
+        this.expect('}', 'fechando o padrão de propriedades');
+        const designation = this.designationIfAny();
+        return { kind: 'property', type, properties, designation, span: this.spanFrom(start) };
+    }
+    expression(): Expression {
+        return this.assignment();
+    }
+    private assignment(): Expression {
+        const start = this.current;
+        const lambda = this.lambdaIfAny();
+        if (lambda)
+            return lambda;
+        const target = this.conditional();
+        if (this.current.kind === 'punct') {
+            let operator = this.current.text;
+            if (operator === '>' && this.at('>', this.peek()) && this.peek().adjacent && this.at('=', this.peek(2)) && this.peek(2).adjacent) {
+                this.advance();
+                this.advance();
+                operator = '>>=';
+            }
+            if (ASSIGNMENT_OPERATORS.has(operator) || operator === '>>=') {
+                this.advance();
+                const value = this.assignment();
+                return { kind: 'assign', operator: operator as AssignmentOperator, target, value, span: this.spanFrom(start) };
+            }
+        }
+        return target;
+    }
+    private lambdaIfAny(): LambdaExpression | null {
+        const start = this.current;
+        const mark = this.mark();
+        const isAsync = this.atIdentifier('async') && (this.peek().kind === 'identifier' || this.at('(', this.peek()) || this.at('delegate', this.peek()));
+        if (isAsync)
+            this.advance();
+        if (this.at('delegate')) {
+            this.advance();
+            const parameters = this.at('(') ? this.parameterList() : [];
+            const body = this.block();
+            return { kind: 'lambda', parameters, body, isAsync, span: this.spanFrom(start) };
+        }
+        if (this.current.kind === 'identifier' && this.at('=>', this.peek())) {
+            const name = String(this.advance().value);
+            this.advance();
+            const parameter: Parameter = { name, type: null, modifier: 'none', defaultValue: null, span: start.span };
+            return { kind: 'lambda', parameters: [parameter], body: this.lambdaBody(), isAsync, span: this.spanFrom(start) };
+        }
+        if (this.at('(') && this.at('=>', this.tokenAfterMatchingParen())) {
+            const parameters = this.lambdaParameters();
+            this.expect('=>');
+            return { kind: 'lambda', parameters, body: this.lambdaBody(), isAsync, span: this.spanFrom(start) };
+        }
+        this.reset(mark);
+        return null;
+    }
+    private tokenAfterMatchingParen(): Token {
+        let depth = 0;
+        let offset = 0;
+        while (true) {
+            const token = this.peek(offset);
+            if (token.kind === 'eof')
+                return token;
+            if (this.at('(', token) || this.at('[', token) || this.at('{', token))
+                depth++;
+            else if (this.at(')', token) || this.at(']', token) || this.at('}', token)) {
+                depth--;
+                if (depth === 0)
+                    return this.peek(offset + 1);
+            }
+            offset++;
+        }
+    }
+    private lambdaParameters(): Parameter[] {
+        this.expect('(');
+        const parameters: Parameter[] = [];
+        if (!this.at(')')) {
+            do {
+                const start = this.current;
+                let modifier: ParameterModifier = 'none';
+                if (this.at('ref') || this.at('out') || this.at('in'))
+                    modifier = this.advance().text as ParameterModifier;
+                if (this.current.kind === 'identifier' && (this.at(',', this.peek()) || this.at(')', this.peek()))) {
+                    parameters.push({ name: String(this.advance().value), type: null, modifier, defaultValue: null, span: this.spanFrom(start) });
+                }
+                else {
+                    const type = this.type();
+                    const name = String(this.expectIdentifier('do parâmetro da lambda').value);
+                    const defaultValue = this.match('=') ? this.expression() : null;
+                    parameters.push({ name, type, modifier, defaultValue, span: this.spanFrom(start) });
+                }
+            } while (this.match(','));
+        }
+        this.expect(')', 'fechando os parâmetros da lambda');
+        return parameters;
+    }
+    private lambdaBody(): Block | Expression {
+        return this.at('{') ? this.block() : this.expression();
+    }
 }
