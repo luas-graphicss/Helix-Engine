@@ -2,36 +2,62 @@ import type { Scene } from '@/engine/core/scene/scene';
 import type { Entity } from '@/engine/core/scene/entity';
 import { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { OrbitController } from '@/engine/renderer/camera/orbit-controller';
-import { createFrameStats, type FrameStats } from '@/engine/renderer/renderer';
+import { createFrameStats, type FrameStats, type Renderer } from '@/engine/renderer/renderer';
+import type { FrameGovernor } from '@/engine/renderer/quality/frame-governor';
+import { FrameProfile } from '@/engine/renderer/stats/frame-profile';
+import type { FrameClock } from '@/engine/core/time/frame-clock';
 import type { CullingOptions } from '@/engine/renderer/culling/visible-set';
 import type { LodSettings } from '@/engine/renderer/lod/lod-selector';
 import type { MyriadSettings } from '@/engine/renderer/myriad/runtime/myriad-settings';
+import type { LightHelperMode } from '@/engine/renderer/passes/light-helper-pass';
+import type { SoundHelperMode } from '@/engine/renderer/passes/sound-helper-pass';
 import * as vec3 from '@/engine/core/math/vec3';
 import * as aabb from '@/engine/core/math/aabb';
 import { degToRad } from '@/engine/core/math/scalar';
 import { computeWorldBounds } from '@/engine/renderer/geometry/bounds';
 import type { CloudSettings, SkySettings } from '@/engine/core/environment/sky-settings';
 import { advanceSkyCycle, syncSunLightToSky, wrapTimeOfDay } from '@/engine/core/environment/sky-cycle';
+import { assignPostProcessSettings, findPostProcessPreset, type PostProcessEffectKey, type PostProcessSettings, } from '@/engine/core/environment/post-process-settings';
 import { History } from '@/engine/editor/history/history';
 import type { GizmoHandle, GizmoMode } from '@/engine/renderer/gizmo/gizmo-frame';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
 import { AnimationEditor } from '@/engine/editor/animation/animation-editor';
+import { AudioEditor } from '@/engine/editor/audio/audio-editor';
+import { GuiDesigner } from '@/engine/editor/gui/gui-designer';
+import { GuiWorldHost } from '@/engine/editor/gui/gui-world-host';
+import { VfxEditor } from '@/engine/editor/vfx/vfx-editor';
+import { VfxWorldHost } from '@/engine/editor/vfx/vfx-world-host';
+import { CodeEditor } from '@/engine/editor/code/code-editor';
+import { ShaderPreview } from '@/engine/editor/code/shader-preview';
+import { ScriptRuntime } from '@/engine/scripting/runtime/script-runtime';
+import { syncCodeEditorWithLibrary } from '@/engine/editor/operations/script-operations';
+import { syncVfxEditorWithLibrary } from '@/engine/editor/operations/vfx-operations';
+import type { VfxHelperMode } from '@/engine/renderer/passes/vfx-helper-pass';
+import { PlaytestHud } from '@/engine/editor/playtest/playtest-hud';
+import { syncGuiDesignerWithLibrary } from '@/engine/editor/operations/gui-operations';
 import type { TransformSnapshot } from '@/engine/editor/operations/transform-operations';
 import { ViewportColorPicker } from '@/engine/editor/viewport/viewport-color-picker';
 import { createPhysicsSettings, PHYSICS_QUALITY_PRESETS, type PhysicsQuality, type PhysicsSettings, } from '@/engine/physics/world/physics-settings';
-import { MaterialLibrary } from '@/engine/materials/material-library';
-import { AssetLibrary } from '@/engine/assets/library/asset-library';
+import type { MaterialLibrary } from '@/engine/materials/material-library';
+import type { AssetLibrary } from '@/engine/assets/library/asset-library';
 import { CsgSystem } from '@/engine/geometry/csg/csg-system';
 import { syncTerrainMaterialFromDocument } from '@/engine/editor/operations/material-library-operations';
 import { setGhostOpacity } from '@/engine/editor/csg/brush-ghost-materials';
+import { ViewportCapture } from '@/engine/editor/viewport/viewport-capture';
+import { ViewportGovernor } from '@/engine/editor/viewport/viewport-governor';
+import { projectRecordOf, type ProjectContext } from '@/engine/project/project-context';
+import { ProjectAutosave } from '@/engine/project/project-autosave';
+import { DEFAULT_PROJECT_NAME, normalizeProjectName } from '@/engine/project/project-record';
 import { EditorLog } from './editor-log';
 import { SceneResources } from './scene-resources';
-import { createDefaultScene } from './default-scene';
-import { createRenderSettings, type RenderSettings } from './render-settings';
+import { createRenderSettings, type PostCompareSettings, type RenderSettings } from './render-settings';
 import { createCsgPreferences, type CsgPreferences } from './csg-preferences';
+import { IMAGE_TOPICS, type NotifyOptions, type SessionTopic } from './session-topics';
+export type { NotifyOptions, SessionTopic } from './session-topics';
 export type TransformTool = 'select' | 'translate' | 'rotate' | 'scale' | 'terrain';
 export type TransformSpace = 'global' | 'local';
+export type EditorWorkspace = 'scene' | 'gui' | 'code';
 export interface GizmoInteraction {
     hovered: GizmoHandle | null;
     active: GizmoHandle | null;
@@ -45,70 +71,175 @@ export interface SnapSettings {
 }
 export interface ViewportStats extends FrameStats {
     fps: number;
+    idle: boolean;
 }
 type Listener = () => void;
 const focusCenter = vec3.create();
 const focusBounds = aabb.create();
+const HISTORY_ONLY: readonly SessionTopic[] = ['history'];
+const SCENE_ONLY: readonly SessionTopic[] = ['scene'];
+const PLAY_UI_INTERVAL_MS = 100;
+export interface EditorSessionOptions {
+    scene: Scene;
+    project: ProjectContext;
+}
 export class EditorSession {
     readonly scene: Scene;
+    readonly project: ProjectContext;
     readonly camera = new PerspectiveCamera();
     readonly orbit: OrbitController;
-    readonly history = new History(() => this.notify());
-    readonly log = new EditorLog(() => this.notify());
-    readonly resources = new SceneResources(() => this.notify());
-    readonly materials = new MaterialLibrary(() => this.notify());
-    readonly library = new AssetLibrary(() => this.notify());
+    readonly history = new History((command) => {
+        const scope = command?.scope ?? 'scene';
+        this.emit(scope === 'history' ? HISTORY_ONLY : [scope, 'history'], command?.image ?? IMAGE_TOPICS.has(scope));
+    }, {
+        isDragging: () => this.pointerDragging,
+        onLiveChange: (command) => {
+            if (command.image ?? IMAGE_TOPICS.has(command.scope ?? 'scene')) {
+                this.sceneVersion++;
+                this.selectedCache = null;
+            }
+            this.notifyLiveEdit();
+        },
+    });
+    readonly log = new EditorLog(() => this.notify('log'));
+    readonly resources = new SceneResources(() => this.notify('resources'));
+    readonly materials: MaterialLibrary;
+    readonly library: AssetLibrary;
+    readonly autosave: ProjectAutosave;
+    readonly capture = new ViewportCapture();
+    readonly viewportGovernor = new ViewportGovernor();
     readonly playtest = new PlaytestController(this);
     readonly terrain = new TerrainEditor(this);
     readonly animation = new AnimationEditor(this);
+    readonly audio = new AudioEditor(this);
+    readonly gui = new GuiDesigner(this);
+    readonly guiWorld = new GuiWorldHost(this);
+    readonly vfx = new VfxEditor(this);
+    readonly vfxWorld = new VfxWorldHost(this);
+    readonly hud = new PlaytestHud(this);
+    readonly code = new CodeEditor(this);
+    readonly scripts = new ScriptRuntime(this);
+    readonly shaderPreview = new ShaderPreview(this);
+    workspace: EditorWorkspace = 'scene';
     readonly transformInterceptors = new Set<TransformInterceptor>();
-    readonly colorPicker = new ViewportColorPicker(() => this.notify());
+    readonly colorPicker = new ViewportColorPicker(() => this.notify('view'));
     readonly csg = new CsgSystem();
     readonly csgPreferences: CsgPreferences = createCsgPreferences();
     selectedId: number | null = null;
     readonly selectedIds = new Set<number>();
     clipboard: Entity[] = [];
     viewportCanvas: HTMLCanvasElement | null = null;
+    viewportRenderer: Renderer | null = null;
+    frameGovernor: FrameGovernor | null = null;
+    frameClock: FrameClock | null = null;
+    readonly frameProfile = new FrameProfile();
+    skyDrivesSun = true;
+    viewportReady = false;
     showGrid = false;
     shadowsEnabled = true;
     tool: TransformTool = 'select';
     space: TransformSpace = 'global';
+    focusPadding = 1.1;
     readonly snap: SnapSettings = { enabled: false, translate: 0.5, rotate: 15, scale: 0.1 };
     readonly gizmo: GizmoInteraction = { hovered: null, active: null };
-    readonly stats: ViewportStats = { ...createFrameStats(), fps: 0 };
+    readonly stats: ViewportStats = { ...createFrameStats(), fps: 0, idle: false };
     readonly render: RenderSettings = createRenderSettings();
     private version = 0;
     private readonly listeners = new Set<Listener>();
+    private sceneVersion = 0;
+    private readonly topicListeners = new Map<SessionTopic, Set<Listener>>();
+    private readonly topicVersions = new Map<SessionTopic, number>();
     private statsVersion = 0;
     private readonly statsListeners = new Set<Listener>();
+    private liveEditVersion = 0;
+    private readonly liveEditListeners = new Set<Listener>();
+    private liveEditFrame = 0;
+    private pointerDragging = false;
     private selectedCache: Entity | null = null;
-    constructor(scene?: Scene) {
-        this.scene = scene ?? createDefaultScene({ onRigReady: () => this.notify() });
+    private readonly disposers: Array<() => void> = [];
+    constructor(options: EditorSessionOptions) {
+        this.scene = options.scene;
+        this.project = options.project;
+        this.materials = options.project.materials;
+        this.library = options.project.library;
+        this.autosave = new ProjectAutosave(this);
         this.orbit = new OrbitController(this.camera);
-        this.log.info('Núcleo', 'Helix Engine inicializada.');
-        this.log.info('Cena', `${this.scene.root.name} aberta (${this.countEntities()} atores).`);
-        this.csg.onRebuilt(() => this.notify());
-        this.subscribe(() => this.animation.syncSelection());
-        this.materials.addSyncListener((document) => syncTerrainMaterialFromDocument(this, document));
+        this.log.info('Editor', 'Editor pronto.');
+        this.csg.onRebuilt(() => this.notify('scene'));
+        this.subscribeTopic(['selection', 'scene'], () => this.animation.syncSelection());
+        this.subscribeTopic(['assets', 'scene'], () => this.audio.syncWithLibrary());
+        this.subscribeTopic('assets', () => syncGuiDesignerWithLibrary(this));
+        this.subscribeTopic(['assets', 'scene'], () => syncVfxEditorWithLibrary(this));
+        this.subscribeTopic('assets', () => syncCodeEditorWithLibrary(this));
+        this.subscribeTopic(['assets', 'scene', 'playtest'], () => this.shaderPreview.sync());
+        this.audio.applyMixer();
+        this.disposers.push(this.materials.addSyncListener((document) => syncTerrainMaterialFromDocument(this, document)));
+        this.disposers.push(this.project.registry.subscribe(() => this.notify('project')));
         if (typeof window !== 'undefined') {
-            void this.materials.load().then(() => {
-                if (this.materials.status === 'ready' && this.materials.size > 0) {
-                    this.log.info('Materiais', `Biblioteca carregada: ${this.materials.size} ${this.materials.size === 1 ? 'material' : 'materiais'}.`);
-                }
-                else if (this.materials.error) {
-                    this.log.warn('Materiais', this.materials.error);
-                }
-            });
-            window.addEventListener('beforeunload', () => this.materials.flush());
-            void this.library.load().then(() => {
-                if (this.library.status === 'ready' && this.library.size > 0) {
-                    this.log.info('Biblioteca', `Biblioteca de ativos carregada: ${this.library.size} ${this.library.size === 1 ? 'ativo' : 'ativos'}.`);
-                }
-                else if (this.library.error) {
-                    this.log.warn('Biblioteca', this.library.error);
-                }
-            });
+            const flushLibraries = () => {
+                this.materials.flush();
+                this.library.flush();
+            };
+            window.addEventListener('pagehide', flushLibraries);
+            this.disposers.push(() => window.removeEventListener('pagehide', flushLibraries));
+            this.trackPointerDrags();
         }
+    }
+    private trackPointerDrags(): void {
+        const begin = (event: PointerEvent) => {
+            if (!event.isPrimary || event.target === this.viewportCanvas)
+                return;
+            this.pointerDragging = true;
+            this.viewportGovernor.setPointerHeld(true);
+        };
+        const end = () => {
+            this.viewportGovernor.setPointerHeld(false);
+            if (!this.pointerDragging && !this.history.liveEditPending)
+                return;
+            this.pointerDragging = false;
+            this.history.endLive();
+        };
+        window.addEventListener('pointerdown', begin, { capture: true, passive: true });
+        window.addEventListener('pointerup', end, { capture: true, passive: true });
+        window.addEventListener('pointercancel', end, { capture: true, passive: true });
+        window.addEventListener('blur', end);
+        this.disposers.push(() => {
+            window.removeEventListener('pointerdown', begin, { capture: true });
+            window.removeEventListener('pointerup', end, { capture: true });
+            window.removeEventListener('pointercancel', end, { capture: true });
+            window.removeEventListener('blur', end);
+        });
+    }
+    get projectName(): string {
+        return projectRecordOf(this.project)?.name ?? DEFAULT_PROJECT_NAME;
+    }
+    onDispose(dispose: () => void): void {
+        this.disposers.push(dispose);
+    }
+    renameProject(name: string): void {
+        const current = this.projectName;
+        const next = normalizeProjectName(name);
+        if (next === current)
+            return;
+        void this.project.registry.rename(this.project.id, next).then(() => this.log.info('Projeto', `Projeto renomeado para "${next}".`), () => this.log.error('Projeto', this.project.registry.error ?? 'Não foi possível renomear o projeto.'));
+    }
+    async dispose(): Promise<void> {
+        this.scripts.stop();
+        this.shaderPreview.stop();
+        this.autosave.stop();
+        if (this.autosave.dirty)
+            await this.autosave.saveNow();
+        this.materials.flush();
+        this.library.flush();
+        for (const dispose of this.disposers.splice(0))
+            dispose();
+        this.listeners.clear();
+        this.topicListeners.clear();
+        this.statsListeners.clear();
+        this.liveEditListeners.clear();
+        if (this.liveEditFrame !== 0)
+            cancelAnimationFrame(this.liveEditFrame);
+        await this.project.database.close();
     }
     attachViewport(canvas: HTMLCanvasElement | null): void {
         this.viewportCanvas = canvas;
