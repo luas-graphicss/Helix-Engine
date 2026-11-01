@@ -561,5 +561,285 @@ static hx_ref fisica(void) {
   checar("overlapSphere", hx_is_array(hx_invoke2(ph, "overlapSphere", v3(0, 3, 3), num(4))));
   checar("massProperties", numero(hx_invoke1(ph, "massProperties", primeira), "mass") > 0);
   checar("colliderVolume", hx_to_number(hx_invoke1(ph, "colliderVolume", primeira)) > 0);
+  hx_ref formas = hx_get(ph, "shapes");
+  checar("shapes.sphere volume", aprox(hx_to_number(hx_invoke1(formas, "volume", hx_invoke1(formas, "sphere", num(1)))), 4.18879, 0.01));
+  assinar(hx_invoke1(ph, "onCollisionBegin", cb(ao_colidir)));
+  assinar(hx_invoke1(ph, "onOutOfBounds", cb(fora_do_mundo)));
+  hx_ref gatilho = hx_invoke2(s, "spawn", str("group"), opts("name", str("Gatilho"), "position", v3(0, 1, 3), "trigger", opts("shape", str("box"), "size", v3(3, 2, 3), NULL), NULL));
+  checar("trigger spawn", !hx_is_none(gatilho) && hx_to_boolean(hx_invoke1(s, "isAttached", gatilho)));
+  checar("physics.stats", hx_is_number(hx_get(hx_get(ph, "stats"), "bodies")));
+  return HX_NONE;
+}
+
+static hx_ref ao_pular(void* userdata, hx_ref args) {
+  (void)userdata;
+  char nome[64];
+  hx_string_copy(hx_get(hx_get(hx_index(args, 0), "entity"), "name"), nome, sizeof nome);
+  info("%s pulou", nome);
+  return HX_NONE;
+}
+
+static hx_ref ao_possuir(void* userdata, hx_ref args) {
+  (void)userdata;
+  hx_ref entidade = hx_index(args, 0);
+  char nome[64] = "ninguém";
+  if (!hx_is_none(entidade)) hx_string_copy(hx_get(entidade, "name"), nome, sizeof nome);
+  info("Possuindo %s", nome);
+  return HX_NONE;
+}
+
+static hx_ref personagem(void) {
+  hx_ref ch = api("character"), pl = api("player");
+  hx_ref novo = hx_invoke1(ch, "spawn", opts("name", str("Heroi"), "position", v3(0, 1.2, 8), "character", opts("walkSpeed", num(4), "runSpeed", num(7), "jumpHeight", num(1.4), NULL), NULL));
+  heroi = keep(novo);
+  checar("character.spawn", !hx_is_none(hx_get(novo, "character")) && hx_to_boolean(hx_invoke1(ch, "has", novo)));
+  hx_ref c = hx_invoke1(ch, "of", novo);
+  checar("character.of", hx_type(hx_get(c, "isGrounded")) == HX_BOOLEAN);
+  checar("settingsOf", numero(hx_invoke1(ch, "settingsOf", novo), "walkSpeed") == 4);
+  hx_invoke1(pl, "possess", novo);
+  checar("player.possess", hx_equals(hx_get(pl, "possessed"), novo) && verdadeiro(hx_get(pl, "isPossessing")));
+  assinar(hx_invoke1(ch, "onJumped", cb(ao_pular)));
+  assinar(hx_invoke1(pl, "onPossessed", cb(ao_possuir)));
+  checar("character.all", hx_length(hx_invoke0(ch, "all")) >= 1);
+  checar("player.spawnPoint", !hx_is_none(hx_get(pl, "spawnPoint")));
+  checar("character.velocity", !hx_is_none(hx_get(c, "velocity")) && !hx_is_none(hx_get(c, "position")));
+  return HX_NONE;
+}
+
+static hx_ref terreno(void) {
+  hx_ref te = api("terrain");
+  checar("terrain.presets", hx_length(hx_invoke0(te, "presets")) > 0);
+  hx_ref colinas = hx_invoke1(te, "spawn", opts("name", str("Colinas"), "size", num(48), "resolution", num(65), "preset", str("hills"), "seed", num(7), "position", v3(0, -6, -70), NULL));
+  checar("terrain.spawn", !hx_is_none(hx_get(colinas, "terrain")) && hx_length(hx_invoke0(te, "all")) >= 1);
+  checar("terrain.of", numero(hx_invoke1(te, "of", colinas), "resolution") == 65);
+  hx_ref altura = hx_invoke2(te, "heightAt", v3(0, 0, -70), colinas);
+  checar("heightAt", hx_is_number(altura));
+  checar("contains", hx_to_boolean(hx_invoke2(te, "contains", v3(0, 0, -70), colinas)) && !hx_to_boolean(hx_invoke2(te, "contains", v3(500, 0, 0), colinas)));
+  hx_ref esculpir[5] = { colinas, str("raise"), v3(5, 0, -70), opts("radius", num(6), "strength", num(1), NULL), num(1) };
+  hx_invoke(te, "sculpt", esculpir, 5);
+  hx_invoke1(te, "markDirty", colinas);
+  hx_ref grama = hx_get(te, "grass");
+  hx_invoke2(grama, "set", colinas, opts("enabled", hx_boolean(1), "density", num(0.5), NULL));
+  checar("grass.set", verdadeiro(hx_get(hx_invoke1(grama, "settingsOf", colinas), "enabled")));
+  hx_ref agua = hx_get(te, "water");
+  hx_invoke2(agua, "set", colinas, opts("enabled", hx_boolean(1), "level", num(-2), NULL));
+  checar("water.set", verdadeiro(hx_get(hx_invoke1(agua, "settingsOf", colinas), "enabled")));
+  checar("terrain.raycast", !hx_is_none(hx_invoke3(te, "raycast", v3(0, 50, -70), v3(0, -1, 0), colinas)));
+  return HX_NONE;
+}
+
+                                                                                          
+
+static void soltar_caixa(void) {
+  hx_ref random = api("math.random");
+  hx_ref caixa = hx_invoke2(api("scene"), "spawnPrimitive", str("box"),
+    opts("name", str("CaixaSolta"),
+      "position", v3(hx_to_number(hx_invoke2(random, "range", num(-3), num(3))), 6, hx_to_number(hx_invoke2(random, "range", num(0), num(4)))),
+      "rigidBody", opts("type", str("dynamic"), "collider", str("box"), "mass", num(1), NULL),
+      "tags", strs(1, "caixa"), NULL));
+  hx_invoke2(api("material"), "setColor", caixa, hx_invoke0(random, "color"));
+  pontos++;
+  hx_invoke2(api("gui"), "bind", str("pontos"), num(pontos));
+  hx_invoke2(api("events"), "emit", str("debug.caixa"), opts("nome", hx_get(caixa, "name"), NULL));
+}
+
+static hx_ref acao_caixa(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  soltar_caixa();
+  return HX_NONE;
+}
+
+static hx_ref acao_reiniciar(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  hx_invoke0(api("play"), "restart");
+  return HX_NONE;
+}
+
+static hx_ref tela_mostrada(void* userdata, hx_ref args) {
+  (void)userdata;
+  hx_ref g = api("gui");
+  tela = keep(hx_index(args, 0));
+  checar("gui.show/isShown", !hx_is_none(tela) && hx_to_boolean(hx_invoke1(g, "isShown", tela)));
+  checar("gui.kinds", contem(hx_invoke0(g, "kinds"), "button"));
+  return HX_NONE;
+}
+
+static hx_ref interface_grafica(void) {
+  hx_ref g = api("gui");
+  hx_invoke1(g, "css", str("DebugEstilo"));
+  hx_ref hud = hx_invoke2(g, "html", str("DebugHud"), opts("id", str("debug-hud"), NULL));
+  checar("gui.html", !hx_is_none(hud) && !hx_is_none(hx_invoke1(g, "element", str("#debug-hud"))));
+  hx_ref icone = hx_invoke2(g, "svg", str("DebugIcone"), opts("id", str("debug-icone"), NULL));
+  checar("gui.svg", !hx_is_none(icone));
+  hx_ref slot = hx_invoke1(g, "element", str("[data-slot=icone]"));
+  if (!hx_is_none(slot) && !hx_is_none(icone)) hx_invoke1(slot, "appendChild", icone);
+  checar("gui.bind", hx_to_number(hx_invoke2(g, "bind", str("linguagem"), str(LINGUAGEM))) >= 1);
+  hx_invoke2(g, "bind", str("titulo"), str("Helix · Debug"));
+  assinar(hx_invoke2(g, "onAction", str("caixa"), cb(acao_caixa)));
+  assinar(hx_invoke2(g, "onAction", str("reiniciar"), cb(acao_reiniciar)));
+  checar("gui.elements", hx_length(hx_invoke1(g, "elements", str("[data-bind]"))) >= 5);
+  checar("gui.size", numero(hx_get(g, "size"), "width") > 0);
+  hx_ref declarativa = hx_invoke2(g, "create", str("DebugTela"), opts("referenceSize", xy(1280, 720), NULL));
+  hx_ref painel = hx_invoke3(g, "add", declarativa, str("frame"),
+    opts("name", str("Painel"),
+      "rect", opts("position", opts("x", escala(1, -236), "y", escala(0, 16), NULL), "size", opts("x", escala(0, 220), "y", escala(0, 48), NULL), NULL),
+      NULL));
+  hx_invoke4(g, "add", declarativa, str("text"), opts("name", str("Rotulo"), "text", str("Tela declarativa OK"), NULL), hx_get(hx_get(painel, "node"), "id"));
+  checar("gui.add/find", str_eq(hx_get(hx_invoke2(g, "find", declarativa, str("Rotulo")), "kind"), "text"));
+  hx_invoke3(g, "setText", declarativa, str("Rotulo"), str("Tela declarativa OK · " LINGUAGEM));
+                                                                                        
+  return hx_invoke1(hx_invoke2(g, "show", declarativa, str("debug-tela")), "then", cb(tela_mostrada));
+}
+
+static hx_ref audio(void) {
+  hx_ref a = api("audio"), s = api("scene");
+  checar("audio.supported", hx_type(hx_get(a, "supported")) == HX_BOOLEAN);
+  hx_ref mixer = hx_get(a, "mixer");
+  hx_invoke2(mixer, "setVolumeDb", str("sfx"), num(-3));
+  checar("mixer.setVolumeDb", numero(hx_invoke1(mixer, "bus", str("sfx")), "volumeDb") == -3);
+  checar("audio.clips", hx_is_array(hx_invoke0(a, "clips")));
+  hx_ref fonte = hx_invoke2(s, "spawn", str("sound"), opts("name", str("FonteSonora"), "position", v3(3, 1, 3), "audioSource", opts("trigger", str("manual"), "spatial", hx_boolean(1), NULL), NULL));
+  checar("spawn sound", !hx_is_none(hx_get(fonte, "audioSource")));
+  hx_ref fontes = hx_get(a, "sources");
+  hx_invoke2(fontes, "set", fonte, opts("volumeDb", num(-4), NULL));
+  checar("sources.set", numero(hx_get(fonte, "audioSource"), "volumeDb") == -4);
+  checar("sources.isPlaying", falso(hx_invoke1(fontes, "isPlaying", fonte)));
+  return HX_NONE;
+}
+
+static hx_ref vfx_salvo(void* userdata, hx_ref args) {
+  (void)userdata;
+  hx_ref v = api("vfx");
+  hx_ref ativo = hx_index(args, 0);
+  checar("vfx.save", !hx_is_none(ativo) && str_eq(hx_get(ativo, "kind"), "vfx"));
+  hx_ref ator = hx_invoke3(v, "emitAt", ativo, v3(0, 1.5, -8), opts("destroyWhenFinished", hx_boolean(0), NULL));
+  checar("vfx.emitAt", verdadeiro(hx_invoke1(v, "has", ator)));
+  hx_invoke2(v, "burst", ator, num(20));
+  checar("vfx.stats", hx_is_number(hx_get(hx_invoke0(v, "stats"), "effects")));
+  return HX_NONE;
+}
+
+static hx_ref vfx(void) {
+  hx_ref v = api("vfx");
+  hx_ref ids = hx_invoke0(hx_get(v, "templates"), "ids");
+  checar("vfx.templates", hx_length(ids) > 0);
+  checar("vfx.moduleKinds", hx_length(hx_invoke0(v, "moduleKinds")) > 0);
+  hx_ref doc = hx_invoke2(v, "fromTemplate", hx_index(ids, 0), str("DebugFaiscas"));
+  doc = hx_invoke2(v, "addEmitter", doc, opts("name", str("Extra"), "maxParticles", num(50), NULL));
+  doc = hx_invoke2(v, "set", doc, opts("loop", hx_boolean(1), NULL));
+  checar("vfx.fromTemplate/addEmitter", hx_length(hx_get(doc, "emitters")) >= 2 && verdadeiro(hx_get(doc, "loop")));
+  return hx_invoke1(hx_invoke2(v, "save", doc, str("DebugFaiscas")), "then", cb(vfx_salvo));
+}
+
+                                                                                        
+
+static void ao_teclar(hx_ref e) {
+  if (hx_to_boolean(hx_get(e, "repeat"))) return;
+  char code[32];
+  hx_string_copy(hx_get(e, "code"), code, sizeof code);
+  if (!strcmp(code, "KeyR")) {
+    hx_invoke0(api("play"), "restart");
+  } else if (!strcmp(code, "KeyB")) {
+    soltar_caixa();
+  } else if (!strcmp(code, "KeyE")) {
+    hx_invoke2(api("events"), "emit", str("debug.ping"), opts("origem", str("teclado"), "quadro", hx_get(api("time"), "frame"), NULL));
+  } else if (!strcmp(code, "KeyF")) {
+    hx_invoke2(api("camera"), "shake", num(0.4), num(0.6));
+  } else if (!strcmp(code, "KeyG")) {
+    if (efeito) {
+      int ligado = !hx_to_boolean(hx_get(efeito, "enabled"));
+      hx_set_boolean(efeito, "enabled", ligado);
+      info("Efeito DebugPost %s", ligado ? "ligado" : "desligado");
+    }
+  } else if (!strcmp(code, "KeyT")) {
+    hx_ref tm = api("time");
+    hx_set_number(tm, "scale", numero(tm, "scale") == 1 ? 0.3 : 1);
+    info("time.scale = %g", numero(tm, "scale"));
+  } else if (!strcmp(code, "KeyH")) {
+    if (tela) {
+      if (hx_to_boolean(hx_invoke1(api("gui"), "isShown", tela))) hx_invoke1(api("gui"), "hide", tela);
+      else hx_invoke2(api("gui"), "show", tela, str("debug-tela"));
+    }
+  } else if (!strcmp(code, "KeyL")) {
+    hx_ref luzes_locais = hx_invoke1(api("light"), "all", opts("local", hx_boolean(1), NULL));
+    char lista[512] = "";
+    int n = hx_length(luzes_locais);
+    for (int i = 0; i < n; i++) {
+      char nome[64];
+      hx_string_copy(hx_get(hx_get(hx_index(luzes_locais, i), "entity"), "name"), nome, sizeof nome);
+      if (strlen(lista) + strlen(nome) + 3 >= sizeof lista) break;
+      if (i > 0) strcat(lista, ", ");
+      strcat(lista, nome);
+    }
+    info("Luzes locais: %s", lista);
+  }
+}
+
+static hx_ref ao_teclar_cb(void* userdata, hx_ref args) {
+  (void)userdata;
+  ao_teclar(hx_index(args, 0));
+  return HX_NONE;
+}
+
+static void clique_na_cena(double x, double y) {
+  hx_ref c = api("camera");
+  hx_ref alvo = hx_invoke2(c, "pick", num(x), num(y));
+  hx_ref ponto = hx_invoke2(c, "pickPoint", num(x), num(y));
+  if (!hx_is_none(alvo)) {
+    char nome[64];
+    hx_string_copy(hx_get(alvo, "name"), nome, sizeof nome);
+    info("Clique em %s", nome);
+  }
+  if (!hx_is_none(ponto)) hx_invoke4(api("debug"), "sphere", ponto, num(0.3), str("#ff006e"), num(2));
+}
+
+static hx_ref ao_apontar(void* userdata, hx_ref args) {
+  (void)userdata;
+  hx_ref e = hx_index(args, 0);
+  if ((int)numero(e, "button") == 0) clique_na_cena(numero(e, "x"), numero(e, "y"));
+  return HX_NONE;
+}
+
+static hx_ref ao_gamepad(void* userdata, hx_ref args) {
+  (void)userdata;
+  hx_ref e = hx_index(args, 0);
+  info("Gamepad %g botão %g", numero(e, "pad"), numero(e, "button"));
+  return HX_NONE;
+}
+
+static hx_ref entrada(void) {
+  hx_ref in = api("input"), acoes = hx_get(in, "actions");
+  hx_invoke2(acoes, "define", str("pular"), strs(2, "Space", "Gamepad:0"));
+  hx_invoke2(acoes, "define", str("soltar"), strs(1, "KeyB"));
+  checar("actions.define/bindings", hx_length(hx_invoke1(acoes, "bindings", str("pular"))) >= 1);
+  checar("action()", str_eq(hx_get(hx_invoke1(in, "action", str("pular")), "name"), "pular") && hx_type(hx_invoke1(acoes, "down", str("pular"))) == HX_BOOLEAN);
+  checar("isDown", falso(hx_invoke1(in, "isDown", str("KeyW"))));
+  checar("pointer", hx_is_number(hx_get(hx_get(in, "pointer"), "x")));
+  checar("gamepads", hx_is_array(hx_invoke0(in, "gamepads")));
+  checar("axis2d", hx_is_number(hx_get(hx_invoke1(in, "axis2d", opts("up", str("KeyW"), "down", str("KeyS"), "left", str("KeyA"), "right", str("KeyD"), NULL)), "x")));
+  checar("keysDown", hx_is_object(hx_invoke0(in, "keysDown")));
+  assinar(hx_invoke1(in, "onKeyDown", cb(ao_teclar_cb)));
+  assinar(hx_invoke1(in, "onPointerDown", cb(ao_apontar)));
+  assinar(hx_invoke1(in, "onGamepadButtonDown", cb(ao_gamepad)));
+  return HX_NONE;
+}
+
+                                                                                                 
+static hx_ref recebido = HX_NONE;
+static int uma_vez, do_ator;
+
+static hx_ref guardar_ping(void* userdata, hx_ref args) {
+  (void)userdata;
+  drop(&recebido);
+  recebido = keep(hx_index(args, 0));
+  return HX_NONE;
+}
+static hx_ref contar_uma_vez(void* userdata, hx_ref args) {
+  (void)userdata;
+  (void)args;
+  uma_vez++;
+  return HX_NONE;
 `;
 }
