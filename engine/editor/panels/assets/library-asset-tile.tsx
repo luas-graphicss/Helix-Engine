@@ -1,10 +1,11 @@
 'use client';
-import { Pause } from 'lucide-react';
+import { AudioLines, Volume2 } from 'lucide-react';
 import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu';
 import type { LibraryAsset } from '@/engine/assets/library/asset-types';
+import { useAudioEditor } from '@/engine/editor/audio/ui/use-audio-editor';
 import { setAssetDragData } from '@/engine/editor/library/asset-drag';
-import { activateLibraryAsset, playingLibraryAudioId } from '@/engine/editor/operations/asset-library-operations';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { activateLibraryAsset } from '@/engine/editor/operations/asset-library-operations';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { ImageBlobThumbnail } from '@/engine/ui/image-blob-thumbnail';
 import { ASSET_KIND_ICON, ASSET_KIND_TINT } from './asset-categories';
 import { describeLibraryAsset, formatBadge } from './asset-format';
@@ -21,22 +22,33 @@ function AssetThumbnail({ asset }: {
     asset: LibraryAsset;
 }) {
     const Icon = ASSET_KIND_ICON[asset.kind];
-    const playing = playingLibraryAudioId() === asset.id;
+    const audio = useAudioEditor();
+    const previewing = asset.kind === 'audio' && audio.quickPreviewAssetId === asset.id;
+    const open = asset.kind === 'audio' && audio.assetId === asset.id;
     return (<>
       {asset.thumbnail ? (<ImageBlobThumbnail blob={asset.thumbnail.blob} alt=""/>) : (<Icon className="size-7 text-muted-foreground transition-colors group-hover:text-foreground" strokeWidth={1.5} aria-hidden/>)}
-      {playing && (<span className="absolute inset-0 flex items-center justify-center bg-background/50">
-          <Pause className="size-5 text-primary" aria-hidden/>
+      {previewing && (<span className="absolute inset-0 flex items-center justify-center bg-background/50" title="Tocando">
+          <Volume2 className="size-5 text-warning" aria-hidden/>
+        </span>)}
+      {open && !previewing && (<span className="absolute top-1 left-1 flex size-4 items-center justify-center rounded-sm bg-background/70 text-primary" title="Aberto no editor de áudio">
+          <AudioLines className="size-3" aria-hidden/>
         </span>)}
     </>);
 }
 const ACTIVATION_HINT: Record<LibraryAsset['kind'], string> = {
     model: 'Duplo clique coloca na cena · arraste para o viewport para posicionar',
     texture: 'Duplo clique aplica à seleção · arraste sobre um ator no viewport',
-    audio: 'Duplo clique reproduz',
+    audio: 'Duplo clique abre no editor de áudio e toca · botão direito para ouvir sem abrir',
     animation: 'Duplo clique abre no editor de animação sobre o ator selecionado · exporte pelos detalhes',
+    gui: 'Duplo clique abre no designer de interface · telas ativas aparecem por cima do jogo no playtest',
+    font: 'Fica disponível no seletor de fonte dos textos da interface · arraste sobre um texto para aplicar',
+    video: 'Duplo clique coloca um telão na cena (ou um elemento de vídeo na tela aberta) · arraste para o viewport ou para o canvas da tela',
+    vfx: 'Duplo clique abre no editor de efeitos · arraste para o viewport para colocar um ator de efeito na cena',
+    script: 'Duplo clique abre no editor de código · botão direito para anexar ao ator selecionado',
+    prefab: 'Duplo clique instancia na cena com ids novos · arraste para o viewport para posicionar',
 };
 export function LibraryAssetTile({ asset, selected, rename, onSelect, onRenameRequest }: LibraryAssetTileProps) {
-    const session = useEditorState();
+    const session = useEditorSession();
     return (<ContextMenu>
       <ContextMenuTrigger render={<AssetTile name={asset.name} caption={describeLibraryAsset(asset)} tint={ASSET_KIND_TINT[asset.kind]} title={`${asset.name}\n${ACTIVATION_HINT[asset.kind]}`} badge={formatBadge(asset)} selected={selected} draggable={rename === null} rename={rename} onDragStart={(event) => {
                 onSelect();
