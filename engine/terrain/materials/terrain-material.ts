@@ -1,6 +1,6 @@
 import type { Vec3 } from '@/engine/core/math/vec3';
 import type { Texture } from '@/engine/core/scene/texture';
-import type { MaterialCredit, TerrainFoliageKind } from './material-catalog';
+import type { HiresMapSources, MaterialCredit, TerrainFoliageKind } from './material-catalog';
 export type TerrainMaterialCategory = 'grass' | 'soil' | 'rock' | 'sand' | 'snow' | 'custom';
 export const TERRAIN_MATERIAL_CATEGORY_LABEL: Record<TerrainMaterialCategory, string> = {
     grass: 'Vegetação',
@@ -24,6 +24,7 @@ export interface TerrainMaterial {
     albedo: Texture | null;
     normal: Texture | null;
     ormh: Texture | null;
+    readonly hires: HiresMapSources;
     roughness: number;
     defaultTiling: number;
     defaultNormalStrength: number;
