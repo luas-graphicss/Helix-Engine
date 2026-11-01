@@ -1,17 +1,29 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Boxes, Gauge, Trash2 } from 'lucide-react';
 import { CollapsibleSection } from '@/engine/ui/collapsible-section';
 import { clearStressTest, countStressActors, generateStressTest, STRESS_GROUP_NAME, type StressDetail, } from '@/engine/editor/operations/stress-test-operations';
 import { SliderField } from '@/engine/ui/slider-field';
 import { ToggleField } from '@/engine/ui/toggle-field';
+import { PanelToolbar } from '@/engine/ui/panel-toolbar';
 import { PropertyRow } from '@/engine/ui/property-row';
 import { SegmentedControl } from '@/engine/ui/segmented-control';
-import { useEditorState, useViewportStats } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession, useSessionTopic, useViewportStats } from '@/engine/editor/session/editor-session-context';
 import { CPU_ONLY_STAGES, FRAME_STAGES, FRAME_STAGE_LABELS } from '@/engine/renderer/stats/frame-stages';
 import { MAX_LOD_LEVELS } from '@/engine/renderer/lod/lod-chain';
 import { TILE_LEVELS } from '@/engine/terrain/chunks/terrain-tiles';
 import { VirtualGeometrySection } from './performance/virtual-geometry-section';
+import { LocalLightsSection } from './performance/local-lights-section';
+import { GHOST_ACTION_CLASS } from '@/engine/ui/surface-styles';
+import { cn } from '@/lib/utils';
+const TIER_LABEL = { high: 'alta', mid: 'média', low: 'baixa' } as const;
+const TIER_SOURCE_LABEL = { forced: 'forçada nas preferências', measured: 'medida agora', cached: 'medida antes', heuristic: 'pelo nome' } as const;
+const TIER_SOURCE_HINT = {
+    forced: 'Perfil escolhido em Configuração ▸ Renderização ▸ Perfil de qualidade.',
+    measured: 'Micro-benchmark de preenchimento e ALU rodado nesta abertura; o resultado fica guardado para este dispositivo.',
+    cached: 'Micro-benchmark rodado numa abertura anterior neste dispositivo.',
+    heuristic: 'Sem medição: classe deduzida do nome da placa reportado pelo driver.',
+} as const;
 const integer = (value: number) => value.toLocaleString('pt-BR');
 const milliseconds = (value: number) => `${value.toFixed(2)} ms`;
 const pixels = (value: number) => (value <= 0 ? 'Desligado' : `${value.toFixed(1)} px`);
@@ -36,42 +48,70 @@ function PerLevel({ counts, levels }: {
 }) {
     const chips: React.ReactNode[] = [];
     for (let level = 0; level < levels; level++) {
-        chips.push(<span key={level} className="rounded-sm bg-surface-raised px-1 font-mono text-[10px] leading-4 text-foreground/80 tabular-nums">
+        chips.push(<span key={level} className="rounded-sm bg-surface-raised px-1 font-mono text-3xs leading-4 text-foreground/80 tabular-nums">
         <span className="text-muted-foreground">L{level}</span> {integer(counts[level])}
       </span>);
     }
     return <div className="flex flex-wrap gap-1 py-1">{chips}</div>;
 }
 export function PerformancePanel() {
-    const session = useEditorState();
+    const session = useSessionTopic('view', 'scene', 'playtest');
     const stats = useViewportStats();
     const { culling, lod } = session.render;
     const gpu = stats.gpuStageMs;
     const cpuTotal = stats.cpuStageMs.reduce((sum, value) => sum + value, 0);
     const frameMs = stats.fps > 0 ? 1000 / stats.fps : 0;
     const slowest = Math.max(cpuTotal, stats.gpuMs, 0.001);
+    const gpuTotalLabel = gpu ? milliseconds(stats.gpuMs) : stats.gpuTimerAvailable ? 'Medindo…' : 'Indisponível neste navegador';
+    const frameSummary = stats.idle ? 'em espera' : `${stats.fps} fps · ${frameMs.toFixed(1)} ms`;
+    useEffect(() => {
+        session.setGpuProfiling(true);
+        return () => session.setGpuProfiling(false);
+    }, [session]);
     return (<div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-border p-2">
-        <span className="flex size-7 shrink-0 items-center justify-center rounded-sm bg-surface-raised text-muted-foreground">
-          <Gauge className="size-4" aria-hidden/>
+      <PanelToolbar className="gap-1.5 pl-2">
+        <Gauge className="size-3.5 shrink-0 text-primary" aria-hidden/>
+        <span className="min-w-0 flex-1 truncate text-2xs font-semibold text-foreground">Desempenho</span>
+        <span className="shrink-0 font-mono text-3xs text-muted-foreground tabular-nums" title={stats.idle ? 'Viewport em espera: nada mudou, então ele não redesenha até a próxima ação.' : 'Quadros por segundo e tempo de cada quadro'}>
+          {frameSummary}
         </span>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="text-xs font-semibold text-foreground">Desempenho do viewport</span>
-          <span className="truncate font-mono text-[10px] text-muted-foreground">
-            {stats.fps} fps · {frameMs.toFixed(1)} ms/frame · {stats.width} × {stats.height}
-            {stats.pixelRatio > 1.01 ? ` · DPR ${stats.pixelRatio.toFixed(2)}` : ''}
-          </span>
-          <span className="truncate font-mono text-[10px] text-muted-foreground" title={stats.gpuName}>
-            {stats.gpuName || 'GPU oculta pelo navegador'}
-          </span>
-        </div>
-      </div>
-      {stats.softwareRenderer && (<p role="alert" className="border-b border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[10px] leading-relaxed text-pretty text-destructive">
-          Renderização por software detectada. Ative a aceleração de hardware (chrome://settings/system) ou atualize o driver de vídeo: sem GPU nenhuma
-          otimização chega a 60 FPS.
+      </PanelToolbar>
+      {stats.softwareRenderer && (<p role="alert" className="border-b border-warning/40 bg-warning/10 px-2 py-1.5 text-3xs leading-relaxed text-pretty text-warning">
+          O navegador está desenhando sem a placa de vídeo, e o desempenho fica muito reduzido. Ative a aceleração de hardware nas configurações do
+          navegador ou atualize o driver de vídeo.
         </p>)}
 
       <div className="flex-1 overflow-auto">
+        <CollapsibleSection title="Dispositivo" defaultOpen={false}>
+          <PropertyRow label="Placa de vídeo">
+            <Value>
+              <span className="truncate" title={stats.gpuName}>
+                {stats.gpuName || 'Não informada pelo navegador'}
+              </span>
+            </Value>
+          </PropertyRow>
+          <PropertyRow label="Classe">
+            <Value>
+              {TIER_LABEL[stats.gpuTier]}{' '}
+              <span className="text-muted-foreground" title={TIER_SOURCE_HINT[stats.gpuTierSource]}>
+                · {TIER_SOURCE_LABEL[stats.gpuTierSource]}
+                {stats.gpuScore > 0 && ` · ${stats.gpuScore.toFixed(2)} Mpx/ms`}
+                {stats.gpuTierSource !== 'heuristic' && stats.gpuHeuristicTier !== stats.gpuTier && ` · pelo nome seria ${TIER_LABEL[stats.gpuHeuristicTier]}`}
+              </span>
+            </Value>
+          </PropertyRow>
+          <PropertyRow label="Resolução">
+            <Value>
+              {integer(stats.width)} × {integer(stats.height)}
+              {stats.pixelRatio > 1.01 && <span className="text-muted-foreground"> · escala {stats.pixelRatio.toFixed(2)}×</span>}
+              {stats.renderScale < 0.995 && (<span className="text-muted-foreground" title="Resolução dinâmica: fração da resolução do canvas em que a cena 3D foi desenhada">
+                  {' '}
+                  · cena a {Math.round(stats.renderScale * 100)}%
+                </span>)}
+            </Value>
+          </PropertyRow>
+        </CollapsibleSection>
+
         <CollapsibleSection title="Tempo por etapa">
           <div className="grid grid-cols-[minmax(0,1fr)_56px_56px] items-center gap-x-2 px-2 pb-1 text-2xs text-muted-foreground">
             <span />
@@ -89,8 +129,8 @@ export function PerformancePanel() {
                     <span className="text-right font-mono text-2xs text-foreground/80 tabular-nums">{cpu.toFixed(2)}</span>
                     <span className="text-right font-mono text-2xs text-foreground/80 tabular-nums">{gpuMs === null ? '—' : gpuMs.toFixed(2)}</span>
                   </div>
-                  <div className="h-0.5 w-full rounded-full bg-surface-raised" aria-hidden>
-                    <div className="h-full rounded-full bg-primary/70" style={{ width: `${width}%` }}/>
+                  <div className="h-1 w-full overflow-hidden rounded-xs bg-surface-sunken shadow-well" aria-hidden>
+                    <div className="h-full bg-primary/70" style={{ width: `${width}%` }}/>
                   </div>
                 </li>);
         })}
@@ -99,8 +139,13 @@ export function PerformancePanel() {
             <Value>{milliseconds(cpuTotal)}</Value>
           </PropertyRow>
           <PropertyRow label="Total GPU">
-            <Value>{gpu ? milliseconds(stats.gpuMs) : 'Sem timer queries neste browser'}</Value>
+            <Value>{gpuTotalLabel}</Value>
           </PropertyRow>
+          <ToggleField label="Redesenhar só ao mudar" on={session.render.renderOnDemand} onToggle={() => session.setRenderOnDemand(!session.render.renderOnDemand)}/>
+          <p className="px-2 pb-2 text-3xs leading-relaxed text-pretty text-muted-foreground">
+            Com a cena parada, o viewport deixa de redesenhar e fica &quot;em espera&quot;, poupando bateria. Desligue para medir o custo de
+            um quadro com tudo imóvel.
+          </p>
           <PropertyRow label="Draw calls">
             <Value>
               {integer(stats.drawCalls)} <span className="text-muted-foreground">· {integer(stats.triangles)} tris</span>
@@ -110,13 +155,13 @@ export function PerformancePanel() {
 
         <VirtualGeometrySection />
 
-        <CollapsibleSection title="Culling">
-          <ToggleField label="Frustum" on={culling.frustumCulling} onToggle={() => session.toggleFrustumCulling()}/>
+        <CollapsibleSection title="Descarte de objetos">
+          <ToggleField label="Fora da câmera" on={culling.frustumCulling} onToggle={() => session.toggleFrustumCulling()}/>
           <SliderField label="Tamanho mín." value={culling.minPixelSize} min={0} max={12} step={0.5} format={pixels} onChange={(value) => session.updateCulling({ minPixelSize: value })}/>
           <PropertyRow label="Visíveis">
             <Ratio part={stats.meshesVisible} total={stats.meshCandidates}/>
           </PropertyRow>
-          <PropertyRow label="Fora do frustum">
+          <PropertyRow label="Fora da câmera">
             <Value>{integer(stats.frustumCulled)}</Value>
           </PropertyRow>
           <PropertyRow label="Pequenas demais">
@@ -170,6 +215,8 @@ export function PerformancePanel() {
             </PropertyRow>)}
         </CollapsibleSection>
 
+        <LocalLightsSection />
+
         <StressTestSection />
       </div>
     </div>);
@@ -187,7 +234,7 @@ const STRESS_DETAIL_OPTIONS: readonly {
     { value: 'dense', label: 'Denso' },
 ];
 function StressTestSection() {
-    const session = useEditorState();
+    const session = useEditorSession();
     const [count, setCount] = useState(STRESS_DEFAULT);
     const [detail, setDetail] = useState<StressDetail>('dense');
     const current = countStressActors(session);
@@ -204,7 +251,7 @@ function StressTestSection() {
         <Value>{current > 0 ? `${integer(current)} no grupo "${STRESS_GROUP_NAME}"` : 'Nenhum'}</Value>
       </PropertyRow>
       <div className="flex gap-1.5 px-2 py-1">
-        <button type="button" onClick={() => generateStressTest(session, count, detail)} className="flex h-7 flex-1 items-center justify-center gap-1.5 rounded-sm border border-dashed border-border-strong text-2xs font-medium text-foreground transition-colors hover:border-primary/60 hover:bg-highlight">
+        <button type="button" onClick={() => generateStressTest(session, count, detail)} className={cn('flex h-7 flex-1 items-center justify-center gap-1.5 text-2xs font-medium text-foreground', GHOST_ACTION_CLASS)}>
           <Boxes className="size-3.5 text-primary" aria-hidden/>
           Gerar {integer(count)}
         </button>
@@ -213,7 +260,7 @@ function StressTestSection() {
           Limpar
         </button>
       </div>
-      <p className="px-2 pb-2 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pb-2 text-3xs leading-relaxed text-pretty text-muted-foreground">
         {detail === 'dense'
             ? 'Seis malhas de 100 a 150 mil triângulos (rochas, nó toroidal, coluna canelada), apoiadas no terreno. Fora do histórico de desfazer: remova pelo botão.'
             : 'Seis primitivas comuns, cores e escalas variadas, apoiadas no terreno. Fora do histórico de desfazer: remova pelo botão.'}
