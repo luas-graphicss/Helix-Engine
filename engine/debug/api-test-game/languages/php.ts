@@ -561,5 +561,285 @@ final class DebugJogo extends \\Helix\\Script
 
     private function soltarCaixa(): void
     {
+        $h = $this->helix;
+        $caixa = $h->scene->spawnPrimitive('box', ['name' => 'CaixaSolta', 'position' => [$h->math->random->range(-3, 3), 6, $h->math->random->range(0, 4)], 'rigidBody' => ['type' => 'dynamic', 'collider' => 'box', 'mass' => 1], 'tags' => ['caixa']]);
+        $h->material->setColor($caixa, $h->math->random->color());
+        $this->pontos++;
+        $h->gui->bind('pontos', $this->pontos);
+        $h->events->emit('debug.caixa', ['nome' => $caixa->name]);
+    }
+
+    private function aoTeclar(mixed $e): void
+    {
+        $h = $this->helix;
+        if ($e->repeat) {
+            return;
+        }
+        switch ($e->code) {
+            case 'KeyR':
+                $h->play->restart();
+                break;
+            case 'KeyB':
+                $this->soltarCaixa();
+                break;
+            case 'KeyE':
+                $h->events->emit('debug.ping', ['origem' => 'teclado', 'quadro' => $h->time->frame]);
+                break;
+            case 'KeyF':
+                $h->camera->shake(0.4, 0.6);
+                break;
+            case 'KeyG':
+                if ($this->efeito !== null) {
+                    $this->efeito->enabled = !$this->efeito->enabled;
+                    $h->log->info('Debug', 'Efeito DebugPost ' . ($this->efeito->enabled ? 'ligado' : 'desligado'));
+                }
+                break;
+            case 'KeyT':
+                $h->time->scale = (float) $h->time->scale === 1.0 ? 0.3 : 1;
+                $h->log->info('Debug', 'time.scale = ' . $h->time->scale);
+                break;
+            case 'KeyH':
+                if ($this->tela !== null) {
+                    if ($h->gui->isShown($this->tela)) {
+                        $h->gui->hide($this->tela);
+                    } else {
+                        $h->gui->show($this->tela, 'debug-tela');
+                    }
+                }
+                break;
+            case 'KeyL':
+                $nomes = array_map(fn ($luz) => $luz->entity->name, $h->light->all(['local' => true]));
+                $h->log->info('Debug', 'Luzes locais: ' . implode(', ', $nomes));
+                break;
+        }
+    }
+
+    private function cliqueNaCena(float $x, float $y): void
+    {
+        $h = $this->helix;
+        $alvo = $h->camera->pick($x, $y);
+        $ponto = $h->camera->pickPoint($x, $y);
+        if ($alvo !== null) {
+            $h->log->info('Debug', "Clique em {$alvo->name}");
+        }
+        if ($ponto !== null) {
+            $h->debug->sphere($ponto, 0.3, '#ff006e', 2);
+        }
+    }
+
+    private function entrada(): void
+    {
+        $i = $this->helix->input;
+        $i->actions->define('pular', ['Space', 'Gamepad:0']);
+        $i->actions->define('soltar', ['KeyB']);
+        $this->checar('actions.define/bindings', count($i->actions->bindings('pular')) >= 1);
+        $this->checar('action()', $i->action('pular')->name === 'pular' && is_bool($i->actions->down('pular')));
+        $this->checar('isDown', $i->isDown('KeyW') === false);
+        $this->checar('pointer', is_numeric($i->pointer->x));
+        $this->checar('gamepads', is_array($i->gamepads()));
+        $this->checar('axis2d', is_numeric($i->axis2d(['up' => 'KeyW', 'down' => 'KeyS', 'left' => 'KeyA', 'right' => 'KeyD'])->x));
+        $this->checar('keysDown', is_array($i->keysDown()));
+        $this->assinar($i->onKeyDown(function ($e): void {
+            $this->aoTeclar($e);
+        }));
+        $this->assinar($i->onPointerDown(function ($e): void {
+            if ((int) $e->button === 0) {
+                $this->cliqueNaCena((float) $e->x, (float) $e->y);
+            }
+        }));
+        $this->assinar($i->onGamepadButtonDown(function ($e): void {
+            $this->helix->log->info('Debug', "Gamepad {$e->pad} botão {$e->button}");
+        }));
+    }
+
+    private function eventos(): void
+    {
+        $h = $this->helix;
+        $ev = $h->events;
+        $recebido = null;
+        $off = $ev->on('debug.ping', function ($p) use (&$recebido): void {
+            $recebido = $p;
+        });
+        $this->checar('events.emit conta ouvintes', (int) $ev->emit('debug.ping', ['origem' => 'teste']) === 1);
+        $this->checar('events.on recebe', $recebido !== null && $recebido->origem === 'teste');
+        $this->checar('listenerCount', (int) $ev->listenerCount('debug.ping') === 1);
+        $off();
+        $this->checar('unsubscribe', (int) $ev->listenerCount('debug.ping') === 0);
+        $umaVez = 0;
+        $ev->once('debug.once', function () use (&$umaVez): void {
+            $umaVez++;
+        });
+        $ev->emit('debug.once');
+        $ev->emit('debug.once');
+        $this->checar('events.once', $umaVez === 1);
+        $this->assinar($ev->on('debug.ping', function ($p) use ($h): void {
+            $h->log->info('Debug', "ping de {$p->origem}");
+        }));
+        $this->assinar($ev->on('debug.caixa', function ($p) use ($h): void {
+            $h->log->debug('Debug', "caixa {$p->nome}");
+        }));
+        $doAtor = 0;
+        $this->assinar($ev->onEntity($this->torus, 'toque', function () use (&$doAtor): void {
+            $doAtor++;
+        }));
+        $ev->emitEntity($this->torus, 'toque');
+        $this->checar('onEntity/emitEntity', $doAtor === 1);
+        $this->assinar($h->play->onStopped(function () use ($h): void {
+            $h->log->info('Debug', 'play.onStopped disparou');
+        }));
+        $this->assinar($h->play->onPaused(function () use ($h): void {
+            $h->log->info('Debug', 'pausado');
+        }));
+        $this->assinar($h->play->onResumed(function () use ($h): void {
+            $h->log->info('Debug', 'retomado');
+        }));
+    }
+
+    private function tempo(): \\Generator
+    {
+        $h = $this->helix;
+        $tm = $h->time;
+        $this->checar('time.now', (float) $tm->now >= 0 && (int) $tm->frame >= 0);
+        $this->checar('time.delta', (float) $tm->delta >= 0 && (float) $tm->fixedDelta > 0);
+        $inicio = (float) $tm->now;
+        yield $tm->wait(0.1);
+        $this->checar('time.wait', (float) $tm->now - $inicio >= 0.09, sprintf('%.3f', (float) $tm->now - $inicio));
+        $quadro = (int) $tm->frame;
+        yield $tm->waitFrames(2);
+        $this->checar('time.waitFrames', (int) $tm->frame >= $quadro + 2, (int) $tm->frame - $quadro);
+        $this->assinar($tm->every(2, function () use ($h): void {
+            $h->gui->bind('atores', $h->scene->count());
+        }));
+        $disparou = false;
+        $tm->delay(0.2, function () use (&$disparou): void {
+            $disparou = true;
+        });
+        yield $tm->wait(0.3);
+        $this->checar('time.delay', $disparou);
+    }
+
+    private function dados(): \\Generator
+    {
+        $h = $this->helix;
+        $st = $h->storage;
+        yield $st->ready();
+        $execucoes = (int) ($st->get('execucoes', 0) ?? 0) + 1;
+        yield $st->set('execucoes', $execucoes);
+        $this->checar('storage.get/set', (int) $st->get('execucoes') === $execucoes && $st->has('execucoes'), $execucoes);
+        $h->log->info('Debug', "Execução nº {$execucoes} deste jogo de teste neste projeto.");
+        $cfg = yield $h->assets->data('DebugConfig');
+        $this->checar('assets.data (TOML)', $cfg !== null && $cfg->jogador !== null && (float) $cfg->jogador->velocidade === 6.5, json_encode($cfg));
+        $texto = yield $h->assets->text('DebugConfig');
+        $this->checar('assets.text', str_contains((string) $texto, 'velocidade'));
+        $this->checar('assets.byName', $h->assets->byName('DebugJogo', 'script') !== null);
+        $this->checar('assets.exists', $h->assets->exists('DebugUtil') && !$h->assets->exists('NaoExiste'));
+        $this->checar('assets.search', count($h->assets->search('Debug')) >= 5);
+        $this->checar('project.name', is_string($h->project->name));
+        $this->checar('project.stats', (int) $h->project->stats->entities > 0);
+        $this->checar('net.localPlayer', $h->net->localPlayer->local === true);
+        $this->checar('play.state', $h->play->state === 'playing' && $h->play->isRunning === true);
+    }
+
+                                                                                                      
+
+    public function onLoad(): void
+    {
+        $this->helix->log->info('Debug', 'onLoad do script de entrada');
+    }
+
+    public function onStart(): \\Generator
+    {
+        $h = $this->helix;
+        $h->log->info('Debug', 'Jogo de teste em ' . self::LINGUAGEM . ': percorrendo a API…');
+        yield from $this->area('Núcleo', $this->nucleo(...));
+        yield from $this->area('Módulo (helix_require)', $this->modulo(...));
+        yield from $this->area('Matemática', $this->matematica(...));
+        yield from $this->area('Cena', $this->cena(...));
+        yield from $this->area('Transformações', $this->transformacao(...));
+        yield from $this->area('Malhas e CSG', $this->malhas(...));
+        yield from $this->area('Materiais', $this->materiais(...));
+        yield from $this->area('Luzes', $this->luzes(...));
+        yield from $this->area('Céu e mundo', $this->ceu(...));
+        yield from $this->area('Câmera', $this->camera(...));
+        yield from $this->area('Pós-processamento', $this->pos(...));
+        yield from $this->area('Render', $this->render(...));
+        yield from $this->area('Física', $this->fisica(...));
+        yield from $this->area('Personagem e jogador', $this->personagem(...));
+        yield from $this->area('Terreno', $this->terreno(...));
+        yield from $this->area('Interface', $this->interfaceGrafica(...));
+        yield from $this->area('Áudio', $this->audio(...));
+        yield from $this->area('VFX', $this->vfx(...));
+        yield from $this->area('Entrada', $this->entrada(...));
+        yield from $this->area('Eventos', $this->eventos(...));
+        yield from $this->area('Tempo e tarefas', $this->tempo(...));
+        yield from $this->area('Dados, projeto e rede', $this->dados(...));
+        $girador = $h->assets->byName('DebugGirador', 'script');
+        if ($girador !== null) {
+            $extra = $h->scene->spawnPrimitive('box', ['name' => 'GiradorDinamico', 'position' => [-2, 0.5, -3], 'rigidBody' => ['type' => 'kinematic', 'collider' => 'box'], 'script' => ['assetId' => $girador->id, 'props' => ['velocidade' => 180, 'cor' => '#00b4d8']]]);
+            $this->checar('spawn com script', $extra->script !== null && $extra->script->assetId === $girador->id);
+        } else {
+            $this->checar('ativo DebugGirador', false, 'não está na biblioteca');
+        }
+        $dica = 'WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.';
+        if ($this->falhas === 0) {
+            $h->log->info('Debug', 'API percorrida em ' . self::LINGUAGEM . ": {$this->checagens} checagens, nenhuma falha. {$dica}");
+        } else {
+            $h->log->warn('Debug', 'API percorrida em ' . self::LINGUAGEM . ": {$this->checagens} checagens, {$this->falhas} falhas (veja FALHOU/ERRO acima). {$dica}");
+        }
+        $h->gui->bind('checagens', $this->checagens);
+        $h->gui->bind('falhas', $this->falhas);
+    }
+
+    public function onUpdate(float $dt): void
+    {
+        $h = $this->helix;
+        $this->quadros++;
+        if ($this->torus !== null) {
+            $h->transform->rotate($this->torus, [0, 40 * $dt, 0]);
+        }
+        $d = $h->debug;
+        $d->line([-6, 0.05, -6], [6, 0.05, -6], '#ff006e');
+        $d->box(['center' => [0, 1, 3], 'size' => [3, 2, 3]], '#ffbe0b');
+        if ($this->heroi !== null) {
+            $d->axes($this->heroi, 1);
+            $d->text($h->math->vec3->add($h->transform->worldPosition($this->heroi), [0, 2.2, 0]), "Heroi · {$this->pontos} pts", '#ffffff');
+        }
+        $d->ray([0, 3, 0], [0, -1, 0], 3, '#06d6a0');
+        $this->hudTimer += $dt;
+        if ($this->hudTimer >= 0.5) {
+            $this->hudTimer = 0.0;
+            $h->gui->bind('fps', (int) round((float) $h->render->stats->fps));
+            $h->gui->bind('checagens', $this->checagens);
+            $h->gui->bind('falhas', $this->falhas);
+        }
+    }
+
+    public function onFixedUpdate(float $h): void
+    {
+        $this->passosFisica++;
+        if ($this->passosFisica === 1) {
+            $this->checar('onFixedUpdate recebe o passo', $h > 0 && $h < 1, $h);
+        }
+    }
+
+    public function onLateUpdate(): void
+    {
+        $this->lateUpdates++;
+    }
+
+    public function onBeforeHotReload(): array
+    {
+        return ['pontos' => $this->pontos];
+    }
+
+    public function onHotReload(mixed $anterior): void
+    {
+        $this->pontos = $anterior !== null && is_numeric($anterior->pontos ?? null) ? (int) $anterior->pontos : 0;
+        $this->helix->log->info('Debug', "Recarga a quente: {$this->pontos} pontos preservados");
+    }
+
+    public function onStop(): void
+    {
+        foreach ($this->assinaturas as $desligar) {
 `;
 }
