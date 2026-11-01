@@ -17,6 +17,8 @@ export interface RigidBodySettings {
     angularDamping: number;
     gravityScale: number;
     canSleep: boolean;
+    layer?: string;
+    collidesWith?: string[];
 }
 export const DEFAULT_DENSITY = 100;
 export function createRigidBodySettings(overrides: Partial<RigidBodySettings> = {}): RigidBodySettings {
@@ -38,11 +40,14 @@ export function createRigidBodySettings(overrides: Partial<RigidBodySettings> = 
     };
 }
 export function cloneRigidBodySettings(settings: RigidBodySettings): RigidBodySettings {
-    return {
+    const clone: RigidBodySettings = {
         ...settings,
         boxSize: vec3.copy(vec3.create(), settings.boxSize),
         center: vec3.copy(vec3.create(), settings.center),
     };
+    if (settings.collidesWith)
+        clone.collidesWith = settings.collidesWith.slice();
+    return clone;
 }
 export function copyRigidBodySettings(out: RigidBodySettings, source: RigidBodySettings): RigidBodySettings {
     out.type = source.type;
@@ -58,7 +63,22 @@ export function copyRigidBodySettings(out: RigidBodySettings, source: RigidBodyS
     out.angularDamping = source.angularDamping;
     out.gravityScale = source.gravityScale;
     out.canSleep = source.canSleep;
+    if (source.layer === undefined)
+        delete out.layer;
+    else
+        out.layer = source.layer;
+    if (source.collidesWith === undefined)
+        delete out.collidesWith;
+    else
+        out.collidesWith = source.collidesWith.slice();
     return out;
+}
+export function sameCollisionLayers(a: RigidBodySettings, b: RigidBodySettings): boolean {
+    if ((a.layer ?? null) !== (b.layer ?? null))
+        return false;
+    const left = a.collidesWith ?? [];
+    const right = b.collidesWith ?? [];
+    return left.length === right.length && left.every((name, index) => name === right[index]);
 }
 export function sameRigidBodyShape(a: RigidBodySettings, b: RigidBodySettings): boolean {
     return (a.type === b.type &&
