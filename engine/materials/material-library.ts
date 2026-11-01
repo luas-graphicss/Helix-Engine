@@ -1,5 +1,6 @@
 import type { Material } from '@/engine/core/scene/material';
 import { copyMaterial } from '@/engine/core/scene/material';
+import type { ProjectDatabase } from '@/engine/core/storage/project-database';
 import type { TextureImage } from '@/engine/core/scene/texture';
 import { decodeImage, mimeTypeFromFileName } from '@/engine/assets/image-decoder';
 import { clonePipelineSettings, emptyGeneratedMaps, generateMapsFromAlbedo, type PipelineSettings } from './map-generation';
@@ -28,14 +29,16 @@ function errorMessage(cause: unknown): string {
 }
 export class MaterialLibrary {
     private readonly documents = new Map<string, MaterialDocument>();
-    private readonly store = MaterialStore.supported ? new MaterialStore() : null;
+    private readonly store: MaterialStore | null;
     private readonly generations = new Map<string, AbortController>();
     private readonly regenerateTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private readonly saveTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private readonly syncListeners = new Set<MaterialSyncListener>();
     status: MaterialLibraryStatus = 'idle';
     error: string | null = null;
-    constructor(private readonly onChange: () => void) { }
+    constructor(private readonly onChange: () => void, database: ProjectDatabase | null) {
+        this.store = database ? new MaterialStore(database) : null;
+    }
     get all(): MaterialDocument[] {
         return Array.from(this.documents.values()).sort((a, b) => a.createdAt - b.createdAt);
     }
