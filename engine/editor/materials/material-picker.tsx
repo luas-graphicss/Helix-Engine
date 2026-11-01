@@ -1,11 +1,12 @@
 'use client';
 import type { ReactElement, ReactNode } from 'react';
 import { Check, LoaderCircle, Palette, Plus } from 'lucide-react';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
-import { ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuShortcut, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, } from '@/components/ui/context-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
+import { ContextMenuGroup, ContextMenuItem, ContextMenuLabel, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, } from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
-import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS, MENU_SHORTCUT_CLASS } from '@/engine/editor/menus/menu-styles';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
+import { MenuShortcut } from '@/engine/editor/menus/menu-shortcut';
+import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS } from '@/engine/editor/menus/menu-styles';
 import type { MaterialDocument } from '@/engine/materials/material-document';
 import { openMaterialEditor } from './material-editor-requests';
 import { materialCaption, MaterialSwatch } from './material-swatch';
@@ -22,13 +23,13 @@ function MaterialRow({ document, applied }: {
       <MaterialSwatch document={document} className="size-5" resolution={40}/>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className={cn('truncate', applied && 'font-medium')}>{document.name}</span>
-        <span className="truncate font-mono text-[10px] text-muted-foreground">{materialCaption(document)}</span>
+        <span className="truncate font-mono text-3xs text-muted-foreground">{materialCaption(document)}</span>
       </span>
       {applied && <Check className="ml-auto text-primary!" aria-label="Em uso"/>}
     </>);
 }
 function useMaterialPicker() {
-    const session = useEditorState();
+    const session = useSessionTopic('scene');
     const library = session.materials;
     const createAndEdit = () => openMaterialEditor({ materialId: library.create().id });
     return { documents: library.all, loading: library.status === 'loading', createAndEdit, openEditor: () => openMaterialEditor() };
@@ -64,7 +65,7 @@ export function MaterialPickerMenu({ trigger, children, appliedId = null, onPick
           <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={openEditor}>
             <Palette aria-hidden/>
             Abrir editor de materiais
-            <DropdownMenuShortcut className={MENU_SHORTCUT_CLASS}>M</DropdownMenuShortcut>
+            <MenuShortcut action="view.materialEditor"/>
           </DropdownMenuItem>
         </DropdownMenuGroup>
       </DropdownMenuContent>
@@ -103,7 +104,7 @@ export function MaterialPickerSubmenu({ label, icon, appliedId = null, onPick }:
           <ContextMenuItem className={MENU_ITEM_CLASS} onClick={openEditor}>
             <Palette aria-hidden/>
             Abrir editor de materiais
-            <ContextMenuShortcut className={MENU_SHORTCUT_CLASS}>M</ContextMenuShortcut>
+            <MenuShortcut menu="context" action="view.materialEditor"/>
           </ContextMenuItem>
         </ContextMenuGroup>
       </ContextMenuSubContent>
