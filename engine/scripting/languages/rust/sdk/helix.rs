@@ -14,6 +14,10 @@
 #![allow(dead_code)]
 #![allow(clippy::missing_safety_doc)]
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 mod ffi {
     #[link(wasm_import_module = "helix")]
@@ -65,36 +69,138 @@ static FAULT: AtomicU32 = AtomicU32::new(0);
 static READY: AtomicBool = AtomicBool::new(false);
 
 #[inline]
+fn ready() {
+    if !READY.load(Ordering::Relaxed) {
+        READY.store(true, Ordering::Relaxed);
+        unsafe { ffi::fault_cell(FAULT.as_ptr()) }
+    }
+}
 
                                                                                                                                      
 #[inline]
 #[track_caller]
+fn check<T>(value: T) -> T {
+    if FAULT.load(Ordering::Relaxed) != 0 {
+        fail()
+    }
+    value
+}
 
 #[cold]
 #[track_caller]
+fn fail() -> ! {
+    let mut buffer = [0u8; 2048];
+    let length = unsafe { ffi::fault_take(buffer.as_mut_ptr(), buffer.len()) };
+    let message = String::from_utf8_lossy(&buffer[..length.min(buffer.len())]).into_owned();
+    panic!("{message}")
+}
 
                                                                                             
 
                                                           
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Kind {
+    Undefined,
+    Null,
+    Boolean,
+    Number,
+    String,
+    Array,
+    Object,
+    Function,
+}
 
+impl Kind {
+    fn from_code(code: i32) -> Kind {
+        match code {
+            1 => Kind::Null,
+            2 => Kind::Boolean,
+            3 => Kind::Number,
+            4 => Kind::String,
+            5 => Kind::Array,
+            6 => Kind::Object,
+            7 => Kind::Function,
+            _ => Kind::Undefined,
+        }
+    }
+}
 
                                                 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
+pub enum Level {
+    Debug = 0,
+    Info = 1,
+    Warn = 2,
+    Error = 3,
+}
 
                                                                                                                 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Vec3 {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
 
+impl Vec3 {
+    pub const ZERO: Vec3 = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
 
+    pub const fn new(x: f64, y: f64, z: f64) -> Vec3 {
+        Vec3 { x, y, z }
+    }
 
+    pub fn length(self) -> f64 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
 
+    pub fn normalized(self) -> Vec3 {
+        let len = self.length();
+        if len == 0.0 { self } else { self * (1.0 / len) }
+    }
 
+    pub fn dot(self, other: Vec3) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    pub fn cross(self, o: Vec3) -> Vec3 {
+        Vec3::new(self.y * o.z - self.z * o.y, self.z * o.x - self.x * o.z, self.x * o.y - self.y * o.x)
+    }
+}
+
+impl std::ops::Add for Vec3 {
+    type Output = Vec3;
+    fn add(self, o: Vec3) -> Vec3 {
+        Vec3::new(self.x + o.x, self.y + o.y, self.z + o.z)
+    }
+}
+
+impl std::ops::Sub for Vec3 {
+    type Output = Vec3;
+    fn sub(self, o: Vec3) -> Vec3 {
+        Vec3::new(self.x - o.x, self.y - o.y, self.z - o.z)
+    }
+}
+
+impl std::ops::Mul<f64> for Vec3 {
+    type Output = Vec3;
+    fn mul(self, k: f64) -> Vec3 {
+        Vec3::new(self.x * k, self.y * k, self.z * k)
+    }
+}
+
+impl std::ops::Neg for Vec3 {
+    type Output = Vec3;
+    fn neg(self) -> Vec3 {
+        Vec3::new(-self.x, -self.y, -self.z)
+    }
+}
 
                                                                                             
 
                                                                                             
 #[repr(transparent)]
+pub struct Value(u32);
 
 
 
@@ -278,3 +384,17 @@ macro_rules! exports {
 macro_rules! __export_one {
     ($name:ident ( $( $arg:ident : $ty:ty ),* ) $body:block) => {
         $crate::__export_one! { $name ( $( $arg : $ty ),* ) -> () $body }
+    };
+    ($name:ident ( $( $arg:ident : $ty:ty ),* ) -> $ret:ty $body:block) => {
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $name( $( $arg : <$ty as $crate::Abi>::Raw ),* ) -> <$ret as $crate::Abi>::Raw {
+            $( let $arg: $ty = <$ty as $crate::Abi>::from_raw($arg); )*
+            let result: $ret = (move || $body)();
+            <$ret as $crate::Abi>::into_raw(result)
+        }
+    };
+}
+
+                                                                    
+pub mod prelude {
+}
