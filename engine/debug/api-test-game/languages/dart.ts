@@ -841,5 +841,212 @@ class DebugJogo extends Script {
       return;
     }
     falhas++;
+    erro('ERRO em ' + a.nome + ': ' + mensagem);
+  }
+
+                                                                                                  
+  Value encadear(Value promessa, Area a) {
+    final depois = promessa.invoke('then', [() => a.rodar()]);
+    return depois.invoke('then', [() => areaOk(a), (Value causa) => areaErro(a, causa)]);
+  }
+
+  void finalizar() {
+    final girador = api('assets').invoke('byName', ['DebugGirador', 'script']);
+    if (!girador.isNullish) {
+      final extra = api('scene').invoke('spawnPrimitive', [
+        'box',
+        {
+          'name': 'GiradorDinamico',
+          'position': v3(-2, 0.5, -3),
+          'rigidBody': {'type': 'kinematic', 'collider': 'box'},
+          'script': {'assetId': girador['id'], 'props': {'velocidade': 180, 'cor': '#00b4d8'}},
+        },
+      ]);
+      checar('spawn com script', !extra['script'].isNullish && extra.path('script.assetId') == girador['id']);
+    } else {
+      checar('ativo DebugGirador', false, 'não está na biblioteca');
+    }
+    const dica = 'WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia.';
+    if (falhas == 0) {
+      info('API percorrida em ' + linguagem + ': ' + checagens.toString() + ' checagens, nenhuma falha. ' + dica);
+    } else {
+      aviso('API percorrida em ' + linguagem + ': ' + checagens.toString() + ' checagens, ' + falhas.toString() + ' falhas (veja FALHOU/ERRO acima). ' + dica);
+    }
+    api('gui').invoke('bind', ['checagens', checagens]);
+    api('gui').invoke('bind', ['falhas', falhas]);
+  }
+
+                                                                                            
+
+  @override
+  void onLoad() {
+    info('onLoad do script de entrada');
+  }
+
+  @override
+  void onStart() {
+    info('Jogo de teste em ' + linguagem + ': percorrendo a API…');
+    var promessa = api('time').invoke('wait', [0]);
+    for (final a in areas) {
+      promessa = encadear(promessa, a);
+    }
+    promessa.invoke('then', [() => finalizar()]);
+  }
+
+  @override
+  void onUpdate(double dt) {
+    quadros++;
+    final anel = torus;
+    if (anel != null) api('transform').invoke('rotate', [anel, v3(0, 40 * dt, 0)]);
+    final d = api('debug');
+    d.invoke('line', [v3(-6, 0.05, -6), v3(6, 0.05, -6), '#ff006e']);
+    d.invoke('box', [{'center': v3(0, 1, 3), 'size': v3(3, 2, 3)}, '#ffbe0b']);
+    final h = heroi;
+    if (h != null) {
+      d.invoke('axes', [h, 1]);
+      final acima = api('math.vec3').invoke('add', [api('transform').invoke('worldPosition', [h]), v3(0, 2.2, 0)]);
+      d.invoke('text', [acima, 'Heroi · ' + pontos.toString() + ' pts', '#ffffff']);
+    }
+    d.invoke('ray', [v3(0, 3, 0), v3(0, -1, 0), 3, '#06d6a0']);
+    hudTimer += dt;
+    if (hudTimer >= 0.5) {
+      hudTimer = 0;
+      final g = api('gui');
+      g.invoke('bind', ['fps', numero(api('render')['stats'], 'fps').round()]);
+      g.invoke('bind', ['checagens', checagens]);
+      g.invoke('bind', ['falhas', falhas]);
+    }
+  }
+
+  @override
+  void onFixedUpdate(double h) {
+    passosFisica++;
+    if (passosFisica == 1) checar('onFixedUpdate recebe o passo', h > 0 && h < 1, h);
+  }
+
+  @override
+  void onLateUpdate(double dt) {
+    lateUpdates++;
+  }
+
+                                                                                  
+  @override
+  Object? onBeforeHotReload() => {'pontos': pontos};
+
+  @override
+  void onHotReload(Value previousState) {
+    pontos = previousState.isObject ? previousState['pontos'].integer : 0;
+    info('Recarga a quente: ' + pontos.toString() + ' pontos preservados');
+  }
+
+  @override
+  void onStop() {
+    for (final desligar in assinaturas) {
+      desligar.call();
+    }
+    assinaturas.clear();
+    info('Parou: ' + quadros.toString() + ' quadros, ' + passosFisica.toString() + ' passos de física, ' + lateUpdates.toString() + ' lateUpdates, ' + renders.toString() + ' frames (onAfterFrame), ' + colisoes.toString() + ' colisões.');
+    torus = null;
+    heroi = null;
+    efeito = null;
+    tela = null;
+  }
+}
 `;
+    const actor = String.raw `                                 
+                                                                                              
+                                                                                                     
+import 'dart:math' as math;
+
+import 'package:helix/helix.dart';
+
+class DebugGirador extends Script {
+                                                                                 
+  var angulo = 0.0;
+  var contatos = 0;
+  var quadros = 0;
+  Value? desligar;
+
+  void registrar(String metodo, String mensagem) {
+    helix['log'].invoke(metodo, ['Girador', mensagem]);
+  }
+
+  String nomeDe(Value entidade) => entidade['name'].string;
+
+  @override
+  void onLoad() {
+    helix['props'].invoke('define', [
+      {
+        'velocidade': {'type': 'range', 'default': 90, 'min': 0, 'max': 360, 'step': 1, 'label': 'Velocidade (°/s)'},
+        'cor': {'type': 'color', 'default': '#ff8800', 'label': 'Cor'},
+        'pulsar': {'type': 'boolean', 'default': true, 'label': 'Pulsar'},
+      },
+    ]);
+  }
+
+  @override
+  void onStart() {
+    final props = helix['props'], lg = helix['log'];
+    registrar('info', nomeDe(self) + ' acordou com velocidade ' + props.invoke('get', ['velocidade']).string + '°/s');
+    helix['material'].invoke('setColor', [self, props.invoke('get', ['cor'])]);
+    desligar = props.invoke('onChanged', ['cor', (Value cor) => helix['material'].invoke('setColor', [self, cor])]);
+    final proprio = helix['self'];
+    lg.invoke('assert', [!proprio.isNullish && proprio == self, 'helix.self deveria ser o ator deste script']);
+    lg.invoke('assert', [props.invoke('has', ['velocidade']).boolean && props.invoke('definitions').length == 3, 'props.define deveria registrar 3 propriedades']);
+  }
+
+  @override
+  void onUpdate(double dt) {
+    final props = helix['props'], tr = helix['transform'];
+    quadros++;
+    angulo += props.invoke('get', ['velocidade']).number * dt;
+    tr.invoke('setRotation', [self, Vec3(0, angulo, 0)]);
+    if (props.invoke('get', ['pulsar']).boolean) tr.invoke('setScale', [self, 1 + math.sin(helix.path('time.now').number * 3) * 0.1]);
+  }
+
+  @override
+  void onCollisionBegin(Value other, Value contact) {
+    contatos++;
+    if (contatos > 3) return;
+    registrar('info', nomeDe(self) + ' tocou ' + nomeDe(other) + ' (impulso ' + contact['impulse'].number.toStringAsFixed(2) + ')');
+  }
+
+  @override
+  void onTriggerEnter(Value other) {
+    registrar('info', nomeDe(other) + ' entrou no gatilho de ' + nomeDe(self));
+  }
+
+  @override
+  void onEnable() {
+    registrar('debug', nomeDe(self) + ' ativo');
+  }
+
+  @override
+  void onDisable() {
+    registrar('debug', nomeDe(self) + ' inativo');
+  }
+
+  @override
+  void onStop() {
+    registrar('info', nomeDe(self) + ': ' + quadros.toString() + ' quadros, ' + contatos.toString() + ' contatos');
+  }
+
+  @override
+  void onDestroy() {
+    desligar?.call();
+    desligar = null;
+  }
+}
+`;
+    const module = String.raw `                                     
+                                                                                                          
+                                                                                                      
+
+double soma(double a, double b) => a + b;
+
+String saudacao(String quem) => 'Olá, ' + quem;
+
+double limitar(double valor, double minimo, double maximo) => valor.clamp(minimo, maximo).toDouble();
+`;
+    return { entry, actor, module };
 }
