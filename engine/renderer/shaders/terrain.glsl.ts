@@ -6,7 +6,7 @@ import { MAX_TERRAIN_CACHE_LEVELS } from '@/engine/renderer/terrain/terrain-cach
 export const TERRAIN_VERTEX_SHADER = `#version 300 es
 precision highp float;
 precision highp int;
-
+                                                                                                        
 invariant gl_Position;
 
 ${TERRAIN_VERTEX_CHUNK}
@@ -49,24 +49,24 @@ in vec2 v_uv;
 ${TERRAIN_MATERIAL_CHUNK}
 ${OCTAHEDRAL_CHUNK}
 
-
+                                                                                                                     
 uniform sampler2DArray u_cacheAlbedo;
 uniform sampler2DArray u_cacheNormal;
-
+                                                                                                           
 uniform highp isampler2DArray u_cachePages;
-
+                                                                                                                                               
 uniform vec4 u_cache;
-
+                                                
 uniform vec2 u_cacheCenter;
-
+                                                                                                                      
 uniform vec4 u_cacheLevels[${MAX_TERRAIN_CACHE_LEVELS}];
-
+                                                                                           
 uniform float u_cacheEnabled;
-
+                                                                                                    
 uniform vec2 u_distanceBlend;
 uniform float u_halfSize;
 uniform mat3 u_normalMatrix;
-
+                                                                                 
 uniform vec4 u_brush;
 uniform vec3 u_brushColor;
 uniform float u_brushEnabled;
@@ -75,8 +75,10 @@ uniform float u_receiveShadows;
 
 ${SCENE_LIGHTING_CHUNK}
 
-
+                                                                                           
 const float RING_BLEND_START = 0.7;
+                                                                                                        
+const int CACHE_MAX_ANISOTROPY = 4;
 
 struct CacheSample {
   vec3 albedo;
@@ -86,7 +88,7 @@ struct CacheSample {
   bool valid;
 };
 
-
+                                                                                                          
 CacheSample sampleCacheLevel(int level, vec2 p) {
   vec4 info = u_cacheLevels[level];
   ivec2 tile = ivec2(floor(p / info.z));
@@ -116,13 +118,13 @@ vec3 applyBrush(vec3 color, vec2 xz, float ringWidth) {
   float inner = (1.0 - smoothstep(0.0, ringWidth * 0.7, abs(d - u_brush.w))) * 0.55;
   float fill = (1.0 - smoothstep(u_brush.w, u_brush.z, d)) * 0.14;
   float coverage = max(outer, max(inner, fill)) * step(d, u_brush.z + ringWidth);
-  return mix(color, u_brushColor, coverage * u_brushEnabled);
+  return mix(color, displayColorToSceneHdr(u_brushColor), coverage * u_brushEnabled);
 }
 
 out vec4 fragColor;
 
 void main() {
-
+                                                                                 
   vec3 positionDx = dFdx(v_worldPosition);
   vec3 positionDy = dFdy(v_worldPosition);
   vec3 localDx = dFdx(v_localPosition);
@@ -134,41 +136,71 @@ void main() {
 
   vec3 Ng = normalize(v_localNormal);
 
-
-
+                                                                                               
+                                                                                                     
   vec2 offset = v_localPosition.xz - u_cacheCenter;
   float radius = max(abs(offset.x), abs(offset.y)) / u_cache.y;
   float ringLog = floor(log2(max(radius, 1e-5)));
   float within = radius / exp2(ringLog + 1.0);
   float lodDistance = ringLog + 1.0 + smoothstep(RING_BLEND_START, 1.0, within);
-  float footprint = max(length(localDx.xz), length(localDy.xz)) * u_cache.z;
-  float lodFootprint = log2(max(footprint, 1e-5));
+                                                                                                 
+                                                                                              
+                                                                                                
+                                                                                            
+  vec2 footprintX = localDx.xz * u_cache.z;
+  vec2 footprintY = localDy.xz * u_cache.z;
+  float lengthX = length(footprintX);
+  float lengthY = length(footprintY);
+  float major = max(lengthX, lengthY);
+  float minor = max(min(lengthX, lengthY), 1e-5);
+  float anisotropy = clamp(major / minor, 1.0, float(CACHE_MAX_ANISOTROPY));
+  float lodFootprint = log2(max(major / anisotropy, 1e-5));
   float lod = clamp(max(lodDistance, lodFootprint), 0.0, u_cache.x);
   int level = int(floor(lod));
   int nextLevel = min(level + 1, int(u_cache.x));
   float levelMix = fract(lod);
+                                                                                                         
+  int taps = clamp(int(ceil(major / exp2(lod))), 1, CACHE_MAX_ANISOTROPY);
+  vec2 majorAxis = lengthX >= lengthY ? localDx.xz : localDy.xz;
 
   vec3 albedo = vec3(0.0);
-  vec3 normal = Ng;
-  float roughness = 1.0;
-  float occlusion = 1.0;
+  vec3 normal = vec3(0.0);
+  float roughness = 0.0;
+  float occlusion = 0.0;
   bool cached = false;
   if (u_cacheEnabled > 0.5) {
-    CacheSample fine = sampleCacheLevel(level, v_localPosition.xz);
-    CacheSample coarse = sampleCacheLevel(nextLevel, v_localPosition.xz);
-
-    float t = fine.valid ? (coarse.valid ? levelMix : 0.0) : 1.0;
-    cached = fine.valid || coarse.valid;
-    albedo = mix(fine.albedo, coarse.albedo, t);
-    normal = normalize(mix(fine.normal, coarse.normal, t));
-    roughness = mix(fine.roughness, coarse.roughness, t);
-    occlusion = mix(fine.occlusion, coarse.occlusion, t);
+    vec2 tapStep = majorAxis / float(taps);
+    vec2 p = v_localPosition.xz - tapStep * (0.5 * float(taps - 1));
+    float weight = 0.0;
+    for (int i = 0; i < CACHE_MAX_ANISOTROPY; i++) {
+      if (i >= taps) break;
+                                                                                                 
+                                                                                             
+      CacheSample fine = sampleCacheLevel(level, p);
+      if (fine.valid) {
+        CacheSample coarse = sampleCacheLevel(nextLevel, p);
+        float t = coarse.valid ? levelMix : 0.0;
+        albedo += mix(fine.albedo, coarse.albedo, t);
+        normal += mix(fine.normal, coarse.normal, t);
+        roughness += mix(fine.roughness, coarse.roughness, t);
+        occlusion += mix(fine.occlusion, coarse.occlusion, t);
+        weight += 1.0;
+      }
+      p += tapStep;
+    }
+    cached = weight > 0.0;
+    if (cached) {
+      albedo /= weight;
+      normal = normalize(normal);
+      roughness /= weight;
+      occlusion /= weight;
+    }
   }
 
   if (!cached) {
-
-
-
+                                                                                           
+                                                                                         
+                                          
     float cachedFar = mix(u_cacheLevels[level].w, u_cacheLevels[nextLevel].w, levelMix);
     float far = u_cacheEnabled > 0.5 ? cachedFar : smoothstep(u_distanceBlend.x, u_distanceBlend.y, distance(v_worldPosition, u_cameraPosition));
     Footprint f = terrainFootprint(v_localPosition, localDx, localDy, Ng, far);
@@ -184,11 +216,12 @@ void main() {
 
   Surface s = makeSurface(N, v_worldPosition, albedo, roughness, 0.0);
   vec3 hdr = shadeSurface(s, v_worldPosition, positionDx, positionDy, occlusion, vec3(0.0), u_receiveShadows);
-  vec3 color = finishSurfaceColor(hdr, s, 0.0);
+  vec3 color = exposeSurfaceColor(hdr, s, 0.0);
 
+                                                                                                                  
   color = applyBrush(color, v_localPosition.xz, brushRingWidth);
   float outline = (1.0 - smoothstep(0.0, edgeWidth, edgeDistance)) * u_outline;
-  color = mix(color, SELECTION_TINT, outline * 0.9);
-  fragColor = vec4(color, 1.0);
+  color = mix(color, SELECTION_TINT_HDR, outline * 0.9);
+  fragColor = sceneColorOutput(color, 1.0);
 }
 `;
