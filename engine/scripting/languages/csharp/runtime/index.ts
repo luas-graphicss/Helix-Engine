@@ -906,3 +906,221 @@ export function defaultOf(type: unknown): unknown {
 }
 export interface HelixRoot extends Record<string, unknown> {
 }
+export function createModule(helix: HelixRoot, require: (specifier: string) => unknown, console: ConsoleLike, module: ModuleRecord) {
+    const siblingCache = new Map<string, unknown>();
+    function sibling(scriptName: string, typeName: string): () => unknown {
+        const key = `${scriptName}\u0000${typeName}`;
+        return () => {
+            const cached = siblingCache.get(key);
+            if (cached !== undefined)
+                return cached;
+            let exported: unknown;
+            try {
+                exported = require(scriptName);
+            }
+            catch (cause) {
+                if (cause instanceof Exception)
+                    throw cause;
+                throw new InvalidOperationException(`Não foi possível carregar o script "${scriptName}": ${cause instanceof Error ? cause.message : String(cause)}`);
+            }
+            const type = exported !== null && typeof exported === 'object' ? (exported as AnyRecord)[typeName] : undefined;
+            if (type === undefined) {
+                throw new InvalidOperationException(`O script "${scriptName}" não exporta o tipo "${typeName}": ele ainda está carregando (dependência circular entre os scripts? mova o uso para dentro de um método) ou o tipo foi renomeado.`);
+            }
+            siblingCache.set(key, type);
+            return type;
+        };
+    }
+    function defineClass(ctor: Function, info: ClassInfo): Function {
+        Object.defineProperty(ctor.prototype, TYPE_NAME, { value: info.name, configurable: true });
+        Object.defineProperty(ctor, TYPE_NAME, { value: info.name, configurable: true });
+        Object.defineProperty(ctor, '$helix', { value: helix, configurable: true });
+        if (info.record && info.record.length > 0)
+            installRecord(ctor, info.record, info.name);
+        else if (!('ToString' in ctor.prototype)) {
+            Object.defineProperty(ctor.prototype, 'ToString', {
+                value: function ToString() {
+                    return info.name;
+                },
+                configurable: true,
+                writable: true,
+            });
+        }
+        Object.defineProperty(module.exports, info.name, { value: ctor, enumerable: true, configurable: true });
+        if (info.isMain) {
+            const factory = (inject: InjectedFields) => {
+                const instance = new (ctor as new (inject: InjectedFields) => ActorScript)(inject);
+                instance.$ctor();
+                return instance.$hooks();
+            };
+            Object.defineProperties(module.exports, {
+                __esModule: { value: true, configurable: true },
+                default: { value: factory, enumerable: true, configurable: true },
+            });
+        }
+        return ctor;
+    }
+    function defineEnumType(name: string, members: Record<string, number>, flags = false): Record<string, unknown> {
+        const enumObject = defineEnum(name, members, flags);
+        Object.defineProperty(module.exports, name, { value: enumObject, enumerable: true, configurable: true });
+        return enumObject;
+    }
+    function detach(value: unknown): unknown {
+        if (value instanceof Promise) {
+            value.catch((cause: unknown) => {
+                const task = helix.task as {
+                    spawn?: (fn: () => unknown) => unknown;
+                } | undefined;
+                if (typeof task?.spawn === 'function') {
+                    task.spawn(() => {
+                        throw cause;
+                    });
+                    return;
+                }
+                console.error(cause instanceof Error ? cause.message : String(cause));
+            });
+        }
+        return value;
+    }
+    const exceptions: Record<string, unknown> = { ...EXCEPTION_TYPES };
+    return {
+        helix,
+        ActorScript,
+        List,
+        Dictionary,
+        HashSet,
+        Queue,
+        Stack,
+        KeyValuePair,
+        Tuple,
+        Grouping,
+        OrderedList,
+        StringBuilder,
+        Random,
+        DateTime,
+        TimeSpan,
+        TypeDescriptor,
+        ...exceptions,
+        Math: MATH,
+        MathF: MATHF,
+        Console: createConsoleStatics(console),
+        Debug: createDebugStatics(console),
+        Int: INT,
+        Long: LONG,
+        Short: SHORT,
+        Byte: BYTE,
+        SByte: SBYTE,
+        UInt: UINT,
+        ULong: ULONG,
+        UShort: USHORT,
+        Float: FLOAT,
+        Double: DOUBLE,
+        Decimal: DECIMAL,
+        Bool: BOOL,
+        Char: CHAR,
+        String: STRING_STATICS,
+        Convert: CONVERT,
+        Enum: ENUM_STATICS,
+        Array: ARRAY,
+        Enumerable: ENUMERABLE,
+        Environment: ENVIRONMENT,
+        Guid: GUID,
+        Task: createTaskStatics(helix),
+        Vector3: VECTOR3,
+        Vector2: VECTOR2,
+        Color: COLOR,
+        StringComparison: STRING_COMPARISON,
+        StringSplitOptions: STRING_SPLIT_OPTIONS,
+        MidpointRounding: MIDPOINT_ROUNDING,
+        defineClass,
+        enum: defineEnumType,
+        sibling,
+        construct,
+        newArray,
+        tuple: (items: unknown[], names: (string | null)[] | null = null) => new Tuple(items, names),
+        kvp: (key: unknown, value: unknown) => new KeyValuePair(key, value),
+        ref: <T>(get: () => T, set: (value: T) => void): Ref<T> => ({
+            get v() {
+                return get();
+            },
+            set v(value: T) {
+                set(value);
+            },
+        }),
+        box: <T>(value: T): Ref<T> => ({ v: value }),
+        get: getMember,
+        set: setMember,
+        call: callMember,
+        bound: boundMethod,
+        invoke,
+        at: elementAt,
+        setAt: setElementAt,
+        slice,
+        fromEnd,
+        deconstruct,
+        len: lengthOf,
+        iter: (value: unknown) => iterate(value),
+        add,
+        sub,
+        mul,
+        div,
+        idiv,
+        rem,
+        irem,
+        neg,
+        eq,
+        neq,
+        lt,
+        le,
+        gt,
+        ge,
+        concat,
+        truthy,
+        str,
+        fmt: format,
+        toInt,
+        toFloat,
+        toChar,
+        charCode,
+        cast: castTo,
+        as: (value: unknown, type: unknown) => (isOfType(value, type) ? value : null),
+        is: isOfType,
+        typeOf: descriptorOf,
+        typeOfValue,
+        enumStr: enumToString,
+        defaultOf,
+        combine,
+        remove,
+        detach,
+        dispose,
+        wrap: wrapThrown,
+        noMatch: (value: unknown): never => {
+            throw new SwitchExpressionException(value);
+        },
+        throwValue: (value: unknown): never => {
+            if (value instanceof Error)
+                throw value;
+            throw new InvalidOperationException(`throw de um valor que não é exceção: ${describeType(value)}.`);
+        },
+    };
+}
+export type RuntimeModule = ReturnType<typeof createModule>;
+export function createBuiltinModule() {
+    return {
+        module: createModule,
+        ActorScript,
+        List,
+        Dictionary,
+        HashSet,
+        Queue,
+        Stack,
+        KeyValuePair,
+        Tuple,
+        Exception,
+        EXCEPTION_TYPES,
+        TypeDescriptor,
+        str,
+        equals,
+        isOfType,
+    };
+}
