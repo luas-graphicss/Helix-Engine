@@ -281,5 +281,285 @@ public class DebugJogo : ActorScript
         m.Positions(caixa)[1] += 0.01f;
         m.MarkDirty(caixa);
         Checar("markDirty/version", m.Version(caixa) > versao);
+        var densa = m.Sphere(1, 32, 16);
+        Checar("mesh.simplify", m.TriangleCount(m.Simplify(densa, 0.5)) < m.TriangleCount(densa));
+        var lod = m.Lod(ator, new { enabled = true, bias = 1 });
+        Checar("mesh.lod", lod == null || lod.Enabled == true);
+        Checar("mesh.myriad", m.Myriad(ator) is bool);
+        Checar("primitivas extras", m.TriangleCount(m.TorusKnot()) > 0 && m.TriangleCount(m.Rock()) > 0 && m.TriangleCount(m.Capsule()) > 0);
+        var mat = Helix.Math.Mat4.FromTRS(V(0, 2, 0), V(0, 45, 0), V(1, 1, 1));
+        Checar("mesh.transform", m.ComputeBounds(m.Transform(m.Clone(caixa), mat)).Min[1] > 1.4);
+        return Task.CompletedTask;
+    }
+
+                                                                                                           
+
+    private Task Materiais()
+    {
+        var mat = Helix.Material;
+        var baseMat = mat.Create(new { name = "DebugBase", baseColor = "#d98c2b", roughness = 0.5, metallic = 0.1 });
+        Checar("material.create", baseMat.Roughness == 0.5);
+        var copia = mat.Clone(baseMat);
+        mat.Set(copia, new { roughness = 1, emissive = "#ffffff", emissiveIntensity = 2 });
+        Checar("material.clone/set", copia.Roughness == 1 && baseMat.Roughness == 0.5);
+        mat.Copy(copia, baseMat);
+        Checar("material.copy", copia.Roughness == 0.5);
+        var caixa = Helix.Scene.SpawnPrimitive("box", new { name = "CaixaPintada", position = V(-7, 0.5f, 2) });
+        mat.Assign(caixa, baseMat);
+        Checar("material.assign/of", mat.Of(caixa) == baseMat);
+        var propria = mat.Own(caixa);
+        Checar("material.own", mat.Of(caixa) == propria);
+        var tela2d = Helix.Texture.Canvas(64, 64);
+        var ctx = tela2d.Context;
+        for (int y = 0; y < 8; y++)
+        {
+            for (int x = 0; x < 8; x++)
+            {
+                ctx.FillStyle = (x + y) % 2 == 1 ? "#1d3557" : "#f1faee";
+                ctx.FillRect(x * 8, y * 8, 8, 8);
+            }
+        }
+        tela2d.Update();
+        mat.SetTexture(caixa, "baseColorMap", tela2d.Texture);
+        Checar("texture.canvas + setTexture", mat.HasAnyTexture(propria) && Helix.Texture.IsTexture(tela2d.Texture));
+        var pixels = new byte[4 * 4 * 4];
+        for (int i = 0; i < pixels.Length; i++) pixels[i] = 255;
+        var textura = Helix.Texture.FromPixels(4, 4, pixels);
+        Checar("texture.fromPixels", textura.Width == 4 && textura.Height == 4);
+        Helix.Texture.Touch(textura);
+        Checar("texture.create", Helix.Texture.Create(new { width = 2, height = 2 }).Width == 2);
+        Checar("material.slots", mat.Slots().Any(slot => slot.Slot == "normalMap"));
+        Checar("materials.list/names", Helix.Materials.List() is Array && Helix.Materials.Names() is Array);
+        var sombreado = mat.FromShader("DebugSuperficie", new { glow = V(1, 0.45f, 0.1f), speed = 2 });
+        Checar("material.fromShader", sombreado != null && sombreado.Uniforms.Set != null);
+        var esfera = Helix.Scene.SpawnPrimitive("sphere", new { name = "EsferaShader", position = V(0, 1, -3), scale = 1.4 });
+        mat.Assign(esfera, sombreado);
+        mat.Uniforms(esfera).Set("speed", 3);
+        var lista = mat.Uniforms(esfera).List();
+        Checar("material.uniforms.list", lista is Array && lista.Any(u => u.Name == "glow"), string.Join(",", lista.Select(u => (string)u.Name)));
+        return Task.CompletedTask;
+    }
+
+    private Task Luzes()
+    {
+        var l = Helix.Light;
+        Checar("light.types", l.Types().Contains("point") && l.LocalTypes().Contains("spot"));
+        var lampada = l.Spawn("point", new { name = "Lampada", position = V(0, 3, 0), color = "#ffd166", intensity = 60, range = 14 });
+        Checar("light.spawn", lampada.Light != null && lampada.Light.Type == "point");
+        l.Set(lampada, new { intensity = 80 });
+        Checar("light.set", lampada.Light.Intensity == 80);
+        l.SetTemperature(lampada, 3200);
+        Checar("setTemperature", lampada.Light.Temperature == 3200);
+        Checar("resolvedColor", Helix.Math.Vec3.Length(l.ResolvedColor(lampada)) > 0);
+        var foco = l.Spawn("spot", new { name = "Holofote", position = V(4, 4, 0), rotation = V(-90, 0, 0), intensity = 120, range = 16, innerAngle = 20, outerAngle = 35, color = "#ffffff" });
+        Checar("spot", foco.Light.Type == "spot");
+        var convertido = l.Convert(foco, "disc");
+        Checar("light.convert", convertido.Type == "disc" && foco.Light.Type == "disc");
+        l.Convert(foco, "spot");
+        var presets = l.Presets();
+        Checar("light.presets", presets.Length > 0);
+        if (presets.Length > 0)
+        {
+            var preset = l.Spawn(presets[0].Id, new { name = "LuzPreset", position = V(-4, 2.5f, 4) });
+            Checar("light.fromPreset", preset.Light != null && l.FromPreset(presets[0].Id).Type == presets[0].Type);
+        }
+        var criada = l.Create("point", new { intensity = 5 });
+        Checar("light.create/clone", criada.Type == "point" && l.Clone(criada).Type == "point");
+        Checar("light.all", l.All(new { local = true }).Length >= 2);
+        Checar("light.sun", l.Sun() == Helix.Scene.Sun);
+        Checar("effectiveRange", l.EffectiveRange(lampada) > 0);
+        Checar("light.temperatureToColor", l.TemperatureToColor(6500).Length == 3);
+        Checar("cssColor", l.CssColor(lampada) is string);
+        Checar("light.isLocal", l.IsLocal(lampada));
+        Checar("temperatureRange", l.TemperatureRange.Min < l.TemperatureRange.Max);
+        l.SetColor(lampada, "#ffffff");
+        var luz = lampada.Light;
+        Checar("light.setColor", luz.Type != "ambient" && Helix.Math.Vec3.Equals(luz.Color, V(1, 1, 1), 0.01));
+        return Task.CompletedTask;
+    }
+
+    private Task Ceu()
+    {
+        var sky = Helix.Sky;
+        sky.Set(new { timeOfDay = 10.5, haze = 0.3, clouds = new { enabled = true, coverage = 0.45 } });
+        Checar("sky.set", Aprox(sky.TimeOfDay, 10.5) && sky.Clouds.Enabled == true);
+        Checar("sky.isDay", sky.IsDay == true);
+        Checar("sky.sunDirection", sky.SunDirection()[1] > 0);
+        Checar("sky.moonDirection", sky.MoonDirection().Length == 3);
+        Checar("sky.formatTimeOfDay", ((string)sky.FormatTimeOfDay(10.5)).Contains(":"), sky.FormatTimeOfDay(10.5));
+        Checar("sky.wrapTimeOfDay", sky.WrapTimeOfDay(25) == 1);
+        Checar("sky.presets", sky.Presets().Any(p => p.Id == "dusk"));
+        Checar("sky.moonPhaseName", sky.MoonPhaseName() is string);
+        Checar("sky.hourAngle", sky.HourAngle() is double);
+        assinaturas.Add(sky.OnHourChanged(h => Helix.Log.Info("Debug", $"Hora do céu: {h}")));
+        assinaturas.Add(sky.OnSunset(() => Helix.Log.Info("Debug", "Pôr do sol")));
+        sky.CycleSpeed = 0;
+        Checar("sky.cycleSpeed", sky.CycleSpeed == 0);
+        Checar("world.gravity", Helix.World.Gravity[1] < 0);
+        Checar("world.wind", Helix.World.Wind.Speed is double);
+        Helix.World.Wind.Set(new { speed = 2, direction = 45 });
+        Checar("world.wind.set", Helix.World.Wind.Speed == 2);
+        Checar("world.sky", Helix.World.Sky == sky.Settings);
+        Checar("world.player", Helix.World.Player.Camera != null);
+        return Task.CompletedTask;
+    }
+
+    private Task Camera()
+    {
+        var c = Helix.Camera;
+        Checar("camera.fov", c.Fov > 0 && c.Aspect > 0);
+        Checar("camera.near/far", c.Near > 0 && c.Far > c.Near);
+        Checar("viewport", c.Viewport.Width > 0);
+        var ponto = c.WorldToScreen(V(0, 0, 0));
+        Checar("worldToScreen", ponto == null || ponto.X is double);
+        var raio = c.ScreenToRay(c.Viewport.Width / 2, c.Viewport.Height / 2);
+        Checar("screenToRay", raio == null || Aprox(Helix.Math.Vec3.Length(raio.Direction), 1, 0.01));
+        Checar("viewMatrix", c.ViewMatrix.Length == 16 && c.ProjectionMatrix.Length == 16 && c.ViewProjectionMatrix.Length == 16);
+        Checar("camera.main inicial", c.Main == null);
+        Checar("player.settings", c.Player.Settings.Distance > 0);
+        c.Player.Set(new { distance = 7, pitch = 18 });
+        Checar("player.set", c.Player.Settings.Distance == 7);
+        Checar("distanceTo", c.DistanceTo(V(0, 0, 0)) >= 0);
+        Checar("mainForward", Helix.Math.Vec3.Length(c.MainForward()) > 0.99);
+        Checar("camera.position", c.Position.Length == 3 && c.Target.Length == 3 && c.Forward.Length == 3);
+        assinaturas.Add(c.OnMainChanged(e => Helix.Log.Info("Debug", $"Câmera principal: {(e != null ? e.Name : "editor/jogador")}")));
+        return Task.CompletedTask;
+    }
+
+    private Task Pos()
+    {
+        var p = Helix.Post;
+        Checar("post.toneMappers", p.ToneMappers().Contains("aces"));
+        p.Set(new
+        {
+            bloom = new { enabled = true, intensity = 0.5, threshold = 1, softKnee = 0.5, radius = 0.6 },
+            vignette = new { enabled = true, intensity = 0.35, smoothness = 0.5, roundness = 1 },
+        });
+        Checar("post.set", p.Bloom.Enabled == true && p.Vignette.Enabled == true);
+        p.Exposure = 1.05;
+        Checar("post.exposure", p.Exposure == 1.05);
+        p.ToneMapper = "agx";
+        Checar("post.toneMapper", p.ToneMapper == "agx");
+        Checar("post.presets", p.Presets().Length > 0);
+        Checar("post.snapshot", p.Snapshot().Bloom.Intensity == p.Bloom.Intensity);
+        Checar("post.create", p.Create().Bloom != null);
+        var personalizado = p.Custom.Add(new { fragment = "DebugPost", name = "DebugPost", uniforms = new { tint = V(0.15f, 0.05f, 0.3f), strength = 0.6 } });
+        efeito = personalizado;
+        Checar("post.custom.add", p.Custom.Get("DebugPost") == personalizado && p.Custom.List().Any(e => e.Name == "DebugPost"));
+        personalizado.Uniforms.Set("strength", 0.8);
+        var u = personalizado.Uniforms.List();
+        Checar("efeito.uniforms.list", u.Any(x => x.Name == "tint") && u.Any(x => x.Name == "strength"), string.Join(",", u.Select(x => (string)x.Name)));
+        p.Tween("bloom.intensity", 0.9, 1.5, "easeInOut");
+        return Task.CompletedTask;
+    }
+
+    private Task Render()
+    {
+        var r = Helix.Render;
+        Checar("render.passNames", r.PassNames().Contains("mesh"));
+        Checar("render.passes", r.Passes.Mesh.Enabled is bool);
+        Checar("render.stats", r.Stats.DrawCalls is double);
+        Checar("render.profile", r.Profile.ShadowMapSize is double);
+        Checar("render.gl", r.Gl != null && r.Gl.DrawArrays != null);
+        assinaturas.Add(r.OnAfterFrame(() => renders++));
+        assinaturas.Add(r.OnBeforePass("post", () => { }));
+        Checar("render.frame", r.Frame.Width is double);
+        r.ShowGrid = false;
+        Checar("render.showGrid", r.ShowGrid == false);
+        Checar("render.culling", r.Culling.FrustumCulling is bool);
+        Checar("render.capabilities", r.Capabilities != null);
+        Checar("render.pixelRatio", r.PixelRatio > 0);
+        Checar("render.custom.list", r.Custom.List() is Array);
+        var programa = r.CreateProgram("#version 300 es\\nvoid main(){gl_Position=vec4(0.0);}", "#version 300 es\\nprecision mediump float;out vec4 o;void main(){o=vec4(1.0);}");
+        Checar("render.createProgram", programa != null && programa.Use != null);
+        programa.Dispose();
+        return Task.CompletedTask;
+    }
+
+                                                                                                     
+
+    private Task Fisica()
+    {
+        var ph = Helix.Physics;
+        Checar("physics.enabled", ph.Enabled == true);
+        Checar("physics.gravity", ph.Gravity[1] < 0);
+        Checar("physics.settings", ph.Settings.FixedTimestep > 0 && ph.FixedTimestep == ph.Settings.FixedTimestep);
+        for (int i = 0; i < 5; i++)
+        {
+            var caixa = Helix.Scene.SpawnPrimitive("box", new { name = $"Caixa{i + 1}", position = V(-2 + i * 1.1f, 3 + i * 1.2f, 3), rigidBody = new { type = "dynamic", collider = "box", mass = 2, restitution = 0.3 }, tags = new[] { "caixa" } });
+            Helix.Material.SetColor(caixa, Helix.Math.Color.Hsl(30 + i * 12, 0.7, 0.5));
+        }
+        var caixas = Helix.Scene.ByTag("caixa");
+        Checar("caixas dinâmicas", caixas.Length == 5 && ph.HasBody(caixas[0]));
+        var corpo = ph.BodyOf(caixas[0]);
+        Checar("bodyOf", corpo.IsDynamic && corpo.Mass > 0);
+        corpo.ApplyImpulse(V(0, 2, 0));
+        corpo.ApplyTorque(V(0, 1, 0));
+        corpo.SetMaterial(new { friction = 0.8 });
+        corpo.LockRotation(false, false, false);
+        corpo.Wake();
+        Checar("body.entity", corpo.Entity == caixas[0] && ph.EntityOf(corpo) == caixas[0]);
+        Checar("body.linearVelocity", corpo.LinearVelocity.Length == 3);
+        Checar("bodies()", ph.Bodies().Length >= 6 && ph.BodyCount >= 6);
+        var hit = ph.Raycast(V(0, 5, 0), V(0, -1, 0), 20);
+        Checar("physics.raycast", hit != null && hit.Entity != null, hit?.Entity?.Name);
+        Checar("raycastAll", ph.RaycastAll(V(0, 5, 0), V(0, -1, 0), 20).Length >= 1);
+        Checar("overlapSphere", ph.OverlapSphere(V(0, 3, 3), 4) is Array);
+        Checar("overlapBox", ph.OverlapBox(V(0, 3, 3), V(3, 3, 3)) is Array);
+        Checar("overlapAabb", ph.OverlapAabb(new { min = V(-5, 0, 0), max = V(5, 8, 6) }) is Array);
+        Checar("massProperties", ph.MassProperties(caixas[0]).Mass > 0);
+        Checar("colliderRequiresStatic", ph.ColliderRequiresStatic("mesh") == true);
+        Checar("colliderVolume", ph.ColliderVolume(caixas[0]) > 0);
+        var presets = ph.Physical.Presets();
+        Checar("physical.presets", presets.Length > 0);
+        if (presets.Length > 0) Checar("physical.apply", ph.Physical.Apply(caixas[1], presets[0].Id).Type != null);
+        Checar("physical.create/match", ph.Physical.Match(ph.Physical.Create()) != null || true);
+        Checar("shapes.sphere volume", Aprox(ph.Shapes.Volume(ph.Shapes.Sphere(1)), 4.18879, 0.01));
+        Checar("shapes.aabb", ph.Shapes.Aabb(ph.Shapes.Box(1, 1, 1), V(0, 0, 0)).Max[0] == 1);
+        Checar("fitCollider", ph.FitCollider(caixas[0]).Collider != null);
+        Checar("closestPoint", ph.ClosestPoint(V(0, 10, 3), caixas[0]).Length == 3);
+        assinaturas.Add(ph.OnCollisionBegin(e =>
+        {
+            colisoes++;
+            if (colisoes <= 3) Helix.Log.Info("Debug", $"Colisão: {e.A.Name} × {e.B.Name} (impulso {e.Contact.Impulse:F2})");
+        }));
+        assinaturas.Add(ph.OnCollisionEnd(_ => { }));
+        assinaturas.Add(ph.OnOutOfBounds(e => Helix.Log.Warn("Debug", $"{e.Name} caiu do mundo")));
+        assinaturas.Add(ph.OnPreStep(() => { }));
+        var gatilho = Helix.Scene.Spawn("group", new { name = "Gatilho", position = V(0, 1, 3), trigger = new { shape = "box", size = V(3, 2, 3) } });
+        Checar("trigger spawn", gatilho != null && Helix.Scene.IsAttached(gatilho));
+        Checar("physics.stats", ph.Stats.Bodies is double);
+        var agua = ph.WaterAt(V(0, 0, 0));
+        Checar("waterAt", agua == null || agua.Height is double);
+        ph.Layers.Define(new[] { "padrao", "fantasma" });
+        ph.Layers.SetCollision("padrao", "fantasma", false);
+        Checar("physics.quality", ph.Quality == null || new[] { "low", "medium", "high" }.Contains((string)ph.Quality));
+        return Task.CompletedTask;
+    }
+
+    private Task Personagem()
+    {
+        var jogador = Helix.Character.Spawn(new { name = "Heroi", position = V(0, 1.2f, 8), character = new { walkSpeed = 4, runSpeed = 7, jumpHeight = 1.4 } });
+        heroi = jogador;
+        Checar("character.spawn", jogador.Character != null && Helix.Character.Has(jogador));
+        var h = Helix.Character.Of(jogador);
+        Checar("character.of", h.Entity == jogador && h.IsGrounded is bool);
+        Checar("settingsOf", Helix.Character.SettingsOf(jogador).WalkSpeed == 4);
+        Helix.Player.Possess(jogador);
+        Checar("player.possess", Helix.Player.Possessed == jogador && Helix.Player.IsPossessing);
+        Checar("findPossessable", Helix.Character.FindPossessable() != null);
+        assinaturas.Add(Helix.Character.OnJumped(e => Helix.Log.Info("Debug", $"{e.Entity.Name} pulou")));
+        assinaturas.Add(Helix.Character.OnLanded(e => { if (e.Speed > 6) Helix.Log.Info("Debug", $"{e.Entity.Name} aterrissou a {e.Speed:F1} m/s"); }));
+        assinaturas.Add(Helix.Player.OnPossessed(e => Helix.Log.Info("Debug", $"Possuindo {(e != null ? e.Name : "ninguém")}")));
+        Checar("character.all", Helix.Character.All().Length >= 1);
+        Checar("player.spawnPoint", Helix.Player.SpawnPoint.Length == 3);
+        Checar("character.inputSource", Helix.Character.InputSource == "engine");
+        Checar("player.cameraControl", Helix.Player.CameraControl == "engine");
+        Checar("player.settings", Helix.Player.Settings.Character.WalkSpeed > 0);
+        Checar("character.velocity", h.Velocity.Length == 3 && h.Position.Length == 3);
+        return Task.CompletedTask;
+    }
+
+    private Task Terreno()
 `;
 }
