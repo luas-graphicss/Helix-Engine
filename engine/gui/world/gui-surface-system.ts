@@ -101,3 +101,230 @@ class SurfaceInstance {
         this.canvas.height = 0;
     }
 }
+export class GuiSurfaceSystem {
+    readonly draws: GuiSurfaceDraw[] = [];
+    private readonly instances = new Map<number, SurfaceInstance>();
+    private readonly listeners = new Set<EventListener>();
+    private readonly alive = new Set<number>();
+    private hovered: SurfaceInstance | null = null;
+    private pressed: SurfaceInstance | null = null;
+    private viewports: GuiViewportProvider | null = null;
+    private pendingDocuments = 0;
+    constructor(private readonly documents: GuiSurfaceDocumentSource) { }
+    onEvent(listener: EventListener): () => void {
+        this.listeners.add(listener);
+        return () => this.listeners.delete(listener);
+    }
+    private emit(entity: Entity, event: GuiRuntimeEvent): void {
+        const surfaceEvent: GuiSurfaceEvent = { ...event, entity };
+        for (const listener of this.listeners)
+            listener(surfaceEvent);
+    }
+    setViewportProvider(provider: GuiViewportProvider | null): void {
+        if (provider === this.viewports)
+            return;
+        this.viewports = provider;
+        for (const instance of this.instances.values())
+            instance.runtime.setViewportProvider(provider);
+    }
+    get size(): number {
+        return this.instances.size;
+    }
+    get animating(): boolean {
+        if (this.pendingDocuments > 0)
+            return true;
+        for (const instance of this.instances.values())
+            if (instance.visible && instance.runtime.animating)
+                return true;
+        return false;
+    }
+    get cursor(): string | null {
+        return this.hovered?.runtime.cursor ?? null;
+    }
+    get hasFocusedInput(): boolean {
+        for (const instance of this.instances.values())
+            if (instance.runtime.hasFocusedInput)
+                return true;
+        return false;
+    }
+    frameOf(entityId: number): GuiSurfaceFrame | null {
+        return this.instances.get(entityId)?.frame ?? null;
+    }
+    update(scene: Scene, camera: PerspectiveCamera, deltaSeconds: number, elapsedSeconds: number): boolean {
+        scene.updateWorldMatrices();
+        const { alive, draws } = this;
+        alive.clear();
+        draws.length = 0;
+        this.pendingDocuments = 0;
+        let changed = false;
+        scene.traverseVisible((entity) => {
+            const settings = entity.guiSurface;
+            if (!settings)
+                return;
+            alive.add(entity.id);
+            const instance = this.acquire(entity);
+            if (this.step(instance, settings, camera, deltaSeconds, elapsedSeconds))
+                changed = true;
+            if (instance.visible)
+                draws.push({ entityId: entity.id, worldMatrix: entity.worldMatrix, local: instance.local, settings, texture: instance.texture });
+        });
+        for (const [id, instance] of [...this.instances.entries()]) {
+            if (alive.has(id))
+                continue;
+            this.release(instance);
+            this.instances.delete(id);
+        }
+        return changed;
+    }
+    private acquire(entity: Entity): SurfaceInstance {
+        let instance = this.instances.get(entity.id);
+        if (!instance) {
+            instance = new SurfaceInstance(entity, (event) => this.emit(entity, event));
+            instance.runtime.setViewportProvider(this.viewports);
+            this.instances.set(entity.id, instance);
+        }
+        return instance;
+    }
+    private release(instance: SurfaceInstance): void {
+        if (this.hovered === instance)
+            this.hovered = null;
+        if (this.pressed === instance)
+            this.pressed = null;
+        instance.dispose();
+    }
+    private step(instance: SurfaceInstance, settings: GuiSurfaceSettings, camera: PerspectiveCamera, deltaSeconds: number, elapsedSeconds: number): boolean {
+        const { entity, runtime } = instance;
+        const bounds = entity.mesh ? getLocalBounds(entity.mesh) : null;
+        computeLocalRect(instance.local, settings.mount, bounds);
+        resolveSurfaceFrame(instance.frame, instance.local, settings.mount, entity.worldMatrix, camera);
+        const culled = settings.cullDistance > 0 && instance.frame.distance > settings.cullDistance;
+        instance.visible = !culled && instance.frame.width > 0 && instance.frame.height > 0;
+        instance.settings = settings;
+        const textureSize = surfaceTextureSize(instance.frame.width, instance.frame.height, settings.pixelsPerMeter);
+        const resized = instance.resize(textureSize.width, textureSize.height);
+        const size: GuiPoint = { x: textureSize.width, y: textureSize.height };
+        const document = this.resolveDocument(instance, settings.content, size);
+        if (document !== instance.document) {
+            instance.document = document;
+            runtime.setDocuments([document]);
+            runtime.setViewport(size);
+        }
+        runtime.setMediaGain(culled ? 0 : surfaceAudioGain(settings, instance.frame.distance));
+        runtime.tick(deltaSeconds);
+        if (!instance.visible)
+            return false;
+        const due = settings.frameRate <= 0 || elapsedSeconds - instance.lastRender >= 1 / settings.frameRate;
+        if (!resized && !(runtime.needsRender && due))
+            return false;
+        instance.render(settings, elapsedSeconds);
+        return true;
+    }
+    private resolveDocument(instance: SurfaceInstance, content: GuiSurfaceContent, size: GuiPoint): GuiDocument {
+        if (content.kind !== 'screen')
+            return instance.synthesize(content, size);
+        if (!content.assetId)
+            return instance.synthesize('empty', size);
+        const lookup = this.documents.lookup(content.assetId);
+        if (lookup === 'loading') {
+            this.pendingDocuments++;
+            return instance.synthesize('loading', size);
+        }
+        if (lookup === 'missing')
+            return instance.synthesize('missing', size);
+        return lookup;
+    }
+    pick(ray: Ray): GuiSurfaceHit | null {
+        let best: GuiSurfaceHit | null = null;
+        for (const instance of this.instances.values()) {
+            const settings = instance.settings;
+            if (!instance.visible || !settings || !settings.interactive)
+                continue;
+            const hit = intersectSurfaceFrame(instance.frame, ray);
+            if (!hit || (!hit.front && !settings.doubleSided))
+                continue;
+            if (settings.interactionDistance > 0 && hit.distance > settings.interactionDistance)
+                continue;
+            if (!best || hit.distance < best.distance)
+                best = { ...hit, entity: instance.entity };
+        }
+        return best;
+    }
+    private instanceFor(hit: GuiSurfaceHit | null): SurfaceInstance | null {
+        return hit ? (this.instances.get(hit.entity.id) ?? null) : null;
+    }
+    private pointOf(instance: SurfaceInstance, hit: GuiSurfaceRayHit): GuiPoint {
+        return { x: hit.u * instance.canvas.width, y: hit.v * instance.canvas.height };
+    }
+    pointerMove(ray: Ray): boolean {
+        if (this.pressed) {
+            const hit = this.pick(ray);
+            const point = hit && this.instanceFor(hit) === this.pressed ? this.pointOf(this.pressed, hit) : { x: OUTSIDE, y: OUTSIDE };
+            this.pressed.runtime.pointerMove(point.x, point.y);
+            return true;
+        }
+        const hit = this.pick(ray);
+        const instance = this.instanceFor(hit);
+        if (this.hovered && this.hovered !== instance)
+            this.hovered.runtime.pointerLeave();
+        this.hovered = instance;
+        if (!instance || !hit)
+            return false;
+        const point = this.pointOf(instance, hit);
+        return instance.runtime.pointerMove(point.x, point.y);
+    }
+    pointerDown(ray: Ray): boolean {
+        const hit = this.pick(ray);
+        const instance = this.instanceFor(hit);
+        if (!instance || !hit)
+            return false;
+        const point = this.pointOf(instance, hit);
+        if (!instance.runtime.pointerDown(point.x, point.y))
+            return false;
+        this.pressed = instance;
+        return true;
+    }
+    pointerUp(ray: Ray): boolean {
+        const pressed = this.pressed;
+        this.pressed = null;
+        if (!pressed)
+            return false;
+        const hit = this.pick(ray);
+        const point = hit && this.instanceFor(hit) === pressed ? this.pointOf(pressed, hit) : { x: OUTSIDE, y: OUTSIDE };
+        pressed.runtime.pointerUp(point.x, point.y);
+        return true;
+    }
+    pointerLeave(): void {
+        this.hovered?.runtime.pointerLeave();
+        this.hovered = null;
+    }
+    wheel(ray: Ray, deltaX: number, deltaY: number): boolean {
+        const hit = this.pick(ray);
+        const instance = this.instanceFor(hit);
+        if (!instance || !hit)
+            return false;
+        const point = this.pointOf(instance, hit);
+        return instance.runtime.wheel(point.x, point.y, deltaX, deltaY);
+    }
+    keyDown(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'altKey'>): boolean {
+        for (const instance of this.instances.values()) {
+            if (instance.runtime.hasFocusedInput && instance.runtime.keyDown(event))
+                return true;
+        }
+        return false;
+    }
+    reset(): void {
+        this.hovered = null;
+        this.pressed = null;
+        for (const instance of this.instances.values())
+            instance.runtime.reset();
+    }
+    dispose(): void {
+        for (const instance of this.instances.values())
+            instance.dispose();
+        this.instances.clear();
+        this.draws.length = 0;
+        this.listeners.clear();
+        this.hovered = null;
+        this.pressed = null;
+    }
+}
