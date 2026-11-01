@@ -38,7 +38,7 @@ void main() {
   delta.w = colorDelta(C, Ctoptop);
   maxDelta = max(max(maxDelta, delta.z), delta.w);
 
-
+                                                                                           
   edges.xy *= step(0.5 * maxDelta, delta.xy);
   fragColor = vec4(edges, 0.0, 1.0);
 }
@@ -122,7 +122,7 @@ float searchYDown(vec2 texcoord, float end) {
 }
 
 vec2 area(vec2 dist, float e1, float e2) {
-
+                                                                     
   vec2 texcoord = SMAA_AREATEX_MAX_DISTANCE * round(4.0 * vec2(e1, e2)) + dist;
   texcoord = SMAA_AREATEX_PIXEL_SIZE * texcoord + 0.5 * SMAA_AREATEX_PIXEL_SIZE;
   return textureLod(u_area, texcoord, 0.0).rg;
@@ -131,7 +131,7 @@ vec2 area(vec2 dist, float e1, float e2) {
 void main() {
   vec2 texcoord = gl_FragCoord.xy * u_texel;
   vec2 pixcoord = gl_FragCoord.xy;
-
+                                                                                     
   vec4 offset0 = texcoord.xyxy + u_texel.xyxy * vec4(-0.25, 0.125, 1.25, 0.125);
   vec4 offset1 = texcoord.xyxy + u_texel.xyxy * vec4(-0.125, 0.25, -0.125, -1.25);
   vec4 offset2 = vec4(offset0.xz, offset1.yw) + vec4(-2.0, 2.0, -2.0, 2.0) * u_texel.xxyy * float(SMAA_MAX_SEARCH_STEPS);
@@ -140,7 +140,7 @@ void main() {
   vec2 e = texture(u_edges, texcoord).rg;
 
   if (e.g > 0.0) {
-
+                                                                          
     vec2 d;
     vec2 coords;
     coords.x = searchXLeft(offset0.xy, offset2.x);
@@ -157,7 +157,7 @@ void main() {
   }
 
   if (e.r > 0.0) {
-
+                                                         
     vec2 d;
     vec2 coords;
     coords.y = searchYUp(offset1.xy, offset2.z);
@@ -199,7 +199,7 @@ void main() {
     return;
   }
 
-
+                                                                                      
   vec2 offset;
   offset.x = a.a > a.b ? a.a : -a.b;
   offset.y = a.g > a.r ? -a.g : a.r;
@@ -209,7 +209,7 @@ void main() {
   vec3 C = textureLod(u_color, texcoord, 0.0).rgb;
   vec3 Cop = textureLod(u_color, texcoord + sign(offset) * u_texel, 0.0).rgb;
   float s = max(abs(offset.x), abs(offset.y));
-
+                                                                                            
   vec3 mixed = mix(srgbToLinear(C), srgbToLinear(Cop), s);
   fragColor = vec4(linearToSrgb(mixed), 1.0);
 }
