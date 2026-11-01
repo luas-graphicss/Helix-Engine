@@ -204,4 +204,205 @@ export function createVfxApi(host: RuntimeHost, sceneApi: SceneApi) {
         builtin: (id: unknown) => ({ kind: 'builtin' as const, id: requireOneOf(id, VFX_BUILTIN_TEXTURES.map((info) => info.id), 'helix.vfx.textures.builtin', 'a textura') }),
         asset: (asset: unknown) => ({ kind: 'asset' as const, assetId: host.resolveAsset(asset, 'helix.vfx.textures.asset', 'texture').id }),
     };
+    return {
+        settings: (entity: unknown, patch?: unknown) => {
+            const target = entityWithVfx(entity, 'helix.vfx.settings');
+            if (patch === undefined)
+                return target.vfx;
+            return patchSettings(target, patch, 'helix.vfx.settings');
+        },
+        has: (entity: unknown) => requireEntity(entity, 'helix.vfx.has').vfx != null,
+        attach: (entity: unknown, asset: unknown, patch?: unknown) => {
+            const target = requireEntity(entity, 'helix.vfx.attach');
+            const assetId = asset === undefined || asset === null ? null : host.resolveAsset(asset, 'helix.vfx.attach', 'vfx').id;
+            target.vfx = createVfxSettings({ assetId });
+            if (patch !== undefined)
+                patchSettings(target as Entity & {
+                    vfx: VfxSettings;
+                }, patch, 'helix.vfx.attach');
+            session.notify();
+            return target.vfx;
+        },
+        detach: (entity: unknown) => {
+            const target = requireEntity(entity, 'helix.vfx.detach');
+            if (!target.vfx)
+                return false;
+            system().stop(target.id);
+            target.vfx = null;
+            session.notify();
+            return true;
+        },
+        setEffect: (entity: unknown, asset: unknown) => {
+            const target = entityWithVfx(entity, 'helix.vfx.setEffect');
+            const assetId = asset === null ? null : host.resolveAsset(asset, 'helix.vfx.setEffect', 'vfx').id;
+            return patchSettings(target, { assetId }, 'helix.vfx.setEffect');
+        },
+        play: (entity: unknown) => {
+            system().play(entityWithVfx(entity, 'helix.vfx.play').id);
+            session.notify();
+        },
+        pause: (entity: unknown) => system().pause(entityWithVfx(entity, 'helix.vfx.pause').id),
+        resume: (entity: unknown) => system().resume(entityWithVfx(entity, 'helix.vfx.resume').id),
+        stop: (entity: unknown) => system().stop(entityWithVfx(entity, 'helix.vfx.stop').id),
+        restart: (entity: unknown) => {
+            const target = entityWithVfx(entity, 'helix.vfx.restart');
+            const instance = system().instanceOf(target.id);
+            if (instance)
+                instance.restart(target.vfx);
+            else
+                system().play(target.id);
+        },
+        reset: () => session.vfxWorld.reset(),
+        state: (entity: unknown) => instanceOf(entity, 'helix.vfx.state')?.state ?? 'stopped',
+        isPlaying: (entity: unknown) => instanceOf(entity, 'helix.vfx.isPlaying')?.state === 'playing',
+        alive: (entity?: unknown) => (entity === undefined ? system().stats.particles : (instanceOf(entity, 'helix.vfx.alive')?.alive ?? 0)),
+        time: (entity: unknown) => instanceOf(entity, 'helix.vfx.time')?.time ?? 0,
+        instance: (entity: unknown) => instanceOf(entity, 'helix.vfx.instance'),
+        burst: (entity: unknown, count: unknown, emitter?: unknown) => {
+            const member = 'helix.vfx.burst';
+            const target = entityWithVfx(entity, member);
+            const amount = requireNumber(count, member, 'a quantidade');
+            const instance = system().instanceOf(target.id);
+            if (instance)
+                return burstInto(instance, target, amount, emitter, member);
+            pendingBursts.push({ entity: target, count: amount, emitter, frames: 0 });
+            return 0;
+        },
+        emitAt: (asset: unknown, position: unknown, options?: unknown) => {
+            const member = 'helix.vfx.emitAt';
+            const resolved = host.resolveAsset(asset, member, 'vfx');
+            const settings = options === undefined ? {} : requireObject(options, member);
+            const { parent, name, ...rest } = settings;
+            const at = toVec3(position, member);
+            const entity = sceneApi.spawn('vfx', {
+                name: typeof name === 'string' ? name : resolved.name,
+                position: at,
+                vfx: { ...rest, assetId: resolved.id, autoPlay: true, playInEditor: true, loop: rest.loop === undefined ? false : rest.loop },
+            }, parent);
+            loose.push({ entity, idleFrames: 0 });
+            return entity;
+        },
+        setParam: (entity: unknown, path: unknown, value: unknown) => {
+            const member = 'helix.vfx.setParam';
+            const instance = requireInstance(entity, member);
+            const segments = requireString(path, member, 'o caminho').split('.');
+            const next = structuredClone(instance.document) as unknown as Record<string, unknown>;
+            let cursor: Record<string, unknown> = next;
+            for (let i = 0; i < segments.length - 1; i++) {
+                const key = segments[i];
+                const child = (cursor as Record<string, unknown>)[key];
+                if (!child || typeof child !== 'object') {
+                    if (Array.isArray(cursor) && Number.isNaN(Number(key))) {
+                        const byName = (cursor as unknown as VfxEmitter[]).findIndex((candidate) => candidate.name === key);
+                        if (byName !== -1) {
+                            cursor = (cursor as unknown as Record<string, unknown>[])[byName];
+                            continue;
+                        }
+                    }
+                    throw new HelixArgumentError(member, `caminho "${segments.slice(0, i + 1).join('.')}" não existe no documento.`);
+                }
+                cursor = child as Record<string, unknown>;
+            }
+            cursor[segments[segments.length - 1]] = value;
+            instance.setDocument(normalizeVfxDocument(next, instance.document.name));
+            return instance.document;
+        },
+        stats: () => ({ ...system().stats }),
+        document: (asset: unknown) => documentOf(asset, 'helix.vfx.document'),
+        create: (name: unknown, patch?: unknown) => {
+            const doc = createVfxDocument({ name: requireString(name, 'helix.vfx.create') });
+            if (patch === undefined)
+                return doc;
+            const next = { ...doc } as Record<string, unknown>;
+            assignSettings(next, patch, 'helix.vfx.create');
+            return normalizeVfxDocument(next, doc.name);
+        },
+        fromTemplate: (id: unknown, name?: unknown) => {
+            const template = findVfxTemplate(requireOneOf(id, templates.ids(), 'helix.vfx.fromTemplate', 'o modelo'));
+            const built = template.build();
+            return name === undefined ? built : { ...built, name: requireString(name, 'helix.vfx.fromTemplate') };
+        },
+        templates,
+        textures,
+        moduleKinds: () => MODULE_KINDS.slice(),
+        modules: () => VFX_MODULE_CATALOG.map((info) => ({ ...info })),
+        shapes: () => VFX_SHAPE_KINDS.slice(),
+        renderModes: () => VFX_RENDER_MODES.slice(),
+        blendModes: () => VFX_BLEND_MODES.slice(),
+        addEmitter: (document: unknown, patch?: unknown) => {
+            const doc = requireDocument(document, 'helix.vfx.addEmitter');
+            const emitter = createEmitter();
+            const built = patch === undefined ? emitter : ({ ...structuredClone(emitter), ...(requireObject(patch, 'helix.vfx.addEmitter', 'o emissor') as Partial<VfxEmitter>), id: emitter.id } as VfxEmitter);
+            return insertEmitter(doc, normalizeVfxDocument({ ...doc, emitters: [built] }, doc.name).emitters[0]);
+        },
+        removeEmitter: (document: unknown, emitter: unknown) => {
+            const doc = requireDocument(document, 'helix.vfx.removeEmitter');
+            return removeEmitter(doc, emitterOf(doc, emitter, 'helix.vfx.removeEmitter').id);
+        },
+        setEmitter: (document: unknown, emitter: unknown, patch: unknown) => {
+            const member = 'helix.vfx.setEmitter';
+            const doc = requireDocument(document, member);
+            const target = emitterOf(doc, emitter, member);
+            const changes = requireObject(patch, member, 'o patch');
+            const updated = updateEmitter(doc, target.id, (current) => {
+                const next = { ...current } as Record<string, unknown>;
+                for (const [key, value] of Object.entries(changes)) {
+                    const existing = next[key];
+                    next[key] = existing && typeof existing === 'object' && !Array.isArray(existing) && value && typeof value === 'object' && !Array.isArray(value) ? { ...(existing as object), ...(value as object) } : value;
+                }
+                return next as unknown as VfxEmitter;
+            });
+            return normalizeVfxDocument(updated, doc.name);
+        },
+        addModule: (document: unknown, emitter: unknown, kind: unknown, patch?: unknown) => {
+            const member = 'helix.vfx.addModule';
+            const doc = requireDocument(document, member);
+            const target = emitterOf(doc, emitter, member);
+            const module = createModule(requireOneOf(kind, MODULE_KINDS, member, 'o tipo de módulo'));
+            const built = patch === undefined ? module : ({ ...module, ...requireObject(patch, member, 'o módulo'), kind: module.kind, id: module.id } as typeof module);
+            return normalizeVfxDocument(insertModule(doc, target.id, built), doc.name);
+        },
+        removeModule: (document: unknown, emitter: unknown, moduleId: unknown) => {
+            const member = 'helix.vfx.removeModule';
+            const doc = requireDocument(document, member);
+            const target = emitterOf(doc, emitter, member);
+            const id = requireString(moduleId, member, 'o id do módulo');
+            const module = target.modules.find((candidate) => candidate.id === id || candidate.kind === id);
+            if (!module)
+                throw new HelixArgumentError(member, `módulo "${id}" não existe em ${target.name}.`);
+            return removeModule(doc, target.id, module.id);
+        },
+        setModule: (document: unknown, emitter: unknown, moduleId: unknown, patch: unknown) => {
+            const member = 'helix.vfx.setModule';
+            const doc = requireDocument(document, member);
+            const target = emitterOf(doc, emitter, member);
+            const id = requireString(moduleId, member, 'o id do módulo');
+            const module = target.modules.find((candidate) => candidate.id === id || candidate.kind === id);
+            if (!module)
+                throw new HelixArgumentError(member, `módulo "${id}" não existe em ${target.name}.`);
+            const changes = requireObject(patch, member, 'o patch');
+            return normalizeVfxDocument(updateModule(doc, target.id, module.id, (current) => ({ ...current, ...changes, kind: current.kind, id: current.id }) as typeof current), doc.name);
+        },
+        set: (document: unknown, patch: unknown) => {
+            const doc = requireDocument(document, 'helix.vfx.set');
+            const next = { ...doc } as Record<string, unknown>;
+            assignSettings(next, patch, 'helix.vfx.set');
+            return normalizeVfxDocument(next, doc.name);
+        },
+        toJson: (document: unknown) => serializeVfxDocument(requireDocument(document, 'helix.vfx.toJson')),
+        fromJson: (text: unknown, name?: unknown) => normalizeVfxDocument(JSON.parse(requireString(text, 'helix.vfx.fromJson', 'o JSON')), name === undefined ? undefined : requireString(name, 'helix.vfx.fromJson')),
+        save: async (document: unknown, name?: unknown) => {
+            const doc = requireDocument(document, 'helix.vfx.save');
+            const asset = await saveVfxDocumentToLibrary(session, name === undefined ? doc : { ...doc, name: requireString(name, 'helix.vfx.save') });
+            if (!asset)
+                throw new HelixError('helix.vfx.save: não foi possível salvar o efeito na biblioteca.');
+            return asset;
+        },
+        particles: (entity: unknown, emitter?: unknown) => particlesOf(requireInstance(entity, 'helix.vfx.particles'), emitter, 'helix.vfx.particles'),
+        setDocument: (entity: unknown, document: unknown) => {
+            const instance = requireInstance(entity, 'helix.vfx.setDocument');
+            instance.setDocument(requireDocument(document, 'helix.vfx.setDocument'));
+        },
+    };
 }
+export type VfxApi = ReturnType<typeof createVfxApi>;
