@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 import { ActionButton } from '@/engine/ui/action-button';
 import { FieldInput } from '@/engine/ui/field-input';
 import { IconButton } from '@/engine/ui/icon-button';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { useFileDrop } from '@/engine/editor/viewport/use-file-drop';
 import { importPbrFiles } from '@/engine/editor/operations/material-library-operations';
 import type { MaterialDocument } from '@/engine/materials/material-document';
@@ -47,7 +47,7 @@ function EmptyState({ onCreate, onImport }: {
     </div>);
 }
 export function MaterialEditorDialog({ open, onOpenChange, selectedId, onSelect, preview, onPreviewChange }: MaterialEditorDialogProps) {
-    const session = useEditorState();
+    const session = useSessionTopic('scene', 'assets');
     const library = session.materials;
     const documents = library.all;
     const selected: MaterialDocument | null = (selectedId ? library.get(selectedId) : null) ?? documents[0] ?? null;
@@ -80,11 +80,11 @@ export function MaterialEditorDialog({ open, onOpenChange, selectedId, onSelect,
         onSelect(next?.id ?? null);
     };
     return (<Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} aria-busy={busy} {...drop.handlers} className={cn('flex h-[min(860px,calc(100dvh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-sm border border-border-strong bg-surface p-0 text-foreground shadow-2xl ring-0 sm:max-w-none', drop.active && 'outline-2 outline-offset-[-2px] outline-primary outline-dashed')}>
-        <header className="flex h-10 shrink-0 items-center gap-3 border-b border-border px-3">
-          <div className="flex min-w-0 items-center gap-2">
+      <DialogContent showCloseButton={false} aria-busy={busy} {...drop.handlers} className={cn('flex h-[min(860px,calc(100dvh-2rem))] w-[min(1440px,calc(100vw-2rem))] max-w-none flex-col gap-0 overflow-hidden rounded-sm bg-surface p-0 text-foreground shadow-overlay sm:max-w-none', drop.active && 'outline-2 outline-offset-[-2px] outline-primary')}>
+        <header className="flex min-h-10 shrink-0 items-center gap-3 border-b border-border px-3">
+          <div className="flex shrink-0 items-center gap-2">
             <Palette className="size-4 shrink-0 text-primary" aria-hidden/>
-            <DialogTitle className="shrink-0 text-xs font-semibold">Editor de materiais</DialogTitle>
+            <DialogTitle className="shrink-0 text-xs font-semibold whitespace-nowrap">Editor de materiais</DialogTitle>
             <DialogDescription className="sr-only">Crie, edite e aplique materiais PBR da sua biblioteca.</DialogDescription>
           </div>
           {selected && (<div className="flex min-w-0 flex-1 items-center gap-2">
@@ -93,15 +93,15 @@ export function MaterialEditorDialog({ open, onOpenChange, selectedId, onSelect,
                 if (event.key === 'Enter')
                     event.currentTarget.blur();
             }}/>
-              <span className="truncate font-mono text-[10px] text-muted-foreground">
+              <span className="truncate font-mono text-3xs text-muted-foreground">
                 {library.status === 'ready' ? 'salvo automaticamente' : library.status === 'loading' ? 'carregando…' : 'sem persistência'}
               </span>
             </div>)}
           {!selected && <span className="flex-1"/>}
-          {library.error && (<span className="max-w-72 truncate text-[10px] text-warning" title={library.error}>
+          {library.error && (<span className="min-w-0 max-w-72 shrink truncate text-3xs text-warning" title={library.error}>
               {library.error}
             </span>)}
-          <input ref={importInputRef} type="file" accept={ACCEPTED_IMAGES} multiple className="sr-only" tabIndex={-1} aria-label="Imagens PBR para importar" onChange={(event) => {
+          <input ref={importInputRef} type="file" accept={ACCEPTED_IMAGES} multiple className="hidden" tabIndex={-1} aria-label="Imagens PBR para importar" onChange={(event) => {
             const files = Array.from(event.currentTarget.files ?? []);
             event.currentTarget.value = '';
             if (files.length > 0)
