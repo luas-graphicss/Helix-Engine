@@ -269,4 +269,212 @@ export class ScriptCompiler {
                 this.moduleGeneration++;
         }
     }
+    siblingsOf(assetId: string, languages: readonly ScriptLanguageId[]): ForeignSibling[] {
+        const siblings: ForeignSibling[] = [];
+        for (const other of this.inputs.values()) {
+            if (other.assetId === assetId || !languages.includes(other.language))
+                continue;
+            siblings.push({ assetId: other.assetId, name: other.name, file: scriptFileName(other.name, other.language), source: other.source });
+        }
+        return siblings;
+    }
+    private missingFromSeal(input: ScriptSourceInput): CompiledScript {
+        const kind = compiledKindOf(input.language) ?? 'module';
+        return {
+            assetId: input.assetId,
+            name: input.name,
+            language: input.language,
+            runContext: input.runContext,
+            key: compileKeyOf(input),
+            source: input.source,
+            compiledAt: Date.now(),
+            kind,
+            code: null,
+            artifact: null,
+            sourceMap: null,
+            dependencies: [],
+            diagnostics: [{ severity: 'error', message: 'Este script não foi pré-compilado com o jogo; compile o jogo de novo na engine.', line: 1, column: 1, source: 'Compilador' }],
+            errorCount: 1,
+            warningCount: 0,
+            durationMs: 0,
+        };
+    }
+    private async loadEngine(language: ScriptLanguageId): Promise<void> {
+        try {
+            await ensureLanguageEngine(language);
+            this.engineFailures.delete(language);
+        }
+        catch (cause) {
+            this.engineFailures.set(language, cause instanceof Error ? cause.message : String(cause));
+        }
+    }
+    private async instrumentModule(script: CompiledScript): Promise<CompiledScript> {
+        if (this.sealed || script.kind !== 'module' || !script.code)
+            return script;
+        try {
+            const project = await this.ensureProject();
+            const output = await project.instrument(script.code, script.sourceMap, MODULE_PARAMETERS);
+            if (!output)
+                return script;
+            return { ...script, debugCode: output.code, debugSourceMap: output.sourceMap, debugLines: output.lines };
+        }
+        catch {
+            return script;
+        }
+    }
+    private compileOne(input: ScriptSourceInput): CompiledScript | Promise<CompiledScript> {
+        const started = performance.now();
+        const kind = compiledKindOf(input.language);
+        const base = {
+            assetId: input.assetId,
+            name: input.name,
+            language: input.language,
+            runContext: input.runContext,
+            key: compileKeyOf(input),
+            source: input.source,
+            compiledAt: Date.now(),
+        };
+        const finish: Finish = (kind, code, sourceMap, diagnostics, dependencies, artifact = null) => {
+            const { errors, warnings } = countDiagnostics(diagnostics);
+            let decoded = null;
+            if (sourceMap) {
+                try {
+                    decoded = decodeSourceMap(sourceMap);
+                }
+                catch {
+                    decoded = null;
+                }
+            }
+            return {
+                ...base,
+                kind,
+                code: errors > 0 ? null : code,
+                artifact: errors > 0 ? null : artifact,
+                sourceMap: decoded,
+                dependencies,
+                diagnostics,
+                errorCount: errors,
+                warningCount: warnings,
+                durationMs: performance.now() - started,
+            };
+        };
+        if (!kind) {
+            const label = scriptLanguage(input.language).label;
+            return finish('module', null, null, [{ severity: 'error', message: `O compilador ${label} ainda não está disponível nesta versão da engine; o script fica na biblioteca mas não roda.`, line: 1, column: 1, source: 'Compilador' }], []);
+        }
+        try {
+            switch (kind) {
+                case 'module': {
+                    if (isForeignLanguage(input.language))
+                        return this.compileForeign(input, kind, finish);
+                    const project = this.project;
+                    if (!project)
+                        throw new Error('Projeto TypeScript não inicializado.');
+                    return project.compile(input.assetId).then((emit) => finish('module', emit.code, emit.sourceMap, [...emit.diagnostics, ...this.dependencyDiagnostics(emit.dependencies, input)], emit.dependencies), (cause: unknown) => finish('module', null, null, [{ severity: 'error', message: `Falha interna do compilador: ${cause instanceof Error ? cause.message : String(cause)}`, line: 1, column: 1, source: 'Compilador' }], []));
+                }
+                case 'foreign':
+                case 'shader':
+                    return this.compileForeign(input, kind, finish);
+                case 'html':
+                    return finishWeb(finish, 'html', compileHtml(input.source));
+                case 'css':
+                    return finishWeb(finish, 'css', compileCss(input.source));
+                case 'svg':
+                    return finishWeb(finish, 'svg', compileSvg(input.source));
+                case 'json':
+                    return finishWeb(finish, 'json', compileJson(input.source));
+                case 'toml':
+                    return finishWeb(finish, 'toml', compileToml(input.source));
+            }
+        }
+        catch (cause) {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            return finish(kind, null, null, [{ severity: 'error', message: `Falha interna do compilador: ${message}`, line: 1, column: 1, source: 'Compilador' }], []);
+        }
+    }
+    private compileForeign(input: ScriptSourceInput, kind: CompiledKind, finish: Finish): CompiledScript | Promise<CompiledScript> {
+        const label = scriptLanguage(input.language).label;
+        const engine = loadedLanguageEngine(input.language);
+        if (!engine) {
+            const reason = this.engineFailures.get(input.language);
+            const message = reason ? `O compilador ${label} não pôde ser carregado (${reason}). Compile de novo quando ele estiver disponível.` : `O compilador ${label} ainda não terminou de carregar; compile de novo em instantes.`;
+            return finish(kind, null, null, [{ severity: 'error', message, line: 1, column: 1, code: 'runtime-unavailable', source: 'Compilador' }], []);
+        }
+        const siblings = this.siblingsOf(input.assetId, engine.languages);
+        const settle = (output: ForeignCompileOutput): CompiledScript => {
+            const diagnostics = [...output.diagnostics, ...this.dependencyDiagnostics(output.dependencies, input)];
+            return finish(kind, output.code ?? null, output.sourceMap ?? null, diagnostics, output.dependencies, output.artifact);
+        };
+        const internalFailure = (cause: unknown): CompiledScript => {
+            const message = cause instanceof Error ? cause.message : String(cause);
+            return finish(kind, null, null, [{ severity: 'error', message: `Falha interna do compilador: ${message}`, line: 1, column: 1, source: 'Compilador' }], []);
+        };
+        const output = engine.compile({ assetId: input.assetId, name: input.name, file: scriptFileName(input.name, input.language), source: input.source, siblings });
+        if (output instanceof Promise)
+            return output.then(settle, internalFailure);
+        return settle(output);
+    }
+    dependencyDiagnostics(dependencies: readonly string[], input: Pick<ScriptSourceInput, 'assetId' | 'name' | 'language'>): CompileDiagnostic[] {
+        const diagnostics: CompileDiagnostic[] = [];
+        for (const specifier of dependencies) {
+            if (specifier === 'helix' || specifier === '@helix/engine')
+                continue;
+            const resolved = this.resolveScript(specifier);
+            if (resolved) {
+                if (resolved.assetId === input.assetId) {
+                    diagnostics.push({ severity: 'error', message: `"${input.name}" importa a si mesmo ("${specifier}").`, line: 1, column: 1, code: 'self-import', source: 'Módulos' });
+                }
+                continue;
+            }
+            if (input.language === 'typescript')
+                continue;
+            const suggestion = closestName(specifier, this.scriptNames);
+            diagnostics.push({
+                severity: 'error',
+                message: `Módulo "${specifier}" não encontrado na biblioteca.${suggestion ? ` Você quis dizer "${suggestion}"?` : ''}`,
+                line: 1,
+                column: 1,
+                code: 'unresolved-import',
+                source: 'Módulos',
+            });
+        }
+        return diagnostics;
+    }
+}
+function describe(input: ScriptSourceInput): ResolvedScript {
+    return { assetId: input.assetId, name: input.name, language: input.language };
+}
+function finishWeb(finish: Finish, kind: CompiledKind, output: WebCompileOutput): CompiledScript {
+    return finish(kind, null, null, output.diagnostics, output.dependencies);
+}
+export function closestName(target: string, names: readonly string[]): string | null {
+    const normalized = stripSpecifierExtension(target.replace(/^\.?\//, '')).toLowerCase();
+    let best: string | null = null;
+    let bestDistance = Infinity;
+    for (const name of names) {
+        const distance = editDistance(normalized, name.toLowerCase());
+        if (distance < bestDistance && distance <= Math.max(2, Math.floor(name.length / 3))) {
+            best = name;
+            bestDistance = distance;
+        }
+    }
+    return best;
+}
+function editDistance(a: string, b: string): number {
+    if (a === b)
+        return 0;
+    const previous = new Array<number>(b.length + 1);
+    const current = new Array<number>(b.length + 1);
+    for (let j = 0; j <= b.length; j++)
+        previous[j] = j;
+    for (let i = 1; i <= a.length; i++) {
+        current[0] = i;
+        for (let j = 1; j <= b.length; j++) {
+            const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+            current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+        }
+        for (let j = 0; j <= b.length; j++)
+            previous[j] = current[j];
+    }
+    return previous[b.length];
 }
