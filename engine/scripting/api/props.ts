@@ -150,3 +150,163 @@ function serialize(definition: PropDefinition, value: unknown): ScriptPropValue 
             throw new HelixArgumentError('helix.props.set', `"${definition.name}" espera um ativo da biblioteca (ou o id dele).`);
     }
 }
+export function createPropsApi(host: RuntimeHost, registry: PropRegistry) {
+    const listeners = new Map<string, Set<(value: unknown, previous: unknown) => void>>();
+    function current(member: string) {
+        const context = host.current;
+        if (!context)
+            throw new HelixError(`${member} só pode ser usado de dentro de um script (durante um hook ou callback).`);
+        return context;
+    }
+    function settingsOf(member: string) {
+        const context = current(member);
+        const actor = context.handle.actor;
+        const settings = actor?.script ?? null;
+        return { context, settings };
+    }
+    function define(spec: unknown): void {
+        const member = 'helix.props.define';
+        const context = current(member);
+        if (typeof spec !== 'object' || spec === null)
+            throw new HelixArgumentError(member, 'esperava um objeto { nome: { type, default, ... } } ou uma lista de definições.');
+        const entries: Array<[
+            string,
+            Record<string, unknown>
+        ]> = Array.isArray(spec)
+            ? spec.map((entry: Record<string, unknown>) => [requireString(entry.name, member, 'o nome da propriedade'), entry])
+            : Object.entries(spec as Record<string, unknown>).map(([name, entry]) => [name, typeof entry === 'object' && entry !== null && !Array.isArray(entry) && !(entry instanceof Float32Array) && !(entry instanceof Entity) ? (entry as Record<string, unknown>) : { default: entry }]);
+        for (const [name, raw] of entries) {
+            const inferred = raw.type ?? inferType(raw.default);
+            if (typeof inferred !== 'string' || !PROP_TYPES.includes(inferred as PropType))
+                throw new HelixArgumentError(member, `tipo "${String(inferred)}" da propriedade "${name}" não é válido. Tipos: ${PROP_TYPES.join(', ')}.`);
+            const type = inferred as PropType;
+            if (type === 'enum' && (!Array.isArray(raw.options) || raw.options.length === 0))
+                throw new HelixArgumentError(member, `a propriedade enum "${name}" precisa de options: ['a', 'b', …].`);
+            registry.define(context.assetId, {
+                name,
+                type,
+                default: defaultFor(type, { ...raw, name }),
+                label: typeof raw.label === 'string' ? raw.label : undefined,
+                hint: typeof raw.hint === 'string' ? raw.hint : undefined,
+                min: typeof raw.min === 'number' ? raw.min : undefined,
+                max: typeof raw.max === 'number' ? raw.max : undefined,
+                step: typeof raw.step === 'number' ? raw.step : undefined,
+                options: Array.isArray(raw.options) ? raw.options.map(String) : undefined,
+                assetKind: typeof raw.assetKind === 'string' ? raw.assetKind : typeof raw.kind === 'string' ? raw.kind : undefined,
+            });
+        }
+        host.session.notify();
+    }
+    function get(nameValue: unknown): unknown {
+        const member = 'helix.props.get';
+        const name = requireString(nameValue, member, 'o nome da propriedade');
+        const { context, settings } = settingsOf(member);
+        const definition = registry.get(context.assetId, name);
+        if (!definition)
+            throw new HelixArgumentError(member, `a propriedade "${name}" não foi declarada; use helix.props.define({ ${name}: { type: 'number', default: 0 } }).`);
+        return materialize(host, definition, settings?.props[name]);
+    }
+    function set(nameValue: unknown, value: unknown): void {
+        const member = 'helix.props.set';
+        const name = requireString(nameValue, member, 'o nome da propriedade');
+        const { context, settings } = settingsOf(member);
+        const definition = registry.get(context.assetId, name);
+        if (!definition)
+            throw new HelixArgumentError(member, `a propriedade "${name}" não foi declarada.`);
+        if (!settings)
+            throw new HelixError(`${member}: o script de entrada não tem ator, logo não tem propriedades por instância.`);
+        const previous = materialize(host, definition, settings.props[name]);
+        settings.props[name] = serialize(definition, value);
+        const next = materialize(host, definition, settings.props[name]);
+        for (const listener of listeners.get(`${context.id}:${name}`) ?? [])
+            host.invoke(context, `helix.props.onChanged("${name}")`, () => listener(next, previous));
+        host.session.notify();
+    }
+    return {
+        define,
+        get,
+        set,
+        has: (nameValue: unknown) => {
+            const context = current('helix.props.has');
+            return registry.get(context.assetId, requireString(nameValue, 'helix.props.has', 'o nome')) !== null;
+        },
+        all: () => {
+            const { context, settings } = settingsOf('helix.props.all');
+            const values: Record<string, unknown> = {};
+            for (const definition of registry.of(context.assetId))
+                values[definition.name] = materialize(host, definition, settings?.props[definition.name]);
+            return values;
+        },
+        definitions: () => registry.of(current('helix.props.definitions').assetId).map((definition) => ({ ...definition })),
+        onChanged: (nameValue: unknown, handler: unknown) => {
+            const context = current('helix.props.onChanged');
+            const name = requireString(nameValue, 'helix.props.onChanged', 'o nome');
+            const fn = requireFunction<(value: unknown, previous: unknown) => void>(handler, 'helix.props.onChanged');
+            const key = `${context.id}:${name}`;
+            let set = listeners.get(key);
+            if (!set)
+                listeners.set(key, (set = new Set()));
+            set.add(fn);
+            const dispose = () => {
+                set!.delete(fn);
+                if (set!.size === 0)
+                    listeners.delete(key);
+            };
+            context.track(dispose);
+            return dispose;
+        },
+        reset: (nameValue?: unknown) => {
+            const { context, settings } = settingsOf('helix.props.reset');
+            if (!settings)
+                return;
+            if (nameValue === undefined) {
+                settings.props = {};
+            }
+            else {
+                delete settings.props[requireString(nameValue, 'helix.props.reset', 'o nome')];
+            }
+            host.session.notify();
+        },
+        get executionOrder() {
+            const context = current('helix.props.executionOrder');
+            return context.handle.actor?.script?.executionOrder ?? registry.executionOrder(context.assetId);
+        },
+        set executionOrder(value: number) {
+            const context = current('helix.props.executionOrder');
+            if (typeof value !== 'number' || !Number.isFinite(value))
+                throw new HelixArgumentError('helix.props.executionOrder', 'esperava um número.');
+            registry.setExecutionOrder(context.assetId, value);
+            if (context.handle.actor?.script)
+                context.handle.actor.script.executionOrder = value;
+            host.requestActorSync();
+        },
+        notifyExternalChange: (assetId: string, actorId: number, name: string) => {
+            for (const context of host.scriptsOfAsset(assetId)) {
+                if (context.handle.actor?.id !== actorId)
+                    continue;
+                const definition = registry.get(assetId, name);
+                if (!definition)
+                    continue;
+                const value = materialize(host, definition, context.handle.actor.script?.props[name]);
+                for (const listener of listeners.get(`${context.id}:${name}`) ?? [])
+                    host.invoke(context, `helix.props.onChanged("${name}")`, () => listener(value, undefined));
+            }
+        },
+    };
+}
+function inferType(value: unknown): PropType | undefined {
+    if (typeof value === 'number')
+        return 'number';
+    if (typeof value === 'boolean')
+        return 'boolean';
+    if (typeof value === 'string')
+        return /^#[0-9a-f]{3,8}$/i.test(value) ? 'color' : 'string';
+    if (value instanceof Entity)
+        return 'entity';
+    if (value instanceof Float32Array && value.length === 3)
+        return 'vec3';
+    if (Array.isArray(value) && value.length === 3 && value.every((entry) => typeof entry === 'number'))
+        return 'vec3';
+    return undefined;
+}
+export { materialize as materializeProp };
