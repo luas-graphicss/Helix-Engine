@@ -1,5 +1,6 @@
 import * as mat4 from '@/engine/core/math/mat4';
 import type { FileBundle } from '../file-bundle';
+import { IGNORE_PROGRESS, progressBetween, STAGE_GEOMETRY, STAGE_HIERARCHY, STAGE_READING, STAGE_TEXTURES, type ImportProgressReporter } from '../import-progress';
 import { baseNameWithoutExtension, createImportedNode, type ImportedMesh, type ImportedNode, type ImportedScene, type ImportUpAxis } from '../import-types';
 import { isAsciiFbx, parseAsciiFbx } from './fbx-ascii-parser';
 import { isBinaryFbx, parseBinaryFbx } from './fbx-binary-parser';
@@ -10,6 +11,8 @@ import { findChild, type FbxNode } from './fbx-node';
 import { readFbxGeometricTransform, readFbxLocalTransform } from './fbx-transform';
 const BONE_SUBCLASSES = new Set(['LimbNode', 'Limb', 'Root']);
 const MINIMUM_VERSION = 6000;
+const GEOMETRY_PROGRESS_START = 0.3;
+const GEOMETRY_PROGRESS_END = 0.95;
 interface SkippedObjects {
     lights: number;
     cameras: number;
@@ -24,9 +27,14 @@ class FbxSceneBuilder {
     private readonly visiting = new Set<string>();
     private readonly localMatrix = mat4.create();
     private readonly geometricMatrix = mat4.create();
+    private readonly totalGeometries: number;
+    private convertedGeometries = 0;
     private approximatedRotationOrders = 0;
-    constructor(private readonly doc: FbxDocument, private readonly materials: FbxMaterialTable, private readonly warnings: string[]) { }
+    constructor(private readonly doc: FbxDocument, private readonly materials: FbxMaterialTable, private readonly warnings: string[], private readonly progress: ImportProgressReporter) {
+        this.totalGeometries = Math.max(1, doc.count('Geometry'));
+    }
     build(): ImportedNode[] {
+        this.progress(GEOMETRY_PROGRESS_START, STAGE_GEOMETRY);
         const roots = this.doc
             .rootModels()
             .map((model) => this.convertModel(model))
@@ -34,6 +42,7 @@ class FbxSceneBuilder {
         if (this.approximatedRotationOrders > 0) {
             this.warnings.push(`${this.approximatedRotationOrders} nó(s) usam ordem de rotação esférica, aproximada por XYZ.`);
         }
+        this.progress(GEOMETRY_PROGRESS_END, STAGE_HIERARCHY);
         return roots;
     }
     private subMeshes(geometry: FbxObject, name: string): FbxSubMesh[] {
@@ -41,6 +50,7 @@ class FbxSceneBuilder {
         if (!cached) {
             cached = convertFbxGeometry(geometry, name, this.warnings);
             this.subMeshCache.set(geometry.id, cached);
+            this.progress(progressBetween(GEOMETRY_PROGRESS_START, GEOMETRY_PROGRESS_END, ++this.convertedGeometries, this.totalGeometries), STAGE_GEOMETRY);
         }
         return cached;
     }
@@ -157,16 +167,19 @@ function collectDocumentWarnings(doc: FbxDocument, skipped: SkippedObjects, warn
     if (skipped.unsupportedGeometries > 0)
         warnings.push(`${skipped.unsupportedGeometries} geometria(s) não poligonal(is) (NURBS, curvas) ignorada(s).`);
 }
-export async function importFbx(file: File, bundle: FileBundle): Promise<ImportedScene> {
+export async function importFbx(file: File, bundle: FileBundle, progress: ImportProgressReporter = IGNORE_PROGRESS): Promise<ImportedScene> {
+    progress(0, STAGE_READING);
     const { root, version } = await parseFbx(file);
     if (version > 0 && version < MINIMUM_VERSION)
         throw new Error(`FBX versão ${version / 1000} não suportada (mínimo 6.0).`);
+    progress(0.2, STAGE_READING);
     const doc = new FbxDocument(root, version);
     if (doc.objects.size === 0)
         throw new Error('O arquivo FBX não contém objetos.');
     const warnings: string[] = [];
+    progress(0.25, STAGE_TEXTURES);
     const materials = buildFbxMaterials(doc, bundle, file.name, warnings);
-    const builder = new FbxSceneBuilder(doc, materials, warnings);
+    const builder = new FbxSceneBuilder(doc, materials, warnings, progress);
     const roots = builder.build();
     if (builder.meshes.length === 0)
         throw new Error('O arquivo FBX não contém malhas poligonais.');
