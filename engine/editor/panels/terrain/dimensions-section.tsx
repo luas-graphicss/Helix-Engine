@@ -3,7 +3,7 @@ import { CollapsibleSection } from '@/engine/ui/collapsible-section';
 import { SelectField } from '@/engine/ui/select-field';
 import { PropertyRow } from '@/engine/ui/property-row';
 import { FieldInput } from '@/engine/ui/field-input';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import { useEditorSession } from '@/engine/editor/session/editor-session-context';
 import { resizeTerrain } from '@/engine/editor/operations/terrain-operations';
 import { MAX_TERRAIN_SIZE, MIN_TERRAIN_SIZE, TERRAIN_RESOLUTIONS, TERRAIN_SPLAT_RESOLUTIONS } from '@/engine/terrain/core/terrain';
 import { clamp } from '@/engine/core/math/scalar';
@@ -14,7 +14,7 @@ const SPLAT_OPTIONS = TERRAIN_SPLAT_RESOLUTIONS.map((value) => ({ value, label: 
 export function DimensionsSection({ target }: {
     target: TerrainTarget;
 }) {
-    const session = useEditorState();
+    const session = useEditorSession();
     const { entity, terrain } = target;
     return (<CollapsibleSection title="Dimensões" defaultOpen={false}>
       <PropertyRow label="Tamanho">
@@ -33,7 +33,7 @@ export function DimensionsSection({ target }: {
       <PropertyRow label="Controle">
         <SelectField label="Resolução dos mapas de controle" options={SPLAT_OPTIONS} value={terrain.splat.resolution} onChange={(splatResolution) => resizeTerrain(session, entity, { splatResolution })}/>
       </PropertyRow>
-      <p className="px-2 pb-1 text-[10px] leading-relaxed text-pretty text-muted-foreground">
+      <p className="px-2 pb-1 text-3xs leading-relaxed text-pretty text-muted-foreground">
         Célula de {meters(terrain.cellSize)} entre vértices. Redimensionar reamostra relevo, camadas e grama.
       </p>
     </CollapsibleSection>);
