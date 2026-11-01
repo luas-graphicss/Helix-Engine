@@ -899,3 +899,254 @@ function createJSON(context: GameContext): Singleton {
         new: () => new JSONParser(context.helix),
     };
 }
+function createDisplayServer(context: GameContext, input: Singleton): Singleton {
+    let vsync = 1;
+    const flags = new Map<number, boolean>();
+    let clipboard = '';
+    function size(): Vector2i {
+        const viewport = viewportSize(context);
+        return new Vector2i(Math.round(viewport.width), Math.round(viewport.height));
+    }
+    function screenSize(): Vector2i {
+        if (hasWindow() && typeof screen !== 'undefined')
+            return new Vector2i(screen.width, screen.height);
+        return size();
+    }
+    function pixelRatio(): number {
+        return hasWindow() ? window.devicePixelRatio || 1 : viewportSize(context).pixelRatio;
+    }
+    function fullscreenElement(): Element | null {
+        return hasWindow() ? document.fullscreenElement : null;
+    }
+    function canvas(): Element | null {
+        const render = context.helix.render as AnyRecord | undefined;
+        const element = render?.canvas;
+        return element instanceof Element ? element : hasWindow() ? document.documentElement : null;
+    }
+    function setMode(mode: unknown): void {
+        const wanted = int(mode);
+        if (!hasWindow())
+            return;
+        if (wanted === 3 || wanted === 4) {
+            const target = canvas();
+            if (target && !fullscreenElement())
+                target.requestFullscreen?.().catch(() => context.warnOnce('fullscreen', 'DisplayServer.window_set_mode(): o navegador só entra em tela cheia a partir de um clique ou tecla do jogador.'));
+            return;
+        }
+        if (fullscreenElement())
+            document.exitFullscreen?.().catch(() => undefined);
+        if (wanted === 1 || wanted === 2)
+            context.warnOnce('window_mode', 'DisplayServer.window_set_mode(): minimizar/maximizar a janela não existe no navegador.');
+    }
+    const server: Singleton = {
+        get_name: () => 'web',
+        window_get_size: (_window: unknown = 0) => size(),
+        window_set_size: (_size: unknown, _window: unknown = 0) => context.warnOnce('window_size', 'DisplayServer.window_set_size(): o tamanho da janela é da página, não do jogo; ajuste o viewport pelo layout.'),
+        window_get_position: (_window: unknown = 0) => new Vector2i(0, 0),
+        window_set_position: (_position: unknown, _window: unknown = 0) => undefined,
+        window_get_mode: (_window: unknown = 0) => (fullscreenElement() ? 3 : 0),
+        window_set_mode: (mode: unknown, _window: unknown = 0) => setMode(mode),
+        window_set_title: (title: unknown, _window: unknown = 0) => {
+            if (hasWindow())
+                document.title = str(title);
+        },
+        window_get_title_size: (title: unknown, _window: unknown = 0) => new Vector2i(str(title).length * 8, 16),
+        window_set_vsync_mode: (mode: unknown, _window: unknown = 0) => {
+            vsync = int(mode, 1);
+        },
+        window_get_vsync_mode: (_window: unknown = 0) => vsync,
+        window_set_flag: (flag: unknown, enabled: unknown, _window: unknown = 0) => {
+            flags.set(int(flag), Boolean(enabled));
+        },
+        window_get_flag: (flag: unknown, _window: unknown = 0) => flags.get(int(flag)) ?? false,
+        window_can_draw: (_window: unknown = 0) => !hasWindow() || document.visibilityState !== 'hidden',
+        window_get_attached_instance_id: (_window: unknown = 0) => 0,
+        screen_get_size: (_screen: unknown = -1) => screenSize(),
+        screen_get_position: (_screen: unknown = -1) => new Vector2i(0, 0),
+        screen_get_usable_rect: (_screen: unknown = -1) => {
+            if (hasWindow() && typeof screen !== 'undefined')
+                return new Rect2(0, 0, screen.availWidth, screen.availHeight);
+            const viewport = size();
+            return new Rect2(0, 0, viewport.x, viewport.y);
+        },
+        screen_get_dpi: (_screen: unknown = -1) => Math.round(96 * pixelRatio()),
+        screen_get_scale: (_screen: unknown = -1) => pixelRatio(),
+        screen_get_refresh_rate: (_screen: unknown = -1) => 60,
+        screen_get_max_scale: () => pixelRatio(),
+        get_screen_count: () => 1,
+        get_primary_screen: () => 0,
+        get_window_list: () => [0],
+        get_window_at_screen_position: (_position: unknown) => 0,
+        mouse_get_position: () => {
+            const pointer = pointerOf(context);
+            return new Vector2i(Math.round(pointer.x), Math.round(pointer.y));
+        },
+        mouse_set_mode: (mode: unknown) => (input.set_mouse_mode as Fn)(mode),
+        mouse_get_mode: () => (input.get_mouse_mode as Fn)(),
+        mouse_get_button_state: () => godotButtonMask(pointerOf(context).buttons),
+        warp_mouse: (_position: unknown) => (input.warp_mouse as Fn)(_position),
+        cursor_set_shape: (shape: unknown) => (input.set_default_cursor_shape as Fn)(shape),
+        cursor_get_shape: () => (input.get_current_cursor_shape as Fn)(),
+        cursor_set_custom_image: (_image: unknown, _shape: unknown = 0, _hotspot: unknown = null) => (input.set_custom_mouse_cursor as Fn)(_image, _shape, _hotspot),
+        clipboard_set: (value: unknown) => {
+            clipboard = str(value);
+            if (typeof navigator !== 'undefined' && navigator.clipboard)
+                navigator.clipboard.writeText(clipboard).catch(() => undefined);
+        },
+        clipboard_get: () => clipboard,
+        clipboard_has: () => clipboard.length > 0,
+        has_feature: (feature: unknown) => {
+            switch (int(feature, -1)) {
+                case 2:
+                    return typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0;
+                case 3:
+                case 5:
+                case 7:
+                    return true;
+                case 11:
+                    return pixelRatio() > 1;
+                default:
+                    return false;
+            }
+        },
+        is_touchscreen_available: () => typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0,
+        get_display_safe_area: () => {
+            const viewport = size();
+            return new Rect2(0, 0, viewport.x, viewport.y);
+        },
+        get_display_cutouts: () => [],
+    };
+    return withConstants('DisplayServer', server);
+}
+function createProjectSettings(context: GameContext): Singleton {
+    const order = new Map<string, number>();
+    function builtin(name: string): unknown {
+        switch (name) {
+            case 'application/config/name':
+                return str((context.helix.project as AnyRecord | undefined)?.name ?? '');
+            case 'application/config/version':
+                return '1.0.0';
+            case 'application/run/main_scene':
+                return 'res://Main.tscn';
+            case 'physics/3d/default_gravity': {
+                const gravity = context.physics.gravity as ArrayLike<number> | undefined;
+                return gravity ? Math.hypot(gravity[0] ?? 0, gravity[1] ?? 0, gravity[2] ?? 0) : 9.8;
+            }
+            case 'physics/3d/default_gravity_vector': {
+                const gravity = context.physics.gravity as ArrayLike<number> | undefined;
+                const length = gravity ? Math.hypot(gravity[0] ?? 0, gravity[1] ?? 0, gravity[2] ?? 0) : 0;
+                return gravity && length > 0 ? new Vector3(gravity[0] / length, gravity[1] / length, gravity[2] / length) : new Vector3(0, -1, 0);
+            }
+            case 'physics/common/physics_ticks_per_second': {
+                const fixed = Number(context.time.fixedDelta ?? 0);
+                return fixed > 0 ? Math.round(1 / fixed) : 60;
+            }
+            case 'display/window/size/viewport_width':
+                return Math.round(viewportSize(context).width);
+            case 'display/window/size/viewport_height':
+                return Math.round(viewportSize(context).height);
+            case 'rendering/renderer/rendering_method':
+                return 'gl_compatibility';
+            default:
+                return undefined;
+        }
+    }
+    function apply(name: string, value: unknown): void {
+        if (name === 'physics/3d/default_gravity') {
+            const magnitude = float(value, 9.8);
+            const current = context.physics.gravity as ArrayLike<number> | undefined;
+            const length = current ? Math.hypot(current[0] ?? 0, current[1] ?? 0, current[2] ?? 0) : 0;
+            const direction = current && length > 0 ? [current[0] / length, current[1] / length, current[2] / length] : [0, -1, 0];
+            try {
+                context.physics.gravity = new Float32Array([direction[0] * magnitude, direction[1] * magnitude, direction[2] * magnitude]);
+            }
+            catch {
+                context.warnOnce('gravity', 'ProjectSettings: este host não permite alterar a gravidade em tempo de execução.');
+            }
+        }
+    }
+    const settings: Singleton = {
+        get_setting: (name: unknown, fallback: unknown = null) => {
+            const key = text(name, 'ProjectSettings.get_setting()');
+            if (context.projectSettings.has(key))
+                return context.projectSettings.get(key);
+            const known = builtin(key);
+            return known === undefined ? fallback : known;
+        },
+        get_setting_with_override: (name: unknown) => {
+            const key = text(name, 'ProjectSettings.get_setting_with_override()');
+            if (context.projectSettings.has(key))
+                return context.projectSettings.get(key);
+            return builtin(key) ?? null;
+        },
+        set_setting: (name: unknown, value: unknown) => {
+            const key = text(name, 'ProjectSettings.set_setting()');
+            if (value === null)
+                context.projectSettings.delete(key);
+            else
+                context.projectSettings.set(key, value);
+            apply(key, value);
+        },
+        has_setting: (name: unknown) => {
+            const key = text(name, 'ProjectSettings.has_setting()');
+            return context.projectSettings.has(key) || builtin(key) !== undefined;
+        },
+        clear: (name: unknown) => {
+            context.projectSettings.delete(text(name, 'ProjectSettings.clear()'));
+        },
+        globalize_path: (path: unknown) => text(path, 'ProjectSettings.globalize_path()').replace(/^(res|user):\/\//, '/'),
+        localize_path: (path: unknown) => {
+            const value = text(path, 'ProjectSettings.localize_path()');
+            return /^(res|user):\/\//.test(value) ? value : `res://${value.replace(/^\/+/, '')}`;
+        },
+        get_global_class_list: () => {
+            const classes = context.services.get('globalClasses') as Map<string, {
+                base: string;
+                path: string;
+            }> | undefined;
+            return Array.from(classes?.entries() ?? []).map(([name, info]) => new Dictionary({ class: name, base: info.base, path: info.path, language: 'GDScript', icon: '' }));
+        },
+        get_order: (name: unknown) => order.get(text(name, 'ProjectSettings.get_order()')) ?? 0,
+        set_order: (name: unknown, position: unknown) => {
+            order.set(text(name, 'ProjectSettings.set_order()'), int(position));
+        },
+        set_initial_value: (_name: unknown, _value: unknown) => undefined,
+        set_as_basic: (_name: unknown, _basic: unknown) => undefined,
+        set_as_internal: (_name: unknown, _internal: unknown) => undefined,
+        add_property_info: (_hint: unknown) => undefined,
+        save: () => OK,
+        load_resource_pack: (_pack: unknown, _replace: unknown = true, _offset: unknown = 0) => false,
+    };
+    return withConstants('ProjectSettings', settings);
+}
+const SCRIPT_EXTENSIONS = /\.(gd|gdscript)$/i;
+const DATA_EXTENSIONS = /\.(json|toml)$/i;
+const KNOWN_EXTENSIONS = ['gd', 'json', 'toml', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'glb', 'gltf', 'mp3', 'wav', 'ogg', 'mp4', 'webm', 'ttf', 'woff2', 'html', 'txt'];
+export class AssetResource extends Resource {
+    constructor(helix: HelixRoot, readonly $asset: AnyRecord, path: string) {
+        super({ entity: null, helix, script: null });
+        this.resource_path = path;
+        this.resource_name = str($asset.name ?? '');
+    }
+    get_path(): string {
+        return this.resource_path;
+    }
+}
+markScriptClass(AssetResource, 'Resource');
+setGodotBase(AssetResource, 'Resource');
+export class DataResource extends Resource {
+    constructor(helix: HelixRoot, readonly data: unknown, path: string) {
+        super({ entity: null, helix, script: null });
+        this.resource_path = path;
+    }
+    get_data(): unknown {
+        return this.data;
+    }
+}
+markScriptClass(DataResource, 'JSON');
+setGodotBase(DataResource, 'JSON');
+export function resourceName(path: string): string {
+    const stripped = path.replace(/^(res|user):\/\//, '');
+    const base = stripped.split('/').pop() ?? stripped;
+    return base.replace(/\.[^.]+$/, '');
+}
