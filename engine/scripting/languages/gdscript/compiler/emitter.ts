@@ -800,4 +800,278 @@ class Emitter {
         }
         return null;
     }
+    private call(e: CallExpression): string {
+        const callee = e.callee;
+        const args = e.args.map((arg) => this.expression(arg));
+        const list = args.join(', ');
+        const packed = `[${list}]`;
+        if (callee.kind === 'identifier') {
+            const resolution = callee.resolved;
+            const name = callee.name;
+            if (!resolution)
+                return `$.invoke(${jsIdentifier(name)}, ${packed}, ${q(name)})`;
+            switch (resolution.kind) {
+                case 'local':
+                    return `$.invoke(${resolution.jsName}, ${packed}, ${q(name)})`;
+                case 'member':
+                    if (resolution.memberKind === 'func')
+                        return resolution.isStatic ? `${resolution.owner}.${name}(${list})` : `this.${name}(${list})`;
+                    return `$.invoke(${this.memberPlaceOf(resolution, 'this')}, ${packed}, ${q(name)})`;
+                case 'base':
+                    return `this.${name}(${list})`;
+                case 'builtin_type':
+                    return `$.T.${name}(${list})`;
+                case 'global_function':
+                    return `$.G.${name}(${list})`;
+                case 'io':
+                    return `$.io.${name}(${list})`;
+                case 'class':
+                    return `$.invoke(${resolution.jsName}, ${packed}, ${q(name)})`;
+                case 'sibling':
+                    return `$.invoke(${siblingAccess(resolution.scriptName)}, ${packed}, ${q(name)})`;
+                case 'singleton':
+                    return `$.invoke($.S.${name}, ${packed}, ${q(name)})`;
+                case 'constant':
+                    return `$.invoke($.C.${name}, ${packed}, ${q(name)})`;
+                case 'key':
+                    return `$.invoke($.K.${name}, ${packed}, ${q(name)})`;
+                case 'helix':
+                    return `$.invoke(helix, ${packed}, "helix")`;
+            }
+        }
+        if (callee.kind === 'member')
+            return this.memberCall(callee, list, packed);
+        if (callee.kind === 'super')
+            return `super.${this.fn.name ?? '_init'}(${list})`;
+        return `$.invoke(${this.expression(callee)}, ${packed}, ${q(this.describe(callee))})`;
+    }
+    private memberCall(callee: MemberExpression, list: string, packed: string): string {
+        const object = callee.object;
+        const name = callee.name;
+        const resolution = callee.memberResolution;
+        if (object.kind === 'super')
+            return `super.${name}(${list})`;
+        if (object.kind === 'self') {
+            if (resolution?.kind === 'member') {
+                if (resolution.memberKind === 'func')
+                    return resolution.isStatic ? `${resolution.owner}.${name}(${list})` : `this.${name}(${list})`;
+                return `$.invoke(${this.memberPlaceOf(resolution, 'this')}, ${packed}, ${q(name)})`;
+            }
+            if (resolution?.kind === 'base')
+                return `this.${name}(${list})`;
+            return `$.call(this, ${q(name)}, ${packed}, "self")`;
+        }
+        const objectText = this.expression(object);
+        const objectType = object.type ?? 'Variant';
+        const where = q(this.describe(object));
+        if (resolution?.kind === 'member') {
+            if (resolution.memberKind === 'func')
+                return resolution.isStatic ? `${resolution.owner}.${name}(${list})` : `${objectText}.${name}(${list})`;
+            return `$.invoke(${this.memberPlaceOf(resolution, objectText)}, ${packed}, ${q(name)})`;
+        }
+        if (resolution?.kind === 'base')
+            return `${objectText}.${name}(${list})`;
+        if (objectType.startsWith('@class:'))
+            return name === 'new' ? `${objectText}.new(${list})` : `$.call(${objectText}, ${q(name)}, ${packed}, ${where})`;
+        if (objectType.startsWith('@type:')) {
+            const typeName = objectType.slice(6);
+            if (name === 'new')
+                return `${objectText}.new(${list})`;
+            if (VALUE_TYPES.has(typeName))
+                return `${objectText}.${name}(${list})`;
+            if (typeName === 'String' || typeName === 'StringName')
+                return `$.STRS.${name}(${list})`;
+            return `$.call(${objectText}, ${q(name)}, ${packed}, ${q(typeName)})`;
+        }
+        if (objectType.startsWith('@singleton:'))
+            return `${objectText}.${name}(${list})`;
+        if (objectType.startsWith('@enum:'))
+            return `$.call(${objectText}, ${q(name)}, ${packed}, ${where})`;
+        if (VALUE_TYPES.has(objectType) || objectType === 'Signal')
+            return `${objectText}.${name}(${list})`;
+        if (STRING_TYPES.has(objectType))
+            return `$.STR.${name}(${objectText}${list ? `, ${list}` : ''})`;
+        if (isArrayType(objectType))
+            return `$.A.${name}(${objectText}${list ? `, ${list}` : ''})`;
+        if (objectType === 'Callable')
+            return `$.CB.${name}(${objectText}${list ? `, ${list}` : ''})`;
+        if ((isGodotNodeClass(objectType) || objectType === 'Node') && NODE_METHODS[name])
+            return `${objectText}.${name}(${list})`;
+        return `$.call(${objectText}, ${q(name)}, ${packed}, ${where})`;
+    }
+    private unary(e: UnaryExpression): string {
+        const operand = this.expression(e.operand);
+        const type = e.operand.type ?? 'Variant';
+        switch (e.operator) {
+            case 'not':
+                return `!${this.truthy(e.operand)}`;
+            case '-':
+                return isNumeric(type) ? `(-${operand})` : `$.neg(${operand})`;
+            case '+':
+                return isNumeric(type) ? operand : `$.pos(${operand})`;
+            case '~':
+                return type === 'int' ? `(~${operand})` : `$.bnot(${operand})`;
+        }
+    }
+    private binaryText(operator: BinaryExpression['operator'], left: string, leftType: StaticType, right: string, rightType: StaticType): string {
+        const numeric = isNumeric(leftType) && isNumeric(rightType);
+        const strings = STRING_TYPES.has(leftType) && STRING_TYPES.has(rightType);
+        const ints = leftType === 'int' && rightType === 'int';
+        switch (operator) {
+            case 'and':
+                return `(${this.truthyText(left, leftType)} && ${this.truthyText(right, rightType)})`;
+            case 'or':
+                return `(${this.truthyText(left, leftType)} || ${this.truthyText(right, rightType)})`;
+            case '==':
+                return numeric || strings || (leftType === 'bool' && rightType === 'bool') ? `(${left} === ${right})` : `$.eq(${left}, ${right})`;
+            case '!=':
+                return numeric || strings || (leftType === 'bool' && rightType === 'bool') ? `(${left} !== ${right})` : `$.ne(${left}, ${right})`;
+            case '<':
+            case '>':
+            case '<=':
+            case '>=':
+                return numeric || strings ? `(${left} ${operator} ${right})` : `$.${COMPARISON[operator]}(${left}, ${right})`;
+            case 'in':
+                return `$.has(${right}, ${left})`;
+            case 'not in':
+                return `!$.has(${right}, ${left})`;
+            case '/':
+                if (ints)
+                    return `$.idiv(${left}, ${right})`;
+                return numeric ? `(${left} / ${right})` : `$.div(${left}, ${right})`;
+            case '%':
+                if (ints)
+                    return `$.imod(${left}, ${right})`;
+                if (STRING_TYPES.has(leftType))
+                    return `$.format(${left}, ${right})`;
+                return `$.mod(${left}, ${right})`;
+            case '&':
+            case '|':
+            case '^':
+            case '<<':
+            case '>>':
+                return ints ? `(${left} ${operator} ${right})` : `$.${BITWISE[operator]}(${left}, ${right})`;
+            case '+':
+                return numeric || strings ? `(${left} + ${right})` : `$.add(${left}, ${right})`;
+            case '-':
+            case '*':
+            case '**':
+                return numeric ? `(${left} ${operator} ${right})` : `$.${ARITHMETIC[operator]}(${left}, ${right})`;
+        }
+    }
+    private truthyText(text: string, type: StaticType): string {
+        return type === 'bool' ? text : `$.truthy(${text})`;
+    }
+    private typeTest(value: string, target: TypeRef): string {
+        const resolved = target.resolved;
+        switch (resolved?.kind) {
+            case 'builtin':
+                return `$.is(${value}, ${q(resolved.runtimeName)})`;
+            case 'class':
+                return `$.is(${value}, ${resolved.jsName})`;
+            case 'godot':
+                return `$.isa(${value}, ${q(resolved.name)})`;
+            case 'enum':
+                return `$.is(${value}, "int")`;
+            case 'void':
+                return 'false';
+            default:
+                return `$.is(${value}, "Variant")`;
+        }
+    }
+    private cast(value: string, target: TypeRef): string {
+        const resolved = target.resolved;
+        switch (resolved?.kind) {
+            case 'builtin':
+                return `$.as(${value}, ${q(resolved.runtimeName)})`;
+            case 'class':
+                return `$.as(${value}, ${resolved.jsName})`;
+            case 'godot':
+                return `$.asa(${value}, ${q(resolved.name)})`;
+            case 'enum':
+                return `$.as(${value}, "int")`;
+            default:
+                return value;
+        }
+    }
+    private lambda(e: LambdaExpression): string {
+        const previousFn = this.fn;
+        this.fn = { name: null, isStatic: this.fn.isStatic, accessorOf: this.fn.accessorOf };
+        try {
+            const params = this.parameterList(e.params);
+            const body = [...this.parameterChecks(e.params, e.name ? `${e.name}()` : 'lambda'), ...this.blockLines(e.body)];
+            const arrow = [`${this.mark(e.span)}${e.isAsync ? 'async ' : ''}(${params}) => {`, ...indent(body), '}'].join('\n');
+            const captures = e.captures ?? [];
+            if (captures.length === 0)
+                return `(${arrow})`;
+            return `((${captures.join(', ')}) => (${arrow}))(${captures.join(', ')})`;
+        }
+        finally {
+            this.fn = previousFn;
+        }
+    }
+    private describe(e: Expression): string {
+        switch (e.kind) {
+            case 'identifier':
+                return e.name;
+            case 'self':
+                return 'self';
+            case 'member':
+                return `${this.describe(e.object)}.${e.name}`;
+            case 'index':
+                return `${this.describe(e.object)}[…]`;
+            case 'call':
+                return `${this.describe(e.callee)}()`;
+            case 'get_node':
+                return e.unique ? `%${e.path}` : `$${e.path}`;
+            case 'type_name':
+                return e.name;
+            case 'string':
+                return q(e.value);
+            default:
+                return 'a expressão';
+        }
+    }
+}
+function callsSuper(block: Block): boolean {
+    const inExpression = (e: Expression | null): boolean => {
+        if (!e)
+            return false;
+        switch (e.kind) {
+            case 'call':
+                return e.callee.kind === 'super' || inExpression(e.callee) || e.args.some(inExpression);
+            case 'await':
+            case 'is':
+            case 'as':
+                return inExpression(e.value);
+            case 'ternary':
+                return inExpression(e.condition) || inExpression(e.whenTrue) || inExpression(e.whenFalse);
+            case 'binary':
+                return inExpression(e.left) || inExpression(e.right);
+            case 'unary':
+                return inExpression(e.operand);
+            default:
+                return false;
+        }
+    };
+    const inBlock = (b: Block): boolean => b.statements.some((statement) => {
+        switch (statement.kind) {
+            case 'expression':
+                return inExpression(statement.expression);
+            case 'if':
+                return inExpression(statement.condition) || inBlock(statement.then) || (statement.otherwise ? inBlock(statement.otherwise) : false);
+            case 'while':
+                return inBlock(statement.body);
+            case 'for':
+                return inBlock(statement.body);
+            case 'match':
+                return statement.branches.some((branch) => inBlock(branch.body));
+            default:
+                return false;
+        }
+    });
+    return inBlock(block);
+}
+export function emit(input: EmitInput): EmitOutput {
+    return new Emitter(input).run();
 }
