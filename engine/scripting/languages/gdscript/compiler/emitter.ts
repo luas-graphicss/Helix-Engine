@@ -539,4 +539,265 @@ class Emitter {
                 return jsIdentifier(e.name);
         }
     }
+    private memberPlaceOf(resolution: Extract<Resolution, {
+        kind: 'member';
+    }>, receiver: string): string {
+        if (resolution.isStatic)
+            return `${resolution.owner}.${resolution.name}`;
+        return `${receiver}.${receiver === 'this' ? this.fieldName(resolution) : resolution.name}`;
+    }
+    private chainOf(object: Expression): {
+        readonly root: string;
+        readonly inner: string;
+    } | null {
+        if (object.kind === 'member') {
+            if (object.object.kind === 'self') {
+                const resolution = object.memberResolution;
+                if (resolution?.kind === 'member')
+                    return resolution.isStatic ? { root: resolution.owner, inner: resolution.name } : { root: 'this', inner: this.fieldName(resolution) };
+                return { root: 'this', inner: object.name };
+            }
+            if (object.object.kind === 'super')
+                return null;
+            return { root: this.expression(object.object), inner: object.name };
+        }
+        if (object.kind === 'identifier') {
+            const resolution = object.resolved;
+            if (resolution?.kind === 'member')
+                return resolution.isStatic ? { root: resolution.owner, inner: resolution.name } : { root: 'this', inner: this.fieldName(resolution) };
+            if (resolution?.kind === 'base')
+                return { root: 'this', inner: resolution.name };
+        }
+        return null;
+    }
+    private fieldName(resolution: Extract<Resolution, {
+        kind: 'member';
+    }>): string {
+        return resolution.backingField && this.fn.accessorOf === resolution.name ? resolution.backingField : resolution.name;
+    }
+    private memberPlace(e: MemberExpression): string | null {
+        const object = e.object;
+        const resolution = e.memberResolution;
+        if (object.kind === 'self') {
+            if (resolution?.kind === 'member')
+                return this.memberPlaceOf(resolution, 'this');
+            return `this.${e.name}`;
+        }
+        const objectType = object.type ?? 'Variant';
+        if (resolution?.kind === 'member')
+            return this.memberPlaceOf(resolution, this.expression(object));
+        if (resolution?.kind === 'base')
+            return `${this.expression(object)}.${e.name}`;
+        if (objectType.startsWith('@class:') || objectType.startsWith('@singleton:'))
+            return `${this.expression(object)}.${e.name}`;
+        if (VALUE_TYPES.has(objectType))
+            return `${this.expression(object)}.${e.name}`;
+        if ((isGodotNodeClass(objectType) || objectType === 'Node') && NODE_PROPERTIES[e.name])
+            return `${this.expression(object)}.${e.name}`;
+        return null;
+    }
+    private matchLines(statement: MatchStatement, at: string): string[] {
+        const label = this.nextTemp('match');
+        const subject = this.nextTemp('value');
+        const lines = [`${at}${label}: {`, `${INDENT}const ${subject} = ${this.expression(statement.value)};`];
+        for (const branch of statement.branches) {
+            const tests = branch.patterns.map((pattern) => this.patternTest(pattern, subject));
+            const test = tests.length === 1 ? tests[0] : `(${tests.join(' || ')})`;
+            const bindings = branch.patterns.length === 1 ? this.patternBindings(branch.patterns[0], subject) : [];
+            const body = [...this.blockLines(branch.body), `break ${label};`];
+            const inner = branch.guard ? [...bindings, `if (${this.condition(branch.guard)}) {`, ...indent(body), '}'] : [...bindings, ...body];
+            lines.push(...indent([`${this.mark(branch.span)}if (${test}) {`, ...indent(inner), '}']));
+        }
+        lines.push('}');
+        return lines;
+    }
+    private patternTest(pattern: Pattern, subject: string): string {
+        switch (pattern.kind) {
+            case 'wildcard':
+            case 'binding':
+                return 'true';
+            case 'value':
+                return `$.eq(${subject}, ${this.expression(pattern.value)})`;
+            case 'array': {
+                const parts = [`Array.isArray(${subject})`, `${subject}.length ${pattern.open ? '>=' : '==='} ${pattern.elements.length}`];
+                pattern.elements.forEach((element, index) => {
+                    const test = this.patternTest(element, `${subject}[${index}]`);
+                    if (test !== 'true')
+                        parts.push(test);
+                });
+                return `(${parts.join(' && ')})`;
+            }
+            case 'dictionary': {
+                const parts = [`$.is(${subject}, "Dictionary")`, `$.len(${subject}) ${pattern.open ? '>=' : '==='} ${pattern.entries.length}`];
+                for (const entry of pattern.entries) {
+                    const key = this.expression(entry.key);
+                    parts.push(`$.has(${subject}, ${key})`);
+                    if (entry.value) {
+                        const test = this.patternTest(entry.value, `$.index(${subject}, ${key})`);
+                        if (test !== 'true')
+                            parts.push(test);
+                    }
+                }
+                return `(${parts.join(' && ')})`;
+            }
+        }
+    }
+    private patternBindings(pattern: Pattern, subject: string): string[] {
+        switch (pattern.kind) {
+            case 'binding':
+                return [`const ${pattern.jsName ?? jsIdentifier(pattern.name)} = ${subject};`];
+            case 'array':
+                return pattern.elements.flatMap((element, index) => this.patternBindings(element, `${subject}[${index}]`));
+            case 'dictionary':
+                return pattern.entries.flatMap((entry) => (entry.value ? this.patternBindings(entry.value, `$.index(${subject}, ${this.expression(entry.key)})`) : []));
+            default:
+                return [];
+        }
+    }
+    private expression(e: Expression): string {
+        switch (e.kind) {
+            case 'literal':
+                if (e.literalType === 'null')
+                    return 'null';
+                return String(e.value);
+            case 'string':
+                return q(e.value);
+            case 'identifier':
+                return this.identifierValue(e);
+            case 'self':
+                return 'this';
+            case 'super':
+                return 'super';
+            case 'array':
+                return `[${e.elements.map((element) => this.expression(element)).join(', ')}]`;
+            case 'dictionary':
+                return `$.dict([${e.entries.map((entry) => `[${this.expression(entry.key)}, ${this.expression(entry.value)}]`).join(', ')}])`;
+            case 'member':
+                return this.memberValue(e);
+            case 'index':
+                return `${this.mark(e.span)}$.index(${this.expression(e.object)}, ${this.expression(e.index)}, ${q(this.describe(e.object))})`;
+            case 'call':
+                return `${this.mark(e.span)}${this.call(e)}`;
+            case 'unary':
+                return this.unary(e);
+            case 'binary':
+                return this.binaryText(e.operator, this.expression(e.left), e.left.type ?? 'Variant', this.expression(e.right), e.right.type ?? 'Variant');
+            case 'ternary':
+                return `(${this.truthy(e.condition)} ? ${this.expression(e.whenTrue)} : ${this.expression(e.whenFalse)})`;
+            case 'is': {
+                const test = this.typeTest(this.expression(e.value), e.target);
+                return e.negated ? `!${test}` : test;
+            }
+            case 'as':
+                return this.cast(this.expression(e.value), e.target);
+            case 'await':
+                return `(await $.wait(${this.expression(e.value)}))`;
+            case 'lambda':
+                return this.lambda(e);
+            case 'get_node':
+                return `${this.mark(e.span)}this.get_node(${q(e.unique ? `%${e.path}` : e.path)})`;
+            case 'preload':
+                return e.scriptName ? siblingAccess(e.scriptName) : `${this.mark(e.span)}$.G.preload(${q(e.path)})`;
+            case 'type_name':
+                return `$.T.${e.name}`;
+        }
+    }
+    private identifierValue(e: IdentifierExpression): string {
+        const resolution = e.resolved;
+        if (!resolution)
+            return jsIdentifier(e.name);
+        switch (resolution.kind) {
+            case 'local':
+                return resolution.jsName;
+            case 'member':
+                if (resolution.memberKind === 'func')
+                    return resolution.isStatic ? `$.callable(${resolution.owner}, ${q(resolution.name)})` : `$.callable(this, ${q(resolution.name)})`;
+                return this.memberPlaceOf(resolution, 'this');
+            case 'base':
+                return NODE_METHODS[resolution.name] ? `$.callable(this, ${q(resolution.name)})` : `this.${resolution.name}`;
+            case 'class':
+                return resolution.jsName;
+            case 'sibling':
+                return siblingAccess(resolution.scriptName);
+            case 'global_function':
+                return `$.G.${resolution.name}`;
+            case 'io':
+                return `$.io.${resolution.name}`;
+            case 'constant':
+                return `$.C.${resolution.name}`;
+            case 'key':
+                return `$.K.${resolution.name}`;
+            case 'builtin_type':
+                return `$.T.${resolution.name}`;
+            case 'singleton':
+                return `$.S.${resolution.name}`;
+            case 'helix':
+                return 'helix';
+        }
+    }
+    private memberValue(e: MemberExpression): string {
+        const object = e.object;
+        const name = e.name;
+        const resolution = e.memberResolution;
+        if (object.kind === 'self') {
+            if (resolution?.kind === 'member')
+                return resolution.memberKind === 'func' ? `$.callable(${resolution.isStatic ? resolution.owner : 'this'}, ${q(name)})` : this.memberPlaceOf(resolution, 'this');
+            if (resolution?.kind === 'base')
+                return NODE_METHODS[name] ? `$.callable(this, ${q(name)})` : `this.${name}`;
+            return `$.get(this, ${q(name)}, "self")`;
+        }
+        const objectText = this.expression(object);
+        const objectType = object.type ?? 'Variant';
+        if (resolution?.kind === 'member') {
+            if (resolution.memberKind === 'func')
+                return `$.callable(${resolution.isStatic ? resolution.owner : objectText}, ${q(name)})`;
+            return this.memberPlaceOf(resolution, objectText);
+        }
+        if (resolution?.kind === 'base')
+            return NODE_METHODS[name] ? `$.callable(${objectText}, ${q(name)})` : `${objectText}.${name}`;
+        if (objectType.startsWith('@class:'))
+            return `${objectText}.${name}`;
+        if (objectType.startsWith('@enum:')) {
+            const folded = this.enumValue(objectType, name);
+            return folded ?? `$.get(${objectText}, ${q(name)}, ${q(this.describe(object))})`;
+        }
+        if (objectType.startsWith('@type:')) {
+            const typeName = objectType.slice(6);
+            if (VALUE_TYPES.has(typeName))
+                return `${objectText}.${name}`;
+            if (typeName === 'String' || typeName === 'StringName')
+                return `$.STRS.${name}`;
+            if (/^[A-Z][A-Z0-9_]*$/.test(name))
+                return `$.C.${name}`;
+            return `$.get(${objectText}, ${q(name)}, ${q(typeName)})`;
+        }
+        if (objectType.startsWith('@singleton:'))
+            return `$.get(${objectText}, ${q(name)}, ${q(objectType.slice(11))})`;
+        if (VALUE_TYPES.has(objectType))
+            return (VALUE_FIELDS[objectType] ?? []).includes(name) ? `${objectText}.${name}` : `$.callable(${objectText}, ${q(name)})`;
+        if (STRING_TYPES.has(objectType) || isArrayType(objectType) || objectType === 'Dictionary' || objectType === 'Callable' || objectType === 'Signal')
+            return `$.callable(${objectText}, ${q(name)})`;
+        if ((isGodotNodeClass(objectType) || objectType === 'Node') && NODE_PROPERTIES[name])
+            return `${objectText}.${name}`;
+        if ((isGodotNodeClass(objectType) || objectType === 'Node') && NODE_METHODS[name])
+            return `$.callable(${objectText}, ${q(name)})`;
+        return `$.get(${objectText}, ${q(name)}, ${q(this.describe(object))})`;
+    }
+    private enumValue(enumType: string, name: string): string | null {
+        const dot = enumType.lastIndexOf('.');
+        const owner = this.classesByTypeName.get(enumType.slice(6, dot));
+        if (!owner)
+            return null;
+        const enumName = enumType.slice(dot + 1);
+        let current: ClassInfo | null = owner;
+        while (current) {
+            const member = current.members.get(enumName);
+            if (member) {
+                const value = member.enumValues?.get(name);
+                return value === undefined ? null : String(value);
+            }
+            current = current.parent;
+        }
+        return null;
+    }
 }
