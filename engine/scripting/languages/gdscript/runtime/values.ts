@@ -1033,3 +1033,228 @@ export class Color {
 for (const name of Object.keys(NAMED_COLORS)) {
     Object.defineProperty(Color, name, { get: () => new Color(...NAMED_COLORS[name]), enumerable: true });
 }
+export class Rect2 {
+    position: Vector2;
+    size: Vector2;
+    constructor(x: unknown = 0, y: unknown = 0, width: unknown = 0, height: unknown = 0) {
+        if (x !== null && typeof x === 'object' && y !== null && typeof y === 'object') {
+            this.position = new Vector2(x);
+            this.size = new Vector2(y);
+            return;
+        }
+        if (x instanceof Rect2) {
+            this.position = new Vector2(x.position);
+            this.size = new Vector2(x.size);
+            return;
+        }
+        this.position = new Vector2(x, y);
+        this.size = new Vector2(width, height);
+    }
+    get end(): Vector2 {
+        return new Vector2(this.position.x + this.size.x, this.position.y + this.size.y);
+    }
+    set end(value: VecLike) {
+        this.size = new Vector2(value.x - this.position.x, value.y - this.position.y);
+    }
+    get_area(): number {
+        return this.size.x * this.size.y;
+    }
+    get_center(): Vector2 {
+        return new Vector2(this.position.x + this.size.x * 0.5, this.position.y + this.size.y * 0.5);
+    }
+    has_area(): boolean {
+        return this.size.x > 0 && this.size.y > 0;
+    }
+    has_point(point: VecLike): boolean {
+        return point.x >= this.position.x && point.y >= this.position.y && point.x < this.position.x + this.size.x && point.y < this.position.y + this.size.y;
+    }
+    intersects(other: Rect2, includeBorders = false): boolean {
+        if (includeBorders)
+            return !(this.position.x > other.position.x + other.size.x || this.position.x + this.size.x < other.position.x || this.position.y > other.position.y + other.size.y || this.position.y + this.size.y < other.position.y);
+        return !(this.position.x >= other.position.x + other.size.x || this.position.x + this.size.x <= other.position.x || this.position.y >= other.position.y + other.size.y || this.position.y + this.size.y <= other.position.y);
+    }
+    intersection(other: Rect2): Rect2 {
+        if (!this.intersects(other))
+            return new Rect2();
+        const x = Math.max(this.position.x, other.position.x);
+        const y = Math.max(this.position.y, other.position.y);
+        const endX = Math.min(this.position.x + this.size.x, other.position.x + other.size.x);
+        const endY = Math.min(this.position.y + this.size.y, other.position.y + other.size.y);
+        return new Rect2(x, y, endX - x, endY - y);
+    }
+    merge(other: Rect2): Rect2 {
+        const x = Math.min(this.position.x, other.position.x);
+        const y = Math.min(this.position.y, other.position.y);
+        const endX = Math.max(this.position.x + this.size.x, other.position.x + other.size.x);
+        const endY = Math.max(this.position.y + this.size.y, other.position.y + other.size.y);
+        return new Rect2(x, y, endX - x, endY - y);
+    }
+    encloses(other: Rect2): boolean {
+        return other.position.x >= this.position.x && other.position.y >= this.position.y && other.position.x + other.size.x <= this.position.x + this.size.x && other.position.y + other.size.y <= this.position.y + this.size.y;
+    }
+    expand(point: VecLike): Rect2 {
+        const x = Math.min(this.position.x, point.x);
+        const y = Math.min(this.position.y, point.y);
+        const endX = Math.max(this.position.x + this.size.x, point.x);
+        const endY = Math.max(this.position.y + this.size.y, point.y);
+        return new Rect2(x, y, endX - x, endY - y);
+    }
+    grow(amount: number): Rect2 {
+        return new Rect2(this.position.x - amount, this.position.y - amount, this.size.x + amount * 2, this.size.y + amount * 2);
+    }
+    grow_individual(left: number, top: number, right: number, bottom: number): Rect2 {
+        return new Rect2(this.position.x - left, this.position.y - top, this.size.x + left + right, this.size.y + top + bottom);
+    }
+    abs(): Rect2 {
+        return new Rect2(Math.min(this.position.x, this.position.x + this.size.x), Math.min(this.position.y, this.position.y + this.size.y), Math.abs(this.size.x), Math.abs(this.size.y));
+    }
+    is_equal_approx(other: Rect2): boolean {
+        return this.position.is_equal_approx(other.position) && this.size.is_equal_approx(other.size);
+    }
+}
+export class AABB {
+    position: Vector3;
+    size: Vector3;
+    constructor(position?: unknown, size?: unknown) {
+        if (position instanceof AABB) {
+            this.position = new Vector3(position.position);
+            this.size = new Vector3(position.size);
+            return;
+        }
+        this.position = position === undefined || position === null ? new Vector3() : new Vector3(position);
+        this.size = size === undefined || size === null ? new Vector3() : new Vector3(size);
+    }
+    get end(): Vector3 {
+        return new Vector3(this.position.x + this.size.x, this.position.y + this.size.y, this.position.z + this.size.z);
+    }
+    set end(value: VecLike) {
+        this.size = new Vector3(value.x - this.position.x, value.y - this.position.y, (value.z ?? 0) - this.position.z);
+    }
+    get_volume(): number {
+        return this.size.x * this.size.y * this.size.z;
+    }
+    get_center(): Vector3 {
+        return new Vector3(this.position.x + this.size.x * 0.5, this.position.y + this.size.y * 0.5, this.position.z + this.size.z * 0.5);
+    }
+    has_volume(): boolean {
+        return this.size.x > 0 && this.size.y > 0 && this.size.z > 0;
+    }
+    has_point(point: VecLike): boolean {
+        const z = point.z ?? 0;
+        return point.x >= this.position.x && point.y >= this.position.y && z >= this.position.z && point.x < this.position.x + this.size.x && point.y < this.position.y + this.size.y && z < this.position.z + this.size.z;
+    }
+    intersects(other: AABB): boolean {
+        return !(this.position.x >= other.position.x + other.size.x || this.position.x + this.size.x <= other.position.x || this.position.y >= other.position.y + other.size.y || this.position.y + this.size.y <= other.position.y || this.position.z >= other.position.z + other.size.z || this.position.z + this.size.z <= other.position.z);
+    }
+    intersection(other: AABB): AABB {
+        if (!this.intersects(other))
+            return new AABB();
+        const min = this.position.max(other.position);
+        const max = this.end.min(other.end);
+        return new AABB(min, new Vector3(max.x - min.x, max.y - min.y, max.z - min.z));
+    }
+    merge(other: AABB): AABB {
+        const min = this.position.min(other.position);
+        const max = this.end.max(other.end);
+        return new AABB(min, new Vector3(max.x - min.x, max.y - min.y, max.z - min.z));
+    }
+    encloses(other: AABB): boolean {
+        const end = this.end;
+        const otherEnd = other.end;
+        return other.position.x >= this.position.x && other.position.y >= this.position.y && other.position.z >= this.position.z && otherEnd.x <= end.x && otherEnd.y <= end.y && otherEnd.z <= end.z;
+    }
+    expand(point: VecLike): AABB {
+        const target = new Vector3(point);
+        const min = this.position.min(target);
+        const max = this.end.max(target);
+        return new AABB(min, new Vector3(max.x - min.x, max.y - min.y, max.z - min.z));
+    }
+    grow(amount: number): AABB {
+        return new AABB(new Vector3(this.position.x - amount, this.position.y - amount, this.position.z - amount), new Vector3(this.size.x + amount * 2, this.size.y + amount * 2, this.size.z + amount * 2));
+    }
+    abs(): AABB {
+        const end = this.end;
+        return new AABB(this.position.min(end), this.size.abs());
+    }
+    get_longest_axis_size(): number {
+        return Math.max(this.size.x, this.size.y, this.size.z);
+    }
+    get_shortest_axis_size(): number {
+        return Math.min(this.size.x, this.size.y, this.size.z);
+    }
+    is_equal_approx(other: AABB): boolean {
+        return this.position.is_equal_approx(other.position) && this.size.is_equal_approx(other.size);
+    }
+}
+export class Dictionary {
+    private readonly entries = new Map<unknown, [
+        unknown,
+        unknown
+    ]>();
+    constructor(source?: unknown) {
+        if (source instanceof Dictionary) {
+            for (const [key, value] of source)
+                this.set(key, value);
+        }
+        else if (source instanceof Map) {
+            for (const [key, value] of source)
+                this.set(key, value);
+        }
+        else if (source !== null && typeof source === 'object') {
+            for (const [key, value] of Object.entries(source as Record<string, unknown>))
+                this.set(key, value);
+        }
+    }
+    static canonical(key: unknown): unknown {
+        if (key === undefined)
+            return null;
+        if (key !== null && typeof key === 'object') {
+            if (key instanceof Vector2 || key instanceof Vector3 || key instanceof Vector4 || key instanceof Quaternion)
+                return `${key.constructor.name}(${key.x},${key.y},${(key as VecLike).z ?? ''},${(key as VecLike).w ?? ''})`;
+            if (key instanceof Color)
+                return `Color(${key.r},${key.g},${key.b},${key.a})`;
+        }
+        return key;
+    }
+    get size(): number {
+        return this.entries.size;
+    }
+    has(key: unknown): boolean {
+        return this.entries.has(Dictionary.canonical(key));
+    }
+    get(key: unknown): unknown {
+        return this.entries.get(Dictionary.canonical(key))?.[1];
+    }
+    set(key: unknown, value: unknown): this {
+        const canonical = Dictionary.canonical(key);
+        const existing = this.entries.get(canonical);
+        if (existing)
+            existing[1] = value;
+        else
+            this.entries.set(canonical, [key === undefined ? null : key, value]);
+        return this;
+    }
+    delete(key: unknown): boolean {
+        return this.entries.delete(Dictionary.canonical(key));
+    }
+    clear(): void {
+        this.entries.clear();
+    }
+    keys(): unknown[] {
+        return Array.from(this.entries.values(), (entry) => entry[0]);
+    }
+    values(): unknown[] {
+        return Array.from(this.entries.values(), (entry) => entry[1]);
+    }
+    *[Symbol.iterator](): IterableIterator<[
+        unknown,
+        unknown
+    ]> {
+        for (const entry of this.entries.values())
+            yield [entry[0], entry[1]];
+    }
+}
+export interface SignalConnection {
+    readonly callable: (...args: unknown[]) => unknown;
+    readonly once: boolean;
+}
