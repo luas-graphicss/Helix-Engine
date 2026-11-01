@@ -251,4 +251,279 @@ export function createSceneApi(host: RuntimeHost) {
     function byId(id: unknown): Entity | null {
         return session.findById(requireNumber(id, 'helix.scene.byId', 'o id'));
     }
+    function addComponent(entityValue: unknown, kindValue: unknown, settings?: unknown): unknown {
+        const member = 'helix.scene.addComponent';
+        const entity = requireEntity(entityValue, member);
+        const kind = requireOneOf(kindValue, COMPONENT_KINDS, member, 'o componente');
+        const patch = settings === undefined ? {} : settings;
+        switch (kind) {
+            case 'mesh': {
+                if (!settings)
+                    throw new HelixArgumentError(member, 'mesh precisa dos dados da malha (helix.mesh.box(), helix.mesh.create(...)).');
+                entity.mesh = settings as MeshData;
+                if (!entity.material)
+                    entity.material = createMaterial({ baseColor: vec3.create(0.7, 0.7, 0.7), roughness: 0.6 });
+                break;
+            }
+            case 'material':
+                entity.material = settings ? (settings as Entity['material']) : createMaterial();
+                break;
+            case 'light': {
+                const options = patch as {
+                    type?: string;
+                };
+                const type = options.type ?? 'point';
+                entity.light = type === 'directional' ? createDirectionalLight() : type === 'ambient' ? createAmbientLight() : createLocalLight(requireOneOf(type, LOCAL_LIGHT_TYPES, member, 'o tipo da luz'));
+                if (entity.light && settings)
+                    assignSettings(entity.light as unknown as Record<string, unknown>, { ...(patch as object), type: undefined }, member, { allowUnknown: true, colors: new Set(['color', 'skyColor', 'groundColor']) });
+                break;
+            }
+            case 'rigidBody':
+                entity.rigidBody = rigidBodyFromPatch(settings ? patch : null, member);
+                break;
+            case 'character':
+                entity.character = createCharacterSettings();
+                if (settings)
+                    assignSettings(entity.character as unknown as Record<string, unknown>, patch, member, { allowUnknown: true });
+                break;
+            case 'csg':
+                if (!entity.mesh)
+                    throw new HelixArgumentError(member, 'csg precisa de um ator com malha: o alvo guarda a malha original.');
+                entity.csg = createCsgSettings(entity.mesh);
+                if (settings)
+                    assignSettings(entity.csg as unknown as Record<string, unknown>, patch, member, { allowUnknown: true });
+                break;
+            case 'csgBrush':
+                if (!entity.parent?.csg)
+                    throw new HelixArgumentError(member, 'um pincel CSG precisa ser filho de um alvo CSG (ator com o componente csg).');
+                entity.csgBrush = createCsgBrushSettings();
+                if (settings)
+                    assignSettings(entity.csgBrush as unknown as Record<string, unknown>, patch, member, { allowUnknown: true });
+                break;
+            case 'audioSource':
+                entity.audioSource = createAudioSourceSettings();
+                if (settings)
+                    assignSettings(entity.audioSource as unknown as Record<string, unknown>, patch, member, { allowUnknown: true });
+                break;
+            case 'audioZone':
+                entity.audioZone = createAudioZoneSettings();
+                if (settings)
+                    assignSettings(entity.audioZone as unknown as Record<string, unknown>, patch, member, { allowUnknown: true });
+                break;
+            case 'guiSurface':
+                entity.guiSurface = createGuiSurfaceSettings();
+                if (settings)
+                    assignSettings(entity.guiSurface as unknown as Record<string, unknown>, patch, member, { allowUnknown: true });
+                break;
+            case 'vfx':
+                entity.vfx = createVfxSettings();
+                if (settings)
+                    assignSettings(entity.vfx as unknown as Record<string, unknown>, patch, member, { allowUnknown: true });
+                break;
+            case 'script':
+                entity.script = createScriptSettings(patch as object);
+                host.requestActorSync();
+                break;
+        }
+        session.notify();
+        return (entity as unknown as Record<string, unknown>)[kind];
+    }
+    function removeComponent(entityValue: unknown, kindValue: unknown): void {
+        const member = 'helix.scene.removeComponent';
+        const entity = requireEntity(entityValue, member);
+        const kind = requireOneOf(kindValue, COMPONENT_KINDS, member, 'o componente');
+        if (kind === 'script')
+            host.destroyScriptsOf(entity);
+        (entity as unknown as Record<string, unknown>)[kind] = null;
+        if (kind === 'script')
+            host.requestActorSync();
+        session.notify();
+    }
+    async function instantiate(assetValue: unknown, options?: unknown): Promise<Entity> {
+        const member = 'helix.scene.instantiate';
+        const asset = host.resolveAsset(assetValue, member, 'model');
+        const settings = (options ?? {}) as Record<string, unknown>;
+        const imported = await session.library.loadModel(asset);
+        const root = await instantiateImportedScene(session, imported, {
+            ...DEFAULT_IMPORT_OPTIONS,
+            rootName: typeof settings.name === 'string' ? settings.name : asset.name,
+            placement: settings.position !== undefined ? 'target' : 'origin',
+            placementPoint: settings.position !== undefined ? toVec3(settings.position, `${member}.position`) : null,
+            frameAfterImport: false,
+            saveToLibrary: false,
+        });
+        if (host.mode === 'play') {
+            host.trackSpawned(root);
+        }
+        applyTransformOptions(root, settings, member);
+        if (settings.parent instanceof Entity)
+            settings.parent.add(root);
+        host.requestActorSync();
+        host.bus.emit('scene.spawned', root);
+        return root;
+    }
+    const sceneApi = {
+        get root() {
+            return scene.root;
+        },
+        get sun() {
+            return scene.findSunLight();
+        },
+        get activeCamera() {
+            return host.cameraEntity();
+        },
+        find,
+        findAll,
+        byId,
+        byKind,
+        byTag,
+        traverse: (visitor: unknown, from?: unknown) => {
+            const fn = requireFunction<(entity: Entity) => void>(visitor, 'helix.scene.traverse', 'o visitante');
+            scene.traverse(fn, from === undefined ? scene.root : requireEntity(from, 'helix.scene.traverse', 'a raiz'));
+        },
+        traverseVisible: (visitor: unknown, from?: unknown) => {
+            const fn = requireFunction<(entity: Entity) => void>(visitor, 'helix.scene.traverseVisible', 'o visitante');
+            scene.traverseVisible(fn, from === undefined ? scene.root : requireEntity(from, 'helix.scene.traverseVisible', 'a raiz'));
+        },
+        all: () => {
+            const list: Entity[] = [];
+            scene.traverse((entity) => {
+                if (entity.parent)
+                    list.push(entity);
+            });
+            return list;
+        },
+        count: () => session.countEntities(),
+        spawn,
+        spawnPrimitive: (kind: unknown, options?: unknown, parent?: unknown) => {
+            const primitive = requireOneOf(kind, PRIMITIVES.map((entry) => entry.kind) as PrimitiveKind[], 'helix.scene.spawnPrimitive', 'a primitiva');
+            const definition = getPrimitive(primitive);
+            return spawn('mesh', { name: definition.label, ...(options as object), mesh: (options as {
+                    mesh?: MeshData;
+                } | undefined)?.mesh ?? definition.create() }, parent);
+        },
+        clone: (value: unknown, deep: unknown = true, parent?: unknown) => {
+            const source = requireEntity(value, 'helix.scene.clone');
+            const target = parent === undefined ? (source.parent ?? scene.root) : resolveParent(parent, 'helix.scene.clone');
+            let copy: Entity;
+            if (deep === false) {
+                const shallow = cloneEntity(scene, source, null);
+                for (const child of shallow.children.slice())
+                    shallow.remove(child);
+                copy = shallow;
+            }
+            else {
+                copy = cloneEntity(scene, source, null);
+            }
+            copy.name = uniqueEntityName(scene, source.name);
+            attach(copy, target, undefined, `Duplicar ${source.name}`);
+            return copy;
+        },
+        destroy,
+        reparent: (value: unknown, parentValue: unknown, index?: unknown) => {
+            const entity = requireEntity(value, 'helix.scene.reparent');
+            const parent = resolveParent(parentValue, 'helix.scene.reparent');
+            if (entity === scene.root)
+                throw new HelixError('helix.scene.reparent: a raiz não pode trocar de pai.');
+            if (entity.contains(parent))
+                throw new HelixError(`helix.scene.reparent: ${parent.name} está dentro de ${entity.name}; um ator não pode virar filho do próprio descendente.`);
+            const previous = entity.parent;
+            parent.insert(entity, index === undefined ? parent.children.length : requireNumber(index, 'helix.scene.reparent', 'a posição'));
+            host.bus.emit('scene.reparented', { entity, oldParent: previous });
+            session.notify();
+        },
+        insert: (parentValue: unknown, child: unknown, index: unknown) => {
+            const parent = requireEntity(parentValue, 'helix.scene.insert', 'o pai');
+            const entity = requireEntity(child, 'helix.scene.insert', 'o filho');
+            parent.insert(entity, requireNumber(index, 'helix.scene.insert', 'a posição'));
+            session.notify();
+        },
+        remove: (parentValue: unknown, child: unknown) => {
+            const parent = requireEntity(parentValue, 'helix.scene.remove', 'o pai');
+            const entity = requireEntity(child, 'helix.scene.remove', 'o filho');
+            parent.remove(entity);
+            session.notify();
+        },
+        contains: (ancestor: unknown, descendant: unknown) => requireEntity(ancestor, 'helix.scene.contains').contains(requireEntity(descendant, 'helix.scene.contains')),
+        instantiate,
+        addComponent,
+        removeComponent,
+        rename: (value: unknown, name: unknown) => {
+            const entity = requireEntity(value, 'helix.scene.rename');
+            entity.name = requireString(name, 'helix.scene.rename', 'o nome');
+            host.bus.emit('scene.renamed', entity);
+            session.notify();
+        },
+        setVisible: (value: unknown, visible: unknown) => {
+            requireEntity(value, 'helix.scene.setVisible').visible = Boolean(visible);
+            session.notify();
+        },
+        path: (value: unknown) => entityPath(requireEntity(value, 'helix.scene.path')),
+        addTag: (value: unknown, tag: unknown) => {
+            requireEntity(value, 'helix.scene.addTag').tags.add(requireString(tag, 'helix.scene.addTag', 'a etiqueta'));
+        },
+        removeTag: (value: unknown, tag: unknown) => requireEntity(value, 'helix.scene.removeTag').tags.delete(requireString(tag, 'helix.scene.removeTag', 'a etiqueta')),
+        hasTag: (value: unknown, tag: unknown) => requireEntity(value, 'helix.scene.hasTag').tags.has(requireString(tag, 'helix.scene.hasTag', 'a etiqueta')),
+        getMeta: (value: unknown, key: unknown) => requireEntity(value, 'helix.scene.getMeta').meta[requireString(key, 'helix.scene.getMeta', 'a chave')],
+        setMeta: (value: unknown, key: unknown, data: unknown) => {
+            const entity = requireEntity(value, 'helix.scene.setMeta');
+            const name = requireString(key, 'helix.scene.setMeta', 'a chave');
+            if (data === undefined) {
+                delete entity.meta[name];
+                return;
+            }
+            if (!isJsonValue(data))
+                throw new HelixArgumentError('helix.scene.setMeta', 'o valor precisa ser serializável em JSON.');
+            entity.meta[name] = data as Entity['meta'][string];
+        },
+        isAttached: (value: unknown) => {
+            let current: Entity | null = requireEntity(value, 'helix.scene.isAttached');
+            while (current.parent)
+                current = current.parent;
+            return current === scene.root;
+        },
+        saveAsPrefab: (value: unknown, name: unknown) => host.savePrefab(requireEntity(value, 'helix.scene.saveAsPrefab'), requireString(name, 'helix.scene.saveAsPrefab', 'o nome')),
+        instantiatePrefab: async (asset: unknown, parent?: unknown) => {
+            const member = 'helix.scene.instantiatePrefab';
+            const target = parent === undefined ? scene.root : resolveParent(parent, member);
+            const root = await host.instantiatePrefab(asset);
+            attach(root, target, undefined, `Instanciar ${root.name}`);
+            return root;
+        },
+        kinds: () => ENTITY_KINDS.slice(),
+        components: () => COMPONENT_KINDS.slice(),
+    };
+    function worldPosition(entity: Entity, out = vec3.create()): Vec3 {
+        world();
+        return mat4.getTranslation(out, entity.worldMatrix);
+    }
+    function worldRotation(entity: Entity, out = quat.create()): Quat {
+        world();
+        return quat.fromMat4Rotation(out, entity.worldMatrix);
+    }
+    function worldScale(entity: Entity, out = vec3.create()): Vec3 {
+        world();
+        const m = entity.worldMatrix;
+        return vec3.set(out, Math.hypot(m[0], m[1], m[2]), Math.hypot(m[4], m[5], m[6]), Math.hypot(m[8], m[9], m[10]));
+    }
+    function setWorldMatrix(entity: Entity, matrix: Float32Array): void {
+        world();
+        let local = matrix;
+        if (entity.parent) {
+            const inverse = mat4.invert(scratchParentInverse, entity.parent.worldMatrix);
+            if (!inverse)
+                throw new HelixError(`helix.transform: a matriz de mundo de ${entity.parent.name} não é invertível (escala zero?).`);
+            local = mat4.multiply(scratchMatrix, inverse, matrix);
+        }
+        mat4.decomposeTranslationRotationScale(scratchTranslation, scratchRotation, scratchScale, local);
+        vec3.copy(entity.transform.position, scratchTranslation);
+        vec3.copy(entity.transform.rotation, scratchRotation);
+        vec3.copy(entity.transform.scale, scratchScale);
+        entity.worldMatrixStale = true;
+    }
+    function worldAxis(entity: Entity, column: 0 | 4 | 8, sign: number, out = vec3.create()): Vec3 {
+        world();
+        const m = entity.worldMatrix;
+        return vec3.normalize(out, vec3.set(out, m[column] * sign, m[column + 1] * sign, m[column + 2] * sign));
+    }
 }
