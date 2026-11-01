@@ -284,5 +284,140 @@ function M.where()
       source, line = info(co, level, "sl")
     else
       local frame = getinfo(co, level, "Sl")
+      if frame then source, line = frame.short_src, frame.currentline end
+    end
+    if source == nil then break end
+    if source ~= "[C]" and source ~= "${LUA_PRELUDE_CHUNK}" and source ~= "=${LUA_PRELUDE_CHUNK}" and line and line > 0 then
+      return { source, line }
+    end
+  end
+  return nil
+end
+
+                                                                                      
+
+local G = {}
+for _, name in ipairs({ "assert", "error", "ipairs", "pairs", "next", "pcall", "xpcall", "select", "tonumber", "tostring", "type", "rawequal", "rawget", "rawset", "rawlen", "setmetatable", "getmetatable", "unpack", "string", "table", "math", "utf8", "coroutine", "bit32", "typeof", "buffer", "vector", "_VERSION" }) do
+  G[name] = _G[name]
+end
+G.os = { clock = os.clock, time = os.time, date = os.date, difftime = os.difftime }
+G.debug = { traceback = debug.traceback }
+
+local function format(...)
+  local n = select("#", ...)
+  local parts = {}
+  for i = 1, n do parts[i] = tostring((select(i, ...))) end
+  return concat(parts, " ")
+end
+
+local function requireFrom(fromKey, spec)
+  if type(spec) ~= "string" or spec == "" then error("require() precisa do nome de um script da biblioteca, em texto.", 3) end
+  if spec == "helix" or spec == "@helix/engine" then return rootHelix end
+  local result = hx.resolve(fromKey, spec)
+  if type(result) ~= "table" then return result end
+  local kind = rawget(result, KIND)
+  if kind == "err" then error(result.message, 3) end
+  if kind == "module" then return requireModule(result.key, result.file, 3) end
+  return materialize(result)
+end
+
+local function newEnv(file, helixValue, scriptValue, key)
+  local env = setmetatable({}, { __index = G })
+  env._G = env
+  env.helix = materialize(helixValue)
+  env.script = materialize(scriptValue)
+  env.print = function(...) hx.console("info", format(...)) end
+  env.warn = function(...) hx.console("warn", format(...)) end
+  env.require = function(spec) return requireFrom(key, spec) end
+  return env
+end
+
+local function loadChunk(key, env)
+  local result = hx.loadChunk(key, env)
+  if type(result) == "function" then return result end
+  if type(result) == "table" then
+    local kind = rawget(result, KIND)
+    if kind == "err" then return nil, result.message end
+    if kind == "source" then
+      local fn, err = load(result.source, result.name, "t", env)
+      if not fn then return nil, tostring(err) end
+      return fn
+    end
+  end
+  return nil, "o runtime não conseguiu carregar o script"
+end
+
+requireModule = function(key, file, level)
+  local cached = modules[key]
+  if cached ~= nil then return cached end
+  for i = 1, #loadingKeys do
+    if loadingKeys[i] == key then
+      local chain = {}
+      for j = i, #loadingFiles do chain[#chain + 1] = loadingFiles[j] end
+      chain[#chain + 1] = file
+      error("Importação circular: " .. concat(chain, " → ") .. ". Quebre o ciclo movendo o que os dois usam para um terceiro módulo.", level + 1)
+    end
+  end
+  local env = newEnv(file, rootHelix, nil, key)
+  local fn, err = loadChunk(key, env)
+  if not fn then error(err, level + 1) end
+  loadingKeys[#loadingKeys + 1] = key
+  loadingFiles[#loadingFiles + 1] = file
+  local result = run(fn)
+  remove(loadingKeys)
+  remove(loadingFiles)
+  if result[1] == "await" then
+    M.drop(result[2])
+    error(file .. ": o nível superior de um módulo não pode esperar (await); mova a espera para uma função.", level + 1)
+  end
+  if result[1] == "error" then
+    error({ message = file .. " falhou ao carregar: " .. tostring(result[2]), trace = result[3] }, level + 1)
+  end
+  local exports = result[2]
+  if exports == nil then exports = env end
+  modules[key] = exports
+  return exports
+end
+
+                                                                                          
+
+function M.setRoot(helixValue)
+  rootHelix = materialize(helixValue)
+end
+
+function M.instantiate(key, file, helixValue, scriptValue)
+  local env = newEnv(file, helixValue, scriptValue, key)
+  local fn, err = loadChunk(key, env)
+  if not fn then return { "error", err, "" } end
+  local result = run(fn)
+  if result[1] == "await" then
+    M.drop(result[2])
+    return { "error", file .. ": o nível superior do script não pode esperar (await); mova a espera para onStart ou helix.task.spawn.", "" }
+  end
+  if result[1] ~= "done" then return result end
+  local returned = result[2]
+  local hooks = {}
+  for _, hook in ipairs(HOOKS) do
+    local name, alias = hook[1], hook[2]
+    local fn = nil
+    if type(returned) == "table" then fn = returned[name] or returned[alias] end
+    if fn == nil then fn = rawget(env, name) or rawget(env, alias) end
+    if type(fn) == "function" then hooks[name] = registerCallback(fn) end
+  end
+  return { "done", hooks }
+end
+
+function M.loadModule(key, file)
+  local ok, result = pcall(requireModule, key, file, 1)
+  if ok then return { "done", pack(result) } end
+  if type(result) == "table" then return { "error", tostring(result.message), tostring(result.trace or "") } end
+  return { "error", tostring(result), "" }
+end
+
+function M.unloadModule(key)
+  modules[key] = nil
+end
+
+return M
 `;
 }
