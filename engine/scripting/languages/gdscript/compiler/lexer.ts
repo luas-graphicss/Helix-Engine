@@ -243,4 +243,197 @@ export class Lexer {
         }
         this.pushNumber(isFloat ? 'float' : 'int', text, Number(text.replace(/_/g, '')), start);
     }
+    private readString(prefix: 'r' | '&' | '^' | null): void {
+        const start = this.position();
+        if (prefix)
+            this.advance();
+        const quote = this.source[this.index];
+        const triple = this.source.startsWith(quote.repeat(3), this.index);
+        const closing = triple ? quote.repeat(3) : quote;
+        this.advanceBy(closing.length);
+        let value = '';
+        let closed = false;
+        while (this.index < this.source.length) {
+            if (this.source.startsWith(closing, this.index)) {
+                this.advanceBy(closing.length);
+                closed = true;
+                break;
+            }
+            const char = this.source[this.index];
+            if (char === '\n') {
+                if (!triple)
+                    break;
+                value += char;
+                this.advance();
+                this.line++;
+                this.column = 1;
+                continue;
+            }
+            if (char === '\\' && prefix !== 'r') {
+                const escapeStart = this.position();
+                this.advance();
+                const code = this.source[this.index];
+                if (code === undefined)
+                    break;
+                if (code === '\n') {
+                    this.advance();
+                    this.line++;
+                    this.column = 1;
+                    continue;
+                }
+                if (code === 'u' || code === 'U') {
+                    const length = code === 'u' ? 4 : 6;
+                    const hex = this.source.slice(this.index + 1, this.index + 1 + length);
+                    if (hex.length === length && /^[0-9a-fA-F]+$/.test(hex)) {
+                        value += String.fromCodePoint(parseInt(hex, 16));
+                        this.advanceBy(1 + length);
+                    }
+                    else {
+                        this.error(`Escape \\${code} precisa de ${length} dígitos hexadecimais.`, escapeStart);
+                        this.advance();
+                    }
+                    continue;
+                }
+                const simple = SIMPLE_ESCAPES[code];
+                if (simple === undefined) {
+                    this.error(`Escape inválido "\\${code}" na string.`, escapeStart);
+                    value += code;
+                }
+                else
+                    value += simple;
+                this.advance();
+                continue;
+            }
+            value += char;
+            this.advance();
+        }
+        if (!closed)
+            this.error(triple ? 'String de aspas triplas sem fechamento.' : 'String sem fechamento: faltou a aspa final nesta linha.', start);
+        const kind = prefix === '&' ? 'string_name' : prefix === '^' ? 'node_path' : 'string';
+        this.tokens.push({ kind, value, raw: prefix === 'r', ...this.span(start) });
+    }
+    private readNodeShortcut(): void {
+        const start = this.position();
+        this.advance();
+        const quote = this.source[this.index];
+        if (quote === '"' || quote === "'") {
+            const before = this.tokens.length;
+            this.readString(null);
+            const token = this.tokens[before];
+            if (token)
+                this.tokens[before] = { ...token, kind: 'get_node', line: start.line, column: start.column };
+            return;
+        }
+        const pathStart = this.index;
+        while (this.index < this.source.length) {
+            const char = this.source[this.index];
+            if (isIdentifierPart(char) || char === '/' || (char === '%' && isIdentifierStart(this.source[this.index + 1] ?? ''))) {
+                this.advance();
+                continue;
+            }
+            break;
+        }
+        const path = this.source.slice(pathStart, this.index);
+        if (path.length === 0)
+            this.error('Depois de "$" vem o caminho do nó (por exemplo $Jogador/Arma).', start);
+        this.tokens.push({ kind: 'get_node', value: path, ...this.span(start) });
+    }
+    private readUniqueNode(): void {
+        const start = this.position();
+        this.advance();
+        const nameStart = this.index;
+        while (this.index < this.source.length && (isIdentifierPart(this.source[this.index]) || this.source[this.index] === '/'))
+            this.advance();
+        this.tokens.push({ kind: 'unique_node', value: this.source.slice(nameStart, this.index), ...this.span(start) });
+    }
+    private previousAllowsUnique(): boolean {
+        const last = this.tokens[this.tokens.length - 1];
+        if (!last)
+            return true;
+        switch (last.kind) {
+            case 'identifier':
+            case 'int':
+            case 'float':
+            case 'string':
+            case 'string_name':
+            case 'node_path':
+            case 'get_node':
+            case 'unique_node':
+                return false;
+            case 'keyword':
+                return last.value !== 'self' && last.value !== 'true' && last.value !== 'false' && last.value !== 'null';
+            case 'operator':
+                return !CLOSERS.has(last.value);
+            default:
+                return true;
+        }
+    }
+    private readAnnotation(): void {
+        const start = this.position();
+        this.advance();
+        const nameStart = this.index;
+        while (this.index < this.source.length && isIdentifierPart(this.source[this.index]))
+            this.advance();
+        const name = this.source.slice(nameStart, this.index);
+        if (name.length === 0)
+            this.error('Depois de "@" vem o nome da anotação (por exemplo @export).', start);
+        this.tokens.push({ kind: 'annotation', value: name, ...this.span(start) });
+    }
+    private readIdentifier(): void {
+        const start = this.position();
+        const begin = this.index;
+        while (this.index < this.source.length && isIdentifierPart(this.source[this.index]))
+            this.advance();
+        const text = this.source.slice(begin, this.index);
+        this.tokens.push({ kind: KEYWORDS.has(text) ? 'keyword' : 'identifier', value: text, ...this.span(start) });
+    }
+    private readOperator(): boolean {
+        for (const operator of OPERATORS) {
+            if (!this.source.startsWith(operator, this.index))
+                continue;
+            const start = this.position();
+            if (OPENERS.has(operator))
+                this.depth++;
+            else if (CLOSERS.has(operator) && this.depth > 0) {
+                this.depth--;
+                this.closeSoftBlocks(start);
+            }
+            this.advanceBy(operator.length);
+            this.tokens.push({ kind: 'operator', value: operator, ...this.span(start) });
+            return true;
+        }
+        return false;
+    }
+    private peekPastSpaces(offset: number): string | undefined {
+        let index = this.index + offset;
+        while (this.source[index] === ' ' || this.source[index] === '\t' || this.source[index] === '\r')
+            index++;
+        return this.source[index];
+    }
+    private position(): Position {
+        return { line: this.line, column: this.column };
+    }
+    private span(start: Position): SourceSpan {
+        return { line: start.line, column: start.column, endLine: this.line, endColumn: this.column };
+    }
+    private advance(): void {
+        this.index++;
+        this.column++;
+    }
+    private advanceBy(count: number): void {
+        this.index += count;
+        this.column += count;
+    }
+    private pushLayout(kind: 'newline' | 'indent' | 'dedent', at: Position, depth = this.depth): void {
+        this.tokens.push({ kind, value: '', depth, line: at.line, column: at.column, endLine: at.line, endColumn: at.column });
+    }
+    private pushNumber(kind: 'int' | 'float', text: string, value: number, start: Position): void {
+        this.tokens.push({ kind, value: text, number: value, ...this.span(start) });
+    }
+    private error(message: string, at: Position): void {
+        this.diagnostics.push({ message, line: at.line, column: at.column, endLine: this.line, endColumn: this.column });
+    }
+}
+export function tokenize(source: string): LexResult {
+    return new Lexer(source).tokenize();
 }
