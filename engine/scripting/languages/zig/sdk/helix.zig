@@ -838,3 +838,113 @@ fn fromRaw(comptime T: type, value: Raw(T)) T {
             break :blk wrapped.vec3();
         },
         []const u8 => @compileError("parâmetros de texto chegam como helix.Value; leia com .string(gpa) ou .stringBuf(buffer)"),
+        else => value,
+    };
+}
+
+fn toRaw(comptime T: type, value: T) Raw(T) {
+    return switch (T) {
+        void => {},
+        bool => @intFromBool(value),
+        Value => value.intoRaw(),
+        Vec3, []const u8 => Value.from(value).intoRaw(),
+        else => value,
+    };
+}
+
+                                                                                                  
+fn Payload(comptime R: type) type {
+    return switch (@typeInfo(R)) {
+        .error_union => |union_info| union_info.payload,
+        else => R,
+    };
+}
+
+inline fn unwrap(result: anytype) Payload(@TypeOf(result)) {
+    return switch (@typeInfo(@TypeOf(result))) {
+        .error_union => result catch |e| {
+            var buffer: [256]u8 = undefined;
+            const text = std.fmt.bufPrint(&buffer, "a função devolveu error.{s}", .{@errorName(e)}) catch "a função devolveu um erro";
+            @panic(text);
+        },
+        else => result,
+    };
+}
+
+                                                                                      
+                                                                                             
+fn Exported(comptime f: anytype) type {
+    const info = @typeInfo(@TypeOf(f)).@"fn";
+    const R = Payload(info.return_type orelse void);
+    const params = info.param_types;
+    return switch (params.len) {
+        0 => struct {
+            fn exported() callconv(.c) Raw(R) {
+                return toRaw(R, unwrap(@call(.never_inline, f, .{})));
+            }
+        },
+        1 => struct {
+            const A = params[0].?;
+            fn exported(a: Raw(A)) callconv(.c) Raw(R) {
+                return toRaw(R, unwrap(@call(.never_inline, f, .{fromRaw(A, a)})));
+            }
+        },
+        2 => struct {
+            const A = params[0].?;
+            const B = params[1].?;
+            fn exported(a: Raw(A), b: Raw(B)) callconv(.c) Raw(R) {
+                return toRaw(R, unwrap(@call(.never_inline, f, .{ fromRaw(A, a), fromRaw(B, b) })));
+            }
+        },
+        3 => struct {
+            const A = params[0].?;
+            const B = params[1].?;
+            const C = params[2].?;
+            fn exported(a: Raw(A), b: Raw(B), c: Raw(C)) callconv(.c) Raw(R) {
+                return toRaw(R, unwrap(@call(.never_inline, f, .{ fromRaw(A, a), fromRaw(B, b), fromRaw(C, c) })));
+            }
+        },
+        4 => struct {
+            const A = params[0].?;
+            const B = params[1].?;
+            const C = params[2].?;
+            const D = params[3].?;
+            fn exported(a: Raw(A), b: Raw(B), c: Raw(C), d: Raw(D)) callconv(.c) Raw(R) {
+                return toRaw(R, unwrap(@call(.never_inline, f, .{ fromRaw(A, a), fromRaw(B, b), fromRaw(C, c), fromRaw(D, d) })));
+            }
+        },
+        else => unreachable,
+    };
+}
+
+const ABI_TYPES = "f64, f32, i32, u32, i64, u64, bool, helix.Value ou helix.Vec3";
+
+fn abiSupported(comptime T: type, comptime allow_text: bool) bool {
+    return switch (T) {
+        void, f64, f32, i32, u32, i64, u64, bool, Value, Vec3 => true,
+        []const u8 => allow_text,
+        else => false,
+    };
+}
+
+                                                                                                 
+                                                                                               
+                                                                                                 
+                                                                               
+pub fn exportDecls(comptime Script: type) void {
+    inline for (comptime std.meta.declarations(Script)) |name| {
+        const decl = @field(Script, name);
+        const T = @TypeOf(decl);
+        if (@typeInfo(T) == .@"fn" and !@typeInfo(T).@"fn".is_generic and !std.mem.eql(u8, name, "main")) {
+            const info = @typeInfo(T).@"fn";
+            if (info.param_types.len > 4) @compileError(std.fmt.comptimePrint("a função '{s}' tem {d} parâmetros; funções exportadas aceitam até 4", .{ name, info.param_types.len }));
+            inline for (info.param_types, 0..) |param, i| {
+                const P = param orelse @compileError(std.fmt.comptimePrint("a função '{s}' tem um parâmetro {d} genérico; declare o tipo", .{ name, i + 1 }));
+                if (!abiSupported(P, false)) @compileError(std.fmt.comptimePrint("a função '{s}' tem o parâmetro {d} do tipo {s}, que não atravessa a ABI da engine: use {s} (textos chegam como helix.Value)", .{ name, i + 1, @typeName(P), ABI_TYPES }));
+            }
+            const R = Payload(info.return_type orelse void);
+            if (!abiSupported(R, true)) @compileError(std.fmt.comptimePrint("a função '{s}' devolve {s}, que não atravessa a ABI da engine: use void, {s} ou []const u8", .{ name, @typeName(R), ABI_TYPES }));
+            @export(&Exported(decl).exported, .{ .name = name });
+        }
+    }
+}
