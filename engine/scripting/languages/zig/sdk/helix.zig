@@ -278,3 +278,283 @@ pub const Value = struct {
 
     pub fn ofBool(value: bool) Value {
         ready();
+        return check(adopt(ffi.boolean(@intFromBool(value))));
+    }
+
+    pub fn ofString(text: []const u8) Value {
+        ready();
+        return check(adopt(ffi.string(text.ptr, text.len)));
+    }
+
+                               
+    pub fn nil() Value {
+        ready();
+        return check(adopt(ffi.@"null"()));
+    }
+
+                       
+    pub fn array() Value {
+        ready();
+        return check(adopt(ffi.array()));
+    }
+
+                        
+    pub fn object() Value {
+        ready();
+        return check(adopt(ffi.object()));
+    }
+
+                                                                                                   
+    pub fn list(items: anytype) Value {
+        const out = Value.array();
+        const T = @TypeOf(items);
+        switch (@typeInfo(T)) {
+            .@"struct" => |info| {
+                inline for (0..info.field_types.len) |i| out.setAt(i, items[i]);
+            },
+            else => {
+                for (items, 0..) |item, i| out.setAt(i, item);
+            },
+        }
+        return out;
+    }
+
+                                                                                           
+                                                                                            
+    pub fn function(callback: Callback) Value {
+        return registerCallback(callback, null, null);
+    }
+
+                                                                                               
+                                                                         
+    pub fn closure(context: anytype, comptime callback: fn (@TypeOf(context), []const Value) Value) Value {
+        const Context = @TypeOf(context);
+        if (@typeInfo(Context) != .pointer) @compileError("helix.Value.closure espera um ponteiro como contexto, não " ++ @typeName(Context));
+        const Adapter = struct {
+            fn invoke(opaque_context: *anyopaque, args: []const Value) Value {
+                const typed: Context = @ptrCast(@alignCast(opaque_context));
+                return callback(typed, args);
+            }
+        };
+        return registerCallback(null, @ptrCast(@constCast(context)), &Adapter.invoke);
+    }
+
+                                                                                                      
+    pub fn adopt(raw_handle: u32) Value {
+        ready();
+        if (raw_handle == 0) return none;
+        return check(Value{ .handle = ffi.retain(raw_handle) });
+    }
+
+                                                                                       
+    pub fn clone(self: Value) Value {
+        return adopt(self.handle);
+    }
+
+                                                                        
+    pub fn deinit(self: Value) void {
+        if (self.handle != 0) ffi.release(self.handle);
+    }
+
+                                                              
+    pub fn raw(self: Value) u32 {
+        return self.handle;
+    }
+
+                                                                                                     
+                                                            
+    pub fn intoRaw(self: Value) u32 {
+        if (self.handle == 0) return 0;
+        const pooled = ffi.pool(self.handle);
+        ffi.release(self.handle);
+        return pooled;
+    }
+
+                                                                                                
+
+    pub fn kind(self: Value) Kind {
+        return Kind.fromCode(check(ffi.@"type"(self.handle)));
+    }
+
+    pub fn isUndefined(self: Value) bool {
+        return self.handle == 0;
+    }
+
+    pub fn isNull(self: Value) bool {
+        return self.handle != 0 and self.kind() == .nil;
+    }
+
+                              
+    pub fn isNone(self: Value) bool {
+        return self.handle == 0 or self.kind() == .nil;
+    }
+
+    pub fn isBool(self: Value) bool {
+        return self.kind() == .boolean;
+    }
+
+    pub fn isNumber(self: Value) bool {
+        return self.kind() == .number;
+    }
+
+    pub fn isString(self: Value) bool {
+        return self.kind() == .string;
+    }
+
+    pub fn isArray(self: Value) bool {
+        return self.kind() == .array;
+    }
+
+    pub fn isObject(self: Value) bool {
+        return self.kind() == .object;
+    }
+
+    pub fn isFunction(self: Value) bool {
+        return self.kind() == .function;
+    }
+
+                                                                                                 
+
+                                                              
+    pub fn number(self: Value) f64 {
+        return check(ffi.to_number(self.handle));
+    }
+
+                                                                      
+    pub fn numberOr(self: Value, fallback: f64) f64 {
+        return if (self.isNumber()) self.number() else fallback;
+    }
+
+                                                                                     
+    pub fn integer(self: Value) i64 {
+        const n = self.number();
+        if (std.math.isNan(n)) return 0;
+        if (n >= 9223372036854775807.0) return std.math.maxInt(i64);
+        if (n <= -9223372036854775808.0) return std.math.minInt(i64);
+        return @intFromFloat(n);
+    }
+
+    pub fn boolean(self: Value) bool {
+        return check(ffi.to_boolean(self.handle)) != 0;
+    }
+
+                                                                                             
+    pub fn stringLen(self: Value) usize {
+        return check(ffi.string_bytes(self.handle));
+    }
+
+                                                                                           
+    pub fn stringBuf(self: Value, buffer: []u8) []const u8 {
+        const length = check(ffi.string_read(self.handle, buffer.ptr, buffer.len));
+        return buffer[0..@min(length, buffer.len)];
+    }
+
+                                                                                           
+                                              
+    pub fn string(self: Value, gpa: std.mem.Allocator) std.mem.Allocator.Error![]u8 {
+        const out = try gpa.alloc(u8, self.stringLen());
+        _ = check(ffi.string_read(self.handle, out.ptr, out.len));
+        return out;
+    }
+
+                                           
+    pub fn eqlString(self: Value, text: []const u8) bool {
+        if (self.stringLen() != text.len) return false;
+        var buffer: [256]u8 = undefined;
+        if (text.len <= buffer.len) return std.mem.eql(u8, self.stringBuf(&buffer), text);
+        const own = self.string(allocator) catch return false;
+        defer allocator.free(own);
+        return std.mem.eql(u8, own, text);
+    }
+
+                                                                                          
+    pub fn vec3(self: Value) Vec3 {
+        if (self.isNone()) return Vec3.zero;
+        if (self.isArray()) return .{ .x = self.numberAt(0), .y = self.numberAt(1), .z = self.numberAt(2) };
+        return .{ .x = self.numberOf("x"), .y = self.numberOf("y"), .z = self.numberOf("z") };
+    }
+
+    fn numberOf(self: Value, key: []const u8) f64 {
+        const field = self.get(key);
+        defer field.deinit();
+        return field.numberOr(0);
+    }
+
+    fn numberAt(self: Value, at_index: usize) f64 {
+        const item = self.at(at_index);
+        defer item.deinit();
+        return item.numberOr(0);
+    }
+
+                                                                                                    
+    pub fn len(self: Value) usize {
+        const length = check(ffi.length(self.handle));
+        return if (length < 0) 0 else @intCast(length);
+    }
+
+                                                                                      
+    pub fn keys(self: Value) Value {
+        return check(adopt(ffi.keys(self.handle)));
+    }
+
+                                                                                                
+
+                                                                                                 
+    pub fn get(self: Value, key: []const u8) Value {
+        return check(adopt(ffi.get(self.handle, key.ptr, key.len)));
+    }
+
+                       
+    pub fn at(self: Value, at_index: usize) Value {
+        return check(adopt(ffi.index(self.handle, @intCast(at_index))));
+    }
+
+                                                                                                          
+    pub fn set(self: Value, key: []const u8, value: anytype) void {
+        const converted = Value.from(value);
+        defer converted.deinit();
+        ffi.set(self.handle, key.ptr, key.len, converted.handle);
+        check({});
+    }
+
+    pub fn setAt(self: Value, at_index: usize, value: anytype) void {
+        const converted = Value.from(value);
+        defer converted.deinit();
+        ffi.set_index(self.handle, @intCast(at_index), converted.handle);
+        check({});
+    }
+
+                       
+    pub fn has(self: Value, key: []const u8) bool {
+        return check(ffi.has(self.handle, key.ptr, key.len)) != 0;
+    }
+
+    pub fn delete(self: Value, key: []const u8) void {
+        ffi.delete(self.handle, key.ptr, key.len);
+        check({});
+    }
+
+                                                                         
+    pub fn path(self: Value, dotted: []const u8) Value {
+        var current = self.clone();
+        var parts = std.mem.splitScalar(u8, dotted, '.');
+        while (parts.next()) |part| {
+            if (part.len == 0) continue;
+            const next = current.get(part);
+            current.deinit();
+            current = next;
+        }
+        return current;
+    }
+
+                                      
+    pub fn push(self: Value, value: anytype) void {
+        const result = self.invoke("push", .{value});
+        result.deinit();
+    }
+
+                                                                                                
+
+                                                                                              
+                                                                   
+    pub fn call(self: Value, args: anytype) Value {
