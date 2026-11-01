@@ -1,9 +1,12 @@
 import type { GL } from '@/engine/renderer/gl/context';
 import { ShaderProgram } from '@/engine/renderer/gl/shader-program';
 import { SceneColorCapture, type PixelRect } from '@/engine/renderer/gl/scene-color-capture';
+import { SceneDepthCapture } from '@/engine/renderer/gl/scene-depth-capture';
+import type { SceneRenderTarget } from '@/engine/renderer/gl/scene-render-target';
+import type { ColorFormat } from '@/engine/renderer/gl/color-render-target';
 import { withDefines, type ShaderDefines } from '@/engine/renderer/gl/shader-source';
 import { WATER_VERTEX_SHADER, WATER_FRAGMENT_SHADER } from '@/engine/renderer/shaders/water.glsl';
-import { bindSceneLightingUniforms, FIRST_PASS_TEXTURE_UNIT, type SceneLightingInput } from '@/engine/renderer/lighting/scene-lighting-uniforms';
+import { bindSceneLightingUniforms, FIRST_PASS_TEXTURE_UNIT, sceneLightingDefines, type SceneLightingInput } from '@/engine/renderer/lighting/scene-lighting-uniforms';
 import type { TerrainGpuCache } from '@/engine/renderer/terrain/terrain-gpu-cache';
 import type { Frustum } from '@/engine/renderer/culling/frustum';
 import type { Entity } from '@/engine/core/scene/entity';
@@ -20,6 +23,12 @@ export interface WaterPassInput extends SceneLightingInput {
     elapsedSeconds: number;
     width: number;
     height: number;
+    sceneTarget: SceneRenderTarget;
+    screenReflections: WaterScreenReflections | null;
+}
+export interface WaterScreenReflections {
+    steps: number;
+    stride: number;
 }
 export interface WaterPassStats {
     drawCalls: number;
@@ -28,6 +37,8 @@ export interface WaterPassStats {
 const HEIGHT_TEXTURE_UNIT = FIRST_PASS_TEXTURE_UNIT;
 const SKY_VIEW_TEXTURE_UNIT = FIRST_PASS_TEXTURE_UNIT + 1;
 const SCENE_COLOR_TEXTURE_UNIT = FIRST_PASS_TEXTURE_UNIT + 2;
+const SCENE_DEPTH_TEXTURE_UNIT = FIRST_PASS_TEXTURE_UNIT + 3;
+const TRACE_THICKNESS = 0.35;
 interface WaterGrid {
     vao: WebGLVertexArrayObject;
     vertexBuffer: WebGLBuffer;
@@ -38,6 +49,7 @@ export class WaterPass {
     readonly stats: WaterPassStats = { drawCalls: 0, triangles: 0 };
     private readonly program: ShaderProgram;
     private readonly sceneColor: SceneColorCapture;
+    private readonly sceneDepth: SceneDepthCapture;
     private readonly grids = new Map<number, WaterGrid>();
     private readonly normalMatrix = mat3.create();
     private readonly inverseWorld = mat4.create();
@@ -46,9 +58,10 @@ export class WaterPass {
     private readonly worldBox = aabb.create();
     private readonly visible: Entity[] = [];
     private readonly captureRect: PixelRect = { x: 0, y: 0, width: 0, height: 0 };
-    constructor(private readonly gl: GL, private readonly terrainGpu: TerrainGpuCache, defines: ShaderDefines = {}) {
-        this.program = new ShaderProgram(gl, WATER_VERTEX_SHADER, withDefines(WATER_FRAGMENT_SHADER, defines));
-        this.sceneColor = new SceneColorCapture(gl);
+    constructor(private readonly gl: GL, private readonly terrainGpu: TerrainGpuCache, defines: ShaderDefines = {}, sceneFormat: ColorFormat = 'rgba16f') {
+        this.program = new ShaderProgram(gl, WATER_VERTEX_SHADER, withDefines(WATER_FRAGMENT_SHADER, sceneLightingDefines(defines, 'direct')));
+        this.sceneColor = new SceneColorCapture(gl, sceneFormat);
+        this.sceneDepth = new SceneDepthCapture(gl, 'água');
     }
     render(terrains: readonly Entity[], input: WaterPassInput): void {
         const { gl, program, stats, visible } = this;
@@ -69,15 +82,34 @@ export class WaterPass {
         }
         if (visible.length === 0)
             return;
+        const trace = input.screenReflections;
+        if (trace) {
+            rect.x = 0;
+            rect.y = 0;
+            rect.width = input.width;
+            rect.height = input.height;
+            gl.activeTexture(gl.TEXTURE0 + SCENE_DEPTH_TEXTURE_UNIT);
+            gl.bindTexture(gl.TEXTURE_2D, this.sceneDepth.capture(input.sceneTarget));
+        }
         gl.activeTexture(gl.TEXTURE0 + SCENE_COLOR_TEXTURE_UNIT);
         this.sceneColor.capture(input.width, input.height, rect);
         program.use();
-        bindSceneLightingUniforms(gl, program, input);
+        bindSceneLightingUniforms(gl, program, input, 'direct');
         gl.uniform1i(program.uniform('u_heightMap'), HEIGHT_TEXTURE_UNIT);
         gl.uniform1i(program.uniform('u_skyViewLut'), SKY_VIEW_TEXTURE_UNIT);
         gl.uniform1i(program.uniform('u_sceneColor'), SCENE_COLOR_TEXTURE_UNIT);
+        gl.uniform1i(program.uniform('u_sceneDepth'), SCENE_DEPTH_TEXTURE_UNIT);
         gl.uniform1f(program.uniform('u_skyViewEnabled'), input.sky.skyViewValid ? 1 : 0);
         gl.uniform2f(program.uniform('u_resolution'), input.width, input.height);
+        gl.uniform1f(program.uniform('u_screenTrace'), trace ? 1 : 0);
+        if (trace) {
+            const { camera } = input;
+            gl.uniformMatrix4fv(program.uniform('u_view'), false, camera.viewMatrix);
+            gl.uniformMatrix4fv(program.uniform('u_projection'), false, camera.projectionMatrix);
+            gl.uniform2f(program.uniform('u_sceneSize'), input.width, input.height);
+            gl.uniform4f(program.uniform('u_traceParams'), trace.steps, trace.stride, TRACE_THICKNESS, camera.far);
+            gl.uniform1f(program.uniform('u_nearPlane'), camera.near);
+        }
         gl.activeTexture(gl.TEXTURE0 + SKY_VIEW_TEXTURE_UNIT);
         gl.bindTexture(gl.TEXTURE_2D, input.sky.skyViewLut);
         gl.enable(gl.BLEND);
@@ -240,6 +272,7 @@ export class WaterPass {
         const { gl } = this;
         this.program.dispose();
         this.sceneColor.dispose();
+        this.sceneDepth.dispose();
         for (const grid of this.grids.values()) {
             gl.deleteVertexArray(grid.vao);
             gl.deleteBuffer(grid.vertexBuffer);
