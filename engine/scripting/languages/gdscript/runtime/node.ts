@@ -2271,3 +2271,183 @@ export class ScriptResource extends Resource {
 }
 markScriptClass(ScriptResource, 'GDScript');
 setGodotBase(ScriptResource, 'GDScript');
+export class RandomNumberGenerator extends RefCounted {
+    private $s = new Uint32Array(4);
+    private $seed = 0;
+    constructor(inject: Injection | null = null) {
+        super(inject);
+        this.randomize();
+    }
+    get seed(): number {
+        return this.$seed;
+    }
+    set seed(value: unknown) {
+        this.$seed = Number(value) >>> 0;
+        let x = this.$seed || 0x9e3779b9;
+        for (let index = 0; index < 4; index++) {
+            x = (x + 0x9e3779b9) >>> 0;
+            let z = x;
+            z = Math.imul(z ^ (z >>> 16), 0x85ebca6b) >>> 0;
+            z = Math.imul(z ^ (z >>> 13), 0xc2b2ae35) >>> 0;
+            this.$s[index] = (z ^ (z >>> 16)) >>> 0;
+        }
+    }
+    get state(): number {
+        return this.$s[0];
+    }
+    set state(value: unknown) {
+        this.seed = value;
+    }
+    private $next(): number {
+        const s = this.$s;
+        const result = Math.imul(rotl(Math.imul(s[1], 5) >>> 0, 7), 9) >>> 0;
+        const t = (s[1] << 9) >>> 0;
+        s[2] ^= s[0];
+        s[3] ^= s[1];
+        s[1] ^= s[2];
+        s[0] ^= s[3];
+        s[2] ^= t;
+        s[3] = rotl(s[3], 11);
+        return result;
+    }
+    randomize(): void {
+        this.seed = (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+    }
+    randi(): number {
+        return this.$next();
+    }
+    randf(): number {
+        return this.$next() / 4294967296;
+    }
+    randf_range(from: unknown, to: unknown): number {
+        const a = Number(from);
+        const b = Number(to);
+        return a + (b - a) * this.randf();
+    }
+    randi_range(from: unknown, to: unknown): number {
+        const a = Math.ceil(Number(from));
+        const b = Math.floor(Number(to));
+        if (b < a)
+            return this.randi_range(to, from);
+        return a + Math.floor(this.randf() * (b - a + 1));
+    }
+    randfn(mean: unknown = 0, deviation: unknown = 1): number {
+        const u = Math.max(this.randf(), 1e-12);
+        const v = this.randf();
+        return Number(mean) + Number(deviation) * Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    }
+    rand_weighted(weights: unknown): number {
+        const list = Array.isArray(weights) ? weights.map(Number) : ArrayBuffer.isView(weights) ? Array.from(weights as unknown as ArrayLike<number>) : [];
+        const total = list.reduce((sum, weight) => sum + Math.max(0, weight), 0);
+        if (total <= 0)
+            return -1;
+        let pick = this.randf() * total;
+        for (let index = 0; index < list.length; index++) {
+            pick -= Math.max(0, list[index]);
+            if (pick < 0)
+                return index;
+        }
+        return list.length - 1;
+    }
+}
+function rotl(x: number, k: number): number {
+    return ((x << k) | (x >>> (32 - k))) >>> 0;
+}
+markScriptClass(RandomNumberGenerator, 'RandomNumberGenerator');
+setGodotBase(RandomNumberGenerator, 'RandomNumberGenerator');
+export class WeakRef extends RefCounted {
+    constructor(helix: HelixRoot, private readonly target: unknown) {
+        super({ entity: null, helix, script: null });
+    }
+    get_ref(): unknown {
+        const target = this.target as {
+            $freed?: boolean;
+        } | null;
+        return target && target.$freed ? null : this.target;
+    }
+}
+markScriptClass(WeakRef, 'WeakRef');
+setGodotBase(WeakRef, 'WeakRef');
+const FAMILIES: Readonly<Record<string, typeof NodeBase>> = {
+    CollisionObject3D: CollisionObject3DNode,
+    PhysicsBody3D: PhysicsBody3DNode,
+    StaticBody3D: StaticBody3DNode,
+    RigidBody3D: RigidBody3DNode,
+    CharacterBody3D: CharacterBody3DNode,
+    Area3D: Area3DNode,
+    AudioStreamPlayer: AudioStreamPlayerNode,
+    Control: ControlNode,
+    Camera3D: Camera3DNode,
+    Light3D: Light3DNode,
+    Timer: TimerNode,
+};
+const OBJECTS: Readonly<Record<string, Function>> = {
+    Object: GodotObject,
+    RefCounted,
+    Resource,
+    Script: ScriptResource,
+    GDScript: ScriptResource,
+    PackedScene: ScriptResource,
+    Tween,
+    SceneTree,
+    SceneTreeTimer,
+    Viewport,
+    Window,
+    RandomNumberGenerator,
+    WeakRef,
+    KinematicCollision3D,
+    InputEvent,
+    InputEventWithModifiers,
+    InputEventKey,
+    InputEventMouse,
+    InputEventMouseButton,
+    InputEventMouseMotion,
+    InputEventAction,
+    InputEventJoypadButton,
+    InputEventJoypadMotion,
+};
+const classCache = new Map<string, Function>();
+function familyOf(name: string): typeof NodeBase {
+    for (let current: string | null = name; current; current = godotParentName(current)) {
+        const family = FAMILIES[current];
+        if (family)
+            return family;
+    }
+    return NodeBase;
+}
+function godotParentName(name: string): string | null {
+    if (name === 'Node' || name === 'Node3D')
+        return null;
+    if (name.startsWith('AudioStreamPlayer'))
+        return 'AudioStreamPlayer';
+    if (/^(Container|Panel|PanelContainer|MarginContainer|CenterContainer|VBoxContainer|HBoxContainer|GridContainer|Label|RichTextLabel|Button|TextureButton|CheckBox|LineEdit|TextEdit|ProgressBar|HSlider|VSlider|TextureRect|ColorRect)$/.test(name))
+        return 'Control';
+    if (/^(DirectionalLight3D|OmniLight3D|SpotLight3D)$/.test(name))
+        return 'Light3D';
+    if (name === 'Camera2D')
+        return 'Camera3D';
+    return godotParentOf(name);
+}
+export function nodeClass(name: string): new (inject: Injection | null) => NodeBase {
+    const cached = classCache.get(name);
+    if (cached)
+        return cached as new (inject: Injection | null) => NodeBase;
+    if (!Object.prototype.hasOwnProperty.call(GODOT_NODE_CLASSES, name) && name !== 'Node' && name !== 'Timer')
+        fail(`"${name}" não é uma classe de nó do Godot que esta engine representa.`);
+    const family = familyOf(name);
+    const ctor = class extends family {
+    };
+    Object.defineProperty(ctor, 'name', { value: name });
+    markScriptClass(ctor, name);
+    setGodotBase(ctor, name);
+    classCache.set(name, ctor);
+    return ctor;
+}
+export function runtimeClass(name: string): Function | null {
+    if (Object.prototype.hasOwnProperty.call(OBJECTS, name))
+        return OBJECTS[name];
+    if (Object.prototype.hasOwnProperty.call(GODOT_NODE_CLASSES, name) || name === 'Node' || name === 'Timer')
+        return nodeClass(name);
+    return null;
+}
+export { contextOf };
