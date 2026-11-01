@@ -561,5 +561,285 @@ class DebugJogo extends Script {
     final hud = g.invoke('html', ['DebugHud', {'id': 'debug-hud'}]);
     checar('gui.html', !hud.isNullish && !g.invoke('element', ['#debug-hud']).isNullish);
     final icone = g.invoke('svg', ['DebugIcone', {'id': 'debug-icone'}]);
+    checar('gui.svg', !icone.isNullish);
+    final slot = g.invoke('element', ['[data-slot=icone]']);
+    if (!slot.isNullish && !icone.isNullish) slot.invoke('appendChild', [icone]);
+    checar('gui.bind', g.invoke('bind', ['linguagem', linguagem]).number >= 1);
+    g.invoke('bind', ['titulo', 'Helix · Debug']);
+    assinar(g.invoke('onAction', ['caixa', () => soltarCaixa()]));
+    assinar(g.invoke('onAction', ['reiniciar', () => api('play').invoke('restart')]));
+    checar('gui.elements', g.invoke('elements', ['[data-bind]']).length >= 5);
+    checar('gui.size', numero(g['size'], 'width') > 0);
+    Map<String, Object?> escala(num scale, num offset) => {'scale': scale, 'offset': offset};
+    final declarativa = g.invoke('create', ['DebugTela', {'referenceSize': {'x': 1280, 'y': 720}}]);
+    final painel = g.invoke('add', [
+      declarativa,
+      'frame',
+      {
+        'name': 'Painel',
+        'rect': {
+          'position': {'x': escala(1, -236), 'y': escala(0, 16)},
+          'size': {'x': escala(0, 220), 'y': escala(0, 48)},
+        },
+      },
+    ]);
+    g.invoke('add', [declarativa, 'text', {'name': 'Rotulo', 'text': 'Tela declarativa OK'}, painel.path('node.id')]);
+    checar('gui.add/find', textoIgual(g.invoke('find', [declarativa, 'Rotulo'])['kind'], 'text'));
+    g.invoke('setText', [declarativa, 'Rotulo', 'Tela declarativa OK · ' + linguagem]);
+                                                                                       
+    return g.invoke('show', [declarativa, 'debug-tela']).invoke('then', [
+      (Value mostrada) {
+        tela = mostrada;
+        checar('gui.show/isShown', !mostrada.isNullish && api('gui').invoke('isShown', [mostrada]).boolean);
+        checar('gui.kinds', contem(api('gui').invoke('kinds'), 'button'));
+      },
+    ]);
+  }
+
+  Object? audio() {
+    final a = api('audio'), s = api('scene');
+    checar('audio.supported', a['supported'].isBoolean);
+    final mixer = a['mixer'];
+    mixer.invoke('setVolumeDb', ['sfx', -3]);
+    checar('mixer.setVolumeDb', numero(mixer.invoke('bus', ['sfx']), 'volumeDb') == -3);
+    checar('audio.clips', a.invoke('clips').isArray);
+    final fonte = s.invoke('spawn', ['sound', {'name': 'FonteSonora', 'position': v3(3, 1, 3), 'audioSource': {'trigger': 'manual', 'spatial': true}}]);
+    checar('spawn sound', !fonte['audioSource'].isNullish);
+    final fontes = a['sources'];
+    fontes.invoke('set', [fonte, {'volumeDb': -4}]);
+    checar('sources.set', numero(fonte['audioSource'], 'volumeDb') == -4);
+    checar('sources.isPlaying', falso(fontes.invoke('isPlaying', [fonte])));
+    return null;
+  }
+
+  Object? vfx() {
+    final v = api('vfx');
+    final ids = v['templates'].invoke('ids');
+    checar('vfx.templates', ids.length > 0);
+    checar('vfx.moduleKinds', v.invoke('moduleKinds').length > 0);
+    var doc = v.invoke('fromTemplate', [ids[0], 'DebugFaiscas']);
+    doc = v.invoke('addEmitter', [doc, {'name': 'Extra', 'maxParticles': 50}]);
+    doc = v.invoke('set', [doc, {'loop': true}]);
+    checar('vfx.fromTemplate/addEmitter', doc['emitters'].length >= 2 && verdadeiro(doc['loop']));
+    return v.invoke('save', [doc, 'DebugFaiscas']).invoke('then', [
+      (Value ativo) {
+        final efeitos = api('vfx');
+        checar('vfx.save', !ativo.isNullish && textoIgual(ativo['kind'], 'vfx'));
+        final ator = efeitos.invoke('emitAt', [ativo, v3(0, 1.5, -8), {'destroyWhenFinished': false}]);
+        checar('vfx.emitAt', verdadeiro(efeitos.invoke('has', [ator])));
+        efeitos.invoke('burst', [ator, 20]);
+        checar('vfx.stats', efeitos.invoke('stats')['effects'].isNumber);
+      },
+    ]);
+  }
+
+                                                                                            
+
+  void aoTeclar(Value e) {
+    if (e['repeat'].boolean) return;
+    switch (e['code'].string) {
+      case 'KeyR':
+        api('play').invoke('restart');
+      case 'KeyB':
+        soltarCaixa();
+      case 'KeyE':
+        api('events').invoke('emit', ['debug.ping', {'origem': 'teclado', 'quadro': api('time')['frame']}]);
+      case 'KeyF':
+        api('camera').invoke('shake', [0.4, 0.6]);
+      case 'KeyG':
+        final fx = efeito;
+        if (fx != null) {
+          final ligado = !fx['enabled'].boolean;
+          fx['enabled'] = ligado;
+          info(ligado ? 'Efeito DebugPost ligado' : 'Efeito DebugPost desligado');
+        }
+      case 'KeyT':
+        final tm = api('time');
+        tm['scale'] = numero(tm, 'scale') == 1 ? 0.3 : 1;
+        info('time.scale = ' + numero(tm, 'scale').toString());
+      case 'KeyH':
+        final t = tela;
+        if (t != null) {
+          final g = api('gui');
+          if (g.invoke('isShown', [t]).boolean) {
+            g.invoke('hide', [t]);
+          } else {
+            g.invoke('show', [t, 'debug-tela']);
+          }
+        }
+      case 'KeyL':
+        info('Luzes locais: ' + api('light').invoke('all', [{'local': true}]).items.map((luz) => nomeDe(luz['entity'])).join(', '));
+    }
+  }
+
+  void cliqueNaCena(double x, double y) {
+    final c = api('camera');
+    final alvo = c.invoke('pick', [x, y]);
+    final ponto = c.invoke('pickPoint', [x, y]);
+    if (!alvo.isNullish) info('Clique em ' + nomeDe(alvo));
+    if (!ponto.isNullish) api('debug').invoke('sphere', [ponto, 0.3, '#ff006e', 2]);
+  }
+
+  Object? entrada() {
+    final input = api('input');
+    final acoes = input['actions'];
+    acoes.invoke('define', ['pular', ['Space', 'Gamepad:0']]);
+    acoes.invoke('define', ['soltar', ['KeyB']]);
+    checar('actions.define/bindings', acoes.invoke('bindings', ['pular']).length >= 1);
+    checar('action()', textoIgual(input.invoke('action', ['pular'])['name'], 'pular') && acoes.invoke('down', ['pular']).isBoolean);
+    checar('isDown', falso(input.invoke('isDown', ['KeyW'])));
+    checar('pointer', input.path('pointer.x').isNumber);
+    checar('gamepads', input.invoke('gamepads').isArray);
+    checar('axis2d', input.invoke('axis2d', [{'up': 'KeyW', 'down': 'KeyS', 'left': 'KeyA', 'right': 'KeyD'}])['x'].isNumber);
+    final teclas = input.invoke('keysDown');
+    checar('keysDown', teclas.isObject || teclas.isArray);
+    assinar(input.invoke('onKeyDown', [(Value e) => aoTeclar(e)]));
+    assinar(input.invoke('onPointerDown', [
+      (Value e) {
+        if (numero(e, 'button') == 0) cliqueNaCena(numero(e, 'x'), numero(e, 'y'));
+      },
+    ]));
+    assinar(input.invoke('onGamepadButtonDown', [(Value e) => info('Gamepad ' + numero(e, 'pad').toString() + ' botão ' + numero(e, 'button').toString())]));
+    return null;
+  }
+
+  Object? eventos() {
+    final ev = api('events'), play = api('play');
+                                                                                    
+    var recebido = Value.none;
+    final desligar = ev.invoke('on', ['debug.ping', (Value payload) => recebido = payload]);
+    checar('events.emit conta ouvintes', ev.invoke('emit', ['debug.ping', {'origem': 'teste'}]).number == 1);
+    checar('events.on recebe', !recebido.isNullish && textoIgual(recebido['origem'], 'teste'));
+    checar('listenerCount', ev.invoke('listenerCount', ['debug.ping']).number == 1);
+    desligar.call();
+    checar('unsubscribe', ev.invoke('listenerCount', ['debug.ping']).number == 0);
+    var umaVez = 0;
+    ev.invoke('once', ['debug.once', () => umaVez++]);
+    ev.invoke('emit', ['debug.once']);
+    ev.invoke('emit', ['debug.once']);
+    checar('events.once', umaVez == 1);
+    assinar(ev.invoke('on', ['debug.ping', (Value payload) => info('ping de ' + payload['origem'].string)]));
+    assinar(ev.invoke('on', ['debug.caixa', (Value payload) => depurar('caixa ' + payload['nome'].string)]));
+    var doAtor = 0;
+    final anel = torus ?? Value.none;
+    assinar(ev.invoke('onEntity', [anel, 'toque', () => doAtor++]));
+    ev.invoke('emitEntity', [anel, 'toque']);
+    checar('onEntity/emitEntity', doAtor == 1);
+    assinar(play.invoke('onStopped', [() => info('play.onStopped disparou')]));
+    assinar(play.invoke('onPaused', [() => info('pausado')]));
+    assinar(play.invoke('onResumed', [() => info('retomado')]));
+    return null;
+  }
+
+                                                                                    
+  Object? tempo() {
+    final tm = api('time');
+    checar('time.now', numero(tm, 'now') >= 0 && numero(tm, 'frame') >= 0);
+    checar('time.delta', numero(tm, 'delta') >= 0 && numero(tm, 'fixedDelta') > 0);
+    final inicio = numero(tm, 'now');
+    return tm.invoke('wait', [0.1]).invoke('then', [
+      () {
+        final relogio = api('time');
+        final decorrido = numero(relogio, 'now') - inicio;
+        checar('time.wait', decorrido >= 0.09, arred(decorrido));
+        final quadro = relogio['frame'].integer;
+        return relogio.invoke('waitFrames', [2]).invoke('then', [
+          () {
+            final depois = api('time');
+            final agora = depois['frame'].integer;
+            checar('time.waitFrames', agora >= quadro + 2, agora - quadro);
+            assinar(depois.invoke('every', [2, () => api('gui').invoke('bind', ['atores', api('scene').invoke('count')])]));
+            var disparou = false;
+            depois.invoke('delay', [0.2, () => disparou = true]);
+            return depois.invoke('wait', [0.3]).invoke('then', [() => checar('time.delay', disparou)]);
+          },
+        ]);
+      },
+    ]);
+  }
+
+  Object? dados() {
+    return api('storage').invoke('ready').invoke('then', [
+      () {
+        final st = api('storage');
+        final atual = st.invoke('get', ['execucoes', 0]);
+        final execucoes = (atual.isNumber ? atual.integer : 0) + 1;
+        return st.invoke('set', ['execucoes', execucoes]).invoke('then', [
+          () {
+            final storage = api('storage');
+            checar('storage.get/set', storage.invoke('get', ['execucoes']).integer == execucoes && storage.invoke('has', ['execucoes']).boolean, execucoes);
+            info('Execução nº ' + execucoes.toString() + ' deste jogo de teste neste projeto.');
+            return api('assets').invoke('data', ['DebugConfig']).invoke('then', [
+              (Value cfg) {
+                checar('assets.data (TOML)', !cfg.isNullish && !cfg['jogador'].isNullish && numero(cfg['jogador'], 'velocidade') == 6.5);
+                return api('assets').invoke('text', ['DebugConfig']).invoke('then', [
+                  (Value texto) {
+                    checar('assets.text', texto.string.contains('velocidade'));
+                    final ativos = api('assets');
+                    checar('assets.byName', !ativos.invoke('byName', ['DebugJogo', 'script']).isNullish);
+                    checar('assets.exists', ativos.invoke('exists', ['DebugUtil']).boolean && !ativos.invoke('exists', ['NaoExiste']).boolean);
+                    checar('assets.search', ativos.invoke('search', ['Debug']).length >= 5);
+                    checar('project.name', api('project')['name'].isString);
+                    checar('project.stats', numero(api('project')['stats'], 'entities') > 0);
+                    checar('net.localPlayer', verdadeiro(api('net').path('localPlayer.local')));
+                    checar('play.state', textoIgual(api('play')['state'], 'playing') && verdadeiro(api('play')['isRunning']));
+                  },
+                ]);
+              },
+            ]);
+          },
+        ]);
+      },
+    ]);
+  }
+
+                                                                            
+  Object? lancar() {
+    throw StateError('erro proposital: a exceção vira ERRO na cadeia');
+  }
+
+                                                                                             
+
+  late final areas = <Area>[
+    Area('Núcleo', nucleo),
+    Area('Módulo (require)', modulo),
+    Area('Matemática', matematica),
+    Area('Cena', cena),
+    Area('Transformações', transformacao),
+    Area('Malhas e CSG', malhas),
+    Area('Materiais', materiais),
+    Area('Luzes', luzes),
+    Area('Céu e mundo', ceu),
+    Area('Câmera', camera),
+    Area('Pós-processamento', pos),
+    Area('Render', render),
+    Area('Física', fisica),
+    Area('Personagem e jogador', personagem),
+    Area('Terreno', terreno),
+    Area('Interface', interfaceGrafica),
+    Area('Áudio', audio),
+    Area('VFX', vfx),
+    Area('Entrada', entrada),
+    Area('Eventos', eventos),
+    Area('Tempo e tarefas', tempo),
+    Area('Dados, projeto e rede', dados),
+    Area('Erro proposital (exceção Dart)', lancar, esperaErro: true),
+  ];
+
+  void areaOk(Area a) {
+    if (a.esperaErro) {
+      checar('a exceção deveria ter chegado à cadeia', false);
+      return;
+    }
+    depurar('ok ' + a.nome);
+  }
+
+  void areaErro(Area a, Value causa) {
+    final mensagem = causa.isObject ? causa['message'].string : causa.string;
+    if (a.esperaErro) {
+      checar('a exceção chega como erro da promessa', mensagem.contains('proposital'), mensagem);
+      return;
+    }
+    falhas++;
 `;
 }
