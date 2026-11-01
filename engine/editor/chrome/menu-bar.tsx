@@ -1,17 +1,28 @@
 'use client';
-import { useState, type ReactNode } from 'react';
-import { Hexagon, Undo2, Redo2, Copy, ClipboardCopy, ClipboardPaste, FolderInput, Trash2, Grid3x3, Eclipse, Sun, Keyboard, Locate, Import, LibraryBig, Play, Pause, Square, StepForward, PersonStanding, Palette, Ungroup, SquareDashed, Eye, EyeOff, Focus, FolderPlus, Lock, LockOpen, } from 'lucide-react';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
-import { useEditorState } from '@/engine/editor/session/editor-session-context';
+import type { ReactNode } from 'react';
+import { Undo2, Redo2, Copy, ClipboardCopy, ClipboardPaste, FolderInput, Trash2, Grid3x3, Eclipse, Sun, Locate, Import, LibraryBig, Play, Pause, Square, StepForward, PersonStanding, Palette, Ungroup, SquareDashed, Eye, EyeOff, Focus, FolderPlus, Lock, LockOpen, ChevronDown, } from 'lucide-react';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
+import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { addFolder, copySelected, deleteSelected, duplicateSelected, groupSelected, isolateEntities, pasteClipboard, showAllEntities, toggleLockSelected, toggleVisibilitySelected, ungroupSelected, unlockAllEntities, } from '@/engine/editor/operations/entity-operations';
-import { setPlayerSpawnIfMissing } from '@/engine/editor/operations/player-operations';
-import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_SHORTCUT_CLASS } from '@/engine/editor/menus/menu-styles';
-import { ShortcutsDialog } from '@/engine/editor/dialogs/shortcuts-dialog';
+import { setPlayerEnabled } from '@/engine/editor/operations/player-operations';
+import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS } from '@/engine/editor/menus/menu-styles';
+import { MenuShortcut } from '@/engine/editor/menus/menu-shortcut';
+import { HelixMenuItems } from '@/engine/editor/menus/helix-menu-items';
+import { ProjectMenuItems } from '@/engine/editor/menus/project-menu-items';
+import { editorDialogs } from '@/engine/editor/dialogs/editor-dialogs';
+import { useProjectName } from '@/engine/editor/session/use-project-name';
 import { openImportFilePicker } from '@/engine/editor/import/import-file-picker';
 import { pickFilesForLibrary } from '@/engine/editor/operations/asset-library-operations';
 import { openMaterialEditor } from '@/engine/editor/materials/material-editor-requests';
 import { PanelsMenuItems } from '@/engine/editor/layout/panels-menu-items';
-function MenuBarMenu({ label, children }: {
+import { GuiEditMenuItems, InterfaceMenuItems } from '@/engine/editor/menus/gui-menu-items';
+import { CodeMenuItems } from '@/engine/editor/menus/code-menu-items';
+import { HelpMenuItems } from '@/engine/editor/menus/help-menu-items';
+import { HelixLogo } from '@/engine/boot/helix-logo';
+import { UI_SCALE_OPTIONS, type UiScaleValue } from '@/engine/settings/engine-settings-schema';
+import { engineSettings, useEngineSetting } from '@/engine/settings/engine-settings-store';
+const MENU_TRIGGER_CLASS = 'h-full shrink-0 px-2 text-2xs whitespace-nowrap text-muted-foreground transition-colors duration-100 hover:bg-highlight hover:text-foreground focus-visible:outline-1 focus-visible:outline-offset-[-1px] focus-visible:outline-primary data-[popup-open]:bg-surface-raised data-[popup-open]:text-foreground data-[popup-open]:shadow-bevel';
+function MenuBarMenu({ label, contentClassName, children }: {
     label: string;
     contentClassName?: string;
     children: ReactNode;
