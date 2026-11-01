@@ -276,3 +276,26 @@ function corner(out: Vec3, u: number, v: number): Vec3 {
     vec3.scaleAndAdd(out, position, right, u);
     return vec3.scaleAndAdd(out, out, up, v);
 }
+function radial(out: Vec3, center: Vec3, u: number, v: number, radius: number): Vec3 {
+    vec3.scaleAndAdd(out, center, right, u * radius);
+    return vec3.scaleAndAdd(out, out, up, v * radius);
+}
+function helperTint(rgb: Vec3): Vec3 {
+    const peak = Math.max(rgb[0], rgb[1], rgb[2], 1e-3);
+    vec3.scale(rgb, rgb, 1 / peak);
+    rgb[0] += (1 - rgb[0]) * COLOR_LIFT;
+    rgb[1] += (1 - rgb[1]) * COLOR_LIFT;
+    rgb[2] += (1 - rgb[2]) * COLOR_LIFT;
+    return rgb;
+}
+function helperColor(out: Vec3, light: Light): Vec3 {
+    if (light.intensity <= 0)
+        return vec3.copy(out, OFF_COLOR);
+    if (light.type === 'directional')
+        vec3.copy(out, light.color);
+    else if (light.type === 'ambient')
+        vec3.copy(out, light.skyColor);
+    else
+        resolveLocalLightColor(out, light as LocalLight);
+    return helperTint(out);
+}
