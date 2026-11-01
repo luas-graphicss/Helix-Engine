@@ -281,5 +281,285 @@ class DebugJogo extends Script {
     me.invoke('computeNormals', [tri]);
     checar('mesh.create + computeBounds', numero(me.invoke('computeBounds', [tri])['max'], 'y') >= 1.5);
     final dupla = me.invoke('merge', [tri, me.invoke('flipWinding', [me.invoke('clone', [tri])])]);
+    checar('mesh.merge', me.invoke('triangleCount', [dupla]).number == 2);
+    s.invoke('spawn', [
+      'mesh',
+      {
+        'name': 'Triangulo',
+        'mesh': dupla,
+        'material': mat.invoke('create', [{'baseColor': '#06d6a0', 'doubleSided': true}]),
+        'position': v3(7, 0, -2),
+      },
+    ]);
+    final grande = me.invoke('scale', [me.invoke('translate', [me.invoke('clone', [caixa]), v3(0, 0.5, 0)]), 2]);
+    checar('mesh.translate/scale', numero(me.invoke('computeBounds', [grande])['max'], 'y') > 1.9);
+    final distancia = me.invoke('raycast', [api('math.ray').invoke('create', [v3(0, 5, 0), v3(0, -1, 0)]), grande]);
+    checar('mesh.raycast', distancia.isNumber && distancia.number > 0);
+    final vertices = me.invoke('vertexCount', [caixa]).integer;
+    checar('positions/indices', me.invoke('positions', [caixa]).length == vertices * 3 && me.invoke('indices', [caixa]).length == 36);
+    checar('primitivas extras', me.invoke('triangleCount', [me.invoke('torusKnot')]).number > 0 && me.invoke('triangleCount', [me.invoke('capsule')]).number > 0);
+    return null;
+  }
+
+                                                                                                
+
+  Object? materiais() {
+    final mat = api('material'), s = api('scene'), tex = api('texture');
+    final base = mat.invoke('create', [{'name': 'DebugBase', 'baseColor': '#d98c2b', 'roughness': 0.5, 'metallic': 0.1}]);
+    checar('material.create', numero(base, 'roughness') == 0.5);
+    final copia = mat.invoke('clone', [base]);
+    mat.invoke('set', [copia, {'roughness': 1, 'emissive': '#ffffff', 'emissiveIntensity': 2}]);
+    checar('material.clone/set', numero(copia, 'roughness') == 1 && numero(base, 'roughness') == 0.5);
+    final caixa = s.invoke('spawnPrimitive', ['box', {'name': 'CaixaPintada', 'position': v3(-7, 0.5, 2)}]);
+    mat.invoke('assign', [caixa, base]);
+    checar('material.assign/of', !mat.invoke('of', [caixa]).isNullish);
+    mat.invoke('own', [caixa]);
+    mat.invoke('setColor', [caixa, '#d98c2b']);
+    final desenho = tex.invoke('canvas', [64, 64]);
+    desenho.invoke('update');
+    mat.invoke('setTexture', [caixa, 'baseColorMap', desenho['texture']]);
+    checar('texture.canvas + setTexture', mat.invoke('hasAnyTexture', [mat.invoke('of', [caixa])]).boolean && tex.invoke('isTexture', [desenho['texture']]).boolean);
+    checar('material.slots', mat.invoke('slots').length > 0);
+    checar('materials.list', api('materials').invoke('list').isArray);
+    final sombreado = mat.invoke('fromShader', ['DebugSuperficie', {'glow': v3(1, 0.45, 0.1), 'speed': 2}]);
+    checar('material.fromShader', !sombreado.isNullish);
+    if (!sombreado.isNullish) {
+      final esfera = s.invoke('spawnPrimitive', ['sphere', {'name': 'EsferaShader', 'position': v3(0, 1, -3), 'scale': 1.4}]);
+      mat.invoke('assign', [esfera, sombreado]);
+      mat.invoke('uniforms', [esfera]).invoke('set', ['speed', 3]);
+      checar('material.uniforms.list', mat.invoke('uniforms', [esfera]).invoke('list').length >= 1);
+    }
+    return null;
+  }
+
+  Object? luzes() {
+    final l = api('light');
+    checar('light.types', contem(l.invoke('types'), 'point') && contem(l.invoke('localTypes'), 'spot'));
+    final lampada = l.invoke('spawn', ['point', {'name': 'Lampada', 'position': v3(0, 3, 0), 'color': '#ffd166', 'intensity': 60, 'range': 14}]);
+    checar('light.spawn', !lampada['light'].isNullish && textoIgual(lampada.path('light.type'), 'point'));
+    l.invoke('set', [lampada, {'intensity': 80}]);
+    checar('light.set', numero(lampada['light'], 'intensity') == 80);
+    l.invoke('setTemperature', [lampada, 3200]);
+    checar('setTemperature', numero(lampada['light'], 'temperature') == 3200);
+    final foco = l.invoke('spawn', [
+      'spot',
+      {
+        'name': 'Holofote', 'position': v3(4, 4, 0), 'rotation': v3(-90, 0, 0), 'intensity': 120, 'range': 16,
+        'innerAngle': 20, 'outerAngle': 35, 'color': '#ffffff',
+      },
+    ]);
+    checar('spot', textoIgual(foco.path('light.type'), 'spot'));
+    final convertido = l.invoke('convert', [foco, 'disc']);
+    checar('light.convert', textoIgual(convertido['type'], 'disc') && textoIgual(foco.path('light.type'), 'disc'));
+    l.invoke('convert', [foco, 'spot']);
+    final presets = l.invoke('presets');
+    checar('light.presets', presets.length > 0);
+    if (presets.length > 0) {
+      final primeiro = presets[0];
+      final preset = l.invoke('spawn', [primeiro['id'], {'name': 'LuzPreset', 'position': v3(-4, 2.5, 4)}]);
+      checar('light.fromPreset', !preset['light'].isNullish && l.invoke('fromPreset', [primeiro['id']])['type'] == primeiro['type']);
+    }
+    checar('light.all', l.invoke('all', [{'local': true}]).length >= 2);
+    checar('effectiveRange', l.invoke('effectiveRange', [lampada]).number > 0);
+    checar('light.isLocal', verdadeiro(l.invoke('isLocal', [lampada])));
+    checar('temperatureToColor', !l.invoke('temperatureToColor', [6500]).isNullish);
+    l.invoke('setColor', [lampada, '#ffffff']);
+    checar('light.setColor', eq3(lampada.path('light.color'), 1, 1, 1, 0.01));
+    return null;
+  }
+
+  Object? ceu() {
+    final sky = api('sky'), mundo = api('world');
+    sky.invoke('set', [{'timeOfDay': 10.5, 'haze': 0.3, 'clouds': {'enabled': true, 'coverage': 0.45}}]);
+    checar('sky.set', aprox(numero(sky, 'timeOfDay'), 10.5, 1e-3) && verdadeiro(sky.path('clouds.enabled')));
+    checar('sky.isDay', verdadeiro(sky['isDay']));
+    checar('sky.sunDirection', numero(sky.invoke('sunDirection'), 'y') > 0);
+    final hora = sky.invoke('formatTimeOfDay', [10.5]).string;
+    checar('sky.formatTimeOfDay', hora.contains(':'), hora);
+    checar('sky.wrapTimeOfDay', sky.invoke('wrapTimeOfDay', [25]).number == 1);
+    checar('sky.presets', sky.invoke('presets').length > 0);
+    assinar(sky.invoke('onHourChanged', [(Value hora) => info('Hora do céu: ' + hora.string)]));
+    sky['cycleSpeed'] = 0;
+    checar('sky.cycleSpeed', numero(sky, 'cycleSpeed') == 0);
+    checar('world.gravity', numero(mundo['gravity'], 'y') < 0);
+    mundo['wind'].invoke('set', [{'speed': 2, 'direction': 45}]);
+    checar('world.wind.set', numero(mundo['wind'], 'speed') == 2);
+    return null;
+  }
+
+  Object? camera() {
+    final c = api('camera');
+    checar('camera.fov', numero(c, 'fov') > 0 && numero(c, 'aspect') > 0);
+    checar('camera.near/far', numero(c, 'near') > 0 && numero(c, 'far') > numero(c, 'near'));
+    final viewport = c['viewport'];
+    checar('viewport', numero(viewport, 'width') > 0);
+    final naTela = c.invoke('worldToScreen', [v3(0, 0, 0)]);
+    checar('worldToScreen', naTela.isNullish || naTela['x'].isNumber);
+    final raio = c.invoke('screenToRay', [numero(viewport, 'width') / 2, numero(viewport, 'height') / 2]);
+    checar('screenToRay', raio.isNullish || aprox(comprimento(raio['direction']), 1, 0.01));
+    checar('viewMatrix', c['viewMatrix'].length == 16);
+    final jogador = c['player'];
+    jogador.invoke('set', [{'distance': 7, 'pitch': 18}]);
+    checar('player.set', numero(jogador['settings'], 'distance') == 7);
+    checar('distanceTo', c.invoke('distanceTo', [v3(0, 0, 0)]).number >= 0);
+    checar('camera.position', !c['position'].isNullish && !c['forward'].isNullish);
+    assinar(c.invoke('onMainChanged', [
+      (Value entidade) => info(entidade.isNullish ? 'Câmera principal: editor/jogador' : 'Câmera principal: ' + nomeDe(entidade)),
+    ]));
+    return null;
+  }
+
+  Object? pos() {
+    final p = api('post');
+    checar('post.toneMappers', p.invoke('toneMappers').length > 0);
+    p.invoke('set', [
+      {
+        'bloom': {'enabled': true, 'intensity': 0.5, 'threshold': 1, 'softKnee': 0.5, 'radius': 0.6},
+        'vignette': {'enabled': true, 'intensity': 0.35, 'smoothness': 0.5, 'roundness': 1},
+      },
+    ]);
+    checar('post.set', verdadeiro(p.path('bloom.enabled')) && verdadeiro(p.path('vignette.enabled')));
+    p['exposure'] = 1.05;
+    checar('post.exposure', aprox(numero(p, 'exposure'), 1.05, 1e-3));
+    p['toneMapper'] = 'agx';
+    checar('post.toneMapper', textoIgual(p['toneMapper'], 'agx'));
+    checar('post.presets', p.invoke('presets').length > 0);
+    final custom = p['custom'];
+    final novo = custom.invoke('add', [{'fragment': 'DebugPost', 'name': 'DebugPost', 'uniforms': {'tint': v3(0.15, 0.05, 0.3), 'strength': 0.6}}]);
+    efeito = novo;
+    checar('post.custom.add', !novo.isNullish && !custom.invoke('get', ['DebugPost']).isNullish);
+    novo['uniforms'].invoke('set', ['strength', 0.8]);
+    checar('efeito.uniforms.list', novo['uniforms'].invoke('list').length >= 2);
+    return null;
+  }
+
+  Object? render() {
+    final r = api('render');
+    checar('render.passNames', r.invoke('passNames').length > 0);
+    checar('render.stats', r.path('stats.drawCalls').isNumber);
+    checar('render.frame', r.path('frame.width').isNumber);
+    assinar(r.invoke('onAfterFrame', [() => renders++]));
+    r['showGrid'] = false;
+    checar('render.showGrid', falso(r['showGrid']));
+    checar('render.pixelRatio', numero(r, 'pixelRatio') > 0);
+    return null;
+  }
+
+                                                                                             
+
+  Object? fisica() {
+    final ph = api('physics'), s = api('scene');
+    checar('physics.enabled', verdadeiro(ph['enabled']));
+    checar('physics.gravity', numero(ph['gravity'], 'y') < 0);
+    checar('physics.settings', numero(ph['settings'], 'fixedTimestep') > 0);
+    for (var i = 1; i <= 5; i++) {
+      final indice = i - 1;
+      final caixa = s.invoke('spawnPrimitive', [
+        'box',
+        {
+          'name': 'Caixa' + i.toString(),
+          'position': v3(-2 + indice * 1.1, 3 + indice * 1.2, 3),
+          'rigidBody': {'type': 'dynamic', 'collider': 'box', 'mass': 2, 'restitution': 0.3},
+          'tags': ['caixa'],
+        },
+      ]);
+      api('material').invoke('setColor', [caixa, api('math.color').invoke('hsl', [30 + i * 12, 0.7, 0.5])]);
+    }
+    final caixas = s.invoke('byTag', ['caixa']);
+    final primeira = caixas[0];
+    checar('caixas dinâmicas', caixas.length == 5 && ph.invoke('hasBody', [primeira]).boolean);
+    final corpo = ph.invoke('bodyOf', [primeira]);
+    checar('bodyOf', verdadeiro(corpo['isDynamic']) && numero(corpo, 'mass') > 0);
+    corpo.invoke('applyImpulse', [v3(0, 2, 0)]);
+    corpo.invoke('applyTorque', [v3(0, 1, 0)]);
+    corpo.invoke('setMaterial', [{'friction': 0.8}]);
+    corpo.invoke('wake');
+    checar('body.linearVelocity', !corpo['linearVelocity'].isNullish);
+    checar('bodies()', ph.invoke('bodies').length >= 6);
+    final hit = ph.invoke('raycast', [v3(0, 5, 0), v3(0, -1, 0), 20]);
+    checar('physics.raycast', !hit.isNullish && !hit['entity'].isNullish);
+    checar('raycastAll', ph.invoke('raycastAll', [v3(0, 5, 0), v3(0, -1, 0), 20]).length >= 1);
+    checar('overlapSphere', ph.invoke('overlapSphere', [v3(0, 3, 3), 4]).isArray);
+    checar('massProperties', numero(ph.invoke('massProperties', [primeira]), 'mass') > 0);
+    checar('colliderVolume', ph.invoke('colliderVolume', [primeira]).number > 0);
+    final formas = ph['shapes'];
+    checar('shapes.sphere volume', aprox(formas.invoke('volume', [formas.invoke('sphere', [1])]).number, 4.18879, 0.01));
+    assinar(ph.invoke('onCollisionBegin', [
+      (Value e) {
+        colisoes++;
+        if (colisoes > 3) return;
+        info('Colisão: ' + nomeDe(e['a']) + ' × ' + nomeDe(e['b']) + ' (impulso ' + arred(numero(e['contact'], 'impulse')).toString() + ')');
+      },
+    ]));
+    assinar(ph.invoke('onOutOfBounds', [(Value entidade) => aviso(nomeDe(entidade) + ' caiu do mundo')]));
+    final gatilho = s.invoke('spawn', ['group', {'name': 'Gatilho', 'position': v3(0, 1, 3), 'trigger': {'shape': 'box', 'size': v3(3, 2, 3)}}]);
+    checar('trigger spawn', !gatilho.isNullish && s.invoke('isAttached', [gatilho]).boolean);
+    checar('physics.stats', ph.path('stats.bodies').isNumber);
+    return null;
+  }
+
+  Object? personagem() {
+    final ch = api('character'), pl = api('player');
+    final novo = ch.invoke('spawn', [{'name': 'Heroi', 'position': v3(0, 1.2, 8), 'character': {'walkSpeed': 4, 'runSpeed': 7, 'jumpHeight': 1.4}}]);
+    heroi = novo;
+    checar('character.spawn', !novo['character'].isNullish && ch.invoke('has', [novo]).boolean);
+    final c = ch.invoke('of', [novo]);
+    checar('character.of', c['isGrounded'].isBoolean);
+    checar('settingsOf', numero(ch.invoke('settingsOf', [novo]), 'walkSpeed') == 4);
+    pl.invoke('possess', [novo]);
+    checar('player.possess', pl['possessed'] == novo && verdadeiro(pl['isPossessing']));
+    assinar(ch.invoke('onJumped', [(Value e) => info(nomeDe(e['entity']) + ' pulou')]));
+    assinar(pl.invoke('onPossessed', [(Value entidade) => info('Possuindo ' + nomeDe(entidade))]));
+    checar('character.all', ch.invoke('all').length >= 1);
+    checar('player.spawnPoint', !pl['spawnPoint'].isNullish);
+    checar('character.velocity', !c['velocity'].isNullish && !c['position'].isNullish);
+    return null;
+  }
+
+  Object? terreno() {
+    final te = api('terrain');
+    checar('terrain.presets', te.invoke('presets').length > 0);
+    final colinas = te.invoke('spawn', [{'name': 'Colinas', 'size': 48, 'resolution': 65, 'preset': 'hills', 'seed': 7, 'position': v3(0, -6, -70)}]);
+    checar('terrain.spawn', !colinas['terrain'].isNullish && te.invoke('all').length >= 1);
+    checar('terrain.of', numero(te.invoke('of', [colinas]), 'resolution') == 65);
+    checar('heightAt', te.invoke('heightAt', [v3(0, 0, -70), colinas]).isNumber);
+    checar('contains', te.invoke('contains', [v3(0, 0, -70), colinas]).boolean && !te.invoke('contains', [v3(500, 0, 0), colinas]).boolean);
+    te.invoke('sculpt', [colinas, 'raise', v3(5, 0, -70), {'radius': 6, 'strength': 1}, 1]);
+    te.invoke('markDirty', [colinas]);
+    final grama = te['grass'];
+    grama.invoke('set', [colinas, {'enabled': true, 'density': 0.5}]);
+    checar('grass.set', verdadeiro(grama.invoke('settingsOf', [colinas])['enabled']));
+    final agua = te['water'];
+    agua.invoke('set', [colinas, {'enabled': true, 'level': -2}]);
+    checar('water.set', verdadeiro(agua.invoke('settingsOf', [colinas])['enabled']));
+    checar('terrain.raycast', !te.invoke('raycast', [v3(0, 50, -70), v3(0, -1, 0), colinas]).isNullish);
+    return null;
+  }
+
+                                                                                             
+
+  void soltarCaixa() {
+    final random = api('math.random');
+    final caixa = api('scene').invoke('spawnPrimitive', [
+      'box',
+      {
+        'name': 'CaixaSolta',
+        'position': v3(random.invoke('range', [-3, 3]).number, 6, random.invoke('range', [0, 4]).number),
+        'rigidBody': {'type': 'dynamic', 'collider': 'box', 'mass': 1},
+        'tags': ['caixa'],
+      },
+    ]);
+    api('material').invoke('setColor', [caixa, random.invoke('color')]);
+    pontos++;
+    api('gui').invoke('bind', ['pontos', pontos]);
+    api('events').invoke('emit', ['debug.caixa', {'nome': caixa['name']}]);
+  }
+
+  Object? interfaceGrafica() {
+    final g = api('gui');
+    g.invoke('css', ['DebugEstilo']);
+    final hud = g.invoke('html', ['DebugHud', {'id': 'debug-hud'}]);
+    checar('gui.html', !hud.isNullish && !g.invoke('element', ['#debug-hud']).isNullish);
+    final icone = g.invoke('svg', ['DebugIcone', {'id': 'debug-icone'}]);
 `;
 }
