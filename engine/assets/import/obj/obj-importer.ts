@@ -4,6 +4,7 @@ import { srgbToLinear } from '@/engine/core/color/srgb';
 import { mimeTypeFromFileName } from '@/engine/assets/image-decoder';
 import type { FileBundle } from '../file-bundle';
 import { triangulatePolygon, withSmoothNormals } from '../geometry-utils';
+import { IGNORE_PROGRESS, progressBetween, STAGE_GEOMETRY, STAGE_HIERARCHY, STAGE_READING, STAGE_TEXTURES, type ImportProgressReporter } from '../import-progress';
 import { baseNameWithoutExtension, createImportedMaterial, createImportedNode, createImportedTexture, type ImportedMaterial, type ImportedMesh, type ImportedNode, type ImportedScene, type ImportedTexture, } from '../import-types';
 import { parseMtl, type MtlMaterial, type MtlTextureMap } from './mtl-parser';
 interface Corner {
@@ -303,13 +304,19 @@ function convertMaterial(mtl: MtlMaterial, textures: TextureTable, warnings: str
         warnings.push(`${mtl.name}: mapa especular (map_Ks) sem equivalente PBR foi ignorado.`);
     return out;
 }
-export async function importObj(file: File, bundle: FileBundle): Promise<ImportedScene> {
+const MESH_PROGRESS_START = 0.45;
+const MESH_PROGRESS_END = 0.95;
+export async function importObj(file: File, bundle: FileBundle, progress: ImportProgressReporter = IGNORE_PROGRESS): Promise<ImportedScene> {
     const warnings: string[] = [];
-    const doc = parseObj(await file.text());
+    progress(0, STAGE_READING);
+    const text = await file.text();
+    progress(0.05, STAGE_READING);
+    const doc = parseObj(text);
     if (doc.parts.length === 0)
         throw new Error('O arquivo OBJ não contém faces.');
     if (doc.skippedPrimitives > 0)
         warnings.push(`${doc.skippedPrimitives} linha(s)/ponto(s) ignorados; apenas faces são importadas.`);
+    progress(0.4, STAGE_TEXTURES);
     const mtlMaterials = new Map<string, MtlMaterial>();
     for (const library of doc.materialLibraries) {
         const candidates = [library, ...library.split(/\s+/)];
@@ -347,8 +354,12 @@ export async function importObj(file: File, bundle: FileBundle): Promise<Importe
     const nodesByObject = new Map<string, ImportedNode>();
     const roots: ImportedNode[] = [];
     const usedMeshNames = new Set<string>();
+    const anyNamedObject = doc.parts.some((candidate) => candidate.object);
+    const totalFaces = doc.parts.reduce((total, part) => total + part.faces.length, 0);
+    let builtFaces = 0;
+    progress(MESH_PROGRESS_START, STAGE_GEOMETRY);
     for (const part of doc.parts) {
-        const objectName = part.object || (doc.parts.some((candidate) => candidate.object) ? fileName : part.group || fileName);
+        const objectName = part.object || (anyNamedObject ? fileName : part.group || fileName);
         let node = nodesByObject.get(objectName);
         if (!node) {
             node = createImportedNode(objectName);
@@ -363,6 +374,8 @@ export async function importObj(file: File, bundle: FileBundle): Promise<Importe
         while (usedMeshNames.has(meshName))
             meshName = `${baseMeshName}_${suffix++}`;
         const mesh = buildPartMesh(meshName, part, doc, materialIndexFor(part.material));
+        builtFaces += part.faces.length;
+        progress(progressBetween(MESH_PROGRESS_START, MESH_PROGRESS_END, builtFaces, totalFaces), STAGE_GEOMETRY);
         if (!mesh)
             continue;
         usedMeshNames.add(meshName);
@@ -371,6 +384,7 @@ export async function importObj(file: File, bundle: FileBundle): Promise<Importe
     }
     if (meshes.length === 0)
         throw new Error('Nenhuma face válida encontrada no OBJ.');
+    progress(MESH_PROGRESS_END, STAGE_HIERARCHY);
     return {
         format: 'obj',
         name: fileName,
