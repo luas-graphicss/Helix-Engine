@@ -561,5 +561,205 @@ def tempo
   checar("time.now", tm.now >= 0 && tm.frame >= 0)
   checar("time.delta", tm.delta >= 0 && tm.fixedDelta > 0)
   inicio = tm.now
+  tm.wait(0.1)
+  checar("time.wait", tm.now - inicio >= 0.09, format("%.3f", tm.now - inicio))
+  quadro = tm.frame
+  tm.waitFrames(2)
+  checar("time.waitFrames", tm.frame >= quadro + 2, tm.frame - quadro)
+  assinar(tm.every(2) { helix.gui.bind("atores", helix.scene.count) })
+  disparou = false
+  tm.delay(0.2) { disparou = true }
+  tm.wait(0.3)
+  checar("time.delay", disparou)
+end
+
+def dados
+  st = helix.storage
+  st.ready
+  execucoes = (st.get("execucoes", 0) || 0) + 1
+  st.set("execucoes", execucoes)
+  checar("storage.get/set", st.get("execucoes") == execucoes && st.has("execucoes"), execucoes)
+  helix.log.info("Debug", "Execução nº #{execucoes} deste jogo de teste neste projeto.")
+  cfg = helix.assets.data("DebugConfig")
+  checar("assets.data (TOML)", cfg&.dig(:jogador, :velocidade) == 6.5)
+  checar("assets.text", helix.assets.text("DebugConfig").include?("velocidade"))
+  checar("assets.byName", !helix.assets.byName("DebugJogo", "script").nil?)
+  checar("assets.exists", helix.assets.exists("DebugUtil") && !helix.assets.exists("NaoExiste"))
+  checar("assets.search", helix.assets.search("Debug").size >= 5)
+  checar("project.name", helix.project.name.is_a?(String))
+  checar("project.stats", helix.project.stats.entities > 0)
+  checar("net.localPlayer", helix.net.localPlayer[:local] == true)
+  checar("play.state", helix.play.state == "playing" && helix.play.isRunning)
+end
+
+                                                                                                 
+
+def on_load
+  puts "on_load do script de entrada (puts chega ao console)"
+end
+
+def on_start
+  helix.log.info("Debug", "Jogo de teste em #{LINGUAGEM}: percorrendo a API…")
+  area("Núcleo") { nucleo }
+  area("Módulo (require)") { modulo }
+  area("Matemática") { matematica }
+  area("Cena") { cena }
+  area("Transformações") { transformacao }
+  area("Malhas e CSG") { malhas }
+  area("Materiais") { materiais }
+  area("Luzes") { luzes }
+  area("Céu e mundo") { ceu }
+  area("Câmera") { camera }
+  area("Pós-processamento") { pos_processamento }
+  area("Render") { render }
+  area("Física") { fisica }
+  area("Personagem e jogador") { personagem }
+  area("Terreno") { terreno }
+  area("Interface") { interface_grafica }
+  area("Áudio") { audio }
+  area("VFX") { efeitos_visuais }
+  area("Entrada") { entrada }
+  area("Eventos") { eventos }
+  area("Tempo e tarefas") { tempo }
+  area("Dados, projeto e rede") { dados }
+  girador = helix.assets.byName("DebugGirador", "script")
+  if girador
+    extra = helix.scene.spawnPrimitive("box", { name: "GiradorDinamico", position: [-2, 0.5, -3], rigidBody: { type: "kinematic", collider: "box" }, script: { assetId: girador.id, props: { velocidade: 180, cor: "#00b4d8" } } })
+    checar("spawn com script", !extra.script.nil? && extra.script.assetId == girador.id)
+  else
+    checar("ativo DebugGirador", false, "não está na biblioteca")
+  end
+  dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia."
+  if @falhas.zero?
+    helix.log.info("Debug", "API percorrida em #{LINGUAGEM}: #{@checagens} checagens, nenhuma falha. #{dica}")
+  else
+    helix.log.warn("Debug", "API percorrida em #{LINGUAGEM}: #{@checagens} checagens, #{@falhas} falhas (veja FALHOU/ERRO acima). #{dica}")
+  end
+  helix.gui.bind("checagens", @checagens)
+  helix.gui.bind("falhas", @falhas)
+end
+
+def on_update(dt)
+  @quadros += 1
+  helix.transform.rotate(@torus, [0, 40 * dt, 0]) if @torus
+  d = helix.debug
+  d.line([-6, 0.05, -6], [6, 0.05, -6], "#ff006e")
+  d.box({ center: [0, 1, 3], size: [3, 2, 3] }, "#ffbe0b")
+  if @heroi
+    d.axes(@heroi, 1)
+    d.text(helix.math.vec3.add(helix.transform.worldPosition(@heroi), [0, 2.2, 0]), "Heroi · #{@pontos} pts", "#ffffff")
+  end
+  d.ray([0, 3, 0], [0, -1, 0], 3, "#06d6a0")
+  @hud_timer += dt
+  return if @hud_timer < 0.5
+
+  @hud_timer = 0.0
+  helix.gui.bind("fps", helix.render.stats.fps.round)
+  helix.gui.bind("checagens", @checagens)
+  helix.gui.bind("falhas", @falhas)
+end
+
+def on_fixed_update(passo)
+  @passos_fisica += 1
+  checar("on_fixed_update recebe o passo", passo > 0 && passo < 1, passo) if @passos_fisica == 1
+end
+
+def on_late_update
+  @late_updates += 1
+end
+
+def on_before_hot_reload
+  { pontos: @pontos }
+end
+
+def on_hot_reload(anterior)
+  @pontos = anterior && anterior[:pontos].is_a?(Numeric) ? anterior[:pontos] : 0
+  helix.log.info("Debug", "Recarga a quente: #{@pontos} pontos preservados")
+end
+
+def on_stop
+  @assinaturas.each(&:call)
+  helix.log.info("Debug", "Parou: #{@quadros} quadros, #{@passos_fisica} passos de física, #{@late_updates} lateUpdates, #{@renders} frames (onAfterFrame), #{@colisoes} colisões.")
+end
 `;
+    const actor = `                                
+                                                                                             
+                                                                                                             
+                                                                                               
+class DebugGirador
+  def initialize
+    @angulo = 0.0
+    @contatos = 0
+    @quadros = 0
+    @desligar = nil
+  end
+
+  def on_load
+    helix.props.define({
+      velocidade: { type: "range", default: 90, min: 0, max: 360, step: 1, label: "Velocidade (°/s)" },
+      cor: { type: "color", default: "#ff8800", label: "Cor" },
+      pulsar: { type: "boolean", default: true, label: "Pulsar" },
+    })
+  end
+
+  def on_start
+    helix.log.info("Girador", "#{actor.name} acordou com velocidade #{helix.props.get("velocidade")}°/s")
+    helix.material.setColor(actor, helix.props.get("cor"))
+    @desligar = helix.props.onChanged("cor") { |cor| helix.material.setColor(actor, cor) }
+    helix.log.assert(helix.props.has("velocidade") && helix.props.definitions.size == 3, "props.define deveria registrar 3 propriedades")
+  end
+
+  def on_update(dt)
+    @quadros += 1
+    @angulo += helix.props.get("velocidade") * dt
+    helix.transform.setRotation(actor, [0, @angulo, 0])
+    helix.transform.setScale(actor, 1 + Math.sin(helix.time.now * 3) * 0.1) if helix.props.get("pulsar")
+  end
+
+  def on_collision_begin(outro, contato)
+    @contatos += 1
+    helix.log.info("Girador", "#{actor.name} tocou #{outro.name}#{format(" (impulso %.2f)", contato.impulse)}") if @contatos <= 3
+  end
+
+  def on_trigger_enter(outro)
+    helix.log.info("Girador", "#{outro.name} entrou no gatilho de #{actor.name}")
+  end
+
+  def on_enable
+    helix.log.debug("Girador", "#{actor.name} ativo")
+  end
+
+  def on_disable
+    helix.log.debug("Girador", "#{actor.name} inativo")
+  end
+
+  def on_stop
+    helix.log.info("Girador", "#{actor.name}: #{@quadros} quadros, #{@contatos} contatos")
+  end
+
+  def on_destroy
+    @desligar&.call
+  end
+end
+`;
+    const module = `                                    
+                                                                                                                 
+                                                                                                    
+module DebugUtil
+  VERSAO = "1.0"
+
+  def self.soma(a, b)
+    a + b
+  end
+
+  def self.saudacao(quem)
+    "Olá, #{quem}"
+  end
+
+  def self.limitar(valor, minimo, maximo)
+    valor.clamp(minimo, maximo)
+  end
+end
+`;
+    return { entry, actor, module };
 }
