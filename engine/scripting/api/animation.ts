@@ -273,4 +273,214 @@ export function createAnimationApi(host: RuntimeHost) {
         }
     }
     host.updaters.add(tick);
+    host.disposers.add(() => {
+        for (const entry of players.values()) {
+            entry.player.stop();
+            setLocomotion(entry.owner, true);
+        }
+        players.clear();
+    });
+    const ik = {
+        limbs: () => LIMB_IDS.slice(),
+        available: (entity: unknown) => availableLimbs(rigOf(entity, 'helix.animation.ik.available').rig),
+        solve: (entity: unknown, limbValue: unknown, targetValue: unknown, poleValue?: unknown) => {
+            const member = 'helix.animation.ik.solve';
+            const { rig } = rigOf(entity, member);
+            const limb = requireOneOf(limbValue, LIMB_IDS, member, 'o membro') as LimbId;
+            const joints = resolveLimb(rig, limb);
+            if (!joints)
+                throw new HelixArgumentError(member, `o esqueleto não tem as juntas do membro ${limb}.`);
+            const target = toVec3(targetValue, member);
+            const pole = poleValue === undefined || poleValue === null ? null : toVec3(poleValue, member);
+            session.scene.updateWorldMatrices();
+            return solveTwoBoneIk({ upper: rig.joints[joints.upper], lower: rig.joints[joints.lower], end: rig.joints[joints.end] }, target, pole);
+        },
+    };
+    const api = {
+        document: (asset: unknown) => documentOf(asset, 'helix.animation.document'),
+        documentSync: (asset: unknown) => documentSync(asset, 'helix.animation.documentSync'),
+        clip: async (entity: unknown, asset: unknown) => {
+            const entry = playerOf(entity, 'helix.animation.clip');
+            const document = await documentOf(asset, 'helix.animation.clip');
+            return clipFor(entry, document, typeof asset === 'string' ? asset : null);
+        },
+        player: (entity: unknown) => wrapPlayer(playerOf(entity, 'helix.animation.player')),
+        hasPlayer: (entity: unknown) => {
+            const owner = rigOwnerOf(requireEntity(entity, 'helix.animation.hasPlayer'));
+            return owner !== null && players.has(owner);
+        },
+        play,
+        pause: (entity: unknown) => playerOf(entity, 'helix.animation.pause').player.pause(),
+        resume: (entity: unknown) => playerOf(entity, 'helix.animation.resume').player.resume(),
+        togglePlay: (entity: unknown) => playerOf(entity, 'helix.animation.togglePlay').player.togglePlay(),
+        stop: (entity: unknown) => {
+            const entry = playerOf(entity, 'helix.animation.stop');
+            entry.player.stop();
+            setLocomotion(entry.owner, true);
+        },
+        seek: (entity: unknown, time: unknown) => playerOf(entity, 'helix.animation.seek').player.seek(requireNumber(time, 'helix.animation.seek', 'o tempo')),
+        setSpeed: (entity: unknown, speed: unknown) => playerOf(entity, 'helix.animation.setSpeed').player.setSpeed(requireNumber(speed, 'helix.animation.setSpeed', 'a velocidade')),
+        setLoop: (entity: unknown, loop: unknown) => playerOf(entity, 'helix.animation.setLoop').player.setLoop(Boolean(loop)),
+        rest: (entity: unknown) => {
+            const entry = playerOf(entity, 'helix.animation.rest');
+            entry.player.stop();
+            entry.player.rest();
+        },
+        onEvent: (entity: unknown, handler: unknown) => wrapPlayer(playerOf(entity, 'helix.animation.onEvent')).onEvent(handler),
+        locomotion: (entity: unknown, enabled?: unknown) => {
+            const owner = rigOwner(entity, 'helix.animation.locomotion');
+            if (enabled === undefined)
+                return locomotionOf(owner);
+            setLocomotion(owner, Boolean(enabled));
+            return Boolean(enabled);
+        },
+        rig: (entity: unknown) => describeRig(rigOf(entity, 'helix.animation.rig').rig),
+        hasRig: (entity: unknown) => rigOwnerOf(requireEntity(entity, 'helix.animation.hasRig')) !== null,
+        rigged: () => riggedEntities(session),
+        roles: () => SEMANTIC_BONES.slice(),
+        joint: (entity: unknown, joint: unknown) => jointEntity(rigOwner(entity, 'helix.animation.joint'), joint, 'helix.animation.joint'),
+        jointByRole: (entity: unknown, role: unknown) => {
+            const { rig } = rigOf(entity, 'helix.animation.jointByRole');
+            const name = requireOneOf(role, SEMANTIC_BONES, 'helix.animation.jointByRole', 'o papel') as SemanticBone;
+            const index = rig.semantic[name];
+            return index === -1 ? null : (rig.joints[index] ?? null);
+        },
+        jointWorld: (entity: unknown, joint: unknown) => {
+            const owner = rigOwner(entity, 'helix.animation.jointWorld');
+            const target = jointEntity(owner, joint, 'helix.animation.jointWorld');
+            session.scene.updateWorldMatrices();
+            mat4.getTranslation(scratchPosition, target.worldMatrix);
+            quat.fromMat4Rotation(scratchRotation, target.worldMatrix);
+            return { position: xyz(scratchPosition), rotation: { x: scratchRotation[0], y: scratchRotation[1], z: scratchRotation[2], w: scratchRotation[3] } };
+        },
+        attach: (entity: unknown, target: unknown, joint: unknown, offset?: unknown) => {
+            const member = 'helix.animation.attach';
+            const child = requireEntity(entity, member, 'o ator a prender');
+            const owner = rigOwner(target, member);
+            const socket = jointEntity(owner, joint, member);
+            if (child.contains(socket))
+                throw new HelixError(`${member}: ${socket.name} está dentro de ${child.name}.`);
+            session.scene.updateWorldMatrices();
+            socket.insert(child, socket.children.length);
+            const options = offset === undefined || offset === null ? {} : requireObject(offset, member, 'o deslocamento');
+            if (options.position !== undefined)
+                toVec3(options.position, member, child.transform.position);
+            else
+                vec3.set(child.transform.position, 0, 0, 0);
+            if (options.rotation !== undefined)
+                toVec3(options.rotation, member, child.transform.rotation);
+            else
+                vec3.set(child.transform.rotation, 0, 0, 0);
+            if (options.scale !== undefined)
+                toVec3(options.scale, member, child.transform.scale);
+            bus.emit('scene.reparented', { entity: child, oldParent: null });
+            session.notify();
+            return child;
+        },
+        evaluate: (entity: unknown, time?: unknown) => {
+            const entry = playerOf(entity, 'helix.animation.evaluate');
+            const { player } = entry;
+            const pose = new Pose(player.rig.jointCount);
+            if (time !== undefined) {
+                const clip = player.currentClip;
+                if (!clip)
+                    throw new HelixError('helix.animation.evaluate: o player não tem clipe.');
+                clip.evaluate(requireNumber(time, 'helix.animation.evaluate', 'o tempo'), pose, player.loop);
+            }
+            else {
+                player.evaluate(pose);
+            }
+            return player.rig.names.map((name, index) => {
+                const rotation = pose.rotation(index);
+                return { name, position: xyz(pose.position(index)), rotation: { x: rotation[0], y: rotation[1], z: rotation[2], w: rotation[3] }, scale: xyz(pose.scale(index)) };
+            });
+        },
+        ik,
+        paths: () => ANIMATION_PATHS.slice(),
+        create: (name: unknown, options?: unknown) => {
+            const member = 'helix.animation.create';
+            const settings = options === undefined ? {} : requireObject(options, member);
+            return createEmptyDocument(requireString(name, member), {
+                frameRate: settings.frameRate === undefined ? undefined : requireNumber(settings.frameRate, member, 'frameRate'),
+                duration: settings.duration === undefined ? undefined : requireNumber(settings.duration, member, 'duration'),
+                loop: settings.loop === undefined ? undefined : Boolean(settings.loop),
+            });
+        },
+        setKey: (document: unknown, joint: unknown, path: unknown, time: unknown, value: unknown) => {
+            const member = 'helix.animation.setKey';
+            const doc = requireDocument(document, member);
+            const jointName = requireString(joint, member, 'a junta');
+            const trackPath = requireOneOf(path, ANIMATION_PATHS, member, 'o caminho') as AnimationPath;
+            const at = requireNumber(time, member, 'o tempo');
+            const values = keyValue(value, trackPath, member);
+            const existing = trackAt(doc, jointName, trackPath) ?? createTrack(jointName, trackPath);
+            let next = replaceTrack(doc, jointName, trackPath, setKey(existing, at, values));
+            if (at > next.duration)
+                next = setDocumentDuration(next, at);
+            return next;
+        },
+        addEvent: (document: unknown, time: unknown, name: unknown) => {
+            const member = 'helix.animation.addEvent';
+            const doc = requireDocument(document, member);
+            const events = [...doc.events, { time: requireNumber(time, member, 'o tempo'), name: requireString(name, member, 'o nome do evento') }].sort((a, b) => a.time - b.time);
+            return { ...doc, events };
+        },
+        setDuration: (document: unknown, seconds: unknown) => setDocumentDuration(requireDocument(document, 'helix.animation.setDuration'), requireNumber(seconds, 'helix.animation.setDuration', 'a duração')),
+        save: async (document: unknown, name?: unknown) => {
+            const doc = requireDocument(document, 'helix.animation.save');
+            const named = name === undefined ? doc : { ...doc, name: requireString(name, 'helix.animation.save') };
+            const asset = await saveAnimationToLibrary(session, named);
+            if (!asset)
+                throw new HelixError('helix.animation.save: não foi possível salvar a animação na biblioteca.');
+            return asset;
+        },
+        tick: (dt: unknown) => tick(optionalNumber(dt, host.time.delta, 'helix.animation.tick')),
+        get playing() {
+            let count = 0;
+            for (const entry of players.values())
+                if (entry.player.playing)
+                    count++;
+            return count;
+        },
+    };
+    function requireDocument(value: unknown, member: string): AnimationDocument {
+        if (value && typeof value === 'object' && Array.isArray((value as {
+            tracks?: unknown;
+        }).tracks))
+            return value as AnimationDocument;
+        throw new HelixArgumentError(member, 'esperava um AnimationDocument (helix.animation.create ou helix.animation.document).');
+    }
+    function keyValue(value: unknown, path: AnimationPath, member: string): Float32Array {
+        const size = path === 'rotation' ? 4 : 3;
+        if (value && typeof value === 'object' && !Array.isArray(value) && !ArrayBuffer.isView(value)) {
+            const v = value as {
+                x?: unknown;
+                y?: unknown;
+                z?: unknown;
+                w?: unknown;
+            };
+            const out = new Float32Array(size);
+            out[0] = requireNumber(v.x, member, 'x');
+            out[1] = requireNumber(v.y, member, 'y');
+            out[2] = requireNumber(v.z, member, 'z');
+            if (size === 4)
+                out[3] = v.w === undefined ? 1 : requireNumber(v.w, member, 'w');
+            return out;
+        }
+        const list = value as ArrayLike<number>;
+        if (!list || typeof list.length !== 'number' || list.length < size) {
+            if (path === 'rotation' && list && list.length === 3) {
+                const euler: Vec3 = vec3.set(vec3.create(), list[0], list[1], list[2]);
+                const q = quat.fromEulerDegrees(quat.create(), euler);
+                return new Float32Array([q[0], q[1], q[2], q[3]]);
+            }
+            throw new HelixArgumentError(member, `o valor de ${path} precisa de ${size} números.`);
+        }
+        const out = new Float32Array(size);
+        for (let i = 0; i < size; i++)
+            out[i] = Number(list[i]);
+        return out;
+    }
+    return api;
 }
+export type AnimationApi = ReturnType<typeof createAnimationApi>;
