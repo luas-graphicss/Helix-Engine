@@ -512,4 +512,209 @@ export class NetHub {
         });
         endpoint.send({ t: 'hello', protocol: HELIX_NET_PROTOCOL, name: this.services.localPlayerName(), ticket });
     }
+    private handleClientMessage(message: NetMessage): void {
+        switch (message.t) {
+            case 'welcome': {
+                this.localInfo = message.player;
+                this.roster.clear();
+                for (const info of message.players)
+                    this.roster.set(info.id, info);
+                this.mirror.clear();
+                this.connected = true;
+                this.latencyMs = 0;
+                this.applyStateDelta(message.state, []);
+                if (this.link.kind === 'websocket')
+                    this.services.log('info', `Conectado ao servidor como ${message.player.name} na sala "${this.room}" (${message.players.length} ${message.players.length === 1 ? 'jogador' : 'jogadores'}, ${message.tickRate} Hz).`);
+                this.services.emitBus('net.connected', { player: this.playerFor(message.player.id, 'client'), tickRate: message.tickRate, room: this.room });
+                return;
+            }
+            case 'reject':
+                this.services.log('error', `O servidor recusou a conexão: ${message.reason}.`);
+                return;
+            case 'result':
+                this.settle(message);
+                return;
+            case 'event':
+                this.dispatchListeners(this.clientListeners, message.name, message.args, `net.on:${message.name}`);
+                return;
+            case 'call':
+                void this.answerServerCall(message);
+                return;
+            case 'state':
+                this.applyStateDelta(message.set, message.removed);
+                return;
+            case 'replicate':
+                for (const item of message.entities)
+                    this.dispatchListeners(new Map([['replicated', this.replicationWatchers]]), 'replicated', [item.id, item.fields, item.name], 'net.onReplicated');
+                return;
+            case 'playerJoined':
+                this.roster.set(message.player.id, message.player);
+                if (this.isAuthoritative)
+                    this.services.emitBus('net.playerJoined', this.playerFor(message.player.id, 'client'));
+                return;
+            case 'playerLeft':
+                this.roster.delete(message.player.id);
+                if (this.isAuthoritative)
+                    this.services.emitBus('net.playerLeft', { ...toNetPlayer(message.player, this.localInfo?.id ?? null, false), reason: message.reason });
+                return;
+            case 'kick':
+                this.services.log('warn', `Você foi removido do servidor: ${message.reason}.`);
+                this.clientEndpoint?.close(`removido: ${message.reason}`);
+                return;
+            case 'pong':
+                this.latencyMs = Math.max(0, performance.now() - message.at);
+                return;
+            default:
+                return;
+        }
+    }
+    private async answerServerCall(message: Extract<NetMessage, {
+        t: 'call';
+    }>): Promise<void> {
+        const entry = this.clientRpcs.get(message.name);
+        const endpoint = this.clientEndpoint;
+        if (!endpoint)
+            return;
+        if (!entry) {
+            endpoint.send({ t: 'result', id: message.id, ok: false, error: `nenhum rpc chamado "${message.name}" está registrado no cliente` });
+            return;
+        }
+        try {
+            const value = await this.services.run(entry.owner, () => entry.fn(...message.args));
+            endpoint.send({ t: 'result', id: message.id, ok: true, value: (value ?? null) as JsonValue });
+        }
+        catch (cause) {
+            this.services.report(entry.owner, `net.rpc:${message.name}`, cause);
+            endpoint.send({ t: 'result', id: message.id, ok: false, error: describeThrown(cause) });
+        }
+    }
+    private settle(message: Extract<NetMessage, {
+        t: 'result';
+    }>): void {
+        const call = this.pending.get(message.id);
+        if (!call)
+            return;
+        this.pending.delete(message.id);
+        if (message.ok)
+            call.resolve(message.value);
+        else
+            call.reject(new HelixError(`helix.net.call: "${call.name}" falhou no outro lado: ${message.error}`));
+    }
+    private applyStateDelta(set: JsonRecord, removed: string[]): void {
+        const changed: string[] = [];
+        for (const [key, value] of Object.entries(set)) {
+            if (sameJson(this.mirror.get(key), value))
+                continue;
+            this.mirror.set(key, value);
+            changed.push(key);
+        }
+        for (const key of removed)
+            if (this.mirror.delete(key))
+                changed.push(key);
+        for (const key of changed) {
+            const value = this.mirror.get(key);
+            this.dispatchListeners(this.stateWatchers, key, [value, key], `net.state:${key}`);
+            this.dispatchListeners(this.stateWatchers, '*', [key, value], 'net.state');
+            this.services.emitBus('net.stateChanged', { key, value: value ?? null });
+        }
+    }
+    private dispatchListeners(map: Map<string, Set<Listener>>, name: string, args: unknown[], phase: string): void {
+        const listeners = map.get(name);
+        if (!listeners || listeners.size === 0)
+            return;
+        for (const listener of Array.from(listeners)) {
+            if (listener.owner && !listener.owner.active)
+                continue;
+            try {
+                const result = this.services.run(listener.owner, () => listener.fn(...(structuredClone(args) as unknown[])));
+                if (result instanceof Promise)
+                    result.catch((cause: unknown) => this.services.report(listener.owner, phase, cause));
+            }
+            catch (cause) {
+                this.services.report(listener.owner, phase, cause);
+            }
+        }
+    }
+    private addListener(map: Map<string, Set<Listener>>, name: string, fn: (...args: unknown[]) => unknown): Unsubscribe {
+        const owner = this.services.currentOwner();
+        const listener: Listener = { owner, fn };
+        let set = map.get(name);
+        if (!set) {
+            set = new Set();
+            map.set(name, set);
+        }
+        set.add(listener);
+        const unsubscribe = () => {
+            map.get(name)?.delete(listener);
+        };
+        owner?.track(unsubscribe);
+        return unsubscribe;
+    }
+    private playerFor(id: number, side: 'server' | 'client'): NetPlayer {
+        const info = side === 'server' ? this.players.get(id)?.info : this.roster.get(id);
+        const host = !this.isAuthoritative;
+        if (!info)
+            return { id, name: `Jogador ${id}`, local: this.localInfo?.id === id, isHost: host, joinedAt: 0 };
+        return toNetPlayer(info, this.localInfo?.id ?? null, host);
+    }
+    private requirePlayer(value: unknown, member: string): ServerPlayer {
+        const id = typeof value === 'number' ? value : typeof value === 'object' && value !== null && typeof (value as {
+            id?: unknown;
+        }).id === 'number' ? (value as {
+            id: number;
+        }).id : null;
+        if (id === null)
+            throw new HelixArgumentError(member, 'esperava um jogador (o objeto de helix.net.players() ou o id dele).');
+        const player = this.players.get(id);
+        if (!player)
+            throw new HelixArgumentError(member, `nenhum jogador com id ${id} está no servidor.`);
+        return player;
+    }
+    private callServer(member: string, name: string, args: JsonValue[]): Promise<unknown> {
+        if (!this.isAuthoritative) {
+            const entry = this.serverRpcs.get(name);
+            if (!entry)
+                return Promise.reject(new HelixError(`${member}: nenhum rpc chamado "${name}" foi registrado.`));
+            const player = this.localInfo ? toNetPlayer(this.localInfo, this.localInfo.id, true) : { id: 1, name: 'Jogador', local: true, isHost: true, joinedAt: 0 };
+            try {
+                return Promise.resolve(this.services.run(entry.owner, () => entry.fn(player, ...(structuredClone(args) as unknown[]))));
+            }
+            catch (cause) {
+                return Promise.reject(cause instanceof Error ? cause : new HelixError(describeThrown(cause)));
+            }
+        }
+        const endpoint = this.clientEndpoint;
+        if (!endpoint?.open || !this.connected)
+            return Promise.reject(new HelixError(`${member}: o cliente não está conectado ao servidor.`));
+        const id = this.nextCallId++;
+        return new Promise((resolve, reject) => {
+            this.pending.set(id, { name, resolve, reject });
+            endpoint.send({ t: 'call', id, name, args });
+        });
+    }
+    private callClient(member: string, player: ServerPlayer, name: string, args: JsonValue[]): Promise<unknown> {
+        if (!this.isAuthoritative) {
+            const entry = this.clientRpcs.get(name);
+            if (!entry)
+                return Promise.reject(new HelixError(`${member}: nenhum rpc chamado "${name}" foi registrado no cliente.`));
+            try {
+                return Promise.resolve(this.services.run(entry.owner, () => entry.fn(...(structuredClone(args) as unknown[]))));
+            }
+            catch (cause) {
+                return Promise.reject(cause instanceof Error ? cause : new HelixError(describeThrown(cause)));
+            }
+        }
+        const id = this.nextCallId++;
+        return new Promise((resolve, reject) => {
+            this.pending.set(id, { name, resolve, reject });
+            player.endpoint.send({ t: 'call', id, name, args });
+        });
+    }
+    private sendEvent(player: ServerPlayer, name: string, args: JsonValue[]): void {
+        if (!this.isAuthoritative) {
+            this.dispatchListeners(this.clientListeners, name, args, `net.on:${name}`);
+            return;
+        }
+        player.endpoint.send({ t: 'event', name, args });
+    }
 }
