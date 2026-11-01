@@ -740,4 +740,284 @@ const MATH_TYPES = `
   }
 `;
 const SCENE_API = `
+  export interface SceneApi {
+    readonly root: Entity
+    readonly sun: Entity | null
+    readonly activeCamera: Entity | null
+    find(name: string, from?: Entity): Entity | null
+    findAll(name: string, from?: Entity): Entity[]
+    byId(id: number): Entity | null
+    byKind(kind: EntityKind): Entity[]
+    byTag(tag: string): Entity[]
+    traverse(visitor: (entity: Entity) => void, from?: Entity): void
+    traverseVisible(visitor: (entity: Entity) => void, from?: Entity): void
+    all(): Entity[]
+    count(): number
+    spawn(kind: EntityKind, options?: SpawnOptions, parent?: Entity): Entity
+    spawnPrimitive(kind: PrimitiveKind, options?: SpawnOptions, parent?: Entity): Entity
+    clone(entity: Entity, deep?: boolean, parent?: Entity): Entity
+    destroy(entity: Entity): void
+    reparent(entity: Entity, parent: Entity, index?: number): void
+    insert(parent: Entity, child: Entity, index: number): void
+    remove(parent: Entity, child: Entity): void
+    contains(ancestor: Entity, descendant: Entity): boolean
+    instantiate(asset: AssetRef, options?: SpawnOptions & { convertUnits?: boolean }): Promise<Entity>
+    addComponent(entity: Entity, kind: ComponentKind, settings?: Record<string, unknown>): unknown
+    removeComponent(entity: Entity, kind: ComponentKind): void
+    rename(entity: Entity, name: string): void
+    setVisible(entity: Entity, visible: boolean): void
+    path(entity: Entity): string
+    addTag(entity: Entity, tag: string): void
+    removeTag(entity: Entity, tag: string): boolean
+    hasTag(entity: Entity, tag: string): boolean
+    getMeta(entity: Entity, key: string): JsonValue
+    setMeta(entity: Entity, key: string, data: JsonValue): void
+    isAttached(entity: Entity): boolean
+    saveAsPrefab(entity: Entity, name: string): Promise<LibraryAsset>
+    instantiatePrefab(asset: AssetRef, parent?: Entity): Promise<Entity>
+    kinds(): EntityKind[]
+    components(): ComponentKind[]
+  }
+  export interface TransformApi {
+    position(entity: Entity): Vec3
+    rotation(entity: Entity): Vec3
+    scale(entity: Entity): Vec3
+    setPosition(entity: Entity, position: Vec3Like): void
+    setRotation(entity: Entity, rotation: Vec3Like): void
+    setScale(entity: Entity, scale: Vec3Like | number): void
+    localMatrix(entity: Entity): Mat4
+    worldMatrix(entity: Entity): Mat4
+    updateLocalMatrix(entity: Entity): boolean
+    worldPosition(entity: Entity): Vec3
+    worldRotation(entity: Entity): Quat
+    worldRotationEuler(entity: Entity): Vec3
+    worldScale(entity: Entity): Vec3
+    setWorldPosition(entity: Entity, position: Vec3Like): void
+    setWorldRotation(entity: Entity, rotation: QuatLike | Vec3Like): void
+    setWorldMatrix(entity: Entity, matrix: Mat4): void
+    forward(entity: Entity): Vec3
+    back(entity: Entity): Vec3
+    right(entity: Entity): Vec3
+    left(entity: Entity): Vec3
+    up(entity: Entity): Vec3
+    down(entity: Entity): Vec3
+    translate(entity: Entity, delta: Vec3Like, space?: Space): void
+    rotate(entity: Entity, eulerDelta: Vec3Like, space?: Space): void
+    rotateAround(entity: Entity, point: Vec3Like, axis: Vec3Like, degrees: number): void
+    lookAt(entity: Entity, target: Vec3Like | Entity, up?: Vec3Like): void
+    setParentKeepWorld(entity: Entity, parent: Entity): void
+    localToWorld(entity: Entity, point: Vec3Like): Vec3
+    worldToLocal(entity: Entity, point: Vec3Like): Vec3
+    localToWorldDirection(entity: Entity, direction: Vec3Like): Vec3
+    worldToLocalDirection(entity: Entity, direction: Vec3Like): Vec3
+    bounds(entity: Entity): Aabb
+    distance(a: Entity | Vec3Like, b: Entity | Vec3Like): number
+    directionTo(a: Entity | Vec3Like, b: Entity | Vec3Like): Vec3
+    reset(entity: Entity): void
+  }
+
+  export interface LodOverride { enabled: boolean; bias: number; forceLevel: number | null }
+  export interface MeshApi {
+    box(width?: number, height?: number, depth?: number, uvTileSize?: number): MeshData
+    roundedBox(width?: number, height?: number, depth?: number, radius?: number): MeshData
+    plane(width?: number, depth?: number, segments?: number): MeshData
+    sphere(radius?: number, widthSegments?: number, heightSegments?: number): MeshData
+    cylinder(radius?: number, height?: number, radialSegments?: number): MeshData
+    cone(radius?: number, height?: number, radialSegments?: number): MeshData
+    torus(radius?: number, tube?: number, radialSegments?: number, tubularSegments?: number): MeshData
+    capsule(radius?: number, height?: number, radialSegments?: number, capSegments?: number): MeshData
+    rock(radius?: number, segments?: number, seed?: number): MeshData
+    denseSphere(radius?: number, segments?: number): MeshData
+    torusKnot(radius?: number, tube?: number, p?: number, q?: number): MeshData
+    flutedColumn(radius?: number, height?: number): MeshData
+    engravedTorus(radius?: number, tube?: number): MeshData
+    create(options: { name?: string; positions: Float32Array | number[]; normals?: Float32Array | number[]; uvs?: Float32Array | number[]; indices?: Uint16Array | Uint32Array | number[]; tangents?: Float32Array | number[] }): MeshData
+    clone(mesh: MeshData, name?: string): MeshData
+                                                                                 
+    markDirty(mesh: MeshData): void
+    version(mesh: MeshData): number
+    vertexCount(mesh: MeshData): number
+    triangleCount(mesh: MeshData): number
+    computeNormals(mesh: MeshData): void
+    computeBounds(mesh: MeshData): Aabb
+    flipWinding(mesh: MeshData): MeshData
+    merge(...meshes: MeshData[]): MeshData
+    transform(mesh: MeshData, matrix: Mat4, name?: string): MeshData
+    translate(mesh: MeshData, offset: Vec3Like): MeshData
+    scale(mesh: MeshData, factor: number | Vec3Like): MeshData
+    raycast(ray: Ray, mesh: MeshData, maxDistance?: number): number | null
+    simplify(mesh: MeshData, ratio: number): MeshData
+    fromModelAsset(asset: AssetRef, nodeName?: string): Promise<MeshData>
+    toModelAsset(mesh: MeshData, name: string): Promise<LibraryAsset>
+    positions(mesh: MeshData): Float32Array
+    normals(mesh: MeshData): Float32Array
+    uvs(mesh: MeshData): Float32Array
+    indices(mesh: MeshData): Uint16Array | Uint32Array
+    forEachVertex(mesh: MeshData, visitor: (position: Vec3, index: number) => void): void
+    lod(entity: Entity, settings?: Partial<LodOverride>): LodOverride | null
+    myriad(entity: Entity, enabled?: boolean): boolean
+  }
+  export interface CsgApi {
+    operations(): CsgOperation[]
+    makeTarget(entity: Entity, options?: Partial<CsgSettings>): CsgSettings
+    makeBrush(entity: Entity, operation?: CsgOperation, enabled?: boolean): CsgBrushSettings
+    rebuild(entity: Entity): void
+    invalidate(entity: Entity): void
+    stats(entity: Entity): CsgTargetStats | null
+    onRebuilt(handler: (entity: Entity) => void): Unsubscribe
+    collectBrushes(target: Entity): Entity[]
+    brushTarget(brush: Entity): Entity | null
+    boolean(a: MeshData, b: MeshData, operation: CsgOperation, brushMatrix?: Mat4, exact?: boolean): MeshData
+    sourceMesh(entity: Entity): MeshData | null
+  }
+
+                                                                                                                                                                  
+  export type ShaderUniformValue = number | boolean | ArrayLike<number> | Texture | ReadonlyArray<number | boolean | ArrayLike<number>>
+                                                                                                            
+  export interface ShaderUniforms {
+    set(name: string, value: ShaderUniformValue | null): void
+    set(values: Record<string, ShaderUniformValue | null>): void
+    get(name: string): ShaderUniformValue | undefined
+    has(name: string): boolean
+    list(): { name: string; type: string; arraySize: number; active: boolean }[]
+  }
+                                                                                             
+  export type ShaderMaterial = Material & { readonly uniforms: ShaderUniforms }
+  export interface MaterialApi {
+    create(options?: Partial<Omit<Material, 'baseColor' | 'emissive' | 'uvTiling'>> & { baseColor?: ColorLike; emissive?: ColorLike; uvTiling?: Vec3Like }): Material
+    clone(material: Material): Material
+    copy(target: Material, source: Material): Material
+    set(material: Material, patch: Partial<Omit<Material, 'baseColor' | 'emissive' | 'uvTiling'>> & { baseColor?: ColorLike; emissive?: ColorLike; uvTiling?: Vec3Like }): Material
+    hasAnyTexture(material: Material): boolean
+    of(entity: Entity): Material | null
+    assign(entity: Entity, material: Material | null): Material | null
+                                                                               
+    own(entity: Entity): Material
+    setColor(target: Entity | Material, color: ColorLike): void
+    setEmissive(target: Entity | Material, color: ColorLike, intensity?: number): void
+    setTexture(target: Entity | Material, slot: MaterialTextureSlot, texture: Texture | null): void
+    slots(): { slot: MaterialTextureSlot; label: string; colorSpace: 'linear' | 'srgb' }[]
+       
+                                                                                           
+                                                                                                                    
+                                                                               
+       
+    fromShader(asset: AssetRef, uniforms?: Record<string, ShaderUniformValue | null>): ShaderMaterial
+                                                                                               
+    uniforms(target: Entity | Material): ShaderUniforms
+    generateNormalFromHeight(image: ImageData | ImageBitmap | HTMLCanvasElement, strength?: number): Promise<ImageData | null>
+    generateMaps(image: ImageData | ImageBitmap | HTMLCanvasElement, settings?: Record<string, unknown>): Promise<Record<string, ImageData | null>>
+    packOrm(sources: { occlusion?: ImageData; roughness?: ImageData; metallic?: ImageData }): ImageData | null
+  }
+  export interface MaterialLibraryApi {
+    get(idOrName: string): MaterialDocument | null
+    list(): MaterialDocument[]
+    names(): string[]
+    save(material: Material, name: string): MaterialDocument | null
+    remove(idOrName: string): void
+    rename(idOrName: string, name: string): void
+    instantiate(idOrName: string): Material
+    apply(entity: Entity, idOrName: string, withPhysics?: boolean): boolean
+    update(idOrName: string, patch: Partial<Material>): void
+    forMaterial(material: Material): MaterialDocument | null
+    onChanged(handler: (document: MaterialDocument) => void): Unsubscribe
+  }
+  export interface TextureApi {
+    create(options: Partial<Texture> & { width: number; height: number }): Texture
+    fromAsset(asset: AssetRef, options?: Partial<Texture>): Promise<Texture>
+    fromImage(image: ImageBitmap | HTMLCanvasElement | HTMLImageElement | ImageData, options?: Partial<Texture>): Texture
+    fromPixels(width: number, height: number, pixels: Uint8Array | Uint8ClampedArray | Float32Array, options?: Partial<Texture>): Texture
+    setImage(texture: Texture, image: ImageBitmap | HTMLCanvasElement | HTMLImageElement | ImageData): void
+                                                                                        
+    touch(texture: Texture): void
+    readPixels(texture: Texture): ImageData
+    canvas(width: number, height: number, options?: Partial<Texture>): { texture: Texture; context: CanvasRenderingContext2D; canvas: HTMLCanvasElement; update: () => void }
+    isTexture(value: unknown): value is Texture
+  }
+
+  export type LightPresetId = string
+  export interface LightApi {
+    types(): LightType[]
+    localTypes(): LocalLightType[]
+    create<T extends LightType>(type: T, options?: Record<string, unknown>): Extract<Light, { type: T }>
+    clone(light: Light): Light
+    fromPreset(id: LightPresetId): LocalLight
+    presets(): { id: LightPresetId; label: string; description: string; type: LocalLightType }[]
+    spawn(typeOrPreset: LightType | LightPresetId, options?: SpawnOptions & Record<string, unknown>, parent?: Entity): Entity
+    set(target: Entity | Light, patch: Record<string, unknown>): void
+    convert(target: Entity | Light, type: LocalLightType): LocalLight
+    all(query?: { type?: LightType; local?: boolean }): { entity: Entity; light: Light }[]
+    sun(): Entity | null
+    ambient(): Entity | null
+    syncSunToSky(): boolean
+    driveSun: boolean
+    isLocal(light: Light | Entity): boolean
+    effectiveRange(light: LocalLight | Entity): number
+    resolvedColor(light: LocalLight | Entity): Vec3
+    temperatureToColor(kelvin: number): Vec3
+    setTemperature(target: Entity | LocalLight, kelvin: number | null): void
+    setColor(target: Entity | Light, color: ColorLike): void
+    cssColor(light: Light | Entity): string
+    readonly temperatureRange: { readonly min: number; readonly max: number }
+  }
+
+  export interface CameraApi {
+                                                                                                               
+    readonly main: Entity | null
+    setMain(entity: Entity | null): void
+    onMainChanged(handler: (entity: Entity | null) => void): Unsubscribe
+    readonly position: Vec3
+    readonly target: Vec3
+    readonly forward: Vec3
+    fov: number
+    near: number
+    far: number
+    exposure: number
+    readonly aspect: number
+    setPose(position: Vec3Like, target: Vec3Like): void
+    lookAt(target: Vec3Like | Entity): void
+    readonly viewport: { readonly width: number; readonly height: number; readonly pixelRatio: number }
+    readonly viewMatrix: Mat4
+    readonly projectionMatrix: Mat4
+    readonly viewProjectionMatrix: Mat4
+    screenToRay(x: number, y: number): Ray | null
+    worldToScreen(point: Vec3Like): { x: number; y: number; depth: number; behind: boolean } | null
+    pick(x: number, y: number, options?: { includeHidden?: boolean }): Entity | null
+    pickPoint(x: number, y: number): Vec3 | null
+    shake(amplitude: number, seconds?: number): void
+    readonly shaking: boolean
+    fade(color?: ColorLike, seconds?: number, direction?: 'in' | 'out'): Promise<void>
+    readonly player: { readonly settings: PlayerCameraSettings; set(patch: Partial<PlayerCameraSettings>): void; control: 'engine' | 'script'; yaw: number; pitch: number }
+    frame(entity: Entity): void
+    mainForward(): Vec3
+    distanceTo(target: Entity | Vec3Like): number
+  }
+
+  export interface CloudSettings {
+    enabled: boolean
+    coverage: number
+    density: number
+    altitude: number
+    thickness: number
+    detail: number
+    windSpeed: number
+    windDirection: number
+    shadows: boolean
+    quality: 'low' | 'medium' | 'high'
+  }
+  export interface SkySettings {
+    enabled: boolean
+    timeOfDay: number
+    cycleSpeed: number
+    latitude: number
+    sunAzimuth: number
+    haze: number
+    sunDiskScale: number
+    moonPhase: number
+    moonScale: number
+    moonlight: number
+    starsIntensity: number
+    skyLighting: number
+    readonly clouds: CloudSettings
+  }
 `;
