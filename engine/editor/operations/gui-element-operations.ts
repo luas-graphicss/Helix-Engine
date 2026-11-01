@@ -555,3 +555,11 @@ export function selectGuiParent(session: EditorSession): void {
     if (parent && parent.id !== GUI_ROOT_ID)
         designer.select([parent.id]);
 }
+export function selectGuiChildren(session: EditorSession): void {
+    const primary = session.gui.primaryNode;
+    if (primary && primary.children.length > 0)
+        session.gui.select(primary.children.map((child) => child.id));
+}
+export function updateGuiDocumentSettings(session: EditorSession, patch: Partial<Omit<GuiDocument, 'root' | 'createdAt'>>, label = 'Alterar tela', mergeKey?: string): void {
+    session.gui.apply(label, (document) => ({ ...document, ...patch }), mergeKey);
+}
