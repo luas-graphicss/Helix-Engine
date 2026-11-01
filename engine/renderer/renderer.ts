@@ -1,6 +1,12 @@
-import { createContext, syncCanvasSize, type GL } from './gl/context';
+import { CanvasSizeTracker, createContext, type GL } from './gl/context';
 import { detectCapabilities, type GlCapabilities, type GpuTier } from './gl/capabilities';
+import { runGpuBenchmark, type GpuBenchmarkMode, type GpuTierSource } from './gl/gpu-benchmark';
+import type { ColorFormat, ColorRenderTarget } from './gl/color-render-target';
+import { FloatSnapshot } from './cache/float-snapshot';
 import { renderProfileForTier, type RenderProfile } from './quality/render-profile';
+import { clampRenderScale } from './quality/dynamic-resolution';
+import { FULL_QUALITY, type QualityStep } from './quality/frame-governor';
+import type { PostProcessSettings } from '@/engine/core/environment/post-process-settings';
 import { FullscreenTriangle } from './gl/fullscreen-triangle';
 import { GpuMeshCache } from './gl/gpu-mesh-cache';
 import { GpuTextureCache } from './gl/gpu-texture-cache';
@@ -9,6 +15,7 @@ import { InstanceBuffer } from './gl/instance-buffer';
 import { GpuTimer } from './gl/gpu-timer';
 import { SceneRenderTarget } from './gl/scene-render-target';
 import { ShaderCompileTracker } from './gl/shader-compile-tracker';
+import { ShaderProgram } from './gl/shader-program';
 import { FRAME_STAGES, StageAverages, stageIndex, type FrameStage } from './stats/frame-stages';
 import { GridPass } from './passes/grid-pass';
 import { GizmoPass, type GizmoRenderRequest } from './passes/gizmo-pass';
@@ -33,10 +40,32 @@ import { TerrainPatchGeometry } from './terrain/terrain-patch-geometry';
 import { TerrainShadowRenderer } from './terrain/terrain-shadow-renderer';
 import { TILE_LEVELS } from '@/engine/terrain/chunks/terrain-tiles';
 import { collectFrameLighting, createFrameLighting } from './lighting/frame-lighting';
-import { fogDensityForSky } from './lighting/scene-lighting-uniforms';
+import { LocalLightSet } from './lighting/local-light-set';
+import { LocalShadowPass, type LocalShadowState } from './passes/local-shadow-pass';
+import { LightHelperPass, type LightHelperRequest } from './passes/light-helper-pass';
+import { SoundHelperPass, type SoundHelperRequest } from './passes/sound-helper-pass';
+import { GuiSurfacePass } from './passes/gui-surface-pass';
+import type { GuiSurfaceDraw } from '@/engine/gui/world/gui-surface-system';
+import { VfxPass } from './passes/vfx-pass';
+import { VfxHelperPass, type VfxHelperRequest } from './passes/vfx-helper-pass';
+import { ScriptDebugPass } from './passes/script-debug-pass';
+import { MeshSurfaceShaders } from './passes/mesh-surface-shaders';
+import { CustomPostPass, type CustomPostEffect } from './post/custom-post-pass';
+import { CustomShaderPrograms } from './shaders/custom/custom-shader-programs';
+import { createStandardShaderInputs } from './shaders/custom/shader-uniform-binder';
+import { SCRIPT_RENDER_PASSES, type ScriptFrameTarget, type ScriptRenderPass, type ScriptRenderRequest } from './script-hooks';
+import type { VfxDraw } from '@/engine/vfx/world/vfx-system';
+import { fogDensityForSky, type LocalLightsBinding } from './lighting/scene-lighting-uniforms';
+import { ReflectionSystem } from './reflections/reflection-system';
+import { DEFAULT_REFLECTION_SETTINGS, type ReflectionSettings } from './reflections/reflection-settings';
 import { hdrShaderDefines, SkySystem } from './sky/sky-system';
+import type { SkyFrame } from './sky/sky-frame';
+import { HDR_RANGE_SCENE } from './shaders/chunks/hdr-encoding.glsl';
 import type { PerspectiveCamera } from './camera/perspective-camera';
 import type { Scene } from '@/engine/core/scene/scene';
+const NO_GUI_SURFACES: readonly GuiSurfaceDraw[] = [];
+const NO_VFX: readonly VfxDraw[] = [];
+const NO_CUSTOM_POST: readonly CustomPostEffect[] = [];
 export interface RenderOptions {
     showGrid: boolean;
     shadows: boolean;
@@ -45,12 +74,27 @@ export interface RenderOptions {
     gizmo: GizmoRenderRequest | null;
     skeletons: SkeletonOverlayRequest | null;
     terrainBrush: TerrainBrushOverlay | null;
+    lightHelpers: LightHelperRequest | null;
+    soundHelpers?: SoundHelperRequest | null;
+    vfxHelpers?: VfxHelperRequest | null;
+    guiSurfaces?: readonly GuiSurfaceDraw[];
+    vfx?: readonly VfxDraw[];
+    soloLight: number | null;
     elapsedSeconds: number;
     deltaSeconds: number;
     culling: CullingOptions;
     lod: LodSettings;
     myriad: MyriadSettings;
     terrainMaterialCache: boolean;
+    postCompareSplit?: number | null;
+    profileGpu?: boolean;
+    capture?: boolean;
+    scripts?: ScriptRenderRequest | null;
+    renderScale?: number;
+    quality?: QualityStep;
+    qualityLevel?: number;
+    editorLite?: boolean;
+    reflections?: ReflectionSettings;
 }
 export interface FrameStats {
     drawCalls: number;
@@ -59,17 +103,25 @@ export interface FrameStats {
     width: number;
     height: number;
     pixelRatio: number;
+    renderScale: number;
+    qualityLevel: number;
     gpuName: string;
     gpuTier: GpuTier;
+    gpuTierSource: GpuTierSource;
+    gpuHeuristicTier: GpuTier;
+    gpuScore: number;
     softwareRenderer: boolean;
     shadersPending: number;
     shadersTotal: number;
+    warmupStage: number;
+    warmupStages: number;
     cloudWidth: number;
     cloudHeight: number;
     cpuMs: number;
     cpuStageMs: Float32Array;
     gpuStageMs: Float32Array | null;
     gpuMs: number;
+    gpuTimerAvailable: boolean;
     meshCandidates: number;
     meshesVisible: number;
     frustumCulled: number;
@@ -98,9 +150,43 @@ export interface FrameStats {
     grassInteractors: number;
     waterDrawCalls: number;
     waterTriangles: number;
+    vfxParticles: number;
+    vfxDrawCalls: number;
+    reflectionProbeFaces: number;
+    reflectionProbeValid: boolean;
+    reflectionScreenTraced: boolean;
+    reflectionDrawCalls: number;
+    localLights: number;
+    localLightBudget: number;
+    localLightsCulled: number;
+    localLightTilesLit: number;
+    localLightTiles: number;
+    localShadowFaces: number;
+    localShadowBudget: number;
+    localShadowRendered: number;
+    localShadowPostponed: number;
+    localShadowDeferred: number;
+    localShadowDrawCalls: number;
+    localShadowStatus: ReadonlyMap<number, LocalShadowState>;
+    settled: boolean;
+    transient: boolean;
 }
 export function createFrameStats(): FrameStats {
     return {
+        settled: false,
+        transient: true,
+        localLights: 0,
+        localLightBudget: 0,
+        localLightsCulled: 0,
+        localLightTilesLit: 0,
+        localLightTiles: 0,
+        localShadowFaces: 0,
+        localShadowBudget: 0,
+        localShadowRendered: 0,
+        localShadowPostponed: 0,
+        localShadowDeferred: 0,
+        localShadowDrawCalls: 0,
+        localShadowStatus: new Map(),
         myriad: createMyriadFrameStats(),
         lodPerLevel: new Array<number>(MAX_LOD_LEVELS).fill(0),
         lodPending: 0,
@@ -120,22 +206,36 @@ export function createFrameStats(): FrameStats {
         grassInteractors: 0,
         waterDrawCalls: 0,
         waterTriangles: 0,
+        vfxParticles: 0,
+        vfxDrawCalls: 0,
+        reflectionProbeFaces: 0,
+        reflectionProbeValid: false,
+        reflectionScreenTraced: false,
+        reflectionDrawCalls: 0,
         drawCalls: 0,
         triangles: 0,
         width: 0,
         height: 0,
         pixelRatio: 1,
+        renderScale: 1,
+        qualityLevel: 0,
         gpuName: '',
         gpuTier: 'mid',
+        gpuTierSource: 'heuristic',
+        gpuHeuristicTier: 'mid',
+        gpuScore: 0,
         softwareRenderer: false,
         shadersPending: 0,
         shadersTotal: 0,
+        warmupStage: 0,
+        warmupStages: FRAME_STAGES.length,
         cloudWidth: 0,
         cloudHeight: 0,
         cpuMs: 0,
         cpuStageMs: new Float32Array(FRAME_STAGES.length),
         gpuStageMs: null,
         gpuMs: 0,
+        gpuTimerAvailable: false,
         meshCandidates: 0,
         meshesVisible: 0,
         frustumCulled: 0,
@@ -148,12 +248,29 @@ export function createFrameStats(): FrameStats {
         shadowTriangles: 0,
     };
 }
+const WARMUP_FRAME_BUDGET_MS = 50;
 const CLEAR_COLOR: [
     number,
     number,
     number,
     number
 ] = [0.118, 0.122, 0.133, 1];
+const SCENE_CLEAR_HDR: [
+    number,
+    number,
+    number
+] = [0.023, 0.0238, 0.0262];
+interface ProbePasses {
+    meshes: boolean;
+    terrain: boolean;
+    sky: boolean;
+}
+export interface RendererOptions {
+    tier?: GpuTier;
+    benchmark?: GpuBenchmarkMode;
+    maxPixelRatio?: number;
+    offscreen?: boolean;
+}
 export class Renderer {
     readonly gl: GL;
     readonly capabilities: GlCapabilities;
@@ -174,14 +291,26 @@ export class Renderer {
     private readonly terrainShadows: TerrainShadowRenderer;
     private readonly shadowPass: ShadowPass;
     private readonly shadowMaskPass: ShadowMaskPass;
+    private readonly localLights: LocalLightSet;
+    private readonly localShadowPass: LocalShadowPass;
     private readonly terrainPass: TerrainPass;
     private readonly grassPass: GrassPass;
     private readonly waterPass: WaterPass;
     private readonly meshPass: MeshPass;
+    private readonly guiSurfacePass: GuiSurfacePass;
+    private readonly vfxPass: VfxPass;
     private readonly gridPass: GridPass;
     private readonly gizmoPass: GizmoPass;
+    private readonly lightHelperPass: LightHelperPass;
+    private readonly soundHelperPass: SoundHelperPass;
+    private readonly vfxHelperPass: VfxHelperPass;
     private readonly skeletonPass: SkeletonPass;
+    private readonly scriptDebugPass: ScriptDebugPass;
     private readonly postPass: PostPass;
+    private readonly customPrograms: CustomShaderPrograms;
+    private readonly customPost: CustomPostPass;
+    private readonly shaderInputs = createStandardShaderInputs();
+    private scriptRequest: ScriptRenderRequest | null = null;
     private readonly sceneTarget: SceneRenderTarget;
     private readonly sky: SkySystem;
     private readonly reflections: ReflectionSystem;
