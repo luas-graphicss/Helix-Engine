@@ -4,6 +4,7 @@ import * as vec3 from '@/engine/core/math/vec3';
 import { createMaterial, type Material } from '@/engine/core/scene/material';
 import type { Entity } from '@/engine/core/scene/entity';
 import { getTriangleCount, type MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { isEntityMyriadEnabled } from '@/engine/renderer/render-overrides';
 import type { GL } from '@/engine/renderer/gl/context';
 import type { FullscreenTriangle } from '@/engine/renderer/gl/fullscreen-triangle';
 import type { GpuTextureCache } from '@/engine/renderer/gl/gpu-texture-cache';
@@ -28,7 +29,7 @@ import { GeometryPool } from './runtime/geometry-pool';
 import { MaterialResolvePass } from './runtime/material-resolve-pass';
 import { MyriadMeshCache, type MyriadMeshEntry } from './runtime/myriad-mesh-cache';
 import { createMyriadSettings, debugViewIndex, type MyriadSettings } from './runtime/myriad-settings';
-import { VisibilityBuffer } from './runtime/visibility-buffer';
+import { probeVisibilityBufferSupport, VisibilityBuffer } from './runtime/visibility-buffer';
 const PREFERRED_WIDTH_SHIFT = 12;
 const DEFAULT_MATERIAL = createMaterial({ baseColor: vec3.create(0.6, 0.6, 0.6) });
 function waitsForBuild(entry: MyriadMeshEntry): boolean {
@@ -37,6 +38,8 @@ function waitsForBuild(entry: MyriadMeshEntry): boolean {
     return getTriangleCount(entry.source) > MAX_CLASSIC_FALLBACK_TRIANGLES;
 }
 export interface MyriadFrameStats {
+    supported: boolean;
+    unsupportedReason: string;
     active: boolean;
     classicTriangles: number;
     activationTriangles: number;
@@ -69,6 +72,8 @@ export interface MyriadFrameStats {
 }
 export function createMyriadFrameStats(): MyriadFrameStats {
     return {
+        supported: true,
+        unsupportedReason: '',
         active: false,
         classicTriangles: 0,
         activationTriangles: 0,
@@ -148,6 +153,7 @@ export class MyriadSystem implements ShadowGeometryHook {
     };
     private active = false;
     private activationTriangles = Infinity;
+    private supported = true;
     private frozen = false;
     private selectionDirty = false;
     private flagsValid = false;
@@ -168,6 +174,19 @@ export class MyriadSystem implements ShadowGeometryHook {
         this.resolvePass = new MaterialResolvePass(gl, triangle, textures, this.defines);
         this.readback = new FlagReadback(gl);
         this.stats.occlusionSupported = this.pyramid.supported;
+        const status = probeVisibilityBufferSupport(gl);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) {
+            this.markUnsupported(`a GPU recusou o buffer de visibilidade (framebuffer 0x${status.toString(16)})`);
+        }
+    }
+    private markUnsupported(reason: string): void {
+        this.supported = false;
+        this.active = false;
+        this.stats.supported = false;
+        this.stats.active = false;
+        this.stats.unsupportedReason = reason;
+        this.visibility.release();
+        console.warn(`[Helix] Geometria virtual indisponível: ${reason}.`);
     }
     beginFrame(settings: MyriadSettings, activationTriangles: number): void {
         this.settings = settings;
@@ -191,6 +210,7 @@ export class MyriadSystem implements ShadowGeometryHook {
         if (!settings.enabled || !this.active) {
             for (const item of visible.meshes)
                 item.virtual = false;
+            this.visibility.release();
             list.begin();
             instances.begin();
             this.selectionDirty = false;
@@ -219,7 +239,7 @@ export class MyriadSystem implements ShadowGeometryHook {
         let count = 0;
         let waiting = 0;
         for (const item of visible.meshes) {
-            if (item.entity.skin) {
+            if (item.entity.skin || !isEntityMyriadEnabled(item.entity)) {
                 item.virtual = false;
                 continue;
             }
@@ -279,7 +299,7 @@ export class MyriadSystem implements ShadowGeometryHook {
             classicTriangles += triangles;
         }
         stats.classicTriangles = classicTriangles;
-        if (!settings.enabled) {
+        if (!settings.enabled || !this.supported) {
             this.active = false;
         }
         else if (this.active) {
@@ -428,9 +448,6 @@ export class MyriadSystem implements ShadowGeometryHook {
         const { settings, stats, list, instances, pool, visibility, pyramid, cull, raster, readback } = this;
         stats.width = width;
         stats.height = height;
-        const resized = visibility.sync(sceneDepth, width, height);
-        if (resized)
-            pyramid.invalidate();
         readback.poll();
         this.publishOcclusionStats();
         if (this.selectionDirty) {
@@ -442,6 +459,17 @@ export class MyriadSystem implements ShadowGeometryHook {
             stats.occlusionActive = false;
             return;
         }
+        let resized: boolean;
+        try {
+            resized = visibility.sync(sceneDepth, width, height);
+        }
+        catch (error) {
+            this.markUnsupported(error instanceof Error ? error.message : String(error));
+            stats.occlusionActive = false;
+            return;
+        }
+        if (resized)
+            pyramid.invalidate();
         visibility.bindAndClearIds();
         const viewProjection = camera.viewProjectionMatrix;
         if (settings.freeze && this.frozen) {
@@ -489,7 +517,7 @@ export class MyriadSystem implements ShadowGeometryHook {
     }
     resolve(lighting: SceneLightingInput): number {
         const { settings, list } = this;
-        if (!settings.enabled || list.count === 0)
+        if (!settings.enabled || list.count === 0 || !this.visibility.allocated)
             return 0;
         const drawCalls = this.resolvePass.run({
             lighting,
