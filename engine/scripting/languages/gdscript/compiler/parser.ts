@@ -474,4 +474,229 @@ export class Parser {
         this.expect('dedent', undefined, 'o fim do bloco da propriedade');
         return { setter, getter };
     }
+    private parseConstantMember(annotations: Annotation[]): ConstantMember {
+        const start = this.expect('keyword', 'const', '"const"');
+        this.rejectAnnotations(annotations, ['warning_ignore'], 'uma constante');
+        const name = this.expectIdentifier('o nome da constante');
+        let type: TypeRef | null = null;
+        if (this.matchOperator(':=')) {
+            const value = this.parseExpression();
+            this.endStatement();
+            return { kind: 'constant', span: span(start, value.span), name: name.value, nameSpan: name, type: null, value, annotations };
+        }
+        if (this.matchOperator(':'))
+            type = this.parseType('o tipo da constante');
+        if (!this.matchOperator('='))
+            throw this.failure(`A constante "${name.value}" precisa de um valor: const ${name.value} = …`, this.peek());
+        const value = this.parseExpression();
+        this.endStatement();
+        return { kind: 'constant', span: span(start, value.span), name: name.value, nameSpan: name, type, value, annotations };
+    }
+    private parseSignalMember(annotations: Annotation[]): SignalMember {
+        const start = this.expect('keyword', 'signal', '"signal"');
+        this.rejectAnnotations(annotations, ['warning_ignore'], 'um sinal');
+        const name = this.expectIdentifier('o nome do sinal');
+        let params: Parameter[] = [];
+        let end: SourceSpan = name;
+        if (this.checkOperator('(')) {
+            this.next();
+            params = this.parseParameters(')');
+            end = this.expectOperator(')');
+        }
+        this.endStatement();
+        return { kind: 'signal', span: span(start, end), name: name.value, params };
+    }
+    private parseEnumMember(annotations: Annotation[]): EnumMember {
+        const start = this.expect('keyword', 'enum', '"enum"');
+        this.rejectAnnotations(annotations, ['warning_ignore'], 'um enum');
+        const name = this.check('identifier') ? this.next() : null;
+        this.expectOperator('{', '"{" com os valores do enum');
+        const values: {
+            name: string;
+            span: SourceSpan;
+            value: Expression | null;
+        }[] = [];
+        while (!this.checkOperator('}')) {
+            const entry = this.expectIdentifier('o nome de um valor do enum');
+            let value: Expression | null = null;
+            if (this.matchOperator('='))
+                value = this.parseExpression();
+            if (values.some((existing) => existing.name === entry.value))
+                throw this.failure(`O valor "${entry.value}" aparece duas vezes no enum.`, entry);
+            values.push({ name: entry.value, span: entry, value });
+            if (!this.matchOperator(','))
+                break;
+        }
+        const end = this.expectOperator('}');
+        this.endStatement();
+        return { kind: 'enum', span: span(start, end), name: name?.value ?? null, values };
+    }
+    private parseFunctionMember(annotations: Annotation[], isStatic: boolean, start: Token): FunctionMember {
+        this.expect('keyword', 'func', '"func"');
+        this.rejectAnnotations(annotations, ['rpc', 'warning_ignore', 'abstract'], 'uma função');
+        const name = this.expectIdentifier('o nome da função');
+        this.expectOperator('(', '"(" com os parâmetros');
+        const params = this.parseParameters(')');
+        this.expectOperator(')');
+        let returnType: TypeRef | null = null;
+        if (this.matchOperator('->'))
+            returnType = this.parseType('o tipo de retorno', true);
+        this.expectOperator(':', '":" antes do corpo da função');
+        const body = this.parseBlock();
+        return { kind: 'function', span: span(start, body.span), name: name.value, nameSpan: name, params, returnType, body, isStatic, annotations };
+    }
+    private parseParameters(closer: string): Parameter[] {
+        const params: Parameter[] = [];
+        while (!this.checkOperator(closer)) {
+            const name = this.expectIdentifier('o nome do parâmetro');
+            let type: TypeRef | null = null;
+            let defaultValue: Expression | null = null;
+            if (this.matchOperator(':='))
+                defaultValue = this.parseExpression();
+            else {
+                if (this.matchOperator(':'))
+                    type = this.parseType('o tipo do parâmetro');
+                if (this.matchOperator('='))
+                    defaultValue = this.parseExpression();
+            }
+            if (params.some((existing) => existing.name === name.value))
+                throw this.failure(`O parâmetro "${name.value}" está repetido.`, name);
+            if (defaultValue === null && params.length > 0 && params[params.length - 1].defaultValue !== null) {
+                throw this.failure(`O parâmetro "${name.value}" precisa de valor padrão: ele vem depois de um parâmetro com padrão.`, name);
+            }
+            params.push({ span: span(name, defaultValue?.span ?? type?.span ?? name), name: name.value, type, defaultValue });
+            if (!this.matchOperator(','))
+                break;
+        }
+        return params;
+    }
+    private parseClassDeclaration(annotations: Annotation[]): ClassDeclaration {
+        const start = this.expect('keyword', 'class', '"class"');
+        this.rejectAnnotations(annotations, ['warning_ignore', 'abstract'], 'uma classe interna');
+        const name = this.expectIdentifier('o nome da classe');
+        let extendsType: TypeRef | null = null;
+        let extendsPath: string | null = null;
+        if (this.matchKeyword('extends')) {
+            const parsed = this.parseExtends();
+            extendsType = parsed.type;
+            extendsPath = parsed.path;
+        }
+        this.expectOperator(':', '":" depois do nome da classe');
+        this.expect('newline', undefined, 'uma quebra de linha depois de ":"');
+        this.expect('indent', undefined, 'o corpo indentado da classe');
+        const members: ClassMember[] = [];
+        while (!this.check('dedent') && !this.check('eof')) {
+            this.skipNewlines();
+            if (this.check('dedent') || this.check('eof'))
+                break;
+            try {
+                const memberAnnotations = this.parseAnnotations();
+                if (this.checkKeyword('extends')) {
+                    const keyword = this.next();
+                    if (members.length > 0 || extendsType || extendsPath)
+                        throw this.failure('extends precisa vir logo depois do nome da classe interna.', keyword);
+                    const parsed = this.parseExtends();
+                    extendsType = parsed.type;
+                    extendsPath = parsed.path;
+                    this.endStatement();
+                    continue;
+                }
+                const member = this.parseMember(memberAnnotations);
+                if (member)
+                    members.push(member);
+            }
+            catch (error) {
+                this.report(error);
+                this.synchronize();
+            }
+        }
+        const end = this.expect('dedent', undefined, 'o fim da classe');
+        return { kind: 'class', span: span(start, end), name: name.value, nameSpan: name, extendsType, extendsPath, members, annotations };
+    }
+    private parseType(what: string, allowVoid = false): TypeRef {
+        const first = this.peek();
+        if (first.kind === 'keyword' && first.value === 'void') {
+            if (!allowVoid)
+                throw this.failure('"void" só vale como tipo de retorno.', first);
+            this.next();
+            return { span: first, name: 'void', args: [] };
+        }
+        if (first.kind === 'keyword' && first.value === 'null') {
+            this.next();
+            return { span: first, name: 'null', args: [] };
+        }
+        const head = this.expectIdentifier(what);
+        let name = head.value;
+        let end: SourceSpan = head;
+        while (this.checkOperator('.') && this.check('identifier', undefined, 1)) {
+            this.next();
+            const part = this.next();
+            name += `.${part.value}`;
+            end = part;
+        }
+        const args: TypeRef[] = [];
+        if (this.checkOperator('[')) {
+            this.next();
+            do
+                args.push(this.parseType('o tipo do elemento'));
+            while (this.matchOperator(','));
+            end = this.expectOperator(']');
+        }
+        return { span: span(head, end), name, args };
+    }
+    private parseBlock(inlineLambda = false): Block {
+        const first = this.peek();
+        if (first.kind !== 'newline') {
+            const statements = this.parseStatementLine(inlineLambda);
+            return { span: span(first, statements[statements.length - 1]?.span ?? first), statements };
+        }
+        this.next();
+        if (!this.check('indent'))
+            throw this.failure('Esperava um bloco indentado nesta linha (ou "pass" para um corpo vazio).', this.peek());
+        const indent = this.next();
+        const statements: Statement[] = [];
+        while (!this.check('dedent') && !this.check('eof')) {
+            this.skipNewlines();
+            if (this.check('dedent') || this.check('eof'))
+                break;
+            try {
+                statements.push(...this.parseStatementLine());
+            }
+            catch (error) {
+                this.report(error);
+                this.synchronize();
+            }
+        }
+        const end = this.check('dedent') ? this.next() : this.peek();
+        return { span: span(indent, statements[statements.length - 1]?.span ?? end), statements };
+    }
+    private parseStatementLine(inlineLambda = false): Statement[] {
+        const statements: Statement[] = [];
+        const atTerminator = (): boolean => {
+            const token = this.peek();
+            if (token.kind === 'eof' || token.kind === 'dedent')
+                return true;
+            return inlineLambda && token.kind === 'operator' && (CLOSERS.has(token.value) || token.value === ',');
+        };
+        for (;;) {
+            statements.push(this.parseStatement());
+            if (this.check('newline')) {
+                this.next();
+                break;
+            }
+            if (atTerminator() || this.endedWithBlock())
+                break;
+            if (this.matchOperator(';')) {
+                if (this.check('newline')) {
+                    this.next();
+                    break;
+                }
+                if (atTerminator())
+                    break;
+                continue;
+            }
+            throw this.failure(`Fim de instrução esperado, mas encontrou ${describeToken(this.peek())}.`, this.peek());
+        }
+        return statements;
+    }
 }
