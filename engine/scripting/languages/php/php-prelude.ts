@@ -289,5 +289,285 @@ final class Game
                                                
     private array $refs = [];
                                                 
+    private array $fns = [];
+                                    
+    private array $callbacks = [];
+    private \SplObjectStorage $callbackIds;
+    private int $nextCallback = 0;
+                                                                      
+    private array $modules = [];
+                                       
+    private array $included = [];
+                                                                                                
+    private array $keysByPath = [];
+                                                                                            
+    private array $loading = [];
+                                      
+    private array $generators = [];
+    private int $nextToken = 0;
+    private ?Ref $root = null;
+    private bool $disposed = false;
+    private string $pendingOutput = '';
+    private ?array $pendingOutputAt = null;
+
+    public function __construct(private readonly object $host)
+    {
+        $this->callbackIds = new \SplObjectStorage();
+        self::$instance = $this;
+    }
+
+                                                                                              
+
+    public function ref(int $id): Ref
+    {
+        $ref = isset($this->refs[$id]) ? $this->refs[$id]->get() : null;
+        if ($ref === null) {
+            $ref = new Ref($this, $id);
+            $this->refs[$id] = \WeakReference::create($ref);
+        }
+        return $ref;
+    }
+
+    public function func(int $id): Func
+    {
+        $fn = isset($this->fns[$id]) ? $this->fns[$id]->get() : null;
+        if ($fn === null) {
+            $fn = new Func($this, $id);
+            $this->fns[$id] = \WeakReference::create($fn);
+        }
+        return $fn;
+    }
+
+                                                                                                                                     
+    public function materialize(mixed $json): mixed
+    {
+        if ($json === null || $json === '') {
+            return null;
+        }
+        return $this->walk(json_decode((string) $json, true, 512, JSON_THROW_ON_ERROR), 0);
+    }
+
+    private function walk(mixed $value, int $depth): mixed
+    {
+        if (!is_array($value)) {
+            return $value;
+        }
+        if (array_is_list($value)) {
+            if ($depth > MAX_DEPTH) {
+                return $value;
+            }
+            return array_map(fn (mixed $item) => $this->walk($item, $depth + 1), $value);
+        }
+        $kind = $value[KIND] ?? null;
+        if ($kind === null) {
+            if ($depth > MAX_DEPTH) {
+                return new Data($value);
+            }
+            $fields = [];
+            foreach ($value as $key => $item) {
+                $fields[$key] = $this->walk($item, $depth + 1);
+            }
+            return new Data($fields);
+        }
+        if (is_int($kind) || is_float($kind)) {
+            return $this->ref((int) $kind);
+        }
+        return match ($kind) {
+            'ref' => $this->ref((int) $value['id']),
+            'fn' => $this->func((int) $value['id']),
+            'vec' => new Vec($value['value'] ?? []),
+            'data' => $this->walk($value['value'] ?? null, $depth),
+            'err' => throw new EngineError((string) ($value['message'] ?? 'erro na engine'), (string) ($value['name'] ?? 'Error')),
+            'await' => new Pending((int) ($value['token'] ?? 0)),
+            'cb' => $this->callbacks[(int) $value['id']] ?? null,
+                                                                                                                                     
+            default => new Data($value),
+        };
+    }
+
+                                                                                                                                             
+    public function pack(mixed $value): string
+    {
+        $encoded = json_encode($this->packValue($value, 0), JSON_OUT);
+        return $encoded === false ? 'null' : $encoded;
+    }
+
+    private function packValue(mixed $value, int $depth): mixed
+    {
+        if ($value === null || is_scalar($value)) {
+            return $value;
+        }
+        if ($value instanceof Ref) {
+            return [KIND => $value->id];
+        }
+        if ($value instanceof Func) {
+            return [KIND => 'fn', 'id' => $value->id];
+        }
+        if ($value instanceof Pending) {
+            return null;
+        }
+        if ($value instanceof \Closure) {
+            return [KIND => 'cb', 'id' => $this->registerCallback($value)];
+        }
+        if ($depth > MAX_DEPTH) {
+            return is_object($value) && method_exists($value, '__toString') ? (string) $value : get_debug_type($value);
+        }
+        if ($value instanceof Data) {
+            $value = $value->getArrayCopy();
+        } elseif ($value instanceof \Traversable) {
+            $value = iterator_to_array($value);
+        } elseif (is_object($value)) {
+            if ($value instanceof \Stringable && !$value instanceof \ArrayObject) {
+                return (string) $value;
+            }
+            $value = get_object_vars($value);
+        }
+        if (is_array($value)) {
+            if (array_is_list($value)) {
+                return array_map(fn (mixed $item) => $this->packValue($item, $depth + 1), $value);
+            }
+            $out = new \stdClass();
+            foreach ($value as $key => $item) {
+                if ($item !== null) {
+                    $out->{(string) $key} = $this->packValue($item, $depth + 1);
+                }
+            }
+            return $out;
+        }
+        return get_debug_type($value);
+    }
+
+    public function registerCallback(callable $callback): int
+    {
+        $closure = $callback instanceof \Closure ? $callback : \Closure::fromCallable($callback);
+        if ($this->callbackIds->contains($closure)) {
+            return $this->callbackIds[$closure];
+        }
+        $id = ++$this->nextCallback;
+        $this->callbacks[$id] = $closure;
+        $this->callbackIds[$closure] = $id;
+        return $id;
+    }
+
+    public static function key(mixed $offset): string|int
+    {
+        if (is_int($offset) || is_string($offset)) {
+            return $offset;
+        }
+        if (is_bool($offset)) {
+            return $offset ? 'true' : 'false';
+        }
+        if (is_float($offset)) {
+            return (int) $offset;
+        }
+        throw new EngineError(sprintf('chave inv��lida (%s): objetos da engine só aceitam nomes (texto) ou índices (número).', get_debug_type($offset)));
+    }
+
+                                                                                                  
+
+    public function read(int $id, string|int $key): mixed
+    {
+        return $this->materialize($this->host->get($id, $key));
+    }
+
+    public function write(int $id, string|int $key, mixed $value): void
+    {
+        $this->materialize($this->host->set($id, $key, $this->pack($value)));
+    }
+
+    public function invoke(int $fnId, array $args): mixed
+    {
+        return $this->materialize($this->host->call($fnId, $this->pack($args)));
+    }
+
+    public function describe(int $id): string
+    {
+        return (string) $this->host->str($id);
+    }
+
+    public function length(int $id): int
+    {
+        return (int) $this->host->len($id);
+    }
+
+                                   
+    public function keys(int $id): array
+    {
+        $keys = json_decode((string) $this->host->keys($id), true);
+        return is_array($keys) ? array_values($keys) : [];
+    }
+
+                                                                                                   
+
+                                                                                                   
+    public function attach(): void
+    {
+        ob_start($this->output(...), 1);
+        set_error_handler($this->warning(...));
+    }
+
+       
+                                                                         
+                                                                            
+                                                                           
+                       
+       
+    public function recover(): void
+    {
+        $this->loading = [];
+        $this->pendingOutput = '';
+        $this->pendingOutputAt = null;
+        if (ob_get_level() === 0) {
+            ob_start($this->output(...), 1);
+        }
+        set_error_handler($this->warning(...));
+    }
+
+       
+                                                                               
+                                                                            
+                                                                       
+                                                                          
+       
+    private function output(string $chunk, int $phase): string
+    {
+        if ($chunk === '') {
+            return '';
+        }
+        if ($this->pendingOutput === '' && preg_match('/^\s*(?:PHP )?(Fatal error|Parse error|Compile error|Warning|Notice|Deprecated): (.*) in (.+?) on line (\d+)\s*$/s', $chunk, $match) === 1) {
+            [, $kind, $text, $file, $line] = $match;
+                                                                                                                          
+            if (preg_match('/^(.+?)\((\d+)\) : eval\(\)\'d code$/', $file, $evalMatch) === 1) {
+                [, $file, $line] = $evalMatch;
+            }
+            $message = preg_replace('/ in \S+:\d+$/', '', strtok($text, "\n") ?: $text) ?? $text;
+            $message = str_replace(SCRIPT_DIR, '', preg_replace('/^Uncaught /', '', $message) ?? $message);
+            if ($kind === 'Fatal error' || $kind === 'Parse error' || $kind === 'Compile error') {
+                $this->host->fatal($message, $file, (int) $line);
+            } else {
+                $this->host->console($kind === 'Warning' ? 'warn' : 'debug', $kind . ': ' . $message, $file, (int) $line);
+            }
+            return '';
+        }
+        $at = $this->scriptFrame(debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS));
+        if ($this->pendingOutput !== '' && $at != $this->pendingOutputAt) {
+            $this->flushOutput();
+        }
+        $this->pendingOutputAt = $at;
+        $this->pendingOutput .= $chunk;
+        if (str_ends_with($chunk, "\n")) {
+            $this->flushOutput();
+        }
+        return '';
+    }
+
+    public function flushOutput(): void
+    {
+        if ($this->pendingOutput === '') {
+            return;
+        }
+        $text = rtrim($this->pendingOutput, "\n");
+        $at = $this->pendingOutputAt;
+        $this->pendingOutput = '';
 `;
 }
