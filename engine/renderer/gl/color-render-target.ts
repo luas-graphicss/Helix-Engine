@@ -1,5 +1,30 @@
 import type { GL } from './context';
-export type ColorFormat = 'rgba8' | 'rgba16f';
+import { framebufferStatus } from './framebuffer-status';
+export type ColorFormat = 'rgba8' | 'rgba16f' | 'rg11b10f';
+export function colorInternalFormat(gl: GL, format: ColorFormat): number {
+    switch (format) {
+        case 'rgba16f':
+            return gl.RGBA16F;
+        case 'rg11b10f':
+            return gl.R11F_G11F_B10F;
+        default:
+            return gl.RGBA8;
+    }
+}
+export function clearHdrColor(gl: GL, format: ColorFormat, hdrColor: readonly [
+    number,
+    number,
+    number
+], encodedRange: number): void {
+    if (format === 'rgba8') {
+        const encode = (value: number) => Math.sqrt(Math.min(1, Math.max(0, value / encodedRange)));
+        gl.clearColor(encode(hdrColor[0]), encode(hdrColor[1]), encode(hdrColor[2]), 1);
+    }
+    else {
+        gl.clearColor(hdrColor[0], hdrColor[1], hdrColor[2], 1);
+    }
+    gl.clear(gl.COLOR_BUFFER_BIT);
+}
 export interface ColorRenderTargetOptions {
     width: number;
     height: number;
@@ -48,7 +73,7 @@ export class ColorRenderTarget {
         this.texture = texture;
         this.framebuffer = framebuffer;
         gl.bindTexture(gl.TEXTURE_2D, texture);
-        gl.texStorage2D(gl.TEXTURE_2D, 1, this.format === 'rgba16f' ? gl.RGBA16F : gl.RGBA8, this.width, this.height);
+        gl.texStorage2D(gl.TEXTURE_2D, 1, colorInternalFormat(gl, this.format), this.width, this.height);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, this.filter);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, this.filter);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, this.wrapS);
@@ -56,7 +81,7 @@ export class ColorRenderTarget {
         gl.bindTexture(gl.TEXTURE_2D, null);
         gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
         gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
-        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        const status = framebufferStatus(gl, `color:${this.format}`);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         if (status !== gl.FRAMEBUFFER_COMPLETE) {
             this.dispose();
