@@ -281,5 +281,285 @@ class DebugJogo : Script() {
         s.invoke("spawn", "mesh", mapOf(
             "name" to "Triangulo",
             "mesh" to dupla,
+            "material" to mat.invoke("create", mapOf("baseColor" to "#06d6a0", "doubleSided" to true)),
+            "position" to v3(7.0, 0.0, -2.0)
+        ))
+        val grande = me.invoke("scale", me.invoke("translate", me.invoke("clone", caixa), v3(0.0, 0.5, 0.0)), 2)
+        checar("mesh.translate/scale", numero(me.invoke("computeBounds", grande)["max"], "y") > 1.9)
+        val distancia = me.invoke("raycast", api("math.ray").invoke("create", v3(0.0, 5.0, 0.0), v3(0.0, -1.0, 0.0)), grande)
+        checar("mesh.raycast", distancia.isNumber && distancia.number > 0)
+        val vertices = me.invoke("vertexCount", caixa).int
+        checar("positions/indices", me.invoke("positions", caixa).size == vertices * 3 && me.invoke("indices", caixa).size == 36)
+        checar("primitivas extras", me.invoke("triangleCount", me.invoke("torusKnot")).number > 0 && me.invoke("triangleCount", me.invoke("capsule")).number > 0)
+        return null
+    }
+
+                                                                                                  
+
+    private fun materiais(): Any? {
+        val mat = api("material")
+        val s = api("scene")
+        val tex = api("texture")
+        val base = mat.invoke("create", mapOf("name" to "DebugBase", "baseColor" to "#d98c2b", "roughness" to 0.5, "metallic" to 0.1))
+        checar("material.create", numero(base, "roughness") == 0.5)
+        val copia = mat.invoke("clone", base)
+        mat.invoke("set", copia, mapOf("roughness" to 1, "emissive" to "#ffffff", "emissiveIntensity" to 2))
+        checar("material.clone/set", numero(copia, "roughness") == 1.0 && numero(base, "roughness") == 0.5)
+        val caixa = s.invoke("spawnPrimitive", "box", mapOf("name" to "CaixaPintada", "position" to v3(-7.0, 0.5, 2.0)))
+        mat.invoke("assign", caixa, base)
+        checar("material.assign/of", !mat.invoke("of", caixa).isNullish)
+        mat.invoke("own", caixa)
+        mat.invoke("setColor", caixa, "#d98c2b")
+        val desenho = tex.invoke("canvas", 64, 64)
+        desenho.invoke("update")
+        mat.invoke("setTexture", caixa, "baseColorMap", desenho["texture"])
+        checar("texture.canvas + setTexture", mat.invoke("hasAnyTexture", mat.invoke("of", caixa)).boolean && tex.invoke("isTexture", desenho["texture"]).boolean)
+        checar("material.slots", mat.invoke("slots").size > 0)
+        checar("materials.list", api("materials").invoke("list").isArray)
+        val sombreado = mat.invoke("fromShader", "DebugSuperficie", mapOf("glow" to v3(1.0, 0.45, 0.1), "speed" to 2))
+        checar("material.fromShader", !sombreado.isNullish)
+        if (!sombreado.isNullish) {
+            val esfera = s.invoke("spawnPrimitive", "sphere", mapOf("name" to "EsferaShader", "position" to v3(0.0, 1.0, -3.0), "scale" to 1.4))
+            mat.invoke("assign", esfera, sombreado)
+            mat.invoke("uniforms", esfera).invoke("set", "speed", 3)
+            checar("material.uniforms.list", mat.invoke("uniforms", esfera).invoke("list").size >= 1)
+        }
+        return null
+    }
+
+    private fun luzes(): Any? {
+        val l = api("light")
+        checar("light.types", contem(l.invoke("types"), "point") && contem(l.invoke("localTypes"), "spot"))
+        val lampada = l.invoke("spawn", "point", mapOf("name" to "Lampada", "position" to v3(0.0, 3.0, 0.0), "color" to "#ffd166", "intensity" to 60, "range" to 14))
+        checar("light.spawn", !lampada["light"].isNullish && textoIgual(lampada.path("light.type"), "point"))
+        l.invoke("set", lampada, mapOf("intensity" to 80))
+        checar("light.set", numero(lampada["light"], "intensity") == 80.0)
+        l.invoke("setTemperature", lampada, 3200)
+        checar("setTemperature", numero(lampada["light"], "temperature") == 3200.0)
+        val foco = l.invoke("spawn", "spot", mapOf(
+            "name" to "Holofote", "position" to v3(4.0, 4.0, 0.0), "rotation" to v3(-90.0, 0.0, 0.0), "intensity" to 120, "range" to 16,
+            "innerAngle" to 20, "outerAngle" to 35, "color" to "#ffffff"
+        ))
+        checar("spot", textoIgual(foco.path("light.type"), "spot"))
+        val convertido = l.invoke("convert", foco, "disc")
+        checar("light.convert", textoIgual(convertido["type"], "disc") && textoIgual(foco.path("light.type"), "disc"))
+        l.invoke("convert", foco, "spot")
+        val presets = l.invoke("presets")
+        checar("light.presets", presets.size > 0)
+        if (presets.size > 0) {
+            val primeiro = presets[0]
+            val preset = l.invoke("spawn", primeiro["id"], mapOf("name" to "LuzPreset", "position" to v3(-4.0, 2.5, 4.0)))
+            checar("light.fromPreset", !preset["light"].isNullish && l.invoke("fromPreset", primeiro["id"])["type"] == primeiro["type"])
+        }
+        checar("light.all", l.invoke("all", mapOf("local" to true)).size >= 2)
+        checar("effectiveRange", l.invoke("effectiveRange", lampada).number > 0)
+        checar("light.isLocal", verdadeiro(l.invoke("isLocal", lampada)))
+        checar("temperatureToColor", !l.invoke("temperatureToColor", 6500).isNullish)
+        l.invoke("setColor", lampada, "#ffffff")
+        checar("light.setColor", eq3(lampada.path("light.color"), 1.0, 1.0, 1.0, 0.01))
+        return null
+    }
+
+    private fun ceu(): Any? {
+        val sky = api("sky")
+        val mundo = api("world")
+        sky.invoke("set", mapOf("timeOfDay" to 10.5, "haze" to 0.3, "clouds" to mapOf("enabled" to true, "coverage" to 0.45)))
+        checar("sky.set", aprox(numero(sky, "timeOfDay"), 10.5, 1e-3) && verdadeiro(sky.path("clouds.enabled")))
+        checar("sky.isDay", verdadeiro(sky["isDay"]))
+        checar("sky.sunDirection", numero(sky.invoke("sunDirection"), "y") > 0)
+        val hora = sky.invoke("formatTimeOfDay", 10.5).string
+        checar("sky.formatTimeOfDay", hora.contains(":"), hora)
+        checar("sky.wrapTimeOfDay", sky.invoke("wrapTimeOfDay", 25).number == 1.0)
+        checar("sky.presets", sky.invoke("presets").size > 0)
+        assinar(sky.invoke("onHourChanged", Helix.fn { args -> info("Hora do céu: " + arg(args, 0).string); null }))
+        sky["cycleSpeed"] = 0
+        checar("sky.cycleSpeed", numero(sky, "cycleSpeed") == 0.0)
+        checar("world.gravity", numero(mundo["gravity"], "y") < 0)
+        mundo["wind"].invoke("set", mapOf("speed" to 2, "direction" to 45))
+        checar("world.wind.set", numero(mundo["wind"], "speed") == 2.0)
+        return null
+    }
+
+    private fun camera(): Any? {
+        val c = api("camera")
+        checar("camera.fov", numero(c, "fov") > 0 && numero(c, "aspect") > 0)
+        checar("camera.near/far", numero(c, "near") > 0 && numero(c, "far") > numero(c, "near"))
+        val viewport = c["viewport"]
+        checar("viewport", numero(viewport, "width") > 0)
+        val naTela = c.invoke("worldToScreen", v3(0.0, 0.0, 0.0))
+        checar("worldToScreen", naTela.isNullish || naTela["x"].isNumber)
+        val raio = c.invoke("screenToRay", numero(viewport, "width") / 2, numero(viewport, "height") / 2)
+        checar("screenToRay", raio.isNullish || aprox(comprimento(raio["direction"]), 1.0, 0.01))
+        checar("viewMatrix", c["viewMatrix"].size == 16)
+        val jogador = c["player"]
+        jogador.invoke("set", mapOf("distance" to 7, "pitch" to 18))
+        checar("player.set", numero(jogador["settings"], "distance") == 7.0)
+        checar("distanceTo", c.invoke("distanceTo", v3(0.0, 0.0, 0.0)).number >= 0)
+        checar("camera.position", !c["position"].isNullish && !c["forward"].isNullish)
+        assinar(c.invoke("onMainChanged", Helix.fn { args ->
+            val entidade = arg(args, 0)
+            info(if (entidade.isNullish) "Câmera principal: editor/jogador" else "Câmera principal: " + nomeDe(entidade))
+            null
+        }))
+        return null
+    }
+
+    private fun pos(): Any? {
+        val p = api("post")
+        checar("post.toneMappers", p.invoke("toneMappers").size > 0)
+        p.invoke("set", mapOf(
+            "bloom" to mapOf("enabled" to true, "intensity" to 0.5, "threshold" to 1, "softKnee" to 0.5, "radius" to 0.6),
+            "vignette" to mapOf("enabled" to true, "intensity" to 0.35, "smoothness" to 0.5, "roundness" to 1)
+        ))
+        checar("post.set", verdadeiro(p.path("bloom.enabled")) && verdadeiro(p.path("vignette.enabled")))
+        p["exposure"] = 1.05
+        checar("post.exposure", aprox(numero(p, "exposure"), 1.05, 1e-3))
+        p["toneMapper"] = "agx"
+        checar("post.toneMapper", textoIgual(p["toneMapper"], "agx"))
+        checar("post.presets", p.invoke("presets").size > 0)
+        val custom = p["custom"]
+        val novo = custom.invoke("add", mapOf("fragment" to "DebugPost", "name" to "DebugPost", "uniforms" to mapOf("tint" to v3(0.15, 0.05, 0.3), "strength" to 0.6)))
+        efeito = novo
+        checar("post.custom.add", !novo.isNullish && !custom.invoke("get", "DebugPost").isNullish)
+        novo["uniforms"].invoke("set", "strength", 0.8)
+        checar("efeito.uniforms.list", novo["uniforms"].invoke("list").size >= 2)
+        return null
+    }
+
+    private fun render(): Any? {
+        val r = api("render")
+        checar("render.passNames", r.invoke("passNames").size > 0)
+        checar("render.stats", r.path("stats.drawCalls").isNumber)
+        checar("render.frame", r.path("frame.width").isNumber)
+        assinar(r.invoke("onAfterFrame", Helix.fn { renders++; null }))
+        r["showGrid"] = false
+        checar("render.showGrid", falso(r["showGrid"]))
+        checar("render.pixelRatio", numero(r, "pixelRatio") > 0)
+        return null
+    }
+
+                                                                                               
+
+    private fun fisica(): Any? {
+        val ph = api("physics")
+        val s = api("scene")
+        checar("physics.enabled", verdadeiro(ph["enabled"]))
+        checar("physics.gravity", numero(ph["gravity"], "y") < 0)
+        checar("physics.settings", numero(ph["settings"], "fixedTimestep") > 0)
+        for (i in 1..5) {
+            val indice = (i - 1).toDouble()
+            val caixa = s.invoke("spawnPrimitive", "box", mapOf(
+                "name" to "Caixa" + i,
+                "position" to v3(-2 + indice * 1.1, 3 + indice * 1.2, 3.0),
+                "rigidBody" to mapOf("type" to "dynamic", "collider" to "box", "mass" to 2, "restitution" to 0.3),
+                "tags" to listOf("caixa")
+            ))
+            api("material").invoke("setColor", caixa, api("math.color").invoke("hsl", 30 + i * 12, 0.7, 0.5))
+        }
+        val caixas = s.invoke("byTag", "caixa")
+        val primeira = caixas[0]
+        checar("caixas dinâmicas", caixas.size == 5 && ph.invoke("hasBody", primeira).boolean)
+        val corpo = ph.invoke("bodyOf", primeira)
+        checar("bodyOf", verdadeiro(corpo["isDynamic"]) && numero(corpo, "mass") > 0)
+        corpo.invoke("applyImpulse", v3(0.0, 2.0, 0.0))
+        corpo.invoke("applyTorque", v3(0.0, 1.0, 0.0))
+        corpo.invoke("setMaterial", mapOf("friction" to 0.8))
+        corpo.invoke("wake")
+        checar("body.linearVelocity", !corpo["linearVelocity"].isNullish)
+        checar("bodies()", ph.invoke("bodies").size >= 6)
+        val hit = ph.invoke("raycast", v3(0.0, 5.0, 0.0), v3(0.0, -1.0, 0.0), 20)
+        checar("physics.raycast", !hit.isNullish && !hit["entity"].isNullish)
+        checar("raycastAll", ph.invoke("raycastAll", v3(0.0, 5.0, 0.0), v3(0.0, -1.0, 0.0), 20).size >= 1)
+        checar("overlapSphere", ph.invoke("overlapSphere", v3(0.0, 3.0, 3.0), 4).isArray)
+        checar("massProperties", numero(ph.invoke("massProperties", primeira), "mass") > 0)
+        checar("colliderVolume", ph.invoke("colliderVolume", primeira).number > 0)
+        val formas = ph["shapes"]
+        checar("shapes.sphere volume", aprox(formas.invoke("volume", formas.invoke("sphere", 1)).number, 4.18879, 0.01))
+        assinar(ph.invoke("onCollisionBegin", Helix.fn { args ->
+            colisoes++
+            if (colisoes <= 3) {
+                val e = arg(args, 0)
+                info("Colisão: " + nomeDe(e["a"]) + " × " + nomeDe(e["b"]) + " (impulso " + arred(numero(e["contact"], "impulse")) + ")")
+            }
+            null
+        }))
+        assinar(ph.invoke("onOutOfBounds", Helix.fn { args -> aviso(nomeDe(arg(args, 0)) + " caiu do mundo"); null }))
+        val gatilho = s.invoke("spawn", "group", mapOf("name" to "Gatilho", "position" to v3(0.0, 1.0, 3.0), "trigger" to mapOf("shape" to "box", "size" to v3(3.0, 2.0, 3.0))))
+        checar("trigger spawn", !gatilho.isNullish && s.invoke("isAttached", gatilho).boolean)
+        checar("physics.stats", ph.path("stats.bodies").isNumber)
+        return null
+    }
+
+    private fun personagem(): Any? {
+        val ch = api("character")
+        val pl = api("player")
+        val novo = ch.invoke("spawn", mapOf("name" to "Heroi", "position" to v3(0.0, 1.2, 8.0), "character" to mapOf("walkSpeed" to 4, "runSpeed" to 7, "jumpHeight" to 1.4)))
+        heroi = novo
+        checar("character.spawn", !novo["character"].isNullish && ch.invoke("has", novo).boolean)
+        val c = ch.invoke("of", novo)
+        checar("character.of", c["isGrounded"].isBoolean)
+        checar("settingsOf", numero(ch.invoke("settingsOf", novo), "walkSpeed") == 4.0)
+        pl.invoke("possess", novo)
+        checar("player.possess", pl["possessed"] == novo && verdadeiro(pl["isPossessing"]))
+        assinar(ch.invoke("onJumped", Helix.fn { args -> info(nomeDe(arg(args, 0)["entity"]) + " pulou"); null }))
+        assinar(pl.invoke("onPossessed", Helix.fn { args -> info("Possuindo " + nomeDe(arg(args, 0))); null }))
+        checar("character.all", ch.invoke("all").size >= 1)
+        checar("player.spawnPoint", !pl["spawnPoint"].isNullish)
+        checar("character.velocity", !c["velocity"].isNullish && !c["position"].isNullish)
+        return null
+    }
+
+    private fun terreno(): Any? {
+        val te = api("terrain")
+        checar("terrain.presets", te.invoke("presets").size > 0)
+        val colinas = te.invoke("spawn", mapOf("name" to "Colinas", "size" to 48, "resolution" to 65, "preset" to "hills", "seed" to 7, "position" to v3(0.0, -6.0, -70.0)))
+        checar("terrain.spawn", !colinas["terrain"].isNullish && te.invoke("all").size >= 1)
+        checar("terrain.of", numero(te.invoke("of", colinas), "resolution") == 65.0)
+        checar("heightAt", te.invoke("heightAt", v3(0.0, 0.0, -70.0), colinas).isNumber)
+        checar("contains", te.invoke("contains", v3(0.0, 0.0, -70.0), colinas).boolean && !te.invoke("contains", v3(500.0, 0.0, 0.0), colinas).boolean)
+        te.invoke("sculpt", colinas, "raise", v3(5.0, 0.0, -70.0), mapOf("radius" to 6, "strength" to 1), 1)
+        te.invoke("markDirty", colinas)
+        val grama = te["grass"]
+        grama.invoke("set", colinas, mapOf("enabled" to true, "density" to 0.5))
+        checar("grass.set", verdadeiro(grama.invoke("settingsOf", colinas)["enabled"]))
+        val agua = te["water"]
+        agua.invoke("set", colinas, mapOf("enabled" to true, "level" to -2))
+        checar("water.set", verdadeiro(agua.invoke("settingsOf", colinas)["enabled"]))
+        checar("terrain.raycast", !te.invoke("raycast", v3(0.0, 50.0, -70.0), v3(0.0, -1.0, 0.0), colinas).isNullish)
+        return null
+    }
+
+                                                                                               
+
+    private fun soltarCaixa() {
+        val random = api("math.random")
+        val caixa = api("scene").invoke("spawnPrimitive", "box", mapOf(
+            "name" to "CaixaSolta",
+            "position" to v3(random.invoke("range", -3, 3).number, 6.0, random.invoke("range", 0, 4).number),
+            "rigidBody" to mapOf("type" to "dynamic", "collider" to "box", "mass" to 1),
+            "tags" to listOf("caixa")
+        ))
+        api("material").invoke("setColor", caixa, random.invoke("color"))
+        pontos++
+        api("gui").invoke("bind", "pontos", pontos)
+        api("events").invoke("emit", "debug.caixa", mapOf("nome" to caixa["name"]))
+    }
+
+    private fun interfaceGrafica(): Any? {
+        val g = api("gui")
+        g.invoke("css", "DebugEstilo")
+        val hud = g.invoke("html", "DebugHud", mapOf("id" to "debug-hud"))
+        checar("gui.html", !hud.isNullish && !g.invoke("element", "#debug-hud").isNullish)
+        val icone = g.invoke("svg", "DebugIcone", mapOf("id" to "debug-icone"))
+        checar("gui.svg", !icone.isNullish)
+        val slot = g.invoke("element", "[data-slot=icone]")
+        if (!slot.isNullish && !icone.isNullish) slot.invoke("appendChild", icone)
+        checar("gui.bind", g.invoke("bind", "linguagem", linguagem).number >= 1)
+        g.invoke("bind", "titulo", "Helix · Debug")
+        assinar(g.invoke("onAction", "caixa", Helix.fn { soltarCaixa(); null }))
+        assinar(g.invoke("onAction", "reiniciar", Helix.fn { api("play").invoke("restart"); null }))
+        checar("gui.elements", g.invoke("elements", "[data-bind]").size >= 5)
+        checar("gui.size", numero(g["size"], "width") > 0)
+        fun escala(scale: Double, offset: Double) = mapOf("scale" to scale, "offset" to offset)
 `;
 }
