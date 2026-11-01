@@ -746,4 +746,260 @@ class Parser {
         this.expect('}', 'fechando o bloco');
         return { kind: 'block', statements, span: this.spanFrom(start) };
     }
+    statement(): Statement {
+        const start = this.current;
+        if (this.at('{'))
+            return this.block();
+        if (this.match(';'))
+            return { kind: 'empty', span: this.spanFrom(start) };
+        if (this.at('if'))
+            return this.ifStatement();
+        if (this.at('while'))
+            return this.whileStatement();
+        if (this.at('do'))
+            return this.doStatement();
+        if (this.at('for'))
+            return this.forStatement();
+        if (this.at('foreach') || (this.atIdentifier('await') && this.at('foreach', this.peek())))
+            return this.forEachStatement();
+        if (this.at('switch'))
+            return this.switchStatement();
+        if (this.at('break')) {
+            this.advance();
+            this.expect(';', 'depois de break');
+            return { kind: 'break', span: this.spanFrom(start) };
+        }
+        if (this.at('continue')) {
+            this.advance();
+            this.expect(';', 'depois de continue');
+            return { kind: 'continue', span: this.spanFrom(start) };
+        }
+        if (this.at('return')) {
+            this.advance();
+            const expression = this.at(';') ? null : this.expression();
+            this.expect(';', 'depois de return');
+            return { kind: 'return', expression, span: this.spanFrom(start) };
+        }
+        if (this.at('throw')) {
+            this.advance();
+            const expression = this.at(';') ? null : this.expression();
+            this.expect(';', 'depois de throw');
+            return { kind: 'throw', expression, span: this.spanFrom(start) };
+        }
+        if (this.at('try'))
+            return this.tryStatement();
+        if (this.at('using'))
+            return this.usingStatement();
+        if (this.at('lock')) {
+            this.advance();
+            this.expect('(');
+            const expression = this.expression();
+            this.expect(')');
+            return { kind: 'lock', expression, body: this.statement(), span: this.spanFrom(start) };
+        }
+        if (this.at('checked') || this.at('unchecked')) {
+            if (this.at('{', this.peek())) {
+                this.advance();
+                return this.block();
+            }
+        }
+        if (this.atIdentifier('yield') && (this.at('return', this.peek()) || this.at('break', this.peek()))) {
+            this.advance();
+            const isBreak = this.advance().text === 'break';
+            const expression = isBreak ? null : this.expression();
+            this.expect(';', 'depois de yield');
+            return { kind: 'yield', expression, span: this.spanFrom(start) };
+        }
+        if (this.at('goto'))
+            this.fail('goto não é suportado; use laços, break/continue ou métodos.');
+        if (this.at('fixed') || this.at('unsafe') || this.at('stackalloc'))
+            this.fail('Código unsafe (ponteiros, fixed, stackalloc) não existe neste runtime.');
+        if (this.at('const')) {
+            this.advance();
+            const type = this.type();
+            const declarators = this.declarators('da constante');
+            this.expect(';', 'depois da constante');
+            return { kind: 'local', type, isConst: true, declarators, deconstruction: null, span: this.spanFrom(start) };
+        }
+        if (this.current.kind === 'identifier' && this.at(':', this.peek()) && !this.at(':', this.peek(2))) {
+            this.fail('Rótulos (nome:) não são suportados porque goto não existe aqui.');
+        }
+        const isAwaitStatement = this.atIdentifier('await') && this.awaitOperandFollows();
+        const declaration = isAwaitStatement ? null : this.attempt(() => this.localDeclarationOrFunction());
+        if (declaration)
+            return declaration;
+        const expression = this.expression();
+        this.expect(';', 'depois da expressão');
+        return { kind: 'expression', expression, span: this.spanFrom(start) };
+    }
+    private localDeclarationOrFunction(): Statement {
+        const start = this.current;
+        const isAsync = this.matchIdentifier('async');
+        if (this.at('ref'))
+            this.advance();
+        if (this.atIdentifier('var') && this.at('(', this.peek())) {
+            this.advance();
+            const names = this.designationNames();
+            this.expect('=', 'na desconstrução');
+            const initializer = this.expression();
+            this.expect(';', 'depois da desconstrução');
+            const type: TypeRef = { name: 'var', typeArguments: [], arrayRank: 0, nullable: false, tupleElements: null, span: start.span };
+            return { kind: 'local', type, isConst: false, declarators: [], deconstruction: { names, initializer }, span: this.spanFrom(start) };
+        }
+        const type = this.type();
+        if (this.current.kind !== 'identifier')
+            this.fail('não é uma declaração');
+        const nameToken = this.current;
+        const after = this.peek();
+        if (this.at('(', after) || (this.at('<', after) && !isAsync)) {
+            this.advance();
+            const typeParameters = this.typeParametersIfAny();
+            const parameters = this.parameterList();
+            this.skipConstraints();
+            if (!this.at('{') && !this.at('=>'))
+                this.fail('não é uma função local');
+            const { body, expressionBody } = this.bodyOrExpression('da função local');
+            const modifiers = isAsync ? ['async'] : [];
+            const method: MethodMember = { kind: 'method', modifiers, returnType: type, name: String(nameToken.value), nameSpan: nameToken.span, typeParameters, parameters, body, expressionBody, span: this.spanFrom(start) };
+            return { kind: 'localFunction', method, span: method.span };
+        }
+        if (isAsync)
+            this.fail('não é uma declaração');
+        if (!this.at('=', after) && !this.at(';', after) && !this.at(',', after))
+            this.fail('não é uma declaração');
+        const declarators = this.declarators('da variável');
+        this.expect(';', 'depois da declaração');
+        return { kind: 'local', type, isConst: false, declarators, deconstruction: null, span: this.spanFrom(start) };
+    }
+    private designationNames(): string[] {
+        this.expect('(', 'abrindo a desconstrução');
+        const names: string[] = [];
+        do {
+            if (this.atIdentifier('var'))
+                this.advance();
+            else if (this.current.kind === 'keyword' && PRIMITIVE_TYPE_KEYWORDS.has(this.current.text))
+                this.advance();
+            names.push(String(this.expectIdentifier('da desconstrução').value));
+        } while (this.match(','));
+        this.expect(')', 'fechando a desconstrução');
+        return names;
+    }
+    private ifStatement(): Statement {
+        const start = this.expect('if');
+        this.expect('(', 'depois de if');
+        const condition = this.expression();
+        this.expect(')', 'fechando a condição do if');
+        const then = this.statement();
+        const elseBranch = this.match('else') ? this.statement() : null;
+        return { kind: 'if', condition, then, else: elseBranch, span: this.spanFrom(start) };
+    }
+    private whileStatement(): Statement {
+        const start = this.expect('while');
+        this.expect('(', 'depois de while');
+        const condition = this.expression();
+        this.expect(')', 'fechando a condição do while');
+        return { kind: 'while', condition, body: this.statement(), span: this.spanFrom(start) };
+    }
+    private doStatement(): Statement {
+        const start = this.expect('do');
+        const body = this.statement();
+        this.expect('while', 'depois do corpo do do');
+        this.expect('(');
+        const condition = this.expression();
+        this.expect(')');
+        this.expect(';', 'depois do do/while');
+        return { kind: 'do', body, condition, span: this.spanFrom(start) };
+    }
+    private forStatement(): Statement {
+        const start = this.expect('for');
+        this.expect('(', 'depois de for');
+        let declaration: LocalDeclaration | null = null;
+        const initializers: Expression[] = [];
+        if (!this.at(';')) {
+            const local = this.attempt(() => {
+                const localStart = this.current;
+                const type = this.type();
+                if (this.current.kind !== 'identifier')
+                    this.fail('não é uma declaração');
+                const declarators = this.declarators('da variável do for');
+                if (!this.at(';'))
+                    this.fail('não é uma declaração');
+                return { kind: 'local', type, isConst: false, declarators, deconstruction: null, span: this.spanFrom(localStart) } as LocalDeclaration;
+            });
+            if (local)
+                declaration = local;
+            else {
+                do
+                    initializers.push(this.expression());
+                while (this.match(','));
+            }
+        }
+        this.expect(';', 'depois da inicialização do for');
+        const condition = this.at(';') ? null : this.expression();
+        this.expect(';', 'depois da condição do for');
+        const updates: Expression[] = [];
+        if (!this.at(')')) {
+            do
+                updates.push(this.expression());
+            while (this.match(','));
+        }
+        this.expect(')', 'fechando o for');
+        return { kind: 'for', declaration, initializers, condition, updates, body: this.statement(), span: this.spanFrom(start) };
+    }
+    private forEachStatement(): Statement {
+        const start = this.current;
+        const isAwait = this.matchIdentifier('await');
+        this.expect('foreach');
+        this.expect('(', 'depois de foreach');
+        let type: TypeRef | null = null;
+        let name: string | null = null;
+        let deconstruction: string[] | null = null;
+        if (this.atIdentifier('var') && this.at('(', this.peek())) {
+            this.advance();
+            deconstruction = this.designationNames();
+        }
+        else if (this.at('(')) {
+            deconstruction = this.designationNames();
+        }
+        else {
+            type = this.type();
+            name = String(this.expectIdentifier('da variável do foreach').value);
+        }
+        if (!this.match('in'))
+            this.fail(`Esperado "in" no foreach, encontrado ${this.describe(this.current)}.`);
+        const iterable = this.expression();
+        this.expect(')', 'fechando o foreach');
+        return { kind: 'foreach', type, name, deconstruction, iterable, body: this.statement(), isAwait, span: this.spanFrom(start) };
+    }
+    private switchStatement(): Statement {
+        const start = this.expect('switch');
+        this.expect('(', 'depois de switch');
+        const value = this.expression();
+        this.expect(')');
+        this.expect('{', 'abrindo o switch');
+        const sections: SwitchSection[] = [];
+        while (!this.at('}') && !this.atEnd()) {
+            const labels: SwitchLabel[] = [];
+            while (this.at('case') || this.at('default')) {
+                const labelStart = this.advance();
+                if (labelStart.text === 'default') {
+                    this.expect(':', 'depois de default');
+                    labels.push({ kind: 'default', span: this.spanFrom(labelStart) });
+                    continue;
+                }
+                const pattern = this.pattern();
+                const guard = this.matchIdentifier('when') ? this.expression() : null;
+                this.expect(':', 'depois do case');
+                labels.push({ kind: 'case', pattern, guard, span: this.spanFrom(labelStart) });
+            }
+            if (labels.length === 0)
+                this.fail(`Esperado case ou default no switch, encontrado ${this.describe(this.current)}.`);
+            const statements: Statement[] = [];
+            while (!this.at('case') && !this.at('default') && !this.at('}') && !this.atEnd())
+                statements.push(this.statement());
+            sections.push({ labels, statements });
+        }
+        this.expect('}', 'fechando o switch');
+        return { kind: 'switch', value, sections, span: this.spanFrom(start) };
+    }
 }
