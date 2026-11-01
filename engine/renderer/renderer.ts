@@ -184,22 +184,41 @@ export class Renderer {
     private readonly postPass: PostPass;
     private readonly sceneTarget: SceneRenderTarget;
     private readonly sky: SkySystem;
+    private readonly reflections: ReflectionSystem;
+    private readonly probeShadowMask: ShadowMaskPass;
+    private readonly probeVisible = new VisibleSet();
+    private probeLocalLights: LocalLightsBinding | null = null;
+    private lastSceneAnimating = true;
+    private viewChangedLastFrame = true;
     private readonly lighting = createFrameLighting();
     private readonly gpuTimer: GpuTimer;
     private readonly cpuStages = new StageAverages();
     private readonly shaders: ShaderCompileTracker;
     private shadersReady: boolean;
-    constructor(readonly canvas: HTMLCanvasElement) {
-        this.gl = createContext(canvas);
+    private warmupStage = 0;
+    private readonly canvasSize: CanvasSizeTracker;
+    private readonly cameraSnapshot = new FloatSnapshot(16);
+    private lastRenderScale = 1;
+    private effectivePost: PostProcessSettings | null = null;
+    private readonly litePost = createLitePostSettings();
+    constructor(readonly canvas: HTMLCanvasElement, options: RendererOptions = {}) {
+        this.gl = createContext(canvas, { offscreen: options.offscreen });
+        this.canvasSize = new CanvasSizeTracker(canvas);
+        if (options.maxPixelRatio !== undefined)
+            this.canvasSize.maxPixelRatio = options.maxPixelRatio;
         this.shaders = ShaderCompileTracker.for(this.gl);
         this.capabilities = detectCapabilities(this.gl);
-        this.profile = renderProfileForTier(this.capabilities.tier);
+        const benchmark = options.tier === undefined ? runGpuBenchmark(this.gl, this.capabilities, options.benchmark ?? (options.offscreen ? 'cached' : 'auto')) : null;
+        this.profile = renderProfileForTier(options.tier ?? benchmark?.tier ?? this.capabilities.tier);
         this.stats.gpuName = this.capabilities.renderer;
-        this.stats.gpuTier = this.capabilities.tier;
+        this.stats.gpuTier = this.profile.tier;
+        this.stats.gpuTierSource = options.tier !== undefined ? 'forced' : (benchmark?.source ?? 'heuristic');
+        this.stats.gpuHeuristicTier = this.capabilities.tier;
+        this.stats.gpuScore = benchmark?.score ?? 0;
         this.stats.softwareRenderer = this.capabilities.software;
         const defines = hdrShaderDefines(this.capabilities);
         this.gpuTimer = new GpuTimer(this.gl);
-        this.stats.gpuStageMs = this.gpuTimer.available ? this.gpuTimer.averages.ms : null;
+        this.stats.gpuTimerAvailable = this.gpuTimer.available;
         this.stats.cpuStageMs = this.cpuStages.ms;
         this.triangle = new FullscreenTriangle(this.gl);
         this.meshes = new GpuMeshCache(this.gl);
@@ -213,17 +232,36 @@ export class Renderer {
         this.terrainShadows = new TerrainShadowRenderer(this.gl, this.terrainPatch, this.terrainGpu, this.terrainPass.selector);
         this.shadowPass = new ShadowPass(this.gl, this.meshes, this.skins, this.terrainShadows, this.profile);
         this.shadowMeshResolver = this.lod.createShadowResolver(this.shadowPass.binding);
-        this.sceneTarget = new SceneRenderTarget(this.gl);
-        this.shadowMaskPass = new ShadowMaskPass(this.gl, this.triangle);
-        this.postPass = new PostPass(this.gl, this.triangle, this.profile);
-        this.grassPass = new GrassPass(this.gl, this.triangle, this.capabilities.floatColorTargets ? 'rgba16f' : 'rgba8', defines);
-        this.waterPass = new WaterPass(this.gl, this.terrainGpu, defines);
+        this.localLights = new LocalLightSet(this.gl);
+        this.localShadowPass = new LocalShadowPass(this.gl, this.meshes, this.skins, this.profile);
+        this.stats.localShadowStatus = this.localShadowPass.stats.status;
+        this.stats.localShadowBudget = this.localShadowPass.stats.facesBudget;
+        this.stats.localLightBudget = this.profile.maxLocalLights;
+        const { floatColorTargets, packedFloatColorTargets } = this.capabilities;
+        const hdrAlphaFormat: ColorFormat = floatColorTargets ? 'rgba16f' : 'rgba8';
+        const hdrFormat: ColorFormat = packedFloatColorTargets ? this.profile.hdrFormat : hdrAlphaFormat;
+        this.sceneTarget = new SceneRenderTarget(this.gl, hdrFormat);
+        this.shadowMaskPass = new ShadowMaskPass(this.gl, this.triangle, this.profile.shadowMaskScale);
+        this.reflections = new ReflectionSystem(this.gl, this.triangle, this.profile, { scene: hdrFormat, sceneAlpha: hdrAlphaFormat }, defines);
+        this.probeShadowMask = new ShadowMaskPass(this.gl, this.triangle, 1);
+        this.postPass = new PostPass(this.gl, this.triangle, this.profile, hdrFormat, hdrAlphaFormat, defines);
+        this.grassPass = new GrassPass(this.gl, this.triangle, hdrAlphaFormat, defines);
+        this.waterPass = new WaterPass(this.gl, this.terrainGpu, defines, hdrFormat);
         this.meshPass = new MeshPass(this.gl, this.meshes, this.textures, this.skins, defines);
+        this.customPrograms = new CustomShaderPrograms(this.gl, defines, this.reportShader);
+        this.meshPass.attachSurfaceShaders(new MeshSurfaceShaders(this.customPrograms, this.textures, this.shaderInputs, this.reportShader));
+        this.customPost = new CustomPostPass(this.gl, this.triangle, this.customPrograms, this.textures, this.reportShader);
+        this.guiSurfacePass = new GuiSurfacePass(this.gl, this.textures, defines);
+        this.vfxPass = new VfxPass(this.gl, this.textures, defines);
         this.myriad = new MyriadSystem(this.gl, this.triangle, this.textures, defines);
         this.stats.myriad = this.myriad.stats;
-        this.gridPass = new GridPass(this.gl, this.triangle);
+        this.gridPass = new GridPass(this.gl);
         this.gizmoPass = new GizmoPass(this.gl);
+        this.lightHelperPass = new LightHelperPass(this.gl);
+        this.soundHelperPass = new SoundHelperPass(this.gl);
+        this.vfxHelperPass = new VfxHelperPass(this.gl);
         this.skeletonPass = new SkeletonPass(this.gl);
+        this.scriptDebugPass = new ScriptDebugPass(this.gl);
         this.sky = new SkySystem(this.gl, this.capabilities, this.triangle, this.profile);
         this.stats.shadersTotal = this.shaders.pendingCount;
         this.stats.shadersPending = this.stats.shadersTotal;
@@ -235,10 +273,33 @@ export class Renderer {
         gl.cullFace(gl.BACK);
         gl.frontFace(gl.CCW);
     }
+    setFixedSize(width: number, height: number): void {
+        this.canvasSize.setFixedSize(width, height);
+    }
+    get ready(): boolean {
+        return this.shadersReady && this.warmupStage >= FRAME_STAGES.length;
+    }
+    get maxPixelRatio(): number {
+        return this.canvasSize.maxPixelRatio;
+    }
+    set maxPixelRatio(value: number) {
+        this.canvasSize.maxPixelRatio = value;
+    }
+    get holdResize(): boolean {
+        return this.canvasSize.holdResize;
+    }
+    set holdResize(value: boolean) {
+        this.canvasSize.holdResize = value;
+    }
+    private frameCaptured = false;
+    get capturedFrame(): ColorRenderTarget | null {
+        return this.frameCaptured ? this.postPass.capturedFrame : null;
+    }
     render(scene: Scene, camera: PerspectiveCamera, options: RenderOptions): void {
         const started = performance.now();
         const { gl, canvas, lighting, visible } = this;
-        syncCanvasSize(canvas);
+        const resized = this.canvasSize.sync();
+        this.frameCaptured = false;
         if (!this.shadersReady) {
             const pending = this.shaders.poll();
             this.stats.shadersPending = pending;
@@ -248,22 +309,70 @@ export class Renderer {
             }
             this.shadersReady = true;
         }
+        const warming = this.warmupStage < FRAME_STAGES.length;
         const { gpuTimer, cpuStages } = this;
+        gpuTimer.setEnabled(options.profileGpu ?? false);
         let stageStart = started;
+        this.textures.beginFrame();
+        this.terrainGpu.beginFrame();
+        const quality = options.quality ?? FULL_QUALITY;
+        this.shadowPass.periodScale = quality.cascadePeriodScale;
+        this.shadowPass.staticCascadesPerFrame = quality.staticCascadesPerFrame;
+        this.terrainCache.burstScale = quality.terrainBurstScale;
+        this.localShadowPass.setFacesPerFrameScale(quality.localShadowFacesScale);
+        this.localShadowPass.maxShadowedLights = quality.maxShadowedLights;
+        this.sky.cloudStepsScale = quality.cloudStepsScale;
+        this.sky.cloudScale = quality.cloudScale;
+        this.grassPass.densityScale = quality.grassDensityScale;
+        this.grassPass.buildBudgetScale = quality.grassBuildScale;
+        this.postPass.setQuality(quality.bloomLevelsDrop, quality.skipAntialias);
+        this.stats.qualityLevel = options.qualityLevel ?? 0;
+        const renderScale = clampRenderScale(options.renderScale ?? quality.renderScale);
+        const width = Math.max(1, Math.round(canvas.width * renderScale));
+        const height = Math.max(1, Math.round(canvas.height * renderScale));
+        const rescaled = renderScale !== this.lastRenderScale;
+        this.lastRenderScale = renderScale;
         camera.aspect = canvas.width / canvas.height;
         camera.updateMatrices();
+        const cameraMoved = this.cameraSnapshot.sync(0, camera.viewProjectionMatrix);
         scene.updateWorldMatrices();
+        this.scriptRequest = options.scripts ?? null;
+        if (options.scripts)
+            for (const bundle of options.scripts.takeShaderWarmup())
+                this.customPrograms.warm(bundle);
+        this.fillShaderInputs(camera, options, width, height);
+        const scripts = !warming && options.scripts && (options.scripts.hasHooks || !options.scripts.enabled || options.scripts.debugLines.length > 0) ? options.scripts : null;
+        const passOn = (pass: ScriptRenderPass) => scripts === null || scripts.isPassEnabled(pass);
+        if (scripts) {
+            this.fillScriptFrame(scripts.frame, camera, options);
+            scripts.before();
+            if (!scripts.enabled) {
+                this.renderScriptsOnly(scripts, camera, started);
+                return;
+            }
+        }
         collectFrameLighting(scene, lighting);
+        this.shaderInputs.sunDirection.set(lighting.sunDirection);
+        this.shaderInputs.sunColor.set(lighting.sunRadiance);
+        this.reflections.beginFrame(options.reflections ?? DEFAULT_REFLECTION_SETTINGS, width, height);
         visible.collect(scene, camera, canvas.height, options.culling, options.showCsgBrushes);
+        this.localLights.collect(scene, camera, options.culling.frustumCulling ? visible.frustum : null, width, height, options.elapsedSeconds, this.profile.maxLocalLights, options.soloLight);
         this.lod.beginFrame(options.lod);
         this.myriad.beginFrame(options.myriad, this.profile.myriadActivationTriangles);
+        this.meshPass.setDebugView(options.myriad.debugView, options.myriad.wireframe);
         this.myriad.collect({ visible, camera, frustum: options.culling.frustumCulling ? visible.frustum : null, selection: options.selection });
+        this.guiSurfacePass.prepare(options.guiSurfaces ?? NO_GUI_SURFACES, camera);
         stageStart = this.endCpuStage('cull', stageStart);
+        if (warming && this.pauseWarmup('cull', started))
+            return;
         gpuTimer.begin('sky');
-        const skyFrame = this.sky.update(scene.sky, lighting, camera, canvas.width, canvas.height, options.deltaSeconds);
+        const skyFrame = this.sky.update(scene.sky, lighting, camera, options.deltaSeconds);
         stageStart = this.endCpuStage('sky', stageStart);
+        if (warming && this.pauseWarmup('sky', started))
+            return;
         gpuTimer.begin('shadows');
-        if (options.shadows && lighting.hasSun && lighting.sunCastShadows) {
+        scripts?.beforePass('shadow');
+        if (options.shadows && lighting.hasSun && lighting.sunCastShadows && passOn('shadow')) {
             this.shadowPass.render({
                 casters: visible.casters,
                 terrainCasters: visible.terrainCasters,
@@ -277,58 +386,168 @@ export class Renderer {
         else {
             this.shadowPass.skip();
         }
+        scripts?.afterPass('shadow');
+        scripts?.beforePass('localShadow');
+        if (options.shadows && passOn('localShadow')) {
+            this.localShadowPass.render({ lights: this.localLights, casters: visible.casters, resolveMesh: this.shadowMeshResolver, virtualGeometry: this.myriad });
+        }
+        else {
+            this.localShadowPass.skip(this.localLights);
+        }
+        scripts?.afterPass('localShadow');
+        this.localLights.upload();
         this.grassPass.updateTrample(scene, options.deltaSeconds);
         stageStart = this.endCpuStage('shadows', stageStart);
+        if (warming && this.pauseWarmup('shadows', started))
+            return;
+        gpuTimer.begin('probe');
+        let drawCalls = 0;
+        const probePasses: ProbePasses = { meshes: passOn('mesh'), terrain: passOn('terrain'), sky: passOn('sky') };
+        const probeOn = probePasses.meshes || probePasses.terrain || probePasses.sky;
+        if (probeOn && this.reflections.wantsProbeFace(camera, lighting.sunDirection, this.lastSceneAnimating)) {
+            drawCalls += this.renderProbeFace(scene, camera, options, skyFrame, probePasses);
+        }
+        stageStart = this.endCpuStage('probe', stageStart);
+        if (warming && this.pauseWarmup('probe', started))
+            return;
         const { sceneTarget } = this;
-        sceneTarget.resize(canvas.width, canvas.height);
+        const skyEnabled = passOn('sky');
+        const skyCoversBackground = skyFrame.enabled && camera.invertible && skyEnabled;
+        sceneTarget.resize(width, height);
         sceneTarget.bind();
-        gl.clearColor(...CLEAR_COLOR);
-        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        sceneTarget.clear(SCENE_CLEAR_HDR, HDR_RANGE_SCENE, !skyCoversBackground);
+        if (scripts) {
+            scripts.frame.sceneColor = sceneTarget.color;
+            scripts.frame.sceneDepth = sceneTarget.depth;
+        }
         const frustum = options.culling.frustumCulling ? visible.frustum : null;
         const surfaceInput = {
             camera,
             lighting,
             shadowMask: this.shadowMaskPass.binding,
+            shadow: this.shadowPass.binding,
             sky: this.sky.binding,
+            localLights: { data: this.localLights.binding, shadow: this.localShadowPass.binding },
+            reflections: this.reflections.binding,
             fogDensity: fogDensityForSky(scene.sky.enabled, scene.sky.haze),
             selection: options.selection,
         };
         const terrainInput = { ...surfaceInput, brush: options.terrainBrush, frustum, pixelScale: visible.pixelScale, lod: options.lod };
         gpuTimer.begin('prepass');
+        const meshesOn = passOn('mesh');
+        const terrainOn = passOn('terrain');
+        const surfaceBufferOn = this.reflections.screenReflectionsWanted;
         this.meshPass.prepare(visible, surfaceInput, this.meshInstances, this.lod.resolveMesh);
-        this.meshPass.renderDepth();
         this.terrainPass.prepare(visible.terrains, terrainInput);
-        this.terrainPass.renderDepth(terrainInput);
+        scripts?.beforePass('depthPrepass');
+        if (passOn('depthPrepass')) {
+            if (surfaceBufferOn)
+                this.reflections.bindSurfaceBuffer(sceneTarget);
+            if (meshesOn)
+                this.meshPass.renderDepth(surfaceBufferOn);
+            if (terrainOn)
+                this.terrainPass.renderDepth(terrainInput, surfaceBufferOn);
+            if (surfaceBufferOn)
+                sceneTarget.bind();
+        }
+        if (scripts) {
+            scripts.afterPass('depthPrepass');
+            sceneTarget.bind();
+        }
         stageStart = this.endCpuStage('prepass', stageStart);
+        if (warming && this.pauseWarmup('prepass', started))
+            return;
         gpuTimer.begin('virtual');
-        this.myriad.renderVisibility(camera, sceneTarget.depth, canvas.width, canvas.height);
+        this.myriad.renderVisibility(camera, sceneTarget.depth, width, height);
         sceneTarget.bind();
         stageStart = this.endCpuStage('virtual', stageStart);
+        if (warming && this.pauseWarmup('virtual', started))
+            return;
+        gpuTimer.begin('clouds');
+        this.sky.renderClouds(camera, width, height);
+        sceneTarget.bind();
+        stageStart = this.endCpuStage('clouds', stageStart);
+        if (warming && this.pauseWarmup('clouds', started))
+            return;
         gpuTimer.begin('mask');
-        let drawCalls = 0;
         const shadowBinding = this.shadowPass.binding;
         const skyBinding = this.sky.binding;
         if ((shadowBinding.active || skyBinding.cloudShadow.enabled) && camera.invertible) {
-            drawCalls += this.shadowMaskPass.render({ camera, depth: sceneTarget.depth, shadow: shadowBinding, sky: skyBinding, lightDirection: skyFrame.shadowCasterDirection }, canvas.width, canvas.height);
+            drawCalls += this.shadowMaskPass.render({ camera, depth: sceneTarget.depth, shadow: shadowBinding, sky: skyBinding, lightDirection: skyFrame.shadowCasterDirection }, width, height);
             sceneTarget.bind();
         }
         else {
             this.shadowMaskPass.skip();
         }
         stageStart = this.endCpuStage('mask', stageStart);
-        gpuTimer.begin('meshes');
-        drawCalls += this.myriad.resolve(surfaceInput);
-        this.meshPass.renderOpaque();
-        stageStart = this.endCpuStage('meshes', stageStart);
-        gpuTimer.begin('terrain');
-        this.terrainCache.update(visible.terrains, camera.position, visible.pixelScale, options.terrainMaterialCache);
+        if (warming && this.pauseWarmup('mask', started))
+            return;
+        gpuTimer.begin('reflections');
+        this.reflections.renderScreenReflections(camera, sceneTarget);
         sceneTarget.bind();
-        this.terrainPass.render(terrainInput);
-        this.grassPass.render(visible.terrains, { ...surfaceInput, frustum, pixelScale: visible.pixelScale, elapsedSeconds: options.elapsedSeconds });
+        stageStart = this.endCpuStage('reflections', stageStart);
+        if (warming && this.pauseWarmup('reflections', started))
+            return;
+        gpuTimer.begin('meshes');
+        const guiOn = passOn('guiSurface');
+        scripts?.beforePass('mesh');
+        if (meshesOn) {
+            drawCalls += this.myriad.resolve(surfaceInput);
+            this.meshPass.renderOpaque();
+        }
+        if (scripts) {
+            scripts.afterPass('mesh');
+            sceneTarget.bind();
+        }
+        if (guiOn)
+            this.guiSurfacePass.renderOpaque(surfaceInput);
+        stageStart = this.endCpuStage('meshes', stageStart);
+        if (warming && this.pauseWarmup('meshes', started))
+            return;
+        gpuTimer.begin('terrain');
+        this.terrainCache.update(visible.terrains, camera.position, visible.frustum, visible.pixelScale, options.terrainMaterialCache);
+        sceneTarget.bind();
+        scripts?.beforePass('terrain');
+        if (terrainOn)
+            this.terrainPass.render(terrainInput);
+        if (scripts) {
+            scripts.afterPass('terrain');
+            sceneTarget.bind();
+        }
+        scripts?.beforePass('grass');
+        if (passOn('grass'))
+            this.grassPass.render(visible.terrains, { ...surfaceInput, frustum, pixelScale: visible.pixelScale, elapsedSeconds: options.elapsedSeconds });
+        if (scripts) {
+            scripts.afterPass('grass');
+            sceneTarget.bind();
+        }
         stageStart = this.endCpuStage('terrain', stageStart);
+        if (warming && this.pauseWarmup('terrain', started))
+            return;
         gpuTimer.begin('overlay');
-        drawCalls += this.sky.renderBackground(camera, canvas.width, canvas.height, options.elapsedSeconds);
-        this.waterPass.render(visible.terrains, { ...surfaceInput, frustum, elapsedSeconds: options.elapsedSeconds, width: canvas.width, height: canvas.height });
+        scripts?.beforePass('sky');
+        if (skyEnabled)
+            drawCalls += this.sky.renderBackground(camera, width, height, options.elapsedSeconds);
+        if (scripts) {
+            scripts.afterPass('sky');
+            sceneTarget.bind();
+        }
+        scripts?.beforePass('water');
+        if (passOn('water')) {
+            this.waterPass.render(visible.terrains, {
+                ...surfaceInput,
+                frustum,
+                elapsedSeconds: options.elapsedSeconds,
+                width,
+                height,
+                sceneTarget,
+                screenReflections: this.reflections.waterScreenReflections,
+            });
+        }
+        if (scripts) {
+            scripts.afterPass('water');
+            sceneTarget.bind();
+        }
         this.terrainGpu.endFrame();
         this.terrainCache.endFrame();
         if (meshesOn)
