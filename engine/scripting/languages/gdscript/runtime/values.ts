@@ -771,3 +771,265 @@ export class Basis {
         return result.scaled(scale);
     }
 }
+export class Transform3D {
+    basis: Basis;
+    origin: Vector3;
+    constructor(basis?: unknown, origin?: unknown) {
+        if (basis instanceof Transform3D) {
+            this.basis = new Basis(basis.basis.x, basis.basis.y, basis.basis.z);
+            this.origin = new Vector3(basis.origin);
+            return;
+        }
+        this.basis = basis instanceof Basis ? basis : basis === undefined || basis === null ? new Basis() : new Basis(basis);
+        this.origin = origin === undefined || origin === null ? new Vector3() : new Vector3(origin);
+    }
+    static get IDENTITY() {
+        return new Transform3D();
+    }
+    xform(vector: VecLike): Vector3 {
+        const rotated = this.basis.xform(vector);
+        return new Vector3(rotated.x + this.origin.x, rotated.y + this.origin.y, rotated.z + this.origin.z);
+    }
+    multiply(other: Transform3D): Transform3D {
+        return new Transform3D(this.basis.multiply(other.basis), this.xform(other.origin));
+    }
+    inverse(): Transform3D {
+        const basis = this.basis.transposed();
+        const origin = basis.xform(this.origin);
+        return new Transform3D(basis, new Vector3(-origin.x, -origin.y, -origin.z));
+    }
+    affine_inverse(): Transform3D {
+        const basis = this.basis.inverse();
+        const origin = basis.xform(this.origin);
+        return new Transform3D(basis, new Vector3(-origin.x, -origin.y, -origin.z));
+    }
+    translated(offset: VecLike): Transform3D {
+        return new Transform3D(this.basis, new Vector3(this.origin.x + offset.x, this.origin.y + offset.y, this.origin.z + (offset.z ?? 0)));
+    }
+    translated_local(offset: VecLike): Transform3D {
+        return new Transform3D(this.basis, this.xform(offset));
+    }
+    rotated(axis: VecLike, angle: number): Transform3D {
+        const rotation = Basis.from_quaternion(Quaternion.fromAxisAngle(axis, angle));
+        return new Transform3D(rotation.multiply(this.basis), rotation.xform(this.origin));
+    }
+    rotated_local(axis: VecLike, angle: number): Transform3D {
+        return new Transform3D(this.basis.rotated(axis, angle), this.origin);
+    }
+    scaled(scale: VecLike): Transform3D {
+        return new Transform3D(this.basis.scaled(scale), new Vector3(this.origin.x * scale.x, this.origin.y * scale.y, this.origin.z * (scale.z ?? 0)));
+    }
+    looking_at(target: VecLike, up: VecLike = new Vector3(0, 1, 0)): Transform3D {
+        const direction = new Vector3(target.x - this.origin.x, target.y - this.origin.y, (target.z ?? 0) - this.origin.z);
+        return new Transform3D(Basis.looking_at(direction, up).scaled(this.basis.get_scale()), this.origin);
+    }
+    orthonormalized(): Transform3D {
+        return new Transform3D(this.basis.orthonormalized(), this.origin);
+    }
+    interpolate_with(to: Transform3D, weight: number): Transform3D {
+        return new Transform3D(this.basis.slerp(to.basis, weight), this.origin.lerp(to.origin, weight));
+    }
+    is_equal_approx(other: Transform3D): boolean {
+        return this.basis.is_equal_approx(other.basis) && this.origin.is_equal_approx(other.origin);
+    }
+}
+const NAMED_COLORS: Record<string, [
+    number,
+    number,
+    number,
+    number
+]> = {
+    BLACK: [0, 0, 0, 1],
+    WHITE: [1, 1, 1, 1],
+    RED: [1, 0, 0, 1],
+    GREEN: [0, 1, 0, 1],
+    BLUE: [0, 0, 1, 1],
+    YELLOW: [1, 1, 0, 1],
+    CYAN: [0, 1, 1, 1],
+    MAGENTA: [1, 0, 1, 1],
+    ORANGE: [1, 0.647059, 0, 1],
+    PURPLE: [0.627451, 0.12549, 0.941176, 1],
+    PINK: [1, 0.752941, 0.796078, 1],
+    BROWN: [0.647059, 0.164706, 0.164706, 1],
+    GRAY: [0.745098, 0.745098, 0.745098, 1],
+    DARK_GRAY: [0.662745, 0.662745, 0.662745, 1],
+    DIM_GRAY: [0.411765, 0.411765, 0.411765, 1],
+    LIGHT_GRAY: [0.827451, 0.827451, 0.827451, 1],
+    SILVER: [0.752941, 0.752941, 0.752941, 1],
+    GOLD: [1, 0.843137, 0, 1],
+    LIME: [0, 1, 0, 1],
+    NAVY_BLUE: [0, 0, 0.501961, 1],
+    SKY_BLUE: [0.529412, 0.807843, 0.921569, 1],
+    DARK_RED: [0.545098, 0, 0, 1],
+    DARK_GREEN: [0, 0.392157, 0, 1],
+    DARK_BLUE: [0, 0, 0.545098, 1],
+    TRANSPARENT: [1, 1, 1, 0],
+};
+export class Color {
+    r: number;
+    g: number;
+    b: number;
+    a: number;
+    constructor(r: unknown = 0, g: unknown = 0, b: unknown = 0, a: unknown = 1) {
+        if (typeof r === 'string') {
+            const parsed = Color.html(r);
+            this.r = parsed.r;
+            this.g = parsed.g;
+            this.b = parsed.b;
+            this.a = typeof g === 'number' ? g : parsed.a;
+            return;
+        }
+        if (r !== null && typeof r === 'object') {
+            const source = r as Partial<Color> & ArrayLike<number>;
+            if (typeof source.r === 'number') {
+                this.r = source.r;
+                this.g = source.g ?? 0;
+                this.b = source.b ?? 0;
+                this.a = typeof g === 'number' ? g : (source.a ?? 1);
+            }
+            else {
+                this.r = Number(source[0] ?? 0);
+                this.g = Number(source[1] ?? 0);
+                this.b = Number(source[2] ?? 0);
+                this.a = typeof g === 'number' ? g : Number(source[3] ?? 1);
+            }
+            return;
+        }
+        this.r = Number(r);
+        this.g = Number(g);
+        this.b = Number(b);
+        this.a = Number(a);
+    }
+    static html(code: string): Color {
+        let hex = code.trim().replace(/^#/, '');
+        if (hex.length === 3 || hex.length === 4)
+            hex = hex.split('').map((char) => char + char).join('');
+        if (!/^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(hex))
+            fail(`Color.html(): "${code}" não é uma cor em hexadecimal (use "#rrggbb" ou "#rrggbbaa").`);
+        const value = (offset: number) => parseInt(hex.slice(offset, offset + 2), 16) / 255;
+        return new Color(value(0), value(2), value(4), hex.length === 8 ? value(6) : 1);
+    }
+    static html_is_valid(code: string): boolean {
+        const hex = code.trim().replace(/^#/, '');
+        return /^[0-9a-fA-F]{3,4}$/.test(hex) || /^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(hex);
+    }
+    static hex(value: number): Color {
+        return new Color(((value >>> 24) & 255) / 255, ((value >>> 16) & 255) / 255, ((value >>> 8) & 255) / 255, (value & 255) / 255);
+    }
+    static from_rgba8(r: number, g: number, b: number, a = 255): Color {
+        return new Color(r / 255, g / 255, b / 255, a / 255);
+    }
+    static from_hsv(h: number, s: number, v: number, a = 1): Color {
+        const i = Math.floor(h * 6);
+        const f = h * 6 - i;
+        const p = v * (1 - s);
+        const q = v * (1 - f * s);
+        const t = v * (1 - (1 - f) * s);
+        switch (((i % 6) + 6) % 6) {
+            case 0:
+                return new Color(v, t, p, a);
+            case 1:
+                return new Color(q, v, p, a);
+            case 2:
+                return new Color(p, v, t, a);
+            case 3:
+                return new Color(p, q, v, a);
+            case 4:
+                return new Color(t, p, v, a);
+            default:
+                return new Color(v, p, q, a);
+        }
+    }
+    static from_string(text: string, fallback: Color): Color {
+        const named = NAMED_COLORS[text.trim().toUpperCase().replace(/\s+/g, '_')];
+        if (named)
+            return new Color(...named);
+        return Color.html_is_valid(text) ? Color.html(text) : fallback;
+    }
+    static named(name: string): Color | null {
+        const named = NAMED_COLORS[name];
+        return named ? new Color(...named) : null;
+    }
+    static get names(): string[] {
+        return Object.keys(NAMED_COLORS);
+    }
+    get h(): number {
+        const max = Math.max(this.r, this.g, this.b);
+        const min = Math.min(this.r, this.g, this.b);
+        const delta = max - min;
+        if (delta === 0)
+            return 0;
+        let h = max === this.r ? (this.g - this.b) / delta : max === this.g ? 2 + (this.b - this.r) / delta : 4 + (this.r - this.g) / delta;
+        h /= 6;
+        return h < 0 ? h + 1 : h;
+    }
+    get s(): number {
+        const max = Math.max(this.r, this.g, this.b);
+        const min = Math.min(this.r, this.g, this.b);
+        return max === 0 ? 0 : (max - min) / max;
+    }
+    get v(): number {
+        return Math.max(this.r, this.g, this.b);
+    }
+    get r8(): number {
+        return Math.round(this.r * 255);
+    }
+    get g8(): number {
+        return Math.round(this.g * 255);
+    }
+    get b8(): number {
+        return Math.round(this.b * 255);
+    }
+    get a8(): number {
+        return Math.round(this.a * 255);
+    }
+    lerp(to: Color, weight: number): Color {
+        return new Color(this.r + (to.r - this.r) * weight, this.g + (to.g - this.g) * weight, this.b + (to.b - this.b) * weight, this.a + (to.a - this.a) * weight);
+    }
+    lightened(amount: number): Color {
+        return new Color(this.r + (1 - this.r) * amount, this.g + (1 - this.g) * amount, this.b + (1 - this.b) * amount, this.a);
+    }
+    darkened(amount: number): Color {
+        return new Color(this.r * (1 - amount), this.g * (1 - amount), this.b * (1 - amount), this.a);
+    }
+    inverted(): Color {
+        return new Color(1 - this.r, 1 - this.g, 1 - this.b, this.a);
+    }
+    clamp(min = new Color(0, 0, 0, 0), max = new Color(1, 1, 1, 1)): Color {
+        return new Color(clampNumber(this.r, min.r, max.r), clampNumber(this.g, min.g, max.g), clampNumber(this.b, min.b, max.b), clampNumber(this.a, min.a, max.a));
+    }
+    blend(over: Color): Color {
+        const alpha = 1 - over.a;
+        const a = this.a * alpha + over.a;
+        if (a === 0)
+            return new Color(0, 0, 0, 0);
+        return new Color((this.r * this.a * alpha + over.r * over.a) / a, (this.g * this.a * alpha + over.g * over.a) / a, (this.b * this.a * alpha + over.b * over.a) / a, a);
+    }
+    to_html(withAlpha = true): string {
+        const hex = (value: number) => Math.round(clampNumber(value, 0, 1) * 255).toString(16).padStart(2, '0');
+        return `${hex(this.r)}${hex(this.g)}${hex(this.b)}${withAlpha ? hex(this.a) : ''}`;
+    }
+    to_rgba32(): number {
+        return ((this.r8 << 24) | (this.g8 << 16) | (this.b8 << 8) | this.a8) >>> 0;
+    }
+    to_abgr32(): number {
+        return ((this.a8 << 24) | (this.b8 << 16) | (this.g8 << 8) | this.r8) >>> 0;
+    }
+    is_equal_approx(other: Color): boolean {
+        return isEqualApprox(this.r, other.r) && isEqualApprox(this.g, other.g) && isEqualApprox(this.b, other.b) && isEqualApprox(this.a, other.a);
+    }
+    luminance(): number {
+        return 0.2126 * this.r + 0.7152 * this.g + 0.0722 * this.b;
+    }
+    srgb_to_linear(): Color {
+        const convert = (value: number) => (value < 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4));
+        return new Color(convert(this.r), convert(this.g), convert(this.b), this.a);
+    }
+    linear_to_srgb(): Color {
+        const convert = (value: number) => (value < 0.0031308 ? 12.92 * value : 1.055 * Math.pow(value, 1 / 2.4) - 0.055);
+        return new Color(convert(this.r), convert(this.g), convert(this.b), this.a);
+    }
+}
+for (const name of Object.keys(NAMED_COLORS)) {
+    Object.defineProperty(Color, name, { get: () => new Color(...NAMED_COLORS[name]), enumerable: true });
+}
