@@ -1,5 +1,6 @@
 import * as vec3 from '@/engine/core/math/vec3';
 import { ensureOutwardWinding, weldPositions, withSmoothNormals } from '../geometry-utils';
+import { IGNORE_PROGRESS, STAGE_GEOMETRY, STAGE_HIERARCHY, STAGE_NORMALS, STAGE_READING, type ImportProgressReporter } from '../import-progress';
 import { baseNameWithoutExtension, createImportedMaterial, createImportedNode, type ImportedScene } from '../import-types';
 const BINARY_HEADER_BYTES = 80;
 const BINARY_TRIANGLE_BYTES = 50;
@@ -63,8 +64,10 @@ function readAscii(text: string): {
     });
     return { soup, name: nameMatch?.[1]?.trim() ?? '' };
 }
-export async function importStl(file: File): Promise<ImportedScene> {
+export async function importStl(file: File, progress: ImportProgressReporter = IGNORE_PROGRESS): Promise<ImportedScene> {
+    progress(0, STAGE_READING);
     const buffer = await file.arrayBuffer();
+    progress(0.1, STAGE_GEOMETRY);
     const warnings: string[] = [];
     const fileName = baseNameWithoutExtension(file.name);
     let soup: Float32Array;
@@ -89,10 +92,13 @@ export async function importStl(file: File): Promise<ImportedScene> {
     }
     if (soup.length < 9)
         throw new Error('O arquivo STL não contém triângulos.');
+    progress(0.45, STAGE_GEOMETRY);
     const welded = weldPositions(soup);
     if (ensureOutwardWinding(welded.positions, welded.indices))
         warnings.push('Faces apontavam para dentro (volume negativo) e foram invertidas.');
+    progress(0.7, STAGE_NORMALS);
     const geometry = withSmoothNormals(name, welded.positions, null, welded.indices);
+    progress(0.95, STAGE_HIERARCHY);
     const node = createImportedNode(name);
     node.meshes.push(0);
     return {
