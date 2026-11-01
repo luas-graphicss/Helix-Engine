@@ -1852,3 +1852,249 @@ const GUI_API = `
     documents(): { key: string; document: GuiDocument; shown: boolean }[]
   }
 `;
+const AUDIO_API = `
+  export type AudioBusId = 'master' | 'music' | 'sfx' | 'ambience' | 'voice' | 'ui'
+  export interface BusSettings { volumeDb: number; muted: boolean; solo: boolean }
+  export interface MixerSettings { buses: Record<AudioBusId, BusSettings>; [key: string]: unknown }
+  export interface AudioClipSettings {
+    bus: AudioBusId
+    volumeDb: number
+    pitch: number
+    pan: number
+    loop: boolean
+    loopStart: number
+    loopEnd: number
+    trimStart: number
+    trimEnd: number
+    fadeIn: { duration: number; curve: string }
+    fadeOut: { duration: number; curve: string }
+    randomPitch: number
+    randomVolumeDb: number
+    effects: Record<string, unknown>
+  }
+  export interface Voice {
+    readonly asset: LibraryAsset
+    readonly playing: boolean
+    readonly state: string
+    readonly position: number
+    readonly duration: number
+    readonly raw: unknown
+    pause(): void
+    resume(): void
+    seek(seconds: number): void
+    stop(fadeSeconds?: number): void
+    setVolumeDb(db: number): void
+    setPitch(semitones: number): void
+    setDetune(cents: number): void
+  }
+  export interface VoiceOptions extends Partial<AudioClipSettings> { randomize?: boolean; position?: Vec3Like; onEnded?: () => void }
+  export interface AudioApi {
+    readonly mixer: {
+      readonly settings: MixerSettings
+      buses(): AudioBusId[]
+      bus(id: AudioBusId): BusSettings
+      setVolumeDb(id: AudioBusId, db: number): void
+      setMuted(id: AudioBusId, muted: boolean): void
+      setSolo(id: AudioBusId, solo: boolean): void
+      apply(): void
+      meter(id: AudioBusId): { peak: number; rms: number } | null
+      readonly limiterReductionDb: number
+      readonly range: { readonly minDb: number; readonly maxDb: number }
+    }
+    readonly sources: {
+      settingsOf(entity: Entity): AudioSourceSettings | null
+      set(entity: Entity, patch: SettingsInput<AudioSourceSettings>): void
+      play(entity: Entity): void
+      stop(entity: Entity): void
+      toggle(entity: Entity): void
+      isPlaying(entity: Entity): boolean
+      status(entity: Entity): { status: string; gain: number; distance: number; occluded: boolean } | null
+      stopAll(fadeSeconds?: number): void
+      all(): Entity[]
+    }
+    readonly zones: {
+      settingsOf(entity: Entity): AudioZoneSettings
+      set(entity: Entity, patch: SettingsInput<AudioZoneSettings>): void
+      readonly active: { entity: Entity; weight: number } | null
+      all(): Entity[]
+    }
+    readonly supported: boolean
+    readonly status: 'idle' | 'unavailable' | 'suspended' | 'running' | 'closed'
+    readonly context: AudioContext | null
+    readonly stats: Record<string, number>
+    readonly voiceCount: number
+    readonly sampleRate: number | null
+    enabled: boolean
+    unlock(): Promise<boolean>
+    play(asset: AssetRef, options?: VoiceOptions): Promise<Voice>
+    playOnce(asset: AssetRef, options?: VoiceOptions): Promise<Voice>
+    loop(asset: AssetRef, options?: VoiceOptions): Promise<Voice>
+    stopAll(fadeSeconds?: number): void
+    readonly activeVoices: number
+    preload(asset: AssetRef): Promise<LibraryAsset>
+    clipSettingsOf(asset: AssetRef): AudioClipSettings
+    createClipSettings(): AudioClipSettings
+    clips(): LibraryAsset[]
+    busInput(bus: AudioBusId): AudioNode
+    readonly analysis: { meter(bus: AudioBusId): { peak: number; rms: number } | null; spectrum(bus: AudioBusId, size?: number): never }
+    readonly synth: { tone(frequency: number, seconds: number): never }
+    readonly export: { render(asset: AssetRef, settings?: Partial<AudioClipSettings>): never }
+    onEnded(handler: (event: { entity: Entity | null; asset: LibraryAsset | null }) => void): Unsubscribe
+  }
+`;
+const ANIMATION_API = `
+  export type BoneRole = 'hips' | 'spine' | 'spine1' | 'spine2' | 'neck' | 'head' | 'leftShoulder' | 'leftArm' | 'leftForeArm' | 'leftHand' | 'rightShoulder' | 'rightArm' | 'rightForeArm' | 'rightHand' | 'leftUpLeg' | 'leftLeg' | 'leftFoot' | 'leftToe' | 'rightUpLeg' | 'rightLeg' | 'rightFoot' | 'rightToe'
+  export type LimbId = 'leftArm' | 'rightArm' | 'leftLeg' | 'rightLeg'
+  export type AnimationPath = 'translation' | 'rotation' | 'scale'
+  export interface AnimationTrack { joint: string; path: AnimationPath; interpolation: 'linear' | 'step' | 'cubic'; times: Float32Array | number[]; values: Float32Array | number[] }
+  export interface AnimationDocument {
+    name: string
+    duration: number
+    loop: boolean
+    frameRate: number | null
+    referenceSpeed: number
+    tracks: readonly AnimationTrack[]
+    skeleton: unknown | null
+    events: { time: number; name: string }[]
+    source: unknown | null
+    createdAt: number
+  }
+  export interface PlayOptions { loop?: boolean; speed?: number; fadeIn?: number; startTime?: number }
+  export interface AnimationPlayerHandle {
+    readonly entity: Entity
+    readonly clip: string | null
+    readonly state: 'stopped' | 'playing' | 'paused'
+    readonly playing: boolean
+    time: number
+    speed: number
+    loop: boolean
+    readonly duration: number
+    readonly phase: number
+    play(clip: AssetRef, options?: PlayOptions): Promise<unknown>
+    pause(): void
+    resume(): void
+    togglePlay(): void
+    stop(): void
+    seek(time: number): void
+    setSpeed(speed: number): void
+    setLoop(loop: boolean): void
+    rest(): void
+    onEvent(handler: (event: { time: number; name: string }, clip: string | null) => void): Unsubscribe
+    exclude(joint: string | BoneRole, excluded?: boolean): void
+  }
+  export interface JointPose { name: string; position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number; w: number }; scale: { x: number; y: number; z: number } }
+  export interface AnimationApi {
+    document(asset: AssetRef): Promise<AnimationDocument>
+    documentSync(asset: AssetRef): AnimationDocument | null
+    clip(entity: Entity, asset: AssetRef): Promise<unknown>
+    player(entity: Entity): AnimationPlayerHandle
+    hasPlayer(entity: Entity): boolean
+    play(entity: Entity, clip: AssetRef, options?: PlayOptions): Promise<unknown>
+    pause(entity: Entity): void
+    resume(entity: Entity): void
+    togglePlay(entity: Entity): void
+    stop(entity: Entity): void
+    seek(entity: Entity, time: number): void
+    setSpeed(entity: Entity, speed: number): void
+    setLoop(entity: Entity, loop: boolean): void
+    rest(entity: Entity): void
+    onEvent(entity: Entity, handler: (event: { time: number; name: string }, clip: string | null) => void): Unsubscribe
+                                                                                                     
+    locomotion(entity: Entity, enabled?: boolean): boolean
+    rig(entity: Entity): { name: string; jointCount: number; joints: { name: string; parent: number; entity: Entity }[]; roles: Partial<Record<BoneRole, string>>; profile: unknown; unitScale: number; limbs: LimbId[] }
+    hasRig(entity: Entity): boolean
+    rigged(): Entity[]
+    roles(): BoneRole[]
+    joint(entity: Entity, joint: string | BoneRole): Entity
+    jointByRole(entity: Entity, role: BoneRole): Entity | null
+    jointWorld(entity: Entity, joint: string | BoneRole): { position: { x: number; y: number; z: number }; rotation: { x: number; y: number; z: number; w: number } }
+                                                                          
+    attach(entity: Entity, target: Entity, joint: string | BoneRole, offset?: { position?: Vec3Like; rotation?: Vec3Like }): Entity
+    evaluate(entity: Entity, time?: number): JointPose[]
+    readonly ik: { limbs(): LimbId[]; available(entity: Entity): LimbId[]; solve(entity: Entity, limb: LimbId, target: Vec3Like, pole?: Vec3Like): boolean }
+    paths(): AnimationPath[]
+    create(name: string, options?: Partial<AnimationDocument>): AnimationDocument
+    setKey(document: AnimationDocument, joint: string, path: AnimationPath, time: number, value: Vec3Like | QuatLike): AnimationDocument
+    addEvent(document: AnimationDocument, time: number, name: string): AnimationDocument
+    setDuration(document: AnimationDocument, seconds: number): AnimationDocument
+    save(document: AnimationDocument, name?: string): Promise<LibraryAsset>
+    tick(dt: number): void
+    readonly playing: number
+  }
+`;
+const VFX_API = `
+  export type VfxModuleKind = 'asset' | 'attractor' | 'collision' | 'colorBySpeed' | 'colorOverLife' | 'drag' | 'force' | 'gravity' | 'limitVelocity' | 'noise' | 'orbit' | 'rotationOverLife' | 'sizeBySpeed' | 'sizeOverLife' | 'velocityOverLife' | 'vortex'
+  export interface VfxEmitter {
+    id: string
+    name: string
+    enabled: boolean
+    delay: number
+    duration: number
+    loop: boolean
+    maxParticles: number
+    space: 'local' | 'world'
+    spawn: Record<string, unknown>
+    shape: Record<string, unknown>
+    initial: Record<string, unknown>
+    modules: { id: string; kind: VfxModuleKind; enabled: boolean; [key: string]: unknown }[]
+    renderer: Record<string, unknown>
+    tint: Vec3 | number[]
+  }
+  export interface VfxDocument { name: string; duration: number; loop: boolean; prewarm: boolean; scale: number; cullRadius: number; emitters: VfxEmitter[]; [key: string]: unknown }
+  export interface VfxParticles {
+    readonly emitter: string
+    readonly count: number
+    readonly capacity: number
+    readonly positions: Float32Array
+    readonly velocities: Float32Array
+    readonly ages: Float32Array
+    readonly lifetimes: Float32Array
+    readonly sizes: Float32Array
+    readonly colors: Float32Array
+  }
+  export type EmitterRef = string | number | VfxEmitter
+  export interface VfxApi {
+    settings(entity: Entity, patch?: Partial<VfxSettings>): VfxSettings
+    has(entity: Entity): boolean
+    attach(entity: Entity, asset: AssetRef, patch?: Partial<VfxSettings>): VfxSettings
+    detach(entity: Entity): boolean
+    setEffect(entity: Entity, asset: AssetRef): VfxSettings
+    play(entity: Entity): void
+    pause(entity: Entity): void
+    resume(entity: Entity): void
+    stop(entity: Entity): void
+    restart(entity: Entity): void
+    reset(): void
+    state(entity: Entity): string
+    isPlaying(entity: Entity): boolean
+    alive(entity?: Entity): number
+    time(entity: Entity): number
+    instance(entity: Entity): unknown | null
+    burst(entity: Entity, count: number, emitter?: EmitterRef): number
+                                                                                                       
+    emitAt(asset: AssetRef, position: Vec3Like, options?: Partial<VfxSettings> & { parent?: Entity; destroyWhenFinished?: boolean }): Entity
+    setParam(entity: Entity, path: string, value: unknown): VfxDocument
+    stats(): { effects: number; playing: number; particles: number; budget: number; pending: number }
+    document(asset: AssetRef): Promise<VfxDocument>
+    create(name: string, patch?: Partial<VfxDocument>): VfxDocument
+    fromTemplate(id: string, name?: string): VfxDocument
+    readonly templates: { list(): { id: string; label: string; description: string; category: string }[]; ids(): string[] }
+    readonly textures: { list(): { kind: 'builtin' | 'asset'; id: string; label: string }[]; builtin(id: string): { kind: 'builtin'; id: string }; asset(asset: AssetRef): { kind: 'asset'; assetId: string } }
+    moduleKinds(): VfxModuleKind[]
+    modules(): { kind: VfxModuleKind; label: string; description: string; category: string }[]
+    shapes(): string[]
+    renderModes(): string[]
+    blendModes(): string[]
+    addEmitter(document: VfxDocument, patch?: Partial<VfxEmitter>): VfxDocument
+    removeEmitter(document: VfxDocument, emitter: EmitterRef): VfxDocument
+    setEmitter(document: VfxDocument, emitter: EmitterRef, patch: Partial<VfxEmitter>): VfxDocument
+    addModule(document: VfxDocument, emitter: EmitterRef, kind: VfxModuleKind, patch?: Record<string, unknown>): VfxDocument
+    removeModule(document: VfxDocument, emitter: EmitterRef, moduleId: string): VfxDocument
+    setModule(document: VfxDocument, emitter: EmitterRef, moduleId: string, patch: Record<string, unknown>): VfxDocument
+    set(document: VfxDocument, patch: Partial<VfxDocument>): VfxDocument
+    toJson(document: VfxDocument): string
+    fromJson(text: string, name?: string): VfxDocument
+    save(document: VfxDocument, name?: string): Promise<LibraryAsset>
+    particles(entity: Entity, emitter?: EmitterRef): VfxParticles | null
+  }
+`;
