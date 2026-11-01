@@ -262,3 +262,245 @@ for (const [ctor, name] of [
     markScriptClass(ctor, name);
     setGodotBase(ctor, 'Tweener');
 }
+export class Tween extends GodotObject {
+    static readonly TRANS_LINEAR = TRANS.LINEAR;
+    static readonly TRANS_SINE = TRANS.SINE;
+    static readonly TRANS_QUINT = TRANS.QUINT;
+    static readonly TRANS_QUART = TRANS.QUART;
+    static readonly TRANS_QUAD = TRANS.QUAD;
+    static readonly TRANS_EXPO = TRANS.EXPO;
+    static readonly TRANS_ELASTIC = TRANS.ELASTIC;
+    static readonly TRANS_CUBIC = TRANS.CUBIC;
+    static readonly TRANS_CIRC = TRANS.CIRC;
+    static readonly TRANS_BOUNCE = TRANS.BOUNCE;
+    static readonly TRANS_BACK = TRANS.BACK;
+    static readonly TRANS_SPRING = TRANS.SPRING;
+    static readonly EASE_IN = EASE.IN;
+    static readonly EASE_OUT = EASE.OUT;
+    static readonly EASE_IN_OUT = EASE.IN_OUT;
+    static readonly EASE_OUT_IN = EASE.OUT_IN;
+    static readonly TWEEN_PROCESS_PHYSICS = 0;
+    static readonly TWEEN_PROCESS_IDLE = 1;
+    static readonly TWEEN_PAUSE_BOUND = 0;
+    static readonly TWEEN_PAUSE_STOP = 1;
+    static readonly TWEEN_PAUSE_PROCESS = 2;
+    trans: number = TRANS.LINEAR;
+    easing: number = EASE.IN_OUT;
+    private steps: Tweener[][] = [];
+    private stepIndex = 0;
+    private parallelDefault = false;
+    private nextParallel = false;
+    private loops = 1;
+    private loopsDone = 0;
+    private speed = 1;
+    private running = true;
+    private valid = true;
+    private startedOnce = false;
+    private boundNode: {
+        $freed: boolean;
+    } | null;
+    private readonly signals = { finished: new Signal(this, 'finished'), step_finished: new Signal(this, 'step_finished'), loop_finished: new Signal(this, 'loop_finished') };
+    constructor(readonly $game: GameContext, bound: {
+        $freed: boolean;
+    } | null = null) {
+        super({ entity: null, helix: $game.helix, script: null });
+        this.boundNode = bound;
+        $game.tweens.add(this);
+    }
+    get finished(): Signal {
+        return this.signals.finished;
+    }
+    get step_finished(): Signal {
+        return this.signals.step_finished;
+    }
+    get loop_finished(): Signal {
+        return this.signals.loop_finished;
+    }
+    private requireValid(where: string): void {
+        if (!this.valid)
+            fail(`Tween.${where}(): este Tween já foi encerrado (kill) ou terminou; crie outro com create_tween().`);
+    }
+    private push(tweener: Tweener): void {
+        const parallel = this.parallelDefault || this.nextParallel;
+        this.nextParallel = false;
+        if (parallel && this.steps.length > 0)
+            this.steps[this.steps.length - 1].push(tweener);
+        else
+            this.steps.push([tweener]);
+    }
+    tween_property(object: unknown, property: unknown, finalValue: unknown, duration: unknown): PropertyTweener {
+        this.requireValid('tween_property');
+        if (object === null || typeof object !== 'object')
+            fail(`Tween.tween_property(): o alvo precisa ser um objeto, recebeu ${object === null ? 'null' : typeof object}.`);
+        if (typeof property !== 'string' || property.length === 0)
+            fail('Tween.tween_property(): a propriedade precisa ser um NodePath/String como "position" ou "position:x".');
+        const tweener = new PropertyTweener(this, object, property.startsWith(':') ? property.slice(1) : property, finalValue, Math.max(0, Number(duration)));
+        this.push(tweener);
+        return tweener;
+    }
+    tween_interval(seconds: unknown): IntervalTweener {
+        this.requireValid('tween_interval');
+        const tweener = new IntervalTweener(this, Math.max(0, Number(seconds)));
+        this.push(tweener);
+        return tweener;
+    }
+    tween_callback(callable: unknown): CallbackTweener {
+        this.requireValid('tween_callback');
+        if (typeof callable !== 'function')
+            fail('Tween.tween_callback(): esperava um Callable (obj.metodo ou func).');
+        const tweener = new CallbackTweener(this, callable as Fn);
+        this.push(tweener);
+        return tweener;
+    }
+    tween_method(callable: unknown, from: unknown, to: unknown, duration: unknown): MethodTweener {
+        this.requireValid('tween_method');
+        if (typeof callable !== 'function')
+            fail('Tween.tween_method(): esperava um Callable (obj.metodo ou func).');
+        const tweener = new MethodTweener(this, callable as Fn, from, to, Math.max(0, Number(duration)));
+        this.push(tweener);
+        return tweener;
+    }
+    set_parallel(parallel: unknown = true): this {
+        this.parallelDefault = Boolean(parallel);
+        return this;
+    }
+    parallel(): this {
+        this.nextParallel = true;
+        return this;
+    }
+    chain(): this {
+        this.nextParallel = false;
+        this.parallelDefault = false;
+        return this;
+    }
+    set_loops(loops: unknown = 0): this {
+        const count = Number(loops);
+        this.loops = count <= 0 ? Infinity : Math.floor(count);
+        return this;
+    }
+    get_loops_left(): number {
+        return this.loops === Infinity ? -1 : Math.max(0, this.loops - this.loopsDone);
+    }
+    set_trans(trans: unknown): this {
+        this.trans = Number(trans);
+        return this;
+    }
+    set_ease(easing: unknown): this {
+        this.easing = Number(easing);
+        return this;
+    }
+    set_speed_scale(speed: unknown): this {
+        this.speed = Math.max(0, Number(speed));
+        return this;
+    }
+    set_process_mode(_mode: unknown): this {
+        return this;
+    }
+    set_pause_mode(_mode: unknown): this {
+        return this;
+    }
+    set_ignore_time_scale(_ignore: unknown = true): this {
+        return this;
+    }
+    bind_node(node: unknown): this {
+        if (node !== null && typeof node === 'object' && '$freed' in node)
+            this.boundNode = node as {
+                $freed: boolean;
+            };
+        return this;
+    }
+    get_total_elapsed_time(): number {
+        return this.totalElapsed;
+    }
+    private totalElapsed = 0;
+    pause(): void {
+        this.running = false;
+    }
+    play(): void {
+        this.requireValid('play');
+        this.running = true;
+    }
+    stop(): void {
+        this.running = false;
+        this.stepIndex = 0;
+        this.loopsDone = 0;
+        this.totalElapsed = 0;
+        for (const step of this.steps)
+            for (const tweener of step)
+                tweener.reset();
+    }
+    kill(): void {
+        this.valid = false;
+        this.running = false;
+        this.$game.tweens.delete(this);
+    }
+    is_running(): boolean {
+        return this.valid && this.running;
+    }
+    is_valid(): boolean {
+        return this.valid;
+    }
+    custom_step(delta: unknown): boolean {
+        return this.step(Number(delta));
+    }
+    step(delta: number): boolean {
+        if (!this.valid)
+            return false;
+        if (this.boundNode?.$freed) {
+            this.kill();
+            return false;
+        }
+        if (!this.running)
+            return true;
+        if (this.steps.length === 0) {
+            if (this.startedOnce)
+                return true;
+            this.startedOnce = true;
+            this.finish();
+            return false;
+        }
+        this.startedOnce = true;
+        let remaining = delta * this.speed;
+        this.totalElapsed += remaining;
+        while (remaining > 0 || this.currentStepDone()) {
+            const step = this.steps[this.stepIndex];
+            let leftover = Infinity;
+            for (const tweener of step)
+                leftover = Math.min(leftover, tweener.advance(remaining));
+            if (!this.currentStepDone())
+                return true;
+            this.signals.step_finished.emit(this.stepIndex);
+            this.stepIndex++;
+            remaining = leftover === Infinity ? 0 : leftover;
+            if (this.stepIndex >= this.steps.length) {
+                this.loopsDone++;
+                this.signals.loop_finished.emit(this.loopsDone - 1);
+                if (this.loopsDone >= this.loops) {
+                    this.finish();
+                    return false;
+                }
+                this.stepIndex = 0;
+                for (const inner of this.steps)
+                    for (const tweener of inner)
+                        tweener.reset();
+                if (remaining <= 0)
+                    return true;
+            }
+            if (!this.valid)
+                return false;
+        }
+        return true;
+    }
+    private currentStepDone(): boolean {
+        const step = this.steps[this.stepIndex];
+        return step !== undefined && step.every((tweener) => tweener.done);
+    }
+    private finish(): void {
+        this.valid = false;
+        this.running = false;
+        this.$game.tweens.delete(this);
+        this.signals.finished.emit();
+    }
+}
+markScriptClass(Tween, 'Tween');
+setGodotBase(Tween, 'Tween');
