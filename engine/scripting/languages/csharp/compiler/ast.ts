@@ -549,3 +549,176 @@ export interface ThrowExpression extends ExpressionBase {
     readonly kind: 'throwExpression';
     readonly expression: Expression;
 }
+export type InterpolatedPart = {
+    readonly kind: 'text';
+    readonly value: string;
+} | {
+    readonly kind: 'expression';
+    readonly expression: Expression;
+    readonly alignment: number | null;
+    readonly format: string | null;
+};
+export interface InterpolatedExpression extends ExpressionBase {
+    readonly kind: 'interpolated';
+    readonly parts: readonly InterpolatedPart[];
+}
+export interface TupleExpression extends ExpressionBase {
+    readonly kind: 'tuple';
+    readonly elements: ReadonlyArray<{
+        readonly name: string | null;
+        readonly value: Expression;
+    }>;
+}
+export interface SwitchArm {
+    readonly pattern: Pattern;
+    readonly guard: Expression | null;
+    readonly result: Expression;
+    readonly span: SourceSpan;
+}
+export interface SwitchExpression extends ExpressionBase {
+    readonly kind: 'switchExpression';
+    readonly value: Expression;
+    readonly arms: readonly SwitchArm[];
+}
+export interface RangeExpression extends ExpressionBase {
+    readonly kind: 'range';
+    readonly start: Expression | null;
+    readonly end: Expression | null;
+}
+export interface FromEndExpression extends ExpressionBase {
+    readonly kind: 'fromEnd';
+    readonly operand: Expression;
+}
+export type TypeTest = {
+    readonly kind: 'primitive';
+    readonly name: string;
+} | {
+    readonly kind: 'runtime';
+    readonly name: string;
+} | {
+    readonly kind: 'script';
+    readonly name: string;
+    readonly jsName: string;
+    readonly sibling: string | null;
+} | {
+    readonly kind: 'array';
+} | {
+    readonly kind: 'any';
+};
+export type Pattern = {
+    readonly kind: 'constant';
+    readonly expression: Expression;
+    readonly span: SourceSpan;
+} | {
+    readonly kind: 'declaration';
+    readonly type: TypeRef;
+    readonly name: string | null;
+    readonly span: SourceSpan;
+    jsName?: string;
+    typeTest?: TypeTest;
+} | {
+    readonly kind: 'var';
+    readonly name: string | null;
+    readonly names: readonly string[] | null;
+    readonly span: SourceSpan;
+    jsName?: string;
+    jsNames?: string[];
+} | {
+    readonly kind: 'type';
+    readonly type: TypeRef;
+    readonly span: SourceSpan;
+    typeTest?: TypeTest;
+} | {
+    readonly kind: 'relational';
+    readonly operator: '<' | '>' | '<=' | '>=';
+    readonly expression: Expression;
+    readonly span: SourceSpan;
+} | {
+    readonly kind: 'not';
+    readonly pattern: Pattern;
+    readonly span: SourceSpan;
+} | {
+    readonly kind: 'and';
+    readonly left: Pattern;
+    readonly right: Pattern;
+    readonly span: SourceSpan;
+} | {
+    readonly kind: 'or';
+    readonly left: Pattern;
+    readonly right: Pattern;
+    readonly span: SourceSpan;
+} | {
+    readonly kind: 'property';
+    readonly type: TypeRef | null;
+    readonly properties: ReadonlyArray<{
+        readonly name: string;
+        readonly pattern: Pattern;
+    }>;
+    readonly designation: string | null;
+    readonly span: SourceSpan;
+    jsName?: string;
+    typeTest?: TypeTest;
+} | {
+    readonly kind: 'positional';
+    readonly type: TypeRef | null;
+    readonly elements: readonly Pattern[];
+    readonly designation: string | null;
+    readonly span: SourceSpan;
+    jsName?: string;
+    typeTest?: TypeTest;
+} | {
+    readonly kind: 'discard';
+    readonly span: SourceSpan;
+};
+export function patternBindings(pattern: Pattern, out: string[] = []): string[] {
+    switch (pattern.kind) {
+        case 'declaration':
+            if (pattern.name)
+                out.push(pattern.name);
+            break;
+        case 'var':
+            if (pattern.name)
+                out.push(pattern.name);
+            if (pattern.names)
+                for (const name of pattern.names)
+                    if (name !== '_')
+                        out.push(name);
+            break;
+        case 'not':
+            patternBindings(pattern.pattern, out);
+            break;
+        case 'and':
+        case 'or':
+            patternBindings(pattern.left, out);
+            patternBindings(pattern.right, out);
+            break;
+        case 'property':
+            for (const property of pattern.properties)
+                patternBindings(property.pattern, out);
+            if (pattern.designation)
+                out.push(pattern.designation);
+            break;
+        case 'positional':
+            for (const element of pattern.elements)
+                patternBindings(element, out);
+            if (pattern.designation)
+                out.push(pattern.designation);
+            break;
+        default:
+            break;
+    }
+    return out;
+}
+export const STATIC_TYPES = {
+    int: { kind: 'int' } as StaticType,
+    float: { kind: 'float' } as StaticType,
+    bool: { kind: 'bool' } as StaticType,
+    string: { kind: 'string' } as StaticType,
+    char: { kind: 'char' } as StaticType,
+    null: { kind: 'null' } as StaticType,
+    void: { kind: 'void' } as StaticType,
+    engine: { kind: 'engine' } as StaticType,
+    dynamic: { kind: 'dynamic' } as StaticType,
+    delegate: { kind: 'delegate', params: null, returns: null } as StaticType,
+    task: { kind: 'task', result: null } as StaticType,
+} as const;
