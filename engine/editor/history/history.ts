@@ -1,10 +1,27 @@
 import type { Command } from './command';
 const MERGE_WINDOW_MS = 1200;
+export interface HistoryOptions {
+    limit?: number;
+    isDragging?: () => boolean;
+    onLiveChange?: (command: Command) => void;
+}
 export class History {
     private readonly undoStack: Command[] = [];
     private readonly redoStack: Command[] = [];
     private lastPushTime = -Infinity;
-    constructor(private readonly onChange: () => void, private readonly limit = 200) { }
+    private readonly limit: number;
+    private readonly isDragging: () => boolean;
+    private readonly onLiveChange: ((command: Command) => void) | null;
+    private pendingLive: Command | null = null;
+    revision = 0;
+    constructor(private readonly onChange: (command?: Command) => void, options: HistoryOptions = {}) {
+        this.limit = options.limit ?? 200;
+        this.isDragging = options.isDragging ?? (() => false);
+        this.onLiveChange = options.onLiveChange ?? null;
+    }
+    get liveEditPending(): boolean {
+        return this.pendingLive !== null;
+    }
     get canUndo(): boolean {
         return this.undoStack.length > 0;
     }
@@ -16,6 +33,12 @@ export class History {
     }
     get redoLabel(): string | null {
         return this.redoStack.at(-1)?.label ?? null;
+    }
+    get undoDepth(): number {
+        return this.undoStack.length;
+    }
+    get redoDepth(): number {
+        return this.redoStack.length;
     }
     execute(command: Command): void {
         command.execute();
@@ -33,7 +56,37 @@ export class History {
                 this.undoStack.shift();
         }
         this.lastPushTime = now;
-        this.onChange();
+        this.revision++;
+        if (command.mergeKey !== undefined && this.onLiveChange && this.isDragging()) {
+            this.pendingLive = canMerge && top ? top : command;
+            this.onLiveChange(command);
+            return;
+        }
+        this.flushLive(command);
+    }
+    endLive(): void {
+        if (!this.pendingLive)
+            return;
+        const command = this.pendingLive;
+        this.pendingLive = null;
+        this.lastPushTime = -Infinity;
+        this.onChange(command);
+    }
+    private flushLive(command: Command | undefined): void {
+        const pending = this.pendingLive;
+        this.pendingLive = null;
+        if (pending && pending !== command)
+            this.onChange(pending);
+        this.onChange(command);
+    }
+    commit(command: Command): void {
+        this.redoStack.length = 0;
+        this.undoStack.push(command);
+        if (this.undoStack.length > this.limit)
+            this.undoStack.shift();
+        this.lastPushTime = -Infinity;
+        this.revision++;
+        this.flushLive(command);
     }
     undo(): void {
         const command = this.undoStack.pop();
@@ -42,7 +95,8 @@ export class History {
         command.undo();
         this.redoStack.push(command);
         this.lastPushTime = -Infinity;
-        this.onChange();
+        this.revision++;
+        this.flushLive(command);
     }
     redo(): void {
         const command = this.redoStack.pop();
@@ -51,7 +105,8 @@ export class History {
         command.execute();
         this.undoStack.push(command);
         this.lastPushTime = -Infinity;
-        this.onChange();
+        this.revision++;
+        this.flushLive(command);
     }
     endMerge(): void {
         this.lastPushTime = -Infinity;
@@ -60,6 +115,6 @@ export class History {
         this.undoStack.length = 0;
         this.redoStack.length = 0;
         this.lastPushTime = -Infinity;
-        this.onChange();
+        this.flushLive(undefined);
     }
 }
