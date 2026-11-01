@@ -4,12 +4,24 @@ import type { RigidBodySettings } from '@/engine/physics/body/rigid-body-setting
 import type { Terrain } from '@/engine/terrain/core/terrain';
 import type { CharacterSettings } from '@/engine/character/character-settings';
 import type { CsgBrushSettings, CsgSettings } from '@/engine/geometry/csg/csg-settings';
+import type { AudioSourceSettings } from '@/engine/audio/world/audio-source-settings';
+import type { AudioZoneSettings } from '@/engine/audio/world/audio-zone-settings';
+import type { GuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings';
+import type { VfxSettings } from '@/engine/vfx/vfx-settings';
+import type { ScriptSettings } from '@/engine/scripting/script-settings';
 import { Transform } from './transform';
 import type { Material } from './material';
 import type { Light } from './light';
 import type { Skin } from './skin';
 import type { Rig } from './rig';
-export type EntityKind = 'group' | 'mesh' | 'light' | 'camera' | 'terrain' | 'character';
+export type EntityKind = 'group' | 'mesh' | 'light' | 'camera' | 'terrain' | 'character' | 'sound' | 'gui' | 'vfx' | 'script';
+export type EntityMetaValue = string | number | boolean | null | EntityMetaValue[] | {
+    [key: string]: EntityMetaValue;
+};
+let treeGeneration = 0;
+export function entityTreeGeneration(): number {
+    return treeGeneration;
+}
 export interface EntityOptions {
     id: number;
     name: string;
@@ -24,6 +36,11 @@ export interface EntityOptions {
     rig?: Rig;
     csg?: CsgSettings;
     csgBrush?: CsgBrushSettings;
+    audioSource?: AudioSourceSettings;
+    audioZone?: AudioZoneSettings;
+    guiSurface?: GuiSurfaceSettings;
+    vfx?: VfxSettings;
+    script?: ScriptSettings;
     castShadows?: boolean;
     receiveShadows?: boolean;
     locked?: boolean;
@@ -48,9 +65,16 @@ export class Entity {
     rig: Rig | null;
     csg: CsgSettings | null;
     csgBrush: CsgBrushSettings | null;
+    audioSource: AudioSourceSettings | null;
+    audioZone: AudioZoneSettings | null;
+    guiSurface: GuiSurfaceSettings | null;
+    vfx: VfxSettings | null;
+    script: ScriptSettings | null;
     castShadows: boolean;
     receiveShadows: boolean;
     locked: boolean;
+    readonly tags = new Set<string>();
+    meta: Record<string, EntityMetaValue> = {};
     constructor(options: EntityOptions) {
         this.id = options.id;
         this.name = options.name;
@@ -65,6 +89,11 @@ export class Entity {
         this.rig = options.rig ?? null;
         this.csg = options.csg ?? null;
         this.csgBrush = options.csgBrush ?? null;
+        this.audioSource = options.audioSource ?? null;
+        this.audioZone = options.audioZone ?? null;
+        this.guiSurface = options.guiSurface ?? null;
+        this.vfx = options.vfx ?? null;
+        this.script = options.script ?? null;
         this.castShadows = options.castShadows ?? true;
         this.receiveShadows = options.receiveShadows ?? true;
         this.locked = options.locked ?? false;
@@ -78,6 +107,7 @@ export class Entity {
         child.worldMatrixStale = true;
         const clamped = Math.max(0, Math.min(index, this.children.length));
         this.children.splice(clamped, 0, child);
+        treeGeneration++;
         return child;
     }
     remove(child: Entity): void {
@@ -86,6 +116,7 @@ export class Entity {
             return;
         this.children.splice(index, 1);
         child.parent = null;
+        treeGeneration++;
     }
     contains(other: Entity): boolean {
         let current: Entity | null = other;
