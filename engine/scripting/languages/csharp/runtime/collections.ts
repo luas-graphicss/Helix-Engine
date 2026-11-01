@@ -467,3 +467,227 @@ export const LINQ: Record<string, (source: Iterable<unknown>, ...args: unknown[]
         return List.from(toArray(source).map((item, index) => new Tuple([index, item], ['Index', 'Item'])));
     },
 };
+export class List {
+    $items: unknown[] = [];
+    constructor(capacityOrItems?: unknown) {
+        if (capacityOrItems !== undefined && capacityOrItems !== null && typeof capacityOrItems !== 'number')
+            this.$items = toArray(iterate(capacityOrItems, 'new List'));
+    }
+    static from(items: Iterable<unknown>): List {
+        const list = new List();
+        list.$items = toArray(items).slice();
+        return list;
+    }
+    get Count(): number {
+        return this.$items.length;
+    }
+    get Capacity(): number {
+        return this.$items.length;
+    }
+    $at(index: unknown): unknown {
+        const position = this.$position(index, 'o índice');
+        return this.$items[position];
+    }
+    $set(index: unknown, value: unknown): void {
+        const position = this.$position(index, 'o índice');
+        this.$items[position] = value;
+    }
+    private $position(index: unknown, what: string): number {
+        const position = Number(index);
+        if (!Number.isInteger(position) || position < 0 || position >= this.$items.length) {
+            throw new ArgumentOutOfRangeException('index', `${what} ${str(index)} está fora da lista (Count = ${this.$items.length}).`);
+        }
+        return position;
+    }
+    Add(item: unknown): void {
+        this.$items.push(item);
+    }
+    AddRange(items: unknown): void {
+        this.$items.push(...toArray(iterate(items, 'AddRange')));
+    }
+    Insert(index: unknown, item: unknown): void {
+        const position = Number(index);
+        if (!Number.isInteger(position) || position < 0 || position > this.$items.length)
+            throw new ArgumentOutOfRangeException('index', `Insert: índice ${str(index)} fora da lista.`);
+        this.$items.splice(position, 0, item);
+    }
+    InsertRange(index: unknown, items: unknown): void {
+        const position = Number(index);
+        if (!Number.isInteger(position) || position < 0 || position > this.$items.length)
+            throw new ArgumentOutOfRangeException('index', `InsertRange: índice ${str(index)} fora da lista.`);
+        this.$items.splice(position, 0, ...toArray(iterate(items, 'InsertRange')));
+    }
+    Remove(item: unknown): boolean {
+        const index = this.IndexOf(item);
+        if (index < 0)
+            return false;
+        this.$items.splice(index, 1);
+        return true;
+    }
+    RemoveAt(index: unknown): void {
+        const position = this.$position(index, 'RemoveAt: o índice');
+        this.$items.splice(position, 1);
+    }
+    RemoveRange(index: unknown, count: unknown): void {
+        const start = this.$position(index, 'RemoveRange: o índice');
+        this.$items.splice(start, Math.max(0, Number(count)));
+    }
+    RemoveAll(predicate: unknown): number {
+        const test = requireFunction(predicate, 'RemoveAll');
+        const before = this.$items.length;
+        this.$items = this.$items.filter((item) => !test(item));
+        return before - this.$items.length;
+    }
+    Clear(): void {
+        this.$items.length = 0;
+    }
+    Contains(item: unknown): boolean {
+        return this.IndexOf(item) >= 0;
+    }
+    IndexOf(item: unknown, start = 0): number {
+        for (let index = Math.max(0, Number(start)); index < this.$items.length; index++)
+            if (equals(this.$items[index], item))
+                return index;
+        return -1;
+    }
+    LastIndexOf(item: unknown): number {
+        for (let index = this.$items.length - 1; index >= 0; index--)
+            if (equals(this.$items[index], item))
+                return index;
+        return -1;
+    }
+    Find(predicate: unknown): unknown {
+        const test = requireFunction(predicate, 'Find');
+        for (const item of this.$items)
+            if (test(item))
+                return item;
+        return null;
+    }
+    FindLast(predicate: unknown): unknown {
+        const test = requireFunction(predicate, 'FindLast');
+        for (let index = this.$items.length - 1; index >= 0; index--)
+            if (test(this.$items[index]))
+                return this.$items[index];
+        return null;
+    }
+    FindIndex(predicate: unknown): number {
+        const test = requireFunction(predicate, 'FindIndex');
+        return this.$items.findIndex((item) => Boolean(test(item)));
+    }
+    FindLastIndex(predicate: unknown): number {
+        const test = requireFunction(predicate, 'FindLastIndex');
+        for (let index = this.$items.length - 1; index >= 0; index--)
+            if (test(this.$items[index]))
+                return index;
+        return -1;
+    }
+    FindAll(predicate: unknown): List {
+        const test = requireFunction(predicate, 'FindAll');
+        return List.from(this.$items.filter((item) => Boolean(test(item))));
+    }
+    Exists(predicate: unknown): boolean {
+        const test = requireFunction(predicate, 'Exists');
+        return this.$items.some((item) => Boolean(test(item)));
+    }
+    TrueForAll(predicate: unknown): boolean {
+        const test = requireFunction(predicate, 'TrueForAll');
+        return this.$items.every((item) => Boolean(test(item)));
+    }
+    ForEach(action: unknown): void {
+        const fn = requireFunction(action, 'ForEach');
+        for (const item of this.$items.slice())
+            fn(item);
+    }
+    Sort(comparison?: unknown): void {
+        if (comparison === undefined || comparison === null) {
+            this.$items.sort(compare);
+            return;
+        }
+        if (typeof comparison === 'function') {
+            this.$items.sort((a, b) => Number((comparison as Fn)(a, b)));
+            return;
+        }
+        const comparer = (comparison as {
+            Compare?: unknown;
+        }).Compare;
+        if (typeof comparer === 'function') {
+            this.$items.sort((a, b) => Number((comparer as Fn).call(comparison, a, b)));
+            return;
+        }
+        throw new ArgumentException('Sort espera uma função de comparação (a, b) => int ou um IComparer.');
+    }
+    Reverse(): void {
+        this.$items.reverse();
+    }
+    GetRange(index: unknown, count: unknown): List {
+        const start = this.$position(index, 'GetRange: o índice');
+        const amount = Number(count);
+        if (!Number.isInteger(amount) || amount < 0 || start + amount > this.$items.length)
+            throw new ArgumentException(`GetRange: ${str(count)} elementos a partir de ${start} passam do fim da lista.`);
+        return List.from(this.$items.slice(start, start + amount));
+    }
+    CopyTo(array: unknown, arrayIndex: unknown = 0): void {
+        if (!Array.isArray(array))
+            throw new ArgumentException('CopyTo espera um array de destino.');
+        const start = Number(arrayIndex);
+        this.$items.forEach((item, index) => {
+            array[start + index] = item;
+        });
+    }
+    ToArray(): unknown[] {
+        return this.$items.slice();
+    }
+    AsReadOnly(): List {
+        return this;
+    }
+    TrimExcess(): void { }
+    Equals(other: unknown): boolean {
+        return this === other;
+    }
+    [Symbol.iterator](): Iterator<unknown> {
+        return this.$items[Symbol.iterator]();
+    }
+    GetEnumerator(): Iterator<unknown> {
+        return this[Symbol.iterator]();
+    }
+    ToString(): string {
+        return `[${this.$items.map((item) => str(item)).join(', ')}]`;
+    }
+    get [TYPE_NAME](): string {
+        return 'List';
+    }
+}
+export class OrderedList extends List {
+    $sortKeys: SortKey[] = [];
+    $sourceItems: unknown[] = [];
+    static sort(source: Iterable<unknown>, keys: SortKey[]): OrderedList {
+        const items = toArray(source).map((item, index) => ({ item, index, keys: keys.map((key) => key.selector(item, index)) }));
+        items.sort((a, b) => {
+            for (let position = 0; position < keys.length; position++) {
+                const result = compare(a.keys[position], b.keys[position]);
+                if (result !== 0)
+                    return keys[position].descending ? -result : result;
+            }
+            return a.index - b.index;
+        });
+        const list = new OrderedList();
+        list.$items = items.map((entry) => entry.item);
+        list.$sortKeys = keys;
+        list.$sourceItems = toArray(source);
+        return list;
+    }
+}
+export class Grouping extends List {
+    readonly Key: unknown;
+    constructor(key: unknown) {
+        super();
+        this.Key = key;
+    }
+    get [TYPE_NAME](): string {
+        return 'Grouping';
+    }
+}
+interface Entry {
+    readonly key: unknown;
+    value: unknown;
+}
