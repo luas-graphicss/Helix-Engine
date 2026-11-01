@@ -844,5 +844,211 @@ async function dadosEProjeto() {
 
   checar("play.state", helix.play.state === "playing" && helix.play.isRunning)
   checar("play.timeScale", helix.play.timeScale === helix.time.scale)
+  checar("play.elapsed", helix.play.elapsed >= 0)
+}
+
+async function salvamentos() {
+  const alvo = helix.scene.find("CaixaFurada")${t('!')}
+  const prefab = await helix.scene.saveAsPrefab(alvo, "DebugPrefab")
+  checar("saveAsPrefab", prefab.name.startsWith("DebugPrefab"), prefab.kind)
+  const instancia = await helix.scene.instantiatePrefab(prefab)
+  helix.transform.setPosition(instancia, [7, 0.5, 4])
+  checar("instantiatePrefab", helix.scene.isAttached(instancia))
+  const modelo = await helix.mesh.toModelAsset(helix.mesh.torusKnot(0.5, 0.15), "DebugModelo")
+  checar("toModelAsset", modelo.kind === "model")
+  const malha = await helix.mesh.fromModelAsset(modelo)
+  checar("fromModelAsset", helix.mesh.triangleCount(malha) > 0)
+  const no = await helix.scene.instantiate(modelo, { position: [-7, 1, -4], name: "NoDoModelo" })
+  checar("scene.instantiate", helix.scene.isAttached(no))
+  const doc = helix.animation.setKey(helix.animation.create("DebugClipe", { duration: 1 }), "hips", "rotation", 0, [0, 0, 0, 1])
+  const clipe = await helix.animation.save(doc, "DebugClipe")
+  checar("animation.save", clipe.kind === "animation")
+  checar("animation.document", (await helix.animation.document(clipe)).tracks.length === 1)
+  const salvo = helix.materials.save(helix.material.create({ baseColor: "#9b5de5" }), "DebugMaterial")
+  checar("materials.save/get", salvo !== null && helix.materials.get("DebugMaterial") !== null)
+  if (salvo) {
+    const instanciado = helix.materials.instantiate("DebugMaterial")
+    checar("materials.instantiate", instanciado !== null && helix.materials.forMaterial(instanciado) !== null)
+    checar("materials.apply", helix.materials.apply(helix.scene.find("Cone")${t('!')}, "DebugMaterial") === true)
+    helix.materials.remove("DebugMaterial")
+    checar("materials.remove", helix.materials.get("DebugMaterial") === null)
+  }
+}
+
+// Hooks -----------------------------------------------------------------------------------------
+
+export function onLoad() {
+  helix.log.info("Debug", "onLoad do script de entrada")
+}
+
+export async function onStart() {
+  helix.log.info("Debug", \`Jogo de teste em \${LINGUAGEM}: percorrendo a API…\`)
+  await area("Núcleo", nucleo)
+  await area("Módulo (require)", modulo)
+  await area("Matemática", matematica)
+  await area("Cena", cena)
+  await area("Transformações", transformacao)
+  await area("Malhas e CSG", malhas)
+  await area("Materiais e texturas", materiais)
+  await area("Luzes", luzes)
+  await area("Céu e mundo", ceu)
+  await area("Câmera", camera)
+  await area("Pós-processamento", pos)
+  await area("Render", render)
+  await area("Física", fisica)
+  await area("Personagem e jogador", personagem)
+  await area("Terreno", terreno)
+  await area("Interface", interfaceGrafica)
+  await area("Áudio", audio)
+  await area("Animação", animacao)
+  await area("VFX", vfx)
+  await area("Entrada", entrada)
+  await area("Eventos", eventos)
+  await area("Tempo e tarefas", tempo)
+  await area("Dados, projeto e rede", dadosEProjeto)
+  await area("Salvamentos na biblioteca", salvamentos)
+  const girador = helix.assets.byName("DebugGirador", "script")
+  if (girador) {
+    const extra = helix.scene.spawnPrimitive("box", { name: "GiradorDinamico", position: [-2, 0.5, -3], rigidBody: { type: "kinematic", collider: "box" }, script: { assetId: girador.id, props: { velocidade: 180, cor: "#00b4d8" } } })
+    checar("spawn com script", extra.script !== null && extra.script.assetId === girador.id)
+  } else {
+    checar("ativo DebugGirador", false, "não está na biblioteca")
+  }
+  resumo()
+}
+
+function resumo() {
+  const dica = "WASD anda, Espaço pula; B solta caixa, E emite evento, F treme a câmera, G alterna o efeito, T câmera lenta, H alterna a tela, L lista luzes, R reinicia."
+  if (estado.falhas === 0) helix.log.info("Debug", \`API percorrida em \${LINGUAGEM}: \${estado.checagens} checagens, nenhuma falha. \${dica}\`)
+  else helix.log.warn("Debug", \`API percorrida em \${LINGUAGEM}: \${estado.checagens} checagens, \${estado.falhas} falhas (veja FALHOU/ERRO acima). \${dica}\`)
+  helix.gui.bind("checagens", estado.checagens)
+  helix.gui.bind("falhas", estado.falhas)
+}
+
+export function onUpdate(dt${t(': number')}) {
+  estado.quadros++
+  if (estado.torus) helix.transform.rotate(estado.torus, [0, 40 * dt, 0])
+  const d = helix.debug
+  d.line([-6, 0.05, -6], [6, 0.05, -6], "#ff006e")
+  d.box({ center: [0, 1, 3], size: [3, 2, 3] }, "#ffbe0b")
+  if (estado.heroi) {
+    d.axes(estado.heroi, 1)
+    d.text(helix.math.vec3.add(helix.transform.worldPosition(estado.heroi), [0, 2.2, 0]), \`Heroi · \${estado.pontos} pts\`, "#ffffff")
+  }
+  if (estado.torus) d.bounds(estado.torus, "#3a86ff")
+  d.ray([0, 3, 0], [0, -1, 0], 3, "#06d6a0")
+  estado.hudTimer += dt
+  if (estado.hudTimer >= 0.5) {
+    estado.hudTimer = 0
+    helix.gui.bind("fps", Math.round(helix.render.stats.fps))
+    helix.gui.bind("checagens", estado.checagens)
+    helix.gui.bind("falhas", estado.falhas)
+  }
+}
+
+export function onFixedUpdate(h${t(': number')}) {
+  estado.passosFisica++
+  if (estado.passosFisica === 1) checar("onFixedUpdate recebe o passo", h > 0 && h < 1, h)
+}
+
+export function onLateUpdate() {
+  estado.lateUpdates++
+}
+
+export function onRender(frame${t(': { width: number }')}) {
+  estado.rendersHook++
+  if (estado.rendersHook === 1) checar("onRender recebe o frame", typeof frame.width === "number")
+}
+
+export function onBeforeHotReload() {
+  return { pontos: estado.pontos }
+}
+
+export function onHotReload(anterior${any}) {
+  estado.pontos = anterior && typeof anterior.pontos === "number" ? anterior.pontos : 0
+  helix.log.info("Debug", \`Recarga a quente: \${estado.pontos} pontos preservados\`)
+}
+
+export function onStop() {
+  for (const desligar of estado.assinaturas) desligar()
+  helix.log.info("Debug", \`Parou: \${estado.quadros} quadros, \${estado.passosFisica} passos de física, \${estado.lateUpdates} lateUpdates, \${estado.renders} frames (onAfterFrame), \${estado.rendersHook} onRender, \${estado.colisoes} colisões.\`)
+}
 `;
+    const actor = `                                 
+                                                                                              
+                                                                                                
+import helix from "helix"
+
+export default class DebugGirador {
+  angulo = 0
+  contatos = 0
+  quadros = 0
+  desligar${t(': (() => void) | null')} = null
+
+  onLoad() {
+    helix.props.define({
+      velocidade: { type: "range", default: 90, min: 0, max: 360, step: 1, label: "Velocidade (°/s)" },
+      cor: { type: "color", default: "#ff8800", label: "Cor" },
+      pulsar: { type: "boolean", default: true, label: "Pulsar" },
+    })
+  }
+
+  onStart() {
+    const ator = (this${t(' as any')}).actor
+    helix.log.info("Girador", \`\${ator.name} acordou com velocidade \${helix.props.get("velocidade")}°/s\${helix.script ? \` (script \${helix.script.name})\` : ""}\`)
+    helix.material.setColor(ator, helix.props.get("cor")${t(' as string')})
+    this.desligar = helix.props.onChanged("cor", (cor) => helix.material.setColor(ator, cor${t(' as string')}))
+    helix.log.assert(helix.self === ator, "helix.self deveria ser o ator deste script")
+    helix.log.assert(helix.props.has("velocidade") && helix.props.definitions().length === 3, "props.define deveria registrar 3 propriedades")
+  }
+
+  onUpdate(dt${t(': number')}) {
+    const ator = (this${t(' as any')}).actor
+    this.quadros++
+    this.angulo += (helix.props.get("velocidade")${t(' as number')}) * dt
+    helix.transform.setRotation(ator, [0, this.angulo, 0])
+    if (helix.props.get("pulsar")) helix.transform.setScale(ator, 1 + Math.sin(helix.time.now * 3) * 0.1)
+  }
+
+  onCollisionBegin(outro${any}, contato${any}) {
+    this.contatos++
+    if (this.contatos <= 3) helix.log.info("Girador", \`\${(this${t(' as any')}).actor.name} tocou \${outro.name} (impulso \${contato.impulse.toFixed(2)})\`)
+  }
+
+  onTriggerEnter(outro${any}) {
+    helix.log.info("Girador", \`\${outro.name} entrou no gatilho de \${(this${t(' as any')}).actor.name}\`)
+  }
+
+  onEnable() {
+    helix.log.debug("Girador", \`\${(this${t(' as any')}).actor.name} ativo\`)
+  }
+
+  onDisable() {
+    helix.log.debug("Girador", \`\${(this${t(' as any')}).actor.name} inativo\`)
+  }
+
+  onStop() {
+    helix.log.info("Girador", \`\${(this${t(' as any')}).actor.name}: \${this.quadros} quadros, \${this.contatos} contatos\`)
+  }
+
+  onDestroy() {
+    if (this.desligar) this.desligar()
+  }
+}
+`;
+    const module = `                                     
+                                                                                       
+export function soma(a${t(': number')}, b${t(': number')})${t(': number')} {
+  return a + b
+}
+
+export function saudacao(quem${t(': string')})${t(': string')} {
+  return \`Olá, \${quem}\`
+}
+
+export function limitar(valor${t(': number')}, minimo${t(': number')}, maximo${t(': number')})${t(': number')} {
+  return Math.min(maximo, Math.max(minimo, valor))
+}
+`;
+    return { entry, actor, module };
 }
