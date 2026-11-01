@@ -545,3 +545,234 @@ export const CONVERT: Record<string, unknown> = {
     },
     FromBase64String: (textValue: unknown) => (typeof atob === 'function' ? Array.from(atob(str(textValue))).map((c) => c.charCodeAt(0)) : []),
 };
+function convertToInteger(value: unknown, what: string): number {
+    if (value === null || value === undefined)
+        return 0;
+    if (typeof value === 'number')
+        return (MATH.Round as Fn)(value) as number;
+    if (typeof value === 'boolean')
+        return value ? 1 : 0;
+    if (typeof value === 'string') {
+        if (value.length === 1 && !/\d/.test(value))
+            return value.charCodeAt(0);
+        return parseInteger(value, what, Number.MIN_SAFE_INTEGER, Number.MAX_SAFE_INTEGER);
+    }
+    throw new FormatException(`${what}: não dá para converter ${str(value)}.`);
+}
+function convertToFloat(value: unknown, what: string): number {
+    if (value === null || value === undefined)
+        return 0;
+    if (typeof value === 'number')
+        return value;
+    if (typeof value === 'boolean')
+        return value ? 1 : 0;
+    if (typeof value === 'string')
+        return parseFloat(value, what);
+    throw new FormatException(`${what}: não dá para converter ${str(value)}.`);
+}
+export const ENUM_STATICS: Record<string, unknown> = {
+    GetNames: (enumObject: unknown) => List.from(enumInfo(enumObject)?.names ?? []).ToArray(),
+    GetValues: (enumObject: unknown) => (enumInfo(enumObject)?.values ?? []).slice(),
+    GetName: (enumObject: unknown, value: unknown) => {
+        const info = enumInfo(enumObject);
+        const index = info ? info.values.indexOf(Number(value)) : -1;
+        return index >= 0 && info ? info.names[index] : null;
+    },
+    IsDefined: (enumObject: unknown, value: unknown) => {
+        const info = enumInfo(enumObject);
+        return info !== null && (typeof value === 'string' ? info.names.includes(value) : info.values.includes(Number(value)));
+    },
+    Parse: (enumObject: unknown, textValue: unknown, ignoreCase: unknown = false) => {
+        const value = enumParse(enumObject, textValue, ignoreCase === true);
+        if (value === null)
+            throw new ArgumentException(`Enum.Parse: "${str(textValue)}" não é um valor de ${enumInfo(enumObject)?.name ?? 'enum'}.`);
+        return value;
+    },
+    TryParse: (enumObject: unknown, textValue: unknown, ...rest: unknown[]) => {
+        const out = rest[rest.length - 1] as Ref<unknown>;
+        const ignoreCase = rest.length > 1 && rest[0] === true;
+        const value = enumParse(enumObject, textValue, ignoreCase);
+        if (out && typeof out === 'object')
+            out.v = value ?? 0;
+        return value !== null;
+    },
+    ToString: (enumObject: unknown, value: unknown) => enumToString(enumObject, value),
+    Format: (enumObject: unknown, value: unknown) => enumToString(enumObject, value),
+    ToObject: (_enumObject: unknown, value: unknown) => Number(value),
+};
+type Scheduler = {
+    wait?(seconds: number): Promise<unknown>;
+    delay?(seconds: number): Promise<unknown>;
+};
+export function createTaskStatics(helix: Record<string, unknown>): Record<string, unknown> {
+    const delay = (ms: unknown): Promise<void> => {
+        const seconds = Math.max(0, Number(ms)) / 1000;
+        const time = helix.time as Scheduler | undefined;
+        if (time && typeof time.wait === 'function')
+            return time.wait(seconds).then(() => undefined);
+        return new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    };
+    const yieldNow = (): Promise<void> => {
+        const time = helix.time as Scheduler | undefined;
+        if (time && typeof time.wait === 'function')
+            return time.wait(0).then(() => undefined);
+        return Promise.resolve();
+    };
+    return {
+        CompletedTask: Promise.resolve(),
+        Delay: delay,
+        Yield: yieldNow,
+        FromResult: (value: unknown) => Promise.resolve(value),
+        FromException: (error: unknown) => Promise.reject(error),
+        WhenAll: (...tasks: unknown[]) => Promise.all(flattenTasks(tasks)),
+        WhenAny: (...tasks: unknown[]) => Promise.race(flattenTasks(tasks)),
+        Run: (fn: unknown) => {
+            if (typeof fn !== 'function')
+                throw new ArgumentException('Task.Run espera uma função.');
+            return Promise.resolve().then(() => (fn as Fn)());
+        },
+    };
+}
+function flattenTasks(tasks: unknown[]): unknown[] {
+    if (tasks.length === 1 && tasks[0] !== null && typeof tasks[0] === 'object' && !(tasks[0] instanceof Promise))
+        return Array.from(iterate(tasks[0], 'Task.WhenAll'));
+    return tasks;
+}
+export class Random {
+    private state: number;
+    constructor(seed?: unknown) {
+        this.state = typeof seed === 'number' ? (seed >>> 0) || 1 : (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
+    }
+    static get Shared(): Random {
+        return shared;
+    }
+    private nextUnit(): number {
+        let x = this.state;
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        this.state = x >>> 0;
+        return this.state / 0x100000000;
+    }
+    Next(min?: unknown, max?: unknown): number {
+        if (min === undefined)
+            return Math.floor(this.nextUnit() * 2147483647);
+        if (max === undefined) {
+            const limit = Number(min);
+            if (limit < 0)
+                throw new ArgumentOutOfRangeException('maxValue', 'Random.Next: o limite precisa ser não negativo.');
+            return Math.floor(this.nextUnit() * limit);
+        }
+        const low = Number(min);
+        const high = Number(max);
+        if (low > high)
+            throw new ArgumentOutOfRangeException('minValue', 'Random.Next: o mínimo é maior que o máximo.');
+        return low + Math.floor(this.nextUnit() * (high - low));
+    }
+    NextInt64(min?: unknown, max?: unknown): number {
+        return this.Next(min, max);
+    }
+    NextDouble(): number {
+        return this.nextUnit();
+    }
+    NextSingle(): number {
+        return this.nextUnit();
+    }
+    NextBytes(buffer: unknown): void {
+        if (!Array.isArray(buffer))
+            throw new ArgumentException('Random.NextBytes espera um array.');
+        for (let index = 0; index < buffer.length; index++)
+            buffer[index] = Math.floor(this.nextUnit() * 256);
+    }
+    Shuffle(array: unknown): void {
+        if (!Array.isArray(array))
+            throw new ArgumentException('Random.Shuffle espera um array.');
+        for (let index = array.length - 1; index > 0; index--) {
+            const other = Math.floor(this.nextUnit() * (index + 1));
+            [array[index], array[other]] = [array[other], array[index]];
+        }
+    }
+    GetItems(choices: unknown, length: unknown): unknown[] {
+        const items = Array.from(iterate(choices, 'Random.GetItems'));
+        if (items.length === 0)
+            throw new ArgumentException('Random.GetItems: a lista de opções está vazia.');
+        return Array.from({ length: Number(length) }, () => items[Math.floor(this.nextUnit() * items.length)]);
+    }
+    ToString(): string {
+        return 'System.Random';
+    }
+}
+const shared = new Random();
+export class TimeSpan {
+    constructor(readonly TotalMilliseconds: number) { }
+    static FromSeconds(seconds: unknown): TimeSpan {
+        return new TimeSpan(Number(seconds) * 1000);
+    }
+    static FromMilliseconds(ms: unknown): TimeSpan {
+        return new TimeSpan(Number(ms));
+    }
+    static FromMinutes(minutes: unknown): TimeSpan {
+        return new TimeSpan(Number(minutes) * 60000);
+    }
+    static FromHours(hours: unknown): TimeSpan {
+        return new TimeSpan(Number(hours) * 3600000);
+    }
+    static FromDays(days: unknown): TimeSpan {
+        return new TimeSpan(Number(days) * 86400000);
+    }
+    static get Zero(): TimeSpan {
+        return new TimeSpan(0);
+    }
+    get TotalSeconds(): number {
+        return this.TotalMilliseconds / 1000;
+    }
+    get TotalMinutes(): number {
+        return this.TotalMilliseconds / 60000;
+    }
+    get TotalHours(): number {
+        return this.TotalMilliseconds / 3600000;
+    }
+    get TotalDays(): number {
+        return this.TotalMilliseconds / 86400000;
+    }
+    get Milliseconds(): number {
+        return Math.trunc(this.TotalMilliseconds % 1000);
+    }
+    get Seconds(): number {
+        return Math.trunc(this.TotalSeconds % 60);
+    }
+    get Minutes(): number {
+        return Math.trunc(this.TotalMinutes % 60);
+    }
+    get Hours(): number {
+        return Math.trunc(this.TotalHours % 24);
+    }
+    get Days(): number {
+        return Math.trunc(this.TotalDays);
+    }
+    Add(other: TimeSpan): TimeSpan {
+        return new TimeSpan(this.TotalMilliseconds + other.TotalMilliseconds);
+    }
+    Subtract(other: TimeSpan): TimeSpan {
+        return new TimeSpan(this.TotalMilliseconds - other.TotalMilliseconds);
+    }
+    CompareTo(other: unknown): number {
+        return other instanceof TimeSpan ? this.TotalMilliseconds - other.TotalMilliseconds : 1;
+    }
+    Equals(other: unknown): boolean {
+        return other instanceof TimeSpan && other.TotalMilliseconds === this.TotalMilliseconds;
+    }
+    GetHashKey(): string {
+        return `timespan:${this.TotalMilliseconds}`;
+    }
+    ToString(): string {
+        const sign = this.TotalMilliseconds < 0 ? '-' : '';
+        const total = Math.abs(this.TotalMilliseconds);
+        const hours = Math.floor(total / 3600000);
+        const minutes = Math.floor((total % 3600000) / 60000);
+        const seconds = Math.floor((total % 60000) / 1000);
+        const ms = Math.floor(total % 1000);
+        const base = `${sign}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        return ms > 0 ? `${base}.${String(ms).padStart(3, '0')}0000` : base;
+    }
+}
