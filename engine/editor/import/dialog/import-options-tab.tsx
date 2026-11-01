@@ -50,7 +50,7 @@ function Hint({ children, className }: {
     children: ReactNode;
     className?: string;
 }) {
-    return <p className={cn('px-2 text-[10px] leading-4 text-muted-foreground', className)}>{children}</p>;
+    return <p className={cn('px-2 text-3xs leading-4 text-muted-foreground', className)}>{children}</p>;
 }
 function NumberInput({ value, min, label, onCommit }: {
     value: number;
@@ -91,7 +91,7 @@ export function ImportOptionsTab({ draft, fileSize }: ImportOptionsTabProps) {
             <TriangleAlert className="size-3.5" aria-hidden/>
             {warnings.length === 1 ? '1 aviso' : `${warnings.length} avisos`}
           </h3>
-          <ul className="flex max-h-28 flex-col gap-0.5 overflow-y-auto pl-5 text-[10px] leading-4 text-foreground/80">
+          <ul className="flex max-h-28 flex-col gap-0.5 overflow-y-auto pl-5 text-3xs leading-4 text-foreground/80">
             {warnings.map((warning, index) => (<li key={`${index}-${warning}`} className="list-disc break-words">
                 {warning}
               </li>))}
@@ -122,7 +122,7 @@ export function ImportOptionsTab({ draft, fileSize }: ImportOptionsTabProps) {
           <NumberInput label="Fator de escala" value={options.scale} min={1e-6} onCommit={(scale) => updateOptions({ scale })}/>
         </PropertyRow>
         <div className="flex items-center gap-1 px-2 pl-[calc(88px+0.5rem)]">
-          {SCALE_PRESETS.map((preset) => (<button key={preset} type="button" onClick={() => updateOptions({ scale: preset })} aria-pressed={options.scale === preset} className={cn('rounded-sm px-1 py-px font-mono text-[10px] leading-4 transition-colors', options.scale === preset ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:bg-highlight hover:text-foreground')}>
+          {SCALE_PRESETS.map((preset) => (<button key={preset} type="button" onClick={() => updateOptions({ scale: preset })} aria-pressed={options.scale === preset} className={cn('rounded-sm px-1 py-px font-mono text-3xs leading-4 transition-colors', options.scale === preset ? 'bg-primary/20 text-primary' : 'text-muted-foreground hover:bg-highlight hover:text-foreground')}>
               {formatScale(preset)}
             </button>))}
         </div>
@@ -135,15 +135,9 @@ export function ImportOptionsTab({ draft, fileSize }: ImportOptionsTabProps) {
         <PropertyRow label="Eixo vertical">
           <SegmentedControl label="Eixo vertical do arquivo" options={UP_AXIS_OPTIONS} value={options.upAxis} onChange={(upAxis) => updateOptions({ upAxis })}/>
         </PropertyRow>
-        <Hint>{draft.upAxis === 'z' ? 'Tratado como Z-up: a raiz recebe rotação de −90° em X.' : 'Tratado como Y-up, igual à engine.'}</Hint>
         <PropertyRow label="Posicionar">
           <SegmentedControl label="Posição inicial" options={PLACEMENT_OPTIONS} value={options.placement} onChange={(placement) => updateOptions({ placement })}/>
         </PropertyRow>
-        <Hint>
-          {options.placement === 'target' && 'Centralizado no alvo da câmera, apoiado na altura dele.'}
-          {options.placement === 'origin' && 'Centralizado na origem do mundo, apoiado em Y = 0.'}
-          {options.placement === 'keep' && 'Mantém as coordenadas exatamente como estão no arquivo.'}
-        </Hint>
         <ToggleField label="Enquadrar ao importar" on={options.frameAfterImport} onToggle={() => updateOptions({ frameAfterImport: !options.frameAfterImport })}/>
       </CollapsibleSection>
 
