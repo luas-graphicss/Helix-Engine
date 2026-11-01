@@ -262,4 +262,278 @@ class TomlParser {
                 return pos;
         }
     }
+    private document(): void {
+        const src = this.src;
+        let pos = 0;
+        let header: readonly string[] = [];
+        for (;;) {
+            pos = this.skipChars(pos, WS);
+            const char = this.charAt(pos);
+            if (char === '')
+                break;
+            if (char === '\n') {
+                pos++;
+                continue;
+            }
+            if (KEY_INITIAL_CHARS.includes(char)) {
+                pos = this.keyValueRule(pos, header);
+                pos = this.skipChars(pos, WS);
+            }
+            else if (char === '[') {
+                this.flags.finalizePending();
+                if (src[pos + 1] === '[') {
+                    const result = this.createListRule(pos);
+                    pos = result.pos;
+                    header = result.key;
+                }
+                else {
+                    const result = this.createDictRule(pos);
+                    pos = result.pos;
+                    header = result.key;
+                }
+                pos = this.skipChars(pos, WS);
+            }
+            else if (char !== '#') {
+                if (char === '=')
+                    this.fail('Falta o nome da chave antes de "=".', 'missing-key', pos);
+                if (char === ']')
+                    this.fail('"]" sem um "[" correspondente nesta linha.', 'unexpected-bracket', pos);
+                this.fail(`${describeChar(char)[0].toUpperCase()}${describeChar(char).slice(1)} não pode começar uma linha de TOML: espere uma chave (nome = valor), um cabeçalho ([tabela]) ou um comentário (#).`, 'invalid-statement', pos);
+            }
+            pos = this.skipComment(pos);
+            const next = this.charAt(pos);
+            if (next === '')
+                break;
+            if (next !== '\n')
+                this.fail(`Depois de um valor ou cabeçalho só pode vir um comentário ou o fim da linha, mas encontrei ${describeChar(next)}.${this.trailingHint(pos)}`, 'expected-newline', pos);
+            pos++;
+        }
+    }
+    private trailingHint(pos: number): string {
+        const rest = this.src.slice(pos, this.src.indexOf('\n', pos) === -1 ? undefined : this.src.indexOf('\n', pos));
+        const before = this.src.slice(this.lineStarts[this.position(pos).line - 1], pos);
+        if (/^[0-9]/.test(rest) && /(^|[=\s])[+-]?0$/.test(before))
+            return ' Números não podem ter zeros à esquerda (escreva 7 em vez de 07).';
+        if (/^[xob][0-9A-Fa-f]/.test(rest) && /[+-]0$/.test(before))
+            return ' Números hexadecimais, octais e binários não aceitam sinal (0xFF, 0o755, 0b1010).';
+        if (/^[XOB][0-9A-Fa-f]/.test(rest) && /(^|[=\s])0$/.test(before))
+            return ' O prefixo de base precisa ser minúsculo: 0x, 0o ou 0b.';
+        if (/^[0-9_]/.test(rest) && /[0-9]_$/.test(before))
+            return ' O separador "_" só pode ficar entre dois dígitos.';
+        if (rest.startsWith(','))
+            return ' Cada chave fica numa linha própria; a vírgula só separa itens dentro de [ ] ou { }.';
+        if (/^\.[0-9]/.test(rest))
+            return ' Um float precisa de dígitos dos dois lados do ponto (0.5, 7.0).';
+        if (rest.startsWith('.'))
+            return ' Chaves pontuadas (a.b = 1) só valem antes do "=".';
+        if (/^[A-Za-z0-9_-]+\s*=/.test(rest))
+            return ' Cada chave fica numa linha própria.';
+        if (/^(T|t|\s[0-9])/.test(rest) && /[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(before))
+            return ' Uma data-hora precisa de horas, minutos e segundos (2024-05-27T07:32:00).';
+        return '';
+    }
+    private createDictRule(pos: number): {
+        pos: number;
+        key: readonly string[];
+    } {
+        const start = pos;
+        pos++;
+        pos = this.skipChars(pos, WS);
+        const parsed = this.parseKey(pos, 'do cabeçalho');
+        pos = parsed.pos;
+        const key = parsed.key;
+        if (this.charAt(pos) !== ']')
+            this.fail(`O cabeçalho [${describeKey(key)} precisa fechar com "]" na mesma linha, mas encontrei ${describeChar(this.charAt(pos))}.`, 'unclosed-table-header', pos);
+        if (this.flags.is(key, 'explicit') || this.flags.is(key, 'frozen')) {
+            this.report(this.flags.is(key, 'frozen') ? `[${describeKey(key)}] não pode ser declarada: "${describeKey(key)}" já foi definida como valor (tabela inline ou lista) e está fechada.` : `A tabela [${describeKey(key)}] já foi declarada antes neste arquivo; junte as duas seções numa só.`, 'duplicate-table', start, pos + 1);
+            return { pos: pos + 1, key };
+        }
+        this.flags.set(key, 'explicit', false);
+        try {
+            this.out.getOrCreateNest(key);
+        }
+        catch (cause) {
+            if (!(cause instanceof NotATableError))
+                throw cause;
+            this.report(`[${describeKey(key)}] não pode ser uma tabela: um dos nomes desse caminho já guarda um valor que não é tabela.`, 'not-a-table', start, pos + 1);
+        }
+        return { pos: pos + 1, key };
+    }
+    private createListRule(pos: number): {
+        pos: number;
+        key: readonly string[];
+    } {
+        const start = pos;
+        pos += 2;
+        pos = this.skipChars(pos, WS);
+        const parsed = this.parseKey(pos, 'do cabeçalho');
+        pos = parsed.pos;
+        const key = parsed.key;
+        if (!this.src.startsWith(']]', pos))
+            this.fail(`O cabeçalho [[${describeKey(key)} precisa fechar com "]]" na mesma linha, mas encontrei ${describeChar(this.charAt(pos))}.`, 'unclosed-array-header', pos);
+        if (this.flags.is(key, 'frozen')) {
+            this.report(`[[${describeKey(key)}]] não pode acrescentar um item: "${describeKey(key)}" foi definida como valor (lista ou tabela inline) e está fechada.`, 'frozen-array', start, pos + 2);
+            return { pos: pos + 2, key };
+        }
+        this.flags.unsetAll(key);
+        this.flags.set(key, 'explicit', false);
+        try {
+            this.out.appendNestToList(key);
+        }
+        catch (cause) {
+            if (!(cause instanceof NotATableError))
+                throw cause;
+            this.report(`[[${describeKey(key)}]] não pode ser uma lista de tabelas: "${describeKey(key)}" já guarda outro tipo de valor.`, 'not-an-array-of-tables', start, pos + 2);
+        }
+        return { pos: pos + 2, key };
+    }
+    private keyValueRule(pos: number, header: readonly string[]): number {
+        const start = pos;
+        const pair = this.parseKeyValuePair(pos);
+        pos = pair.pos;
+        const key = pair.key;
+        const value = pair.value;
+        const keyParent = key.slice(0, -1);
+        const keyStem = key[key.length - 1];
+        const absoluteParent = [...header, ...keyParent];
+        for (let index = 1; index < key.length; index++) {
+            const containerKey = [...header, ...key.slice(0, index)];
+            if (this.flags.is(containerKey, 'explicit')) {
+                this.report(`A chave pontuada "${describeKey(key)}" tentaria estender a tabela "${describeKey(containerKey)}", que já foi declarada por cabeçalho (ou por outra seção); acrescente a chave dentro da seção dela.`, 'dotted-redefines-table', start, pair.keyEnd);
+                return pos;
+            }
+            this.flags.addPending(containerKey, 'explicit');
+        }
+        if (this.flags.is(absoluteParent, 'frozen')) {
+            this.report(`"${describeKey(key)}" não pode ser acrescentada: "${describeKey(absoluteParent)}" é uma tabela inline ou lista já fechada.`, 'frozen-table', start, pair.keyEnd);
+            return pos;
+        }
+        let nest: TomlTable;
+        try {
+            nest = this.out.getOrCreateNest(absoluteParent);
+        }
+        catch (cause) {
+            if (!(cause instanceof NotATableError))
+                throw cause;
+            this.report(`"${describeKey(key)}" não pode ser acrescentada: um dos nomes do caminho "${describeKey(absoluteParent)}" já guarda um valor que não é tabela.`, 'not-a-table', start, pair.keyEnd);
+            return pos;
+        }
+        if (Object.prototype.hasOwnProperty.call(nest, keyStem)) {
+            this.report(`A chave "${describeKey(key)}" já foi definida${header.length > 0 ? ` em [${describeKey(header)}]` : ''}; cada chave só pode aparecer uma vez (o primeiro valor é mantido).`, 'duplicate-key', start, pair.keyEnd);
+            return pos;
+        }
+        if (isTable(value) || Array.isArray(value))
+            this.flags.set([...header, ...key], 'frozen', true);
+        assign(nest, keyStem, value);
+        return pos;
+    }
+    private parseKeyValuePair(pos: number): {
+        pos: number;
+        key: readonly string[];
+        keyEnd: number;
+        value: TomlValue;
+    } {
+        const parsed = this.parseKey(pos, 'da chave');
+        pos = parsed.pos;
+        const char = this.charAt(pos);
+        if (char !== '=') {
+            if (char === ':')
+                this.fail(`Depois da chave "${describeKey(parsed.key)}" vem "=" (TOML não usa ":" como em YAML/JSON).`, 'expected-equals', pos);
+            this.fail(`Depois da chave "${describeKey(parsed.key)}" era esperado "=", mas encontrei ${describeChar(char)}.`, 'expected-equals', pos);
+        }
+        pos++;
+        pos = this.skipChars(pos, WS);
+        const next = this.charAt(pos);
+        if (next === '' || next === '\n' || next === '#')
+            this.fail(`A chave "${describeKey(parsed.key)}" está sem valor depois do "=".`, 'missing-value', pos);
+        const value = this.parseValue(pos);
+        return { pos: value.pos, key: parsed.key, keyEnd: parsed.end, value: value.value };
+    }
+    private parseKey(pos: number, what: string): {
+        pos: number;
+        key: string[];
+        end: number;
+    } {
+        const first = this.parseKeyPart(pos, what);
+        pos = first.pos;
+        let end = pos;
+        const key = [first.part];
+        pos = this.skipChars(pos, WS);
+        for (;;) {
+            if (this.charAt(pos) !== '.')
+                return { pos, key, end };
+            pos++;
+            pos = this.skipChars(pos, WS);
+            const part = this.parseKeyPart(pos, what);
+            pos = part.pos;
+            end = pos;
+            key.push(part.part);
+            pos = this.skipChars(pos, WS);
+        }
+    }
+    private parseKeyPart(pos: number, what: string): {
+        pos: number;
+        part: string;
+    } {
+        const char = this.charAt(pos);
+        if (char !== '' && BARE_KEY_CHARS.includes(char)) {
+            const start = pos;
+            pos = this.skipChars(pos, BARE_KEY_CHARS);
+            return { pos, part: this.src.slice(start, pos) };
+        }
+        if (char === "'") {
+            const literal = this.parseLiteralStr(pos);
+            return { pos: literal.pos, part: literal.value };
+        }
+        if (char === '"') {
+            const basic = this.parseOneLineBasicStr(pos);
+            return { pos: basic.pos, part: basic.value };
+        }
+        if (char === '' || char === '\n')
+            this.fail(`Falta o nome ${what} (depois do ponto ou do colchete).`, 'missing-key', pos);
+        if (char === '.')
+            this.fail(`Nome ${what} vazio entre dois pontos; cada parte de uma chave pontuada precisa de um nome.`, 'empty-key-part', pos);
+        this.fail(`${describeChar(char)[0].toUpperCase()}${describeChar(char).slice(1)} não pode fazer parte de um nome de chave sem aspas; use só letras, dígitos, "-" e "_", ou ponha o nome entre aspas.`, 'invalid-key-character', pos);
+    }
+    private parseValue(pos: number): {
+        pos: number;
+        value: TomlValue;
+    } {
+        const src = this.src;
+        const char = this.charAt(pos);
+        if (char === '"')
+            return src.startsWith('"""', pos) ? this.parseMultilineStr(pos, false) : this.parseOneLineBasicStr(pos);
+        if (char === "'")
+            return src.startsWith("'''", pos) ? this.parseMultilineStr(pos, true) : this.parseLiteralStr(pos);
+        if (char === 't' && src.startsWith('true', pos))
+            return { pos: pos + 4, value: true };
+        if (char === 'f' && src.startsWith('false', pos))
+            return { pos: pos + 5, value: false };
+        if (char === '[')
+            return this.parseArray(pos);
+        if (char === '{')
+            return this.parseInlineTable(pos);
+        const datetime = matchAt(RE_DATETIME, src, pos);
+        if (datetime)
+            return { pos: pos + datetime[0].length, value: this.matchToDateTime(datetime, pos) };
+        const localTime = matchAt(RE_LOCALTIME, src, pos);
+        if (localTime)
+            return { pos: pos + localTime[0].length, value: this.matchToLocalTime(localTime, pos) };
+        const number = matchAt(RE_NUMBER, src, pos);
+        if (number)
+            return { pos: pos + number[0].length, value: this.matchToNumber(number) };
+        const three = src.slice(pos, pos + 3);
+        if (three === 'inf')
+            return { pos: pos + 3, value: Infinity };
+        if (three === 'nan')
+            return { pos: pos + 3, value: NaN };
+        const four = src.slice(pos, pos + 4);
+        if (four === '+inf')
+            return { pos: pos + 4, value: Infinity };
+        if (four === '-inf')
+            return { pos: pos + 4, value: -Infinity };
+        if (four === '+nan' || four === '-nan')
+            return { pos: pos + 4, value: NaN };
+        this.fail(this.describeInvalidValue(pos), 'invalid-value', pos);
+    }
 }
