@@ -561,5 +561,285 @@ public class DebugJogo extends Script {
             return null;
         }));
         checar("character.all", ch.call("all").length() >= 1);
+        checar("player.spawnPoint", !pl.get("spawnPoint").isNullish());
+        checar("character.velocity", !c.get("velocity").isNullish() && !c.get("position").isNullish());
+        return null;
+    }
+
+    private Object terreno() {
+        Value te = api("terrain");
+        checar("terrain.presets", te.call("presets").length() > 0);
+        Value colinas = te.call("spawn", obj("name", "Colinas", "size", 48, "resolution", 65, "preset", "hills", "seed", 7, "position", v3(0, -6, -70)));
+        checar("terrain.spawn", !colinas.get("terrain").isNullish() && te.call("all").length() >= 1);
+        checar("terrain.of", numero(te.call("of", colinas), "resolution") == 65);
+        checar("heightAt", te.call("heightAt", v3(0, 0, -70), colinas).isNumber());
+        checar("contains", te.call("contains", v3(0, 0, -70), colinas).asBoolean() && !te.call("contains", v3(500, 0, 0), colinas).asBoolean());
+        te.call("sculpt", colinas, "raise", v3(5, 0, -70), obj("radius", 6, "strength", 1), 1);
+        te.call("markDirty", colinas);
+        Value grama = te.get("grass");
+        grama.call("set", colinas, obj("enabled", true, "density", 0.5));
+        checar("grass.set", verdadeiro(grama.call("settingsOf", colinas).get("enabled")));
+        Value agua = te.get("water");
+        agua.call("set", colinas, obj("enabled", true, "level", -2));
+        checar("water.set", verdadeiro(agua.call("settingsOf", colinas).get("enabled")));
+        checar("terrain.raycast", !te.call("raycast", v3(0, 50, -70), v3(0, -1, 0), colinas).isNullish());
+        return null;
+    }
+
+                                                                                               
+
+    private void soltarCaixa() {
+        Value random = api("math.random");
+        Value caixa = api("scene").call("spawnPrimitive", "box", obj(
+            "name", "CaixaSolta",
+            "position", v3(random.call("range", -3, 3).asDouble(), 6, random.call("range", 0, 4).asDouble()),
+            "rigidBody", obj("type", "dynamic", "collider", "box", "mass", 1),
+            "tags", Helix.array("caixa")
+        ));
+        api("material").call("setColor", caixa, random.call("color"));
+        pontos++;
+        api("gui").call("bind", "pontos", pontos);
+        api("events").call("emit", "debug.caixa", obj("nome", caixa.get("name")));
+    }
+
+    private Object interfaceGrafica() {
+        Value g = api("gui");
+        g.call("css", "DebugEstilo");
+        Value hud = g.call("html", "DebugHud", obj("id", "debug-hud"));
+        checar("gui.html", !hud.isNullish() && !g.call("element", "#debug-hud").isNullish());
+        Value icone = g.call("svg", "DebugIcone", obj("id", "debug-icone"));
+        checar("gui.svg", !icone.isNullish());
+        Value slot = g.call("element", "[data-slot=icone]");
+        if (!slot.isNullish() && !icone.isNullish()) slot.call("appendChild", icone);
+        checar("gui.bind", g.call("bind", "linguagem", LINGUAGEM).asDouble() >= 1);
+        g.call("bind", "titulo", "Helix · Debug");
+        assinar(g.call("onAction", "caixa", (Fn0) () -> {
+            soltarCaixa();
+            return null;
+        }));
+        assinar(g.call("onAction", "reiniciar", (Fn0) () -> {
+            api("play").call("restart");
+            return null;
+        }));
+        checar("gui.elements", g.call("elements", "[data-bind]").length() >= 5);
+        checar("gui.size", numero(g.get("size"), "width") > 0);
+        Value declarativa = g.call("create", "DebugTela", obj("referenceSize", obj("x", 1280, "y", 720)));
+        Value painel = g.call("add", declarativa, "frame", obj(
+            "name", "Painel",
+            "rect", obj(
+                "position", obj("x", escala(1, -236), "y", escala(0, 16)),
+                "size", obj("x", escala(0, 220), "y", escala(0, 48))
+            )
+        ));
+        g.call("add", declarativa, "text", obj("name", "Rotulo", "text", "Tela declarativa OK"), painel.path("node.id"));
+        checar("gui.add/find", textoIgual(g.call("find", declarativa, "Rotulo").get("kind"), "text"));
+        g.call("setText", declarativa, "Rotulo", "Tela declarativa OK · " + LINGUAGEM);
+                                                                                           
+        return g.call("show", declarativa, "debug-tela").call("then", (Fn1) mostrada -> {
+            tela = mostrada;
+            checar("gui.show/isShown", !mostrada.isNullish() && api("gui").call("isShown", mostrada).asBoolean());
+            checar("gui.kinds", contem(api("gui").call("kinds"), "button"));
+            return null;
+        });
+    }
+
+    private static Value escala(double scale, double offset) {
+        return obj("scale", scale, "offset", offset);
+    }
+
+    private Object audio() {
+        Value a = api("audio"), s = api("scene");
+        checar("audio.supported", a.get("supported").isBoolean());
+        Value mixer = a.get("mixer");
+        mixer.call("setVolumeDb", "sfx", -3);
+        checar("mixer.setVolumeDb", numero(mixer.call("bus", "sfx"), "volumeDb") == -3);
+        checar("audio.clips", a.call("clips").isArray());
+        Value fonte = s.call("spawn", "sound", obj("name", "FonteSonora", "position", v3(3, 1, 3), "audioSource", obj("trigger", "manual", "spatial", true)));
+        checar("spawn sound", !fonte.get("audioSource").isNullish());
+        Value fontes = a.get("sources");
+        fontes.call("set", fonte, obj("volumeDb", -4));
+        checar("sources.set", numero(fonte.get("audioSource"), "volumeDb") == -4);
+        checar("sources.isPlaying", falso(fontes.call("isPlaying", fonte)));
+        return null;
+    }
+
+    private Object vfx() {
+        Value v = api("vfx");
+        Value ids = v.get("templates").call("ids");
+        checar("vfx.templates", ids.length() > 0);
+        checar("vfx.moduleKinds", v.call("moduleKinds").length() > 0);
+        Value doc = v.call("fromTemplate", ids.get(0), "DebugFaiscas");
+        doc = v.call("addEmitter", doc, obj("name", "Extra", "maxParticles", 50));
+        doc = v.call("set", doc, obj("loop", true));
+        checar("vfx.fromTemplate/addEmitter", doc.get("emitters").length() >= 2 && verdadeiro(doc.get("loop")));
+        return v.call("save", doc, "DebugFaiscas").call("then", (Fn1) ativo -> {
+            Value efeitos = api("vfx");
+            checar("vfx.save", !ativo.isNullish() && textoIgual(ativo.get("kind"), "vfx"));
+            Value ator = efeitos.call("emitAt", ativo, v3(0, 1.5, -8), obj("destroyWhenFinished", false));
+            checar("vfx.emitAt", verdadeiro(efeitos.call("has", ator)));
+            efeitos.call("burst", ator, 20);
+            checar("vfx.stats", efeitos.call("stats").get("effects").isNumber());
+            return null;
+        });
+    }
+
+                                                                                              
+
+    private void aoTeclar(Value e) {
+        if (e.get("repeat").asBoolean()) return;
+        switch (e.get("code").asString()) {
+            case "KeyR":
+                api("play").call("restart");
+                break;
+            case "KeyB":
+                soltarCaixa();
+                break;
+            case "KeyE":
+                api("events").call("emit", "debug.ping", obj("origem", "teclado", "quadro", api("time").get("frame")));
+                break;
+            case "KeyF":
+                api("camera").call("shake", 0.4, 0.6);
+                break;
+            case "KeyG":
+                if (efeito != null) {
+                    boolean ligado = !efeito.get("enabled").asBoolean();
+                    efeito.set("enabled", ligado);
+                    info(ligado ? "Efeito DebugPost ligado" : "Efeito DebugPost desligado");
+                }
+                break;
+            case "KeyT": {
+                Value tm = api("time");
+                tm.set("scale", numero(tm, "scale") == 1 ? 0.3 : 1);
+                info("time.scale = " + numero(tm, "scale"));
+                break;
+            }
+            case "KeyH":
+                if (tela != null) {
+                    Value g = api("gui");
+                    if (g.call("isShown", tela).asBoolean()) g.call("hide", tela);
+                    else g.call("show", tela, "debug-tela");
+                }
+                break;
+            case "KeyL": {
+                StringBuilder nomes = new StringBuilder();
+                for (Value luz : api("light").call("all", obj("local", true)).asList()) {
+                    if (nomes.length() > 0) nomes.append(", ");
+                    nomes.append(nomeDe(luz.get("entity")));
+                }
+                info("Luzes locais: " + nomes);
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    private void cliqueNaCena(double x, double y) {
+        Value c = api("camera");
+        Value alvo = c.call("pick", x, y);
+        Value ponto = c.call("pickPoint", x, y);
+        if (!alvo.isNullish()) info("Clique em " + nomeDe(alvo));
+        if (!ponto.isNullish()) api("debug").call("sphere", ponto, 0.3, "#ff006e", 2);
+    }
+
+    private Object entrada() {
+        Value input = api("input");
+        Value acoes = input.get("actions");
+        acoes.call("define", "pular", Helix.array("Space", "Gamepad:0"));
+        acoes.call("define", "soltar", Helix.array("KeyB"));
+        checar("actions.define/bindings", acoes.call("bindings", "pular").length() >= 1);
+        checar("action()", textoIgual(input.call("action", "pular").get("name"), "pular") && acoes.call("down", "pular").isBoolean());
+        checar("isDown", falso(input.call("isDown", "KeyW")));
+        checar("pointer", input.path("pointer.x").isNumber());
+        checar("gamepads", input.call("gamepads").isArray());
+        checar("axis2d", input.call("axis2d", obj("up", "KeyW", "down", "KeyS", "left", "KeyA", "right", "KeyD")).get("x").isNumber());
+        Value teclas = input.call("keysDown");
+        checar("keysDown", teclas.isObject() || teclas.isArray());
+        assinar(input.call("onKeyDown", (Fn1) e -> {
+            aoTeclar(e);
+            return null;
+        }));
+        assinar(input.call("onPointerDown", (Fn1) e -> {
+            if (numero(e, "button") == 0) cliqueNaCena(numero(e, "x"), numero(e, "y"));
+            return null;
+        }));
+        assinar(input.call("onGamepadButtonDown", (Fn1) e -> {
+            info("Gamepad " + numero(e, "pad") + " botão " + numero(e, "button"));
+            return null;
+        }));
+        return null;
+    }
+
+    private Object eventos() {
+        Value ev = api("events"), play = api("play");
+                                                                                        
+        Value[] recebido = {Value.undefined()};
+        Value desligar = ev.call("on", "debug.ping", (Fn1) payload -> {
+            recebido[0] = payload;
+            return null;
+        });
+        checar("events.emit conta ouvintes", ev.call("emit", "debug.ping", obj("origem", "teste")).asDouble() == 1);
+        checar("events.on recebe", !recebido[0].isNullish() && textoIgual(recebido[0].get("origem"), "teste"));
+        checar("listenerCount", ev.call("listenerCount", "debug.ping").asDouble() == 1);
+        desligar.invoke();
+        checar("unsubscribe", ev.call("listenerCount", "debug.ping").asDouble() == 0);
+        int[] umaVez = {0};
+        ev.call("once", "debug.once", (Fn0) () -> {
+            umaVez[0]++;
+            return null;
+        });
+        ev.call("emit", "debug.once");
+        ev.call("emit", "debug.once");
+        checar("events.once", umaVez[0] == 1);
+        assinar(ev.call("on", "debug.ping", (Fn1) payload -> {
+            info("ping de " + payload.get("origem").asString());
+            return null;
+        }));
+        assinar(ev.call("on", "debug.caixa", (Fn1) payload -> {
+            depurar("caixa " + payload.get("nome").asString());
+            return null;
+        }));
+        int[] doAtor = {0};
+        Value anel = torus != null ? torus : Value.undefined();
+        assinar(ev.call("onEntity", anel, "toque", (Fn0) () -> {
+            doAtor[0]++;
+            return null;
+        }));
+        ev.call("emitEntity", anel, "toque");
+        checar("onEntity/emitEntity", doAtor[0] == 1);
+        assinar(play.call("onStopped", (Fn0) () -> {
+            info("play.onStopped disparou");
+            return null;
+        }));
+        assinar(play.call("onPaused", (Fn0) () -> {
+            info("pausado");
+            return null;
+        }));
+        assinar(play.call("onResumed", (Fn0) () -> {
+            info("retomado");
+            return null;
+        }));
+        return null;
+    }
+
+                                                                                         
+    private Object tempo() {
+        Value tm = api("time");
+        checar("time.now", numero(tm, "now") >= 0 && numero(tm, "frame") >= 0);
+        checar("time.delta", numero(tm, "delta") >= 0 && numero(tm, "fixedDelta") > 0);
+        double inicio = numero(tm, "now");
+        return tm.call("wait", 0.1).call("then", (Fn0) () -> {
+            Value relogio = api("time");
+            double decorrido = numero(relogio, "now") - inicio;
+            checar("time.wait", decorrido >= 0.09, arred(decorrido));
+            int quadro = relogio.get("frame").asInt();
+            return relogio.call("waitFrames", 2).call("then", (Fn0) () -> {
+                Value depois = api("time");
+                int agora = depois.get("frame").asInt();
+                checar("time.waitFrames", agora >= quadro + 2, agora - quadro);
+                assinar(depois.call("every", 2, (Fn0) () -> {
+                    api("gui").call("bind", "atores", api("scene").call("count"));
+                    return null;
+                }));
 `;
 }
