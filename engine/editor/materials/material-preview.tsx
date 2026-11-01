@@ -103,7 +103,7 @@ export function MaterialPreview({ material, settings, onChange }: MaterialPrevie
       <div className={cn('relative min-h-0 flex-1 overflow-hidden', BACKDROP_CLASS[settings.backdrop])}>
         <canvas ref={canvasRef} className="size-full cursor-grab touch-none active:cursor-grabbing" aria-label="Viewport de preview do material"/>
         {error && (<p className="absolute inset-x-4 top-4 rounded-sm border border-destructive/40 bg-background/90 px-2 py-1 text-2xs text-destructive">{error}</p>)}
-        <div className="pointer-events-none absolute inset-x-3 bottom-2 flex items-center justify-between font-mono text-[10px] text-foreground/60 mix-blend-difference">
+        <div className="pointer-events-none absolute inset-x-3 bottom-2 flex items-center justify-between font-mono text-3xs text-foreground/60 mix-blend-difference">
           <span>Arrastar: orbitar · Shift+arrastar: luz · Roda: zoom</span>
           <span>{material.name}</span>
         </div>
