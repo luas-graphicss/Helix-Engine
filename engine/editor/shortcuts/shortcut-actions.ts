@@ -263,4 +263,71 @@ export const SHORTCUT_ACTION_GROUPS = [
             action('code.escape', 'Fechar a busca ou voltar à cena', ['escape']),
         ],
     },
+    {
+        title: 'Animação',
+        scope: 'animation',
+        actions: [
+            action('animation.togglePlay', 'Reproduzir / pausar', ['space']),
+            action('animation.stepBack', 'Quadro anterior', ['arrowleft', 'shift arrowleft'], 'Shift: 10 quadros'),
+            action('animation.stepForward', 'Quadro seguinte', ['arrowright', 'shift arrowright'], 'Shift: 10 quadros'),
+            action('animation.goToStart', 'Início do clipe', ['home']),
+            action('animation.goToEnd', 'Fim do clipe', ['end']),
+            action('animation.previousKey', 'Chave anterior', [',']),
+            action('animation.nextKey', 'Chave seguinte', ['.']),
+            action('animation.keySelected', 'Inserir chave nos ossos selecionados', ['k']),
+            action('animation.keyAll', 'Inserir chave em todos os ossos', ['shift k']),
+            action('animation.copyKeys', 'Copiar chaves', ['ctrl c']),
+            action('animation.pasteKeys', 'Colar chaves no quadro atual', ['ctrl v']),
+            action('animation.selectAllKeys', 'Selecionar todas as chaves', ['ctrl a']),
+            action('animation.deleteKeys', 'Excluir as chaves selecionadas', ['delete', 'backspace']),
+            action('animation.save', 'Salvar na biblioteca', ['ctrl s']),
+            action('animation.escape', 'Limpar a seleção de chaves', ['escape']),
+        ],
+    },
+    {
+        title: 'Áudio',
+        scope: 'audio',
+        actions: [
+            action('audio.togglePlay', 'Reproduzir / pausar', ['space']),
+            action('audio.stepBack', 'Recuar 0,1 s', ['arrowleft', 'shift arrowleft'], 'Shift: 1 s'),
+            action('audio.stepForward', 'Avançar 0,1 s', ['arrowright', 'shift arrowright'], 'Shift: 1 s'),
+            action('audio.goToStart', 'Início do recorte', ['home']),
+            action('audio.goToEnd', 'Fim do recorte', ['end']),
+            action('audio.trimStart', 'Início do recorte no cursor', ['[']),
+            action('audio.trimEnd', 'Fim do recorte no cursor', [']']),
+            action('audio.bypass', 'Ouvir o original (A/B)', ['b']),
+            action('audio.zoomIn', 'Aproximar a forma de onda', ['=', 'shift =', '+']),
+            action('audio.zoomOut', 'Afastar a forma de onda', ['-']),
+            action('audio.zoomAll', 'Ver o arquivo inteiro', ['0']),
+        ],
+    },
+    {
+        title: 'Efeitos',
+        scope: 'vfx',
+        actions: [
+            action('vfx.togglePlay', 'Tocar / congelar o efeito', ['space']),
+            action('vfx.stepBack', 'Recuar um quadro', ['arrowleft', 'shift arrowleft'], 'Shift: 10 quadros'),
+            action('vfx.stepForward', 'Avançar um quadro', ['arrowright', 'shift arrowright'], 'Shift: 10 quadros'),
+            action('vfx.goToStart', 'Início do ciclo', ['home']),
+            action('vfx.goToEnd', 'Fim do ciclo', ['end']),
+            action('vfx.duplicate', 'Duplicar o emissor ou módulo', ['ctrl d']),
+            action('vfx.moveUp', 'Subir na pilha', ['alt arrowup']),
+            action('vfx.moveDown', 'Descer na pilha', ['alt arrowdown']),
+            action('vfx.delete', 'Remover o emissor ou módulo', ['delete', 'backspace']),
+            action('vfx.save', 'Salvar o efeito na biblioteca', ['ctrl s']),
+            action('vfx.escape', 'Voltar do módulo ao emissor, do emissor ao efeito', ['escape']),
+        ],
+    },
 ] as const satisfies readonly ShortcutActionGroup[];
+export type ShortcutActionId = (typeof SHORTCUT_ACTION_GROUPS)[number]['actions'][number]['id'];
+export const SHORTCUT_ACTIONS: readonly ShortcutAction[] = SHORTCUT_ACTION_GROUPS.flatMap((group) => group.actions.map((definition) => ({ ...definition, scope: group.scope })));
+const ACTIONS_BY_ID = new Map<string, ShortcutAction>(SHORTCUT_ACTIONS.map((entry) => [entry.id, entry]));
+export function shortcutAction(id: ShortcutActionId): ShortcutAction {
+    const found = ACTIONS_BY_ID.get(id);
+    if (!found)
+        throw new Error(`Ação de atalho desconhecida: ${id}`);
+    return found;
+}
+export function isShortcutActionId(value: unknown): value is ShortcutActionId {
+    return typeof value === 'string' && ACTIONS_BY_ID.has(value);
+}
