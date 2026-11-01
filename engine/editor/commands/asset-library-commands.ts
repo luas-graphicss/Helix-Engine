@@ -3,6 +3,8 @@ import type { AssetLibrary } from '@/engine/assets/library/asset-library';
 import type { AssetSnapshot } from '@/engine/assets/library/asset-types';
 import type { Command } from '@/engine/editor/history/command';
 export class AddAssetCommand implements Command {
+    readonly scope = 'assets' as const;
+    readonly image = false;
     readonly label: string;
     constructor(private readonly library: AssetLibrary, private readonly snapshot: AssetSnapshot, private readonly scene: ImportedScene | null = null) {
         this.label = `Adicionar ${snapshot.asset.name} à biblioteca`;
@@ -15,6 +17,8 @@ export class AddAssetCommand implements Command {
     }
 }
 export class ReplaceAssetCommand implements Command {
+    readonly scope = 'assets' as const;
+    readonly image = false;
     readonly label: string;
     constructor(private readonly library: AssetLibrary, private readonly before: AssetSnapshot, private readonly after: AssetSnapshot) {
         this.label = `Salvar ${after.asset.name} na biblioteca`;
@@ -29,6 +33,8 @@ export class ReplaceAssetCommand implements Command {
     }
 }
 export class RemoveAssetCommand implements Command {
+    readonly scope = 'assets' as const;
+    readonly image = false;
     readonly label: string;
     constructor(private readonly library: AssetLibrary, private readonly snapshot: AssetSnapshot) {
         this.label = `Remover ${snapshot.asset.name} da biblioteca`;
