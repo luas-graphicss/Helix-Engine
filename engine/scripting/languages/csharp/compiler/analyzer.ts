@@ -1869,4 +1869,280 @@ class Analyzer {
                 return STATIC_TYPES.dynamic;
         }
     }
+    private sequenceMemberType(targetType: StaticType, name: string, inCall: boolean): StaticType {
+        const element = elementTypeOf(targetType) ?? STATIC_TYPES.dynamic;
+        if (targetType.kind === 'collection') {
+            switch (targetType.name) {
+                case 'Dictionary':
+                    if (name === 'Keys')
+                        return { kind: 'collection', name: 'List', args: [targetType.args[0] ?? STATIC_TYPES.dynamic] };
+                    if (name === 'Values')
+                        return { kind: 'collection', name: 'List', args: [targetType.args[1] ?? STATIC_TYPES.dynamic] };
+                    if (name === 'GetValueOrDefault')
+                        return { kind: 'delegate', params: null, returns: targetType.args[1] ?? STATIC_TYPES.dynamic };
+                    break;
+                default:
+                    break;
+            }
+            if (name === 'Count' && !inCall)
+                return STATIC_TYPES.int;
+            if (name === 'Capacity')
+                return STATIC_TYPES.int;
+        }
+        return this.shapeType(SEQUENCE_METHOD_SHAPES.get(name), targetType, element, inCall);
+    }
+    private shapeType(shape: Shape | undefined, self: StaticType, element: StaticType, inCall: boolean): StaticType {
+        if (!shape)
+            return STATIC_TYPES.dynamic;
+        const asDelegate = (returns: StaticType): StaticType => (inCall ? returns : { kind: 'delegate', params: null, returns });
+        switch (shape) {
+            case 'bool': return asDelegate(STATIC_TYPES.bool);
+            case 'int': return asDelegate(STATIC_TYPES.int);
+            case 'float': return asDelegate(STATIC_TYPES.float);
+            case 'string': return asDelegate(STATIC_TYPES.string);
+            case 'void': return asDelegate(STATIC_TYPES.void);
+            case 'element': return asDelegate(element);
+            case 'self': return asDelegate(self.kind === 'collection' ? self : { kind: 'collection', name: 'List', args: [element] });
+            case 'list': return asDelegate({ kind: 'collection', name: 'List', args: [element] });
+            case 'array': return asDelegate({ kind: 'array', element: shape === 'array' && self.kind === 'string' ? STATIC_TYPES.string : element });
+            case 'dynamic': return STATIC_TYPES.dynamic;
+        }
+    }
+    private element(e: Expression & {
+        kind: 'element';
+    }, scope: Scope): StaticType {
+        const targetType = this.expression(e.target, scope, null);
+        for (const argument of e.arguments)
+            this.expression(argument.expression, scope, null);
+        const isRange = e.arguments.length === 1 && e.arguments[0].expression.kind === 'range';
+        switch (targetType.kind) {
+            case 'array':
+                return isRange ? targetType : targetType.element;
+            case 'string':
+                return isRange ? STATIC_TYPES.string : STATIC_TYPES.char;
+            case 'collection':
+                if (targetType.name === 'Dictionary')
+                    return targetType.args[1] ?? STATIC_TYPES.dynamic;
+                if (targetType.name === 'List')
+                    return isRange ? targetType : (targetType.args[0] ?? STATIC_TYPES.dynamic);
+                this.error(e.span, `${targetType.name} não aceita indexação com [ ].`);
+                return STATIC_TYPES.dynamic;
+            case 'class': {
+                const cls = this.classOf(targetType);
+                if (cls && !this.hasIndexer(cls))
+                    this.error(e.span, `"${cls.name}" não tem indexador (this[…]).`);
+                const indexer = cls ? this.indexerOf(cls) : null;
+                return indexer ? this.typeFromRef(indexer.type, cls) : STATIC_TYPES.dynamic;
+            }
+            case 'tuple': {
+                const first = e.arguments[0]?.expression;
+                if (first?.kind === 'literal' && typeof first.value === 'number')
+                    return targetType.elements[first.value]?.type ?? STATIC_TYPES.dynamic;
+                return STATIC_TYPES.dynamic;
+            }
+            case 'int':
+            case 'float':
+            case 'bool':
+            case 'char':
+            case 'enum':
+                this.error(e.span, `${describeType(targetType)} não aceita indexação.`);
+                return STATIC_TYPES.dynamic;
+            default:
+                return targetType.kind === 'engine' ? STATIC_TYPES.engine : STATIC_TYPES.dynamic;
+        }
+    }
+    private hasIndexer(cls: ClassInfo): boolean {
+        for (let current: ClassInfo | null = cls; current; current = current.base)
+            if (current.hasIndexer)
+                return true;
+        return false;
+    }
+    private indexerOf(cls: ClassInfo): Member & {
+        kind: 'indexer';
+    } | null {
+        for (let current: ClassInfo | null = cls; current; current = current.base) {
+            const found = current.decl.members.find((member): member is Member & {
+                kind: 'indexer';
+            } => member.kind === 'indexer');
+            if (found)
+                return found;
+        }
+        return null;
+    }
+    private call(e: Expression & {
+        kind: 'call';
+    }, scope: Scope): StaticType {
+        const { target } = e;
+        let calleeType: StaticType;
+        if (target.kind === 'identifier')
+            calleeType = this.identifier(target, scope, true);
+        else if (target.kind === 'member')
+            calleeType = this.member(target, scope, true);
+        else
+            calleeType = this.expression(target, scope, null);
+        target.staticType = calleeType;
+        const member = this.memberOfCallTarget(target, scope, e.arguments.length);
+        if (member)
+            return this.callScriptMethod(e, member, scope);
+        const receiverType = target.kind === 'member' ? target.target.staticType : undefined;
+        const elementType = receiverType ? elementTypeOf(receiverType) : null;
+        const methodName = target.kind === 'member' ? target.name : target.kind === 'identifier' ? target.name : null;
+        const lambdaParams = this.sequenceLambdaParams(receiverType, methodName, elementType);
+        e.arguments.forEach((argument, index) => {
+            if (argument.declaration)
+                this.declareOutVariable(argument, scope);
+            const expected = argument.expression.kind === 'lambda' ? lambdaParams(index, argument.expression) : null;
+            this.expression(argument.expression, scope, expected);
+            if (argument.modifier === 'out' || argument.modifier === 'ref')
+                this.checkRefTarget(argument.expression);
+        });
+        if (calleeType.kind === 'delegate')
+            return calleeType.returns ?? STATIC_TYPES.dynamic;
+        if (target.kind === 'member' && receiverType) {
+            if (receiverType.kind === 'collection' || receiverType.kind === 'array' || receiverType.kind === 'string')
+                return this.lambdaAwareSequenceResult(target.name, receiverType, elementType ?? STATIC_TYPES.dynamic, e);
+            if (receiverType.kind === 'engine')
+                return STATIC_TYPES.engine;
+        }
+        if (calleeType.kind === 'engine')
+            return STATIC_TYPES.engine;
+        if (calleeType.kind === 'class' || calleeType.kind === 'enum') {
+            this.error(e.span, `"${calleeType.name}" é um tipo, não um método; para criar uma instância use new ${calleeType.name}(…).`);
+        }
+        return STATIC_TYPES.dynamic;
+    }
+    private lambdaAwareSequenceResult(name: string, receiverType: StaticType, element: StaticType, e: Expression & {
+        kind: 'call';
+    }): StaticType {
+        const lambda = e.arguments[0]?.expression;
+        const lambdaResult = lambda?.kind === 'lambda' && lambda.body.kind !== 'block' ? lambda.body.staticType : undefined;
+        if (name === 'Select' || name === 'SelectMany') {
+            const inner = name === 'SelectMany' && lambdaResult ? (elementTypeOf(lambdaResult) ?? STATIC_TYPES.dynamic) : lambdaResult;
+            return { kind: 'collection', name: 'List', args: [inner && inner.kind !== 'void' ? inner : STATIC_TYPES.dynamic] };
+        }
+        if (name === 'Sum')
+            return lambdaResult ? (isIntegralType(lambdaResult) ? STATIC_TYPES.int : STATIC_TYPES.float) : isIntegralType(element) ? STATIC_TYPES.int : STATIC_TYPES.float;
+        if ((name === 'Min' || name === 'Max') && lambdaResult)
+            return lambdaResult;
+        if (name === 'Aggregate')
+            return e.arguments.length >= 2 ? (e.arguments[0].expression.staticType ?? STATIC_TYPES.dynamic) : element;
+        if (name === 'GroupBy' || name === 'ToDictionary' || name === 'ToLookup' || name === 'Zip' || name === 'Chunk' || name === 'Index' || name === 'Cast' || name === 'OfType' || name === 'ToHashSet')
+            return STATIC_TYPES.dynamic;
+        const type = receiverType.kind === 'string' ? this.shapeType(STRING_METHOD_SHAPES.get(name) ?? SEQUENCE_METHOD_SHAPES.get(name), receiverType, STATIC_TYPES.char, true) : this.sequenceMemberType(receiverType, name, true);
+        return type.kind === 'delegate' ? (type.returns ?? STATIC_TYPES.dynamic) : type;
+    }
+    private sequenceLambdaParams(receiverType: StaticType | undefined, methodName: string | null, elementType: StaticType | null): (index: number, lambda: LambdaExpression) => StaticType | null {
+        if (!receiverType || !elementType || !methodName)
+            return () => null;
+        if (receiverType.kind !== 'collection' && receiverType.kind !== 'array' && receiverType.kind !== 'string')
+            return () => null;
+        return (index, lambda) => {
+            if (methodName === 'Aggregate') {
+                return index === 0 ? null : { kind: 'delegate', params: [STATIC_TYPES.dynamic, elementType], returns: null };
+            }
+            if (methodName === 'Zip' || methodName === 'Join')
+                return null;
+            if (methodName === 'Sort' && lambda.parameters.length === 2)
+                return { kind: 'delegate', params: [elementType, elementType], returns: STATIC_TYPES.int };
+            const params = lambda.parameters.length === 2 ? [elementType, STATIC_TYPES.int] : [elementType];
+            return { kind: 'delegate', params, returns: null };
+        };
+    }
+    private memberOfCallTarget(target: Expression, scope: Scope, arity: number): MemberInfo | null {
+        if (target.kind === 'identifier') {
+            if (target.resolution?.kind !== 'member' || target.resolution.memberKind !== 'method')
+                return null;
+            const cls = scope.fn.cls;
+            return cls ? this.findMember(cls, target.name, arity) : null;
+        }
+        if (target.kind !== 'member')
+            return null;
+        const resolution = target.resolution;
+        if (resolution?.kind === 'member' && resolution.memberKind === 'method') {
+            const owner = target.target.kind === 'identifier' && target.target.resolution?.kind === 'type' ? this.lookupTypeByResolution(target.target.resolution) : null;
+            return owner?.kind === 'class' ? this.findMember(owner, target.name, arity) : null;
+        }
+        if (resolution?.kind === 'direct') {
+            const receiverType = target.target.staticType;
+            const cls = target.target.kind === 'base' ? (scope.fn.cls?.base ?? null) : this.classOf(receiverType);
+            const member = cls ? this.findMember(cls, target.name, arity) : null;
+            return member?.kind === 'method' ? member : null;
+        }
+        return null;
+    }
+    private callScriptMethod(e: Expression & {
+        kind: 'call';
+    }, member: MemberInfo, scope: Scope): StaticType {
+        const { params } = member;
+        const target = e.target as Expression & {
+            kind: 'identifier' | 'member';
+        };
+        if (target.kind === 'identifier' && target.resolution?.kind === 'member')
+            target.resolution = { ...target.resolution, jsName: member.jsName };
+        if (target.kind === 'member' && target.resolution?.kind === 'member')
+            target.resolution = { ...target.resolution, jsName: member.jsName };
+        if (target.kind === 'member' && target.resolution?.kind === 'direct')
+            target.resolution = { kind: 'direct', jsName: member.jsName };
+        const order: number[] = [];
+        const used = new Set<number>();
+        let positional = 0;
+        for (const argument of e.arguments) {
+            if (argument.declaration)
+                this.declareOutVariable(argument, scope);
+            let slot: number;
+            if (argument.name) {
+                slot = params.findIndex((parameter) => parameter.name === argument.name);
+                if (slot < 0) {
+                    this.error(argument.span, `"${member.name}" não tem um parâmetro chamado "${argument.name}".${hint(argument.name, params.map((parameter) => parameter.name))}`);
+                    slot = positional;
+                }
+            }
+            else
+                slot = positional;
+            positional = slot + 1;
+            if (used.has(slot))
+                this.error(argument.span, `O parâmetro "${params[slot]?.name ?? slot + 1}" de "${member.name}" recebeu dois argumentos.`);
+            used.add(slot);
+            order.push(slot);
+            const parameter = params[slot];
+            const paramsArray = parameter?.modifier === 'params';
+            const expected = parameter ? (paramsArray && parameter.type.kind === 'array' ? parameter.type.element : parameter.type) : null;
+            const type = this.expression(argument.expression, scope, expected);
+            if (parameter && (parameter.modifier === 'ref' || parameter.modifier === 'out') && argument.modifier === 'none')
+                this.error(argument.span, `O parâmetro "${parameter.name}" de "${member.name}" é ${parameter.modifier}: escreva ${parameter.modifier} ${this.describeArgument(argument)}.`);
+            if (argument.modifier !== 'none' && parameter && parameter.modifier !== 'ref' && parameter.modifier !== 'out')
+                this.error(argument.span, `O parâmetro "${parameter.name}" de "${member.name}" não é ${argument.modifier}.`);
+            if (argument.modifier === 'out' || argument.modifier === 'ref')
+                this.checkRefTarget(argument.expression);
+            if (parameter && paramsArray && e.arguments.length === params.length && slot === params.length - 1 && type.kind === 'array')
+                e.spreadLast = true;
+            if (parameter && !paramsArray)
+                this.checkArgumentType(argument, type, parameter.type, member.name);
+        }
+        const required = params.filter((parameter) => !parameter.hasDefault && parameter.modifier !== 'params').length;
+        const hasParams = params.some((parameter) => parameter.modifier === 'params');
+        if (e.arguments.length < required || (!hasParams && e.arguments.length > params.length)) {
+            this.error(e.span, `"${member.name}" espera ${hasParams ? `ao menos ${required}` : required === params.length ? `${params.length}` : `de ${required} a ${params.length}`} ${params.length === 1 && required === 1 ? 'argumento' : 'argumentos'}, recebeu ${e.arguments.length}.`);
+        }
+        if (order.some((slot, index) => slot !== index))
+            e.argumentOrder = order;
+        return member.type;
+    }
+    private describeArgument(argument: Argument): string {
+        return argument.expression.kind === 'identifier' ? argument.expression.name : '…';
+    }
+    private checkArgumentType(argument: Argument, actual: StaticType, expected: StaticType, method: string): void {
+        const simple = (type: StaticType) => type.kind === 'int' || type.kind === 'float' || type.kind === 'bool' || type.kind === 'string' || type.kind === 'char';
+        if (!simple(actual) || !simple(expected))
+            return;
+        if (isNumericType(actual) && isNumericType(expected)) {
+            if (actual.kind === 'float' && expected.kind === 'int')
+                this.error(argument.span, `"${method}" espera int, mas o argumento é float; converta com (int).`);
+            return;
+        }
+        if (actual.kind === 'char' && expected.kind === 'int')
+            return;
+        if (actual.kind !== expected.kind)
+            this.error(argument.span, `"${method}" espera ${describeType(expected)}, mas o argumento é ${describeType(actual)}.`);
+    }
 }
