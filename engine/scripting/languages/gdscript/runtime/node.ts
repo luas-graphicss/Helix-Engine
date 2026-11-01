@@ -829,4 +829,276 @@ export class NodeBase extends GodotObject implements NodeLike, InputTarget {
         const name = str(group);
         return this.$groupNames.has(name) || (this.$entity?.tags.has(name) ?? false);
     }
+    add_to_group(group: unknown, _persistent = false): void {
+        const name = str(group);
+        this.$groupNames.add(name);
+        this.$entity?.tags.add(name);
+        let set = this.$context.groups.get(name);
+        if (!set) {
+            set = new Set();
+            this.$context.groups.set(name, set);
+        }
+        set.add(this);
+    }
+    remove_from_group(group: unknown): void {
+        const name = str(group);
+        this.$groupNames.delete(name);
+        this.$entity?.tags.delete(name);
+        this.$context.groups.get(name)?.delete(this);
+    }
+    get_groups(): string[] {
+        const names = new Set(this.$groupNames);
+        if (this.$entity)
+            for (const tag of this.$entity.tags)
+                names.add(tag);
+        return Array.from(names);
+    }
+    set_process(enable: unknown): void {
+        this.$processing = Boolean(enable);
+    }
+    set_physics_process(enable: unknown): void {
+        this.$physicsProcessing = Boolean(enable);
+    }
+    set_process_input(enable: unknown): void {
+        this.$inputEnabled = Boolean(enable);
+        this.$updateInputRegistration();
+    }
+    set_process_unhandled_input(enable: unknown): void {
+        this.$unhandledInputEnabled = Boolean(enable);
+        this.$updateInputRegistration();
+    }
+    set_process_unhandled_key_input(enable: unknown): void {
+        this.$unhandledKeyInputEnabled = Boolean(enable);
+        this.$updateInputRegistration();
+    }
+    is_processing(): boolean {
+        return this.$processing;
+    }
+    is_physics_processing(): boolean {
+        return this.$physicsProcessing;
+    }
+    is_processing_input(): boolean {
+        return this.$inputEnabled;
+    }
+    get_process_delta_time(): number {
+        return Number(this.$context.time.delta ?? 0);
+    }
+    get_physics_process_delta_time(): number {
+        return Number(this.$context.time.fixedDelta ?? 1 / 60);
+    }
+    get_viewport(): Viewport {
+        return viewportOf(this.$context);
+    }
+    get_window(): Window {
+        return windowOf(this.$context);
+    }
+    print_tree(): void {
+        this.$context.log('info', this.$treeLines(false).join('\n'));
+    }
+    print_tree_pretty(): void {
+        this.$context.log('info', this.$treeLines(true).join('\n'));
+    }
+    private $treeLines(pretty: boolean, prefix = '', last = true): string[] {
+        const label = pretty ? `${prefix}${last ? '└─' : '├─'}${this.name} (${this.get_class()})` : this.get_path();
+        const lines = [label];
+        const children = this.$children();
+        children.forEach((child, index) => lines.push(...child.$treeLines(pretty, pretty ? `${prefix}${last ? '   ' : '│  '}` : '', index === children.length - 1)));
+        return lines;
+    }
+    duplicate(_flags = 15): NodeBase {
+        if (!this.$entity)
+            fail('duplicate(): só nós que já estão na cena podem ser duplicados nesta engine.');
+        const copy = (this.$sceneApi.clone as Fn)(this.$entity, true) as EngineEntity;
+        return wrapEntity(copy, this.$context);
+    }
+    create_tween(): Tween {
+        return new Tween(this.$context, this);
+    }
+    get_rid(): number {
+        return this.$entity?.id ?? 0;
+    }
+    set_collision_layer_value(layer: unknown, value: unknown): void {
+        const bit = 1 << (Number(layer) - 1);
+        this.$collisionLayer = value ? this.$collisionLayer | bit : this.$collisionLayer & ~bit;
+    }
+    set_collision_mask_value(layer: unknown, value: unknown): void {
+        const bit = 1 << (Number(layer) - 1);
+        this.$collisionMask = value ? this.$collisionMask | bit : this.$collisionMask & ~bit;
+    }
+    get_collision_layer_value(layer: unknown): boolean {
+        return (this.$collisionLayer & (1 << (Number(layer) - 1))) !== 0;
+    }
+    get_collision_mask_value(layer: unknown): boolean {
+        return (this.$collisionMask & (1 << (Number(layer) - 1))) !== 0;
+    }
+    get collision_layer(): number {
+        return this.$collisionLayer;
+    }
+    set collision_layer(value: unknown) {
+        this.$collisionLayer = Number(value) | 0;
+    }
+    get collision_mask(): number {
+        return this.$collisionMask;
+    }
+    set collision_mask(value: unknown) {
+        this.$collisionMask = Number(value) | 0;
+    }
+    is_class(name: unknown): boolean {
+        if (typeof name !== 'string')
+            return false;
+        if (super.is_class(name))
+            return true;
+        return name === 'Node' || (godotIsA(godotBaseOf(this.constructor), 'Node3D') && godotIsA(name, 'Node'));
+    }
+    to_string(): string {
+        const custom = (this as unknown as {
+            _to_string: Fn;
+        })._to_string;
+        if (custom !== GodotObject.prototype._to_string)
+            return str(custom.call(this));
+        return `${this.name}:<${scriptNameOf(this) ?? godotBaseOf(this.constructor)}#${this.$instanceId}>`;
+    }
 }
+markScriptClass(NodeBase, 'Node3D');
+setGodotBase(NodeBase, 'Node3D');
+interface BodyApi {
+    readonly isDynamic: boolean;
+    readonly isKinematic: boolean;
+    readonly isStatic: boolean;
+    readonly mass: number;
+    linearVelocity: Float32Array;
+    angularVelocity: Float32Array;
+    gravityScale: number;
+    applyImpulse(impulse: unknown, point?: unknown): void;
+    applyAngularImpulse(impulse: unknown): void;
+    applyForce(force: unknown, point?: unknown): void;
+    applyTorque(torque: unknown): void;
+    moveKinematic(position: unknown, orientation?: unknown, step?: unknown): void;
+    wake(): void;
+}
+interface RaycastHit {
+    readonly entity: EngineEntity;
+    readonly point: Float32Array;
+    readonly normal: Float32Array;
+    readonly distance: number;
+}
+export class KinematicCollision3D extends GodotObject {
+    constructor(helix: HelixRoot, private readonly collider: NodeBase, private readonly position: Vector3, private readonly normal: Vector3, private readonly travel: Vector3, private readonly remainder: Vector3) {
+        super({ entity: null, helix, script: null });
+    }
+    get_collider(): NodeBase {
+        return this.collider;
+    }
+    get_collider_rid(): number {
+        return this.collider.get_rid();
+    }
+    get_collider_shape(): null {
+        return null;
+    }
+    get_collider_velocity(): Vector3 {
+        return this.collider instanceof RigidBody3DNode ? this.collider.linear_velocity : new Vector3();
+    }
+    get_position(): Vector3 {
+        return this.position;
+    }
+    get_normal(): Vector3 {
+        return this.normal;
+    }
+    get_travel(): Vector3 {
+        return this.travel;
+    }
+    get_remainder(): Vector3 {
+        return this.remainder;
+    }
+    get_angle(upDirection: unknown = Vector3.UP): number {
+        return Math.acos(Math.max(-1, Math.min(1, this.normal.dot(toVector3(upDirection)))));
+    }
+    get_depth(): number {
+        return 0;
+    }
+    get_collision_count(): number {
+        return 1;
+    }
+    get_local_shape(): null {
+        return null;
+    }
+}
+markScriptClass(KinematicCollision3D, 'KinematicCollision3D');
+setGodotBase(KinematicCollision3D, 'KinematicCollision3D');
+export class CollisionObject3DNode extends NodeBase {
+    protected $physicsApi(): AnyRecord {
+        return this.$helix.physics as AnyRecord;
+    }
+    protected $body(): BodyApi | null {
+        const entity = this.$entity;
+        if (!entity || !entity.rigidBody)
+            return null;
+        const api = this.$physicsApi();
+        const hasBody = api.hasBody as Fn | undefined;
+        if (hasBody && !hasBody(entity))
+            return null;
+        try {
+            return (api.bodyOf as Fn)(entity) as BodyApi;
+        }
+        catch {
+            return null;
+        }
+    }
+    protected $raycast(origin: Vector3, direction: Vector3, maxDistance: number): RaycastHit | null {
+        const raycast = this.$physicsApi().raycast as Fn | undefined;
+        if (!raycast || !this.$entity)
+            return null;
+        const hit = raycast(origin, direction, maxDistance, { exclude: [this.$entity] }) as RaycastHit | null;
+        return hit ?? null;
+    }
+    protected $halfHeight(): number {
+        const body = this.$entity?.rigidBody as {
+            collider?: string;
+            height?: number;
+            radius?: number;
+            boxSize?: Float32Array;
+        } | null | undefined;
+        if (!body) {
+            const character = this.$entity?.character as {
+                height?: number;
+            } | null | undefined;
+            return character?.height ? character.height / 2 : 0.9;
+        }
+        if (body.collider === 'capsule')
+            return (body.height ?? 1.8) / 2;
+        if (body.collider === 'sphere')
+            return body.radius ?? 0.5;
+        return body.boxSize ? body.boxSize[1] / 2 : 0.5;
+    }
+}
+markScriptClass(CollisionObject3DNode, 'CollisionObject3D');
+setGodotBase(CollisionObject3DNode, 'CollisionObject3D');
+export class PhysicsBody3DNode extends CollisionObject3DNode {
+    move_and_collide(motion: unknown, testOnly = false, _safeMargin = 0.001, _recoveryAsCollision = false): KinematicCollision3D | null {
+        const delta = toVector3(motion);
+        const length = delta.length();
+        const from = this.global_position;
+        if (length < 1e-9)
+            return null;
+        const direction = delta.normalized();
+        const hit = this.$raycast(from, direction, length + 0.001);
+        if (!hit) {
+            if (!testOnly)
+                this.global_position = vadd(from, delta);
+            return null;
+        }
+        const travelLength = Math.max(0, hit.distance - 0.001);
+        const travel = vscale(direction, travelLength);
+        if (!testOnly)
+            this.global_position = vadd(from, travel);
+        return new KinematicCollision3D(this.$helix, wrapEntity(hit.entity, this.$context), fromEngineVec3(hit.point), fromEngineVec3(hit.normal), travel, vsub(delta, travel));
+    }
+}
+markScriptClass(PhysicsBody3DNode, 'PhysicsBody3D');
+setGodotBase(PhysicsBody3DNode, 'PhysicsBody3D');
+export class StaticBody3DNode extends PhysicsBody3DNode {
+    constant_linear_velocity = new Vector3();
+    constant_angular_velocity = new Vector3();
+}
+markScriptClass(StaticBody3DNode, 'StaticBody3D');
+setGodotBase(StaticBody3DNode, 'StaticBody3D');
