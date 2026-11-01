@@ -737,3 +737,280 @@ interface DictView {
     fresh(): DictView;
     source: unknown;
 }
+function dictView(value: unknown): DictView | null {
+    if (value instanceof Dictionary) {
+        return {
+            source: value,
+            has: (key) => value.has(key),
+            get: (key) => value.get(key),
+            set: (key, entry) => void value.set(key, entry),
+            delete: (key) => value.delete(key),
+            keys: () => value.keys(),
+            values: () => value.values(),
+            size: () => value.size,
+            clear: () => value.clear(),
+            fresh: () => dictView(new Dictionary()) as DictView,
+        };
+    }
+    if (value instanceof Map) {
+        return {
+            source: value,
+            has: (key) => value.has(key),
+            get: (key) => value.get(key),
+            set: (key, entry) => void value.set(key, entry),
+            delete: (key) => value.delete(key),
+            keys: () => Array.from(value.keys()),
+            values: () => Array.from(value.values()),
+            size: () => value.size,
+            clear: () => value.clear(),
+            fresh: () => dictView(new Map()) as DictView,
+        };
+    }
+    if (value !== null && typeof value === 'object' && !Array.isArray(value) && !ArrayBuffer.isView(value) && !isVecLike(value) && !isScriptInstance(value)) {
+        const object = value as Record<string, unknown>;
+        return {
+            source: value,
+            has: (key) => Object.prototype.hasOwnProperty.call(object, String(key)),
+            get: (key) => object[String(key)],
+            set: (key, entry) => void (object[String(key)] = entry),
+            delete: (key) => {
+                const existed = Object.prototype.hasOwnProperty.call(object, String(key));
+                delete object[String(key)];
+                return existed;
+            },
+            keys: () => Object.keys(object),
+            values: () => Object.values(object),
+            size: () => Object.keys(object).length,
+            clear: () => {
+                for (const key of Object.keys(object))
+                    delete object[key];
+            },
+            fresh: () => dictView({}) as DictView,
+        };
+    }
+    return null;
+}
+const DICT_METHODS: Record<string, Method<DictView>> = {
+    size: (dict) => dict.size(),
+    is_empty: (dict) => dict.size() === 0,
+    has: (dict, key) => dict.has(key),
+    has_all: (dict, keys) => {
+        if (!Array.isArray(keys))
+            fail(`Dictionary.has_all(): esperava uma lista de chaves, recebeu ${describeTypeOf(keys)}.`);
+        return keys.every((key) => dict.has(key));
+    },
+    get: (dict, key, fallback = null) => (dict.has(key) ? norm(dict.get(key)) : fallback),
+    get_or_add: (dict, key, fallback = null) => {
+        if (!dict.has(key))
+            dict.set(key, fallback);
+        return norm(dict.get(key));
+    },
+    set: (dict, key, value) => {
+        dict.set(key, value);
+        return true;
+    },
+    erase: (dict, key) => dict.delete(key),
+    clear: (dict) => {
+        dict.clear();
+        return null;
+    },
+    keys: (dict) => dict.keys(),
+    values: (dict) => dict.values(),
+    duplicate: (dict, deep = false) => {
+        const copy = dict.fresh();
+        for (const key of dict.keys())
+            copy.set(key, truthy(deep) ? deepCopy(dict.get(key)) : dict.get(key));
+        return copy.source;
+    },
+    merge: (dict, other, overwrite = false) => {
+        const source = dictView(other);
+        if (!source)
+            fail(`Dictionary.merge(): esperava um Dictionary, recebeu ${describeTypeOf(other)}.`);
+        for (const key of source.keys())
+            if (truthy(overwrite) || !dict.has(key))
+                dict.set(key, source.get(key));
+        return null;
+    },
+    merged: (dict, other, overwrite = false) => {
+        const copy = dict.fresh();
+        for (const key of dict.keys())
+            copy.set(key, dict.get(key));
+        const source = dictView(other);
+        if (!source)
+            fail(`Dictionary.merged(): esperava um Dictionary, recebeu ${describeTypeOf(other)}.`);
+        for (const key of source.keys())
+            if (truthy(overwrite) || !copy.has(key))
+                copy.set(key, source.get(key));
+        return copy.source;
+    },
+    find_key: (dict, value) => {
+        for (const key of dict.keys())
+            if (eq(dict.get(key), value))
+                return key;
+        return null;
+    },
+    hash: (dict) => STRING_METHODS.hash(str(dict.source)) as number,
+    sort: (dict) => {
+        const entries = dict.keys().map((key) => [key, dict.get(key)] as const);
+        entries.sort((a, b) => compare(a[0], b[0], 'sort'));
+        dict.clear();
+        for (const [key, value] of entries)
+            dict.set(key, value);
+        return null;
+    },
+    is_read_only: () => false,
+    make_read_only: () => null,
+    is_typed: () => false,
+    is_typed_key: () => false,
+    is_typed_value: () => false,
+    recursive_equal: (dict, other) => eq(dict.source, other),
+};
+const CALLABLE_METHODS: Record<string, Method<Fn>> = {
+    call: (fn, ...args) => norm(fn(...args)),
+    callv: (fn, args) => {
+        if (!Array.isArray(args))
+            fail(`Callable.callv(): esperava uma lista de argumentos, recebeu ${describeTypeOf(args)}.`);
+        return norm(fn(...args));
+    },
+    call_deferred: (fn, ...args) => {
+        void Promise.resolve().then(() => fn(...args));
+        return null;
+    },
+    bind: (fn, ...bound) => {
+        const meta = callableMeta(fn);
+        const result = (...args: unknown[]) => fn(...args, ...bound);
+        return meta ? makeCallable(meta.object, meta.method ?? '', fn, [...meta.bound, ...bound]) : result;
+    },
+    bindv: (fn, bound) => {
+        if (!Array.isArray(bound))
+            fail(`Callable.bindv(): esperava uma lista, recebeu ${describeTypeOf(bound)}.`);
+        return CALLABLE_METHODS.bind(fn, ...bound);
+    },
+    unbind: (fn, count) => {
+        const drop = requireInt(count, 'Callable', 'unbind', 'a quantidade');
+        return (...args: unknown[]) => fn(...args.slice(0, Math.max(0, args.length - drop)));
+    },
+    is_valid: () => true,
+    is_null: () => false,
+    is_custom: (fn) => callableMeta(fn) === null,
+    is_standard: (fn) => callableMeta(fn) !== null,
+    get_object: (fn) => callableMeta(fn)?.object ?? null,
+    get_method: (fn) => callableMeta(fn)?.method ?? fn.name ?? '',
+    get_bound_arguments_count: (fn) => callableMeta(fn)?.bound.length ?? 0,
+    get_bound_arguments: (fn) => callableMeta(fn)?.bound.slice() ?? [],
+    get_argument_count: (fn) => fn.length,
+    hash: (fn) => STRING_METHODS.hash(str(fn)) as number,
+    rpc: () => fail('Callable.rpc() não existe aqui; a rede da engine é helix.net (helix.play.rpc).'),
+};
+function vectorPrototype(value: {
+    x: number;
+    y: number;
+    z?: number;
+    w?: number;
+}): object {
+    const arity = vectorArity(value);
+    return arity === 2 ? Vector2.prototype : arity === 3 ? Vector3.prototype : Vector4.prototype;
+}
+function describeReceiver(receiver: unknown, where: string | undefined): string {
+    return where ? `${where} (${describeTypeOf(receiver)})` : describeTypeOf(receiver);
+}
+function methodsOf(receiver: object): string[] {
+    const names = new Set<string>();
+    let current: object | null = receiver;
+    while (current && current !== Object.prototype) {
+        for (const key of Object.getOwnPropertyNames(current)) {
+            if (key === 'constructor' || key.startsWith('__'))
+                continue;
+            const descriptor = Object.getOwnPropertyDescriptor(current, key);
+            if (descriptor && typeof descriptor.value === 'function')
+                names.add(key);
+        }
+        current = Object.getPrototypeOf(current);
+    }
+    return Array.from(names);
+}
+function missingMethod(receiver: unknown, name: string, where: string | undefined, candidates: Iterable<string>): never {
+    return fail(`O método "${name}" não existe em ${describeReceiver(receiver, where)}.${suggestionText(name, candidates)}`);
+}
+export function call(receiver: unknown, name: string, args: unknown[], where?: string): unknown {
+    if (receiver === null || receiver === undefined)
+        fail(`Tentativa de chamar "${name}" em null${where ? ` (${where} é null)` : ''}.`);
+    switch (typeof receiver) {
+        case 'string': {
+            const method = STRING_METHODS[name];
+            if (method)
+                return method(receiver, ...args);
+            const native = (String.prototype as unknown as Record<string, unknown>)[name];
+            if (typeof native === 'function')
+                return norm((native as Fn).apply(receiver, args));
+            return missingMethod(receiver, name, where, Object.keys(STRING_METHODS));
+        }
+        case 'number':
+        case 'boolean':
+        case 'bigint':
+        case 'symbol':
+            return fail(`${describeTypeOf(receiver)} não tem métodos; "${name}" não existe${where ? ` em ${where}` : ''}.`);
+        case 'function': {
+            if (isScriptClass(receiver)) {
+                if (name === 'new')
+                    return construct(receiver as new (inject: unknown) => object, args);
+                const member = (receiver as unknown as Record<string, unknown>)[name];
+                if (typeof member === 'function')
+                    return norm((member as Fn).apply(receiver, args));
+                return missingMethod(receiver, name, where, methodsOf(receiver));
+            }
+            const method = CALLABLE_METHODS[name];
+            if (method)
+                return method(receiver as Fn, ...args);
+            return missingMethod(receiver, name, where, Object.keys(CALLABLE_METHODS));
+        }
+        case 'object':
+            break;
+        default:
+            return fail(`Não é possível chamar "${name}" em ${describeTypeOf(receiver)}.`);
+    }
+    const object = receiver as Record<string, unknown>;
+    if (Array.isArray(object)) {
+        const method = ARRAY_METHODS[name];
+        if (method)
+            return method(object, ...args);
+        const native = object[name];
+        if (typeof native === 'function')
+            return norm((native as Fn).apply(object, args));
+        return missingMethod(object, name, where, Object.keys(ARRAY_METHODS));
+    }
+    if (object instanceof Dictionary) {
+        const method = DICT_METHODS[name];
+        if (method)
+            return method(dictView(object) as DictView, ...args);
+        return missingMethod(object, name, where, Object.keys(DICT_METHODS));
+    }
+    const member = object[name];
+    if (typeof member === 'function') {
+        if (isScriptInstance(object) || isValueType(object) || object instanceof Signal)
+            return norm((member as Fn).apply(object, args));
+        return norm((member as Fn).apply(object, toEngineArgs(args)));
+    }
+    if (isVecLike(object)) {
+        const method = (vectorPrototype(object) as Record<string, unknown>)[name];
+        if (typeof method === 'function')
+            return (method as Fn).apply(object, args);
+        return missingMethod(object, name, where, Object.getOwnPropertyNames(vectorPrototype(object)));
+    }
+    if (ArrayBuffer.isView(object)) {
+        const method = ARRAY_METHODS[name];
+        if (method)
+            return method(object as unknown as List, ...args);
+        return missingMethod(object, name, where, Object.keys(ARRAY_METHODS));
+    }
+    const view = dictView(object);
+    if (view && !isScriptInstance(object)) {
+        const method = DICT_METHODS[name];
+        if (method)
+            return method(view, ...args);
+        if (typeof member === 'function')
+            return norm((member as Fn).apply(object, toEngineArgs(args)));
+        return missingMethod(object, name, where, [...Object.keys(object), ...Object.keys(DICT_METHODS)]);
+    }
+    return missingMethod(object, name, where, methodsOf(object));
+}
