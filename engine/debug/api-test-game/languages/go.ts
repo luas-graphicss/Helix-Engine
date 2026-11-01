@@ -1099,4 +1099,35 @@ func onDestroy() {
 
 func main() {}
 `;
+    const module = String.raw `                                     
+                                                                                                        
+                                                                                                 
+package main
+
+import "helix"
+
+                    
+func soma(a, b float64) float64 {
+	return a + b
+}
+
+                        
+func saudacao(quem uint32) uint32 {
+	return helix.From("Olá, " + helix.Wrap(quem).String()).Handle()
+}
+
+                       
+func limitar(valor, minimo, maximo float64) float64 {
+	if valor > maximo {
+		return maximo
+	}
+	if valor < minimo {
+		return minimo
+	}
+	return valor
+}
+
+func main() {}
+`;
+    return { entry, actor, module };
 }
