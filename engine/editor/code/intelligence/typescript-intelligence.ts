@@ -265,4 +265,207 @@ class TypeScriptIntelligence implements LanguageIntelligence {
             return;
         view.dispatch({ changes, userEvent: 'input.complete' });
     }
+    private readonly moduleSpecifierCompletions: CompletionSource = (context: CompletionContext): CompletionResult | null => {
+        const line = context.state.doc.lineAt(context.pos);
+        const match = SPECIFIER_BEFORE.exec(line.text.slice(0, context.pos - line.from));
+        if (!match)
+            return null;
+        const partial = match[2];
+        const own = this.host.scriptName();
+        const { library } = this.host.session;
+        const languageByName = new Map<string, string>();
+        for (const asset of library.byKind('script')) {
+            if (asset.details.kind === 'script')
+                languageByName.set(asset.name, scriptLanguage(asset.details.language).label);
+        }
+        const options: Completion[] = [{ label: 'helix', type: 'namespace', detail: 'API da engine', boost: 99 }];
+        for (const name of this.project.scriptNames) {
+            if (name === own)
+                continue;
+            options.push({ label: name, type: 'namespace', detail: languageByName.get(name) ?? 'script' });
+        }
+        return { from: context.pos - partial.length, options, validFor: /^[\w./@-]*$/ };
+    };
+    private readonly hover = async (view: EditorView, pos: number): Promise<Tooltip | null> => {
+        const path = this.sync(view.state.doc);
+        if (!path)
+            return null;
+        let info: TS.QuickInfo | null;
+        try {
+            info = await this.project.quickInfo(path, pos);
+        }
+        catch {
+            return null;
+        }
+        if (!info || this.disposed)
+            return null;
+        const dom = infoNode({ signature: displayPartsToString(info.displayParts), doc: this.docText(info.documentation, info.tags), className: 'hx-hover' });
+        if (!dom)
+            return null;
+        return { pos: info.textSpan.start, end: info.textSpan.start + info.textSpan.length, above: true, create: () => ({ dom }) };
+    };
+    private readonly onUpdate = (update: ViewUpdate): void => {
+        if (this.disposed)
+            return;
+        const open = update.state.field(this.signatureField) !== null;
+        if (update.docChanged) {
+            const typed = update.transactions.some((transaction) => transaction.isUserEvent('input.type') || transaction.isUserEvent('input.complete'));
+            let trigger: TS.SignatureHelpTriggerReason | null = null;
+            if (typed) {
+                update.changes.iterChanges((_fromA, _toA, _fromB, _toB, inserted) => {
+                    const last = inserted.toString().at(-1);
+                    if (last === '(' || last === ',' || last === '<')
+                        trigger = { kind: 'characterTyped', triggerCharacter: last };
+                    else if (last === ')' && open)
+                        trigger = { kind: 'retrigger', triggerCharacter: ')' };
+                });
+            }
+            if (trigger || open)
+                this.scheduleSignatureHelp(update.view, trigger ?? { kind: 'retrigger' });
+        }
+        else if (open && update.selectionSet) {
+            this.scheduleSignatureHelp(update.view, { kind: 'retrigger' });
+        }
+    };
+    private scheduleSignatureHelp(view: EditorView, reason: TS.SignatureHelpTriggerReason): void {
+        if (this.signatureTimer)
+            clearTimeout(this.signatureTimer);
+        this.signatureTimer = setTimeout(() => {
+            this.signatureTimer = null;
+            if (!this.disposed)
+                void this.updateSignatureHelp(view, reason);
+        }, 30);
+    }
+    private async updateSignatureHelp(view: EditorView, reason: TS.SignatureHelpTriggerReason): Promise<void> {
+        const request = ++this.signatureRequest;
+        const current = view.state.field(this.signatureField, false) ?? null;
+        const close = () => {
+            if (view.state.field(this.signatureField, false))
+                view.dispatch({ effects: setSignatureHelp.of(null) });
+        };
+        const path = this.sync(view.state.doc);
+        if (!path)
+            return close();
+        const doc = view.state.doc;
+        let items: TS.SignatureHelpItems | null;
+        try {
+            items = await this.project.signatureHelp(path, view.state.selection.main.head, reason);
+        }
+        catch {
+            return close();
+        }
+        if (this.disposed || request !== this.signatureRequest)
+            return;
+        if (!items || items.items.length === 0)
+            return close();
+        const span = view.state.doc === doc ? items.applicableSpan.start : Math.min(items.applicableSpan.start, view.state.doc.length);
+        const sameCall = current !== null && current.pos === span && current.items.items.length === items.items.length;
+        const selected = sameCall ? current.selected : items.selectedItemIndex;
+        view.dispatch({ effects: setSignatureHelp.of({ pos: span, items, selected: Math.min(selected, items.items.length - 1) }) });
+    }
+    showSignatureHelp(view: EditorView): boolean {
+        void this.updateSignatureHelp(view, { kind: 'invoked' });
+        return true;
+    }
+    private signatureKeys() {
+        const cycle = (direction: 1 | -1) => (view: EditorView): boolean => {
+            const help = view.state.field(this.signatureField, false);
+            if (!help || help.items.items.length < 2 || completionStatus(view.state) === 'active')
+                return false;
+            const count = help.items.items.length;
+            view.dispatch({ effects: setSignatureHelp.of({ ...help, selected: (help.selected + direction + count) % count }) });
+            return true;
+        };
+        return [
+            { key: 'ArrowUp', run: cycle(-1) },
+            { key: 'ArrowDown', run: cycle(1) },
+            {
+                key: 'Escape',
+                run: (view: EditorView) => {
+                    const effects: StateEffect<unknown>[] = [];
+                    if (view.state.field(this.signatureField, false))
+                        effects.push(setSignatureHelp.of(null));
+                    if (view.state.field(transientField, false))
+                        effects.push(setTransientTooltip.of(null));
+                    if (effects.length === 0)
+                        return false;
+                    view.dispatch({ effects });
+                    return true;
+                },
+            },
+        ];
+    }
+    async formatDocument(view: EditorView): Promise<boolean> {
+        const path = this.sync(view.state.doc);
+        if (!path)
+            return false;
+        const doc = view.state.doc;
+        let edits: readonly TS.TextChange[];
+        try {
+            edits = await this.project.formattingEdits(path, this.formatOptions());
+        }
+        catch (cause) {
+            this.host.session.log.warn(LOG_SOURCE, `Não foi possível formatar: ${cause instanceof Error ? cause.message : String(cause)}`);
+            return false;
+        }
+        if (this.disposed)
+            return false;
+        if (view.state.doc !== doc) {
+            this.host.session.log.warn(LOG_SOURCE, 'O texto mudou durante a formatação; formate de novo.');
+            return false;
+        }
+        const sorted = [...edits].sort((a, b) => a.span.start - b.span.start);
+        const changes: ChangeSpec[] = [];
+        let last = -1;
+        for (const edit of sorted) {
+            if (edit.span.start < last)
+                continue;
+            changes.push({ from: edit.span.start, to: edit.span.start + edit.span.length, insert: edit.newText });
+            last = edit.span.start + edit.span.length;
+        }
+        if (changes.length > 0)
+            view.dispatch({ changes, userEvent: 'format', scrollIntoView: true });
+        return true;
+    }
+    async gotoDefinition(view: EditorView): Promise<boolean> {
+        const path = this.sync(view.state.doc);
+        if (!path)
+            return false;
+        const pos = view.state.selection.main.head;
+        let definition: TS.DefinitionInfo | undefined;
+        try {
+            definition = (await this.project.definitions(path, pos))[0];
+        }
+        catch {
+            definition = undefined;
+        }
+        if (this.disposed)
+            return false;
+        if (!definition) {
+            this.transient(view, pos, 'Nenhuma definição encontrada aqui.');
+            return false;
+        }
+        const { textSpan, fileName } = definition;
+        if (fileName === path) {
+            view.dispatch({ selection: EditorSelection.range(textSpan.start + textSpan.length, textSpan.start), effects: EditorView.scrollIntoView(textSpan.start, { y: 'center' }), userEvent: 'select' });
+            view.focus();
+            return true;
+        }
+        const owner = this.project.assetOfPath(fileName);
+        const { session } = this.host;
+        const asset = owner ? session.library.get(owner.assetId) : null;
+        if (asset) {
+            const line = lineOf(this.project.textOf(fileName) ?? '', textSpan.start);
+            void openScriptAssetInEditor(session, asset, { line, pin: true });
+            return true;
+        }
+        const [text, info] = await Promise.all([this.project.fetchText(fileName).catch(() => null), this.project.quickInfo(path, pos).catch(() => null)]);
+        if (this.disposed)
+            return false;
+        const declaration = text ?? '';
+        const line = declaration.split('\n')[lineOf(declaration, textSpan.start) - 1]?.trim() ?? definition.name;
+        const where = fileName.startsWith('/helix/') ? 'API da engine (helix.d.ts)' : `biblioteca padrão (${fileName.split('/').pop()})`;
+        this.transient(view, pos, `${where}\n\n${this.docText(info?.documentation, info?.tags)}`, line);
+        return true;
+    }
 }
