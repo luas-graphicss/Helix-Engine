@@ -151,8 +151,265 @@ public struct Vec3: Equatable, CustomStringConvertible, ValueConvertible {
                                                                                            
 
                                                                                               
+public final class Value: CustomStringConvertible, Equatable, Sequence, ValueConvertible, ExpressibleByFloatLiteral, ExpressibleByIntegerLiteral, ExpressibleByBooleanLiteral, ExpressibleByStringLiteral, ExpressibleByNilLiteral {
+                                                            
+  public let handle: UInt32
+
+                                         
+  init(owned handle: UInt32) {
+    self.handle = handle
+  }
+
+                                                                                                    
+  public init(adopting raw: UInt32, file: StaticString = #fileID, line: UInt = #line) {
+    hxReady()
+    handle = raw == 0 ? 0 : hxCheck(hx_retain(raw), file, line)
+  }
+
+  deinit {
+    if handle != 0 { hx_release(handle) }
+  }
+
+  @inline(__always) static func acquire(_ raw: UInt32, _ file: StaticString, _ line: UInt) -> Value {
+    Value(adopting: raw, file: file, line: line)
+  }
+
+                  
+  public static let undefined = Value(owned: 0)
+
+  public static func null() -> Value {
+    hxReady()
+    return Value(owned: hx_null())
+  }
+
+  public static func array() -> Value {
+    hxReady()
+    return Value(owned: hx_array())
+  }
+
+  public static func object() -> Value {
+    hxReady()
+    return Value(owned: hx_object())
+  }
+
+                                                                                  
+  public static func object(_ fields: [String: ValueConvertible]) -> Value {
+    let object = Value.object()
+    for (key, item) in fields { object.set(key, item) }
+    return object
+  }
+
+                                   
+  public static func list(_ items: [ValueConvertible]) -> Value {
+    let array = Value.array()
+    for (index, item) in items.enumerated() { array.set(index, item) }
+    return array
+  }
+
+                                                                                                                    
+  public static func function(file: StaticString = #fileID, line: UInt = #line, _ body: @escaping ([Value]) -> ValueConvertible) -> Value {
+    hxReady()
+    let id = HelixCallbacks.register(body)
+    return hxCheck(Value(owned: hx_callback(id)), file, line)
+  }
+
+                                                                                                                         
+  public func intoRaw() -> UInt32 {
+    handle == 0 ? 0 : hx_pool(handle)
+  }
+
+                                                                                                          
+  public convenience init(floatLiteral value: Double) { hxReady(); self.init(owned: hx_number(value)) }
+  public convenience init(integerLiteral value: Int) { hxReady(); self.init(owned: hx_number(Double(value))) }
+  public convenience init(booleanLiteral value: Bool) { hxReady(); self.init(owned: hx_boolean(value ? 1 : 0)) }
+  public convenience init(stringLiteral value: String) { hxReady(); self.init(owned: hxWithBytes(value) { hx_string($0, $1) }) }
+  public convenience init(nilLiteral: ()) { hxReady(); self.init(owned: hx_null()) }
+
+                                                                                             
+
+  public func kind(file: StaticString = #fileID, line: UInt = #line) -> Kind {
+    Kind(code: hxCheck(hx_type(handle), file, line))
+  }
+
+  public var kind: Kind { kind() }
+  public var isUndefined: Bool { handle == 0 }
+  public var isNull: Bool { kind == .null }
+                            
+  public var isNone: Bool { let k = kind; return k == .undefined || k == .null }
+  public var isBool: Bool { kind == .boolean }
+  public var isNumber: Bool { kind == .number }
+  public var isString: Bool { kind == .string }
+  public var isArray: Bool { kind == .array }
+  public var isObject: Bool { kind == .object }
+  public var isFunction: Bool { kind == .function }
+
+                                                                                              
+
+                                                               
+  public var number: Double { hxCheck(hx_to_number(handle), #fileID, #line) }
+
+                                                  
+  public var int: Int {
+    let n = number
+    return n.isNaN ? 0 : Int(n)
+  }
+
+                                                                                                
+  public var bool: Bool { hxCheck(hx_to_boolean(handle), #fileID, #line) != 0 }
+
+                                                                                         
+  public var string: String {
+    hxReady()
+    let length = hx_string_bytes(handle)
+    if length <= 0 { return "" }
+    var buffer = [UInt8](repeating: 0, count: length)
+    _ = buffer.withUnsafeMutableBufferPointer { hx_string_read(handle, $0.baseAddress, $0.count) }
+    return String(decoding: buffer, as: UTF8.self)
+  }
+
+                              
+  public var vec3: Vec3 { Vec3(get("x").number, get("y").number, get("z").number) }
+
+                                              
+  public var array: [Value] { Array(self) }
+
+  public var description: String { string }
+
+                                                                                              
+
+                                                                                    
+  public func get(_ key: String, file: StaticString = #fileID, line: UInt = #line) -> Value {
+    hxReady()
+    return hxWithBytes(key) { Value.acquire(hxCheck(hx_get(handle, $0, $1), file, line), file, line) }
+  }
+
+                      
+  public func at(_ index: Int, file: StaticString = #fileID, line: UInt = #line) -> Value {
+    hxReady()
+    return Value.acquire(hxCheck(hx_index(handle, Int32(index)), file, line), file, line)
+  }
+
+                                                                                                       
+  public func set(_ key: String, _ value: ValueConvertible, file: StaticString = #fileID, line: UInt = #line) {
+    hxReady()
+    let item = value.value
+    hxWithBytes(key) { hxCheck(hx_set(handle, $0, $1, item.handle), file, line) }
+  }
+
+  public func set(_ index: Int, _ value: ValueConvertible, file: StaticString = #fileID, line: UInt = #line) {
+    hxReady()
+    let item = value.value
+    hxCheck(hx_set_index(handle, Int32(index), item.handle), file, line)
+  }
+
+  public subscript(key: String, file: StaticString = #fileID, line: UInt = #line) -> Value {
+    get { get(key, file: file, line: line) }
+    set { set(key, newValue, file: file, line: line) }
+  }
+
+  public subscript(index: Int, file: StaticString = #fileID, line: UInt = #line) -> Value {
+    get { at(index, file: file, line: line) }
+    set { set(index, newValue, file: file, line: line) }
+  }
+
+  public func has(_ key: String, file: StaticString = #fileID, line: UInt = #line) -> Bool {
+    hxReady()
+    return hxWithBytes(key) { hxCheck(hx_has(handle, $0, $1), file, line) } != 0
+  }
+
+  public func delete(_ key: String, file: StaticString = #fileID, line: UInt = #line) {
+    hxReady()
+    hxWithBytes(key) { hxCheck(hx_delete(handle, $0, $1), file, line) }
+  }
+
+                                                                     
+  public var count: Int { Int(Swift.max(0, hxCheck(hx_length(handle), #fileID, #line))) }
+
+  public var isEmpty: Bool { count == 0 }
+
+                                                                       
+  public var keys: [String] {
+    hxReady()
+    let list = Value.acquire(hxCheck(hx_keys(handle), #fileID, #line), #fileID, #line)
+    return list.map { $0.string }
+  }
+
+                                                                                 
+  public func path(_ path: String, file: StaticString = #fileID, line: UInt = #line) -> Value {
+    var current = self
+    for part in path.split(separator: ".") where !part.isEmpty {
+      current = current.get(String(part), file: file, line: line)
+    }
+    return current
+  }
+
+                                                              
+  @discardableResult
+  public func call(_ args: ValueConvertible..., file: StaticString = #fileID, line: UInt = #line) -> Value {
+    call(arguments: args, file: file, line: line)
+  }
+
+  @discardableResult
+  public func call(arguments args: [ValueConvertible], file: StaticString = #fileID, line: UInt = #line) -> Value {
+    hxReady()
+    return hxWithHandles(args) { handles, count in Value.acquire(hxCheck(hx_call(handle, handles, count), file, line), file, line) }
+  }
+
+                                                                 
+  @discardableResult
+  public func invoke(_ method: String, _ args: ValueConvertible..., file: StaticString = #fileID, line: UInt = #line) -> Value {
+    invoke(method, arguments: args, file: file, line: line)
+  }
+
+  @discardableResult
+  public func invoke(_ method: String, arguments args: [ValueConvertible], file: StaticString = #fileID, line: UInt = #line) -> Value {
+    hxReady()
+    return hxWithHandles(args) { handles, count in
+      hxWithBytes(method) { Value.acquire(hxCheck(hx_invoke(handle, $0, $1, handles, count), file, line), file, line) }
+    }
+  }
+
+                                 
+  @discardableResult
+  public func construct(_ args: ValueConvertible..., file: StaticString = #fileID, line: UInt = #line) -> Value {
+    hxReady()
+    return hxWithHandles(args) { handles, count in Value.acquire(hxCheck(hx_construct(handle, handles, count), file, line), file, line) }
+  }
+
+                                                         
+  public func equals(_ other: Value, file: StaticString = #fileID, line: UInt = #line) -> Bool {
+    hxCheck(hx_equals(handle, other.handle), file, line) != 0
+  }
+
+  public static func == (a: Value, b: Value) -> Bool { a.equals(b) }
+
+                                                                                             
+
+  public struct Iterator: IteratorProtocol {
+    let value: Value
+    let length: Int
+    var index = 0
+
+    public mutating func next() -> Value? {
+      guard index < length else { return nil }
+      defer { index += 1 }
+      return value.at(index)
+    }
+  }
+
+  public func makeIterator() -> Iterator { Iterator(value: self, length: kind == .string ? 0 : count) }
+
+  public var value: Value { self }
+}
 
                                                                             
+@inline(__always) func hxWithHandles<R>(_ args: [ValueConvertible], _ body: (UnsafePointer<UInt32>?, Int32) -> R) -> R {
+  let values = args.map { $0.value }
+  let handles = values.map { $0.handle }
+  return withExtendedLifetime(values) {
+    handles.withUnsafeBufferPointer { body($0.baseAddress, Int32($0.count)) }
+  }
+}
 
                                                                                              
 
@@ -161,12 +418,33 @@ public protocol ValueConvertible {
   var value: Value { get }
 }
 
+extension Double: ValueConvertible {
+  public var value: Value { hxReady(); return Value(owned: hx_number(self)) }
+}
 
+extension Float: ValueConvertible {
+  public var value: Value { Double(self).value }
+}
 
+extension Int: ValueConvertible {
+  public var value: Value { Double(self).value }
+}
 
+extension Int32: ValueConvertible {
+  public var value: Value { Double(self).value }
+}
 
+extension UInt32: ValueConvertible {
+  public var value: Value { Double(self).value }
+}
 
+extension Int64: ValueConvertible {
+  public var value: Value { Double(self).value }
+}
 
+extension Bool: ValueConvertible {
+  public var value: Value { hxReady(); return Value(owned: hx_boolean(self ? 1 : 0)) }
+}
 
 
 
