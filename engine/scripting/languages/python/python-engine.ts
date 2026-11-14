@@ -3,6 +3,7 @@ import type { PyCallable, PyDict } from 'pyodide/ffi';
 import type { CompileDiagnostic } from '../../compiler/compile-types';
 import { HelixError } from '../../runtime/script-errors';
 import type { ForeignCompileInput, ForeignCompileOutput, ForeignGame, ForeignGameHost, ScriptLanguageEngine } from '../language-engine';
+import { importVendorModule } from '../vendor-module';
 import { PythonGame, type PythonGameProxy, type PythonHostFunctions } from './python-game';
 import { PYTHON_PRELUDE_FILE, pythonPreludeSource } from './python-prelude';
 const PYODIDE_BASE_PATH = '/vendor/pyodide/';
@@ -47,7 +48,7 @@ class PythonEngine implements ScriptLanguageEngine {
     }
     private async boot(): Promise<void> {
         const indexURL = new URL(PYODIDE_BASE_PATH, window.location.href).href;
-        const module = (await import(`${indexURL}pyodide.mjs`)) as PyodideModule;
+        const module = await importVendorModule<PyodideModule>(`${indexURL}pyodide.mjs`);
         const pyodide = await module.loadPyodide({ indexURL });
         pyodide.setStdout({ batched: (text) => this.emit('info', text) });
         pyodide.setStderr({ batched: (text) => this.emit('warn', text) });

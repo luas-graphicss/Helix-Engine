@@ -1,4 +1,5 @@
 import { HelixError } from '../../runtime/script-errors';
+import { importVendorModule } from '../vendor-module';
 import { PHP_INI, PHP_SCRIPT_DIR, phpPreludeSource } from './php-prelude';
 const VENDOR_BASE_PATH = '/vendor/php/';
 const RUNTIME_MODULE = 'php8.4-web.mjs';
@@ -43,6 +44,9 @@ export interface PhpWasmArguments {
 interface PhpWasmWrapper {
     new (loader: Promise<unknown>, args: PhpWasmArguments): PhpWasmInstance;
 }
+interface PhpWasmWrapperModule {
+    readonly PhpWebBase?: PhpWasmWrapper;
+}
 interface PhpWasmPackage {
     readonly wrapper: PhpWasmWrapper;
     loadRuntime(): Promise<unknown>;
@@ -51,13 +55,11 @@ let packagePromise: Promise<PhpWasmPackage> | null = null;
 function loadPhpWasm(): Promise<PhpWasmPackage> {
     if (!packagePromise) {
         const base = new URL(VENDOR_BASE_PATH, window.location.href).href;
-        packagePromise = import(`${base}${WRAPPER_MODULE}`)
-            .then((module: {
-            PhpWebBase?: PhpWasmWrapper;
-        }) => {
+        packagePromise = importVendorModule<PhpWasmWrapperModule>(`${base}${WRAPPER_MODULE}`)
+            .then((module) => {
             if (!module.PhpWebBase)
                 throw new HelixError(`${WRAPPER_MODULE} não exporta PhpWebBase.`);
-            return { wrapper: module.PhpWebBase, loadRuntime: () => import(`${base}${RUNTIME_MODULE}`) };
+            return { wrapper: module.PhpWebBase, loadRuntime: () => importVendorModule(`${base}${RUNTIME_MODULE}`) };
         })
             .catch((cause: unknown) => {
             packagePromise = null;

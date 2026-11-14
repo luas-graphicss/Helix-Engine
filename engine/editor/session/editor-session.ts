@@ -19,6 +19,8 @@ import type { CloudSettings, SkySettings } from '@/engine/core/environment/sky-s
 import { advanceSkyCycle, syncSunLightToSky, wrapTimeOfDay } from '@/engine/core/environment/sky-cycle';
 import { assignPostProcessSettings, findPostProcessPreset, type PostProcessEffectKey, type PostProcessSettings, } from '@/engine/core/environment/post-process-settings';
 import { History } from '@/engine/editor/history/history';
+import { ActivityLog } from '@/engine/editor/activity/activity-log';
+import { createHistoryActivityRecorder } from '@/engine/editor/activity/history-activity-recorder';
 import type { GizmoHandle, GizmoMode } from '@/engine/renderer/gizmo/gizmo-frame';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
@@ -88,6 +90,7 @@ export class EditorSession {
     readonly project: ProjectContext;
     readonly camera = new PerspectiveCamera();
     readonly orbit: OrbitController;
+    readonly activity = new ActivityLog();
     readonly history = new History((command) => {
         const scope = command?.scope ?? 'scene';
         this.emit(scope === 'history' ? HISTORY_ONLY : [scope, 'history'], command?.image ?? IMAGE_TOPICS.has(scope));
@@ -100,6 +103,7 @@ export class EditorSession {
             }
             this.notifyLiveEdit();
         },
+        onEvent: createHistoryActivityRecorder(this.activity),
     });
     readonly log = new EditorLog(() => this.notify('log'));
     readonly resources = new SceneResources(() => this.notify('resources'));

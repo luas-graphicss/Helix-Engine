@@ -89,7 +89,7 @@ export async function instantiateImportedScene(session: EditorSession, imported:
         placeRootAt(session, result.root, options.placementPoint ?? session.camera.target);
     else if (options.placement === 'origin')
         placeRootAt(session, result.root, WORLD_ORIGIN);
-    addEntity(session, result.root, session.scene.root, `Importar ${result.root.name}`);
+    addEntity(session, result.root, session.scene.root, `Importar ${result.root.name}`, 'import');
     if (options.frameAfterImport)
         session.focusSelected();
     const stats = computeImportStats(imported);

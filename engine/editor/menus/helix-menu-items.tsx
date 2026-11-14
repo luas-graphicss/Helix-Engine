@@ -1,10 +1,11 @@
 'use client';
 import { useRouter } from 'next/navigation';
-import { Download, FilePlus2, FlaskConical, History, Info, Keyboard, LogOut, Package, Settings2, X } from 'lucide-react';
+import { Download, FileClock, FilePlus2, FlaskConical, History, Info, Keyboard, LogOut, Package, Settings2, X } from 'lucide-react';
 import { DropdownMenuGroup, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu';
 import { betaFeatures, useBetaFeaturesVersion } from '@/engine/settings/beta-features';
 import { engineSettings, useEngineSettingsVersion } from '@/engine/settings/engine-settings-store';
 import { editorDialogs } from '../dialogs/editor-dialogs';
+import { useDockLayoutStore } from '../layout/dock-layout-context';
 import { closeProject, createProjectFromEditor } from '../operations/engine-operations';
 import { exportOpenProject } from '../operations/project-operations';
 import { useEditorSession } from '../session/editor-session-context';
@@ -24,6 +25,7 @@ function ItemCount({ count, label }: {
 export function HelixMenuItems() {
     const session = useEditorSession();
     const router = useRouter();
+    const dock = useDockLayoutStore();
     useBetaFeaturesVersion();
     useEngineSettingsVersion();
     return (<>
@@ -56,6 +58,10 @@ export function HelixMenuItems() {
           <History aria-hidden/>
           Abrir salvamentos automáticos…
           <MenuShortcut action="helix.autosaves"/>
+        </DropdownMenuItem>
+        <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.reveal('activity')}>
+          <FileClock aria-hidden/>
+          Histórico de atividade
         </DropdownMenuItem>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />

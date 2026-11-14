@@ -1,4 +1,4 @@
-import type { Command } from '@/engine/editor/history/command';
+import type { Command, CommandActivity } from '@/engine/editor/history/command';
 export class SetValueCommand<T> implements Command {
     constructor(readonly label: string, private readonly apply: (value: T) => void, private readonly before: T, private after: T, readonly mergeKey?: string) { }
     execute(): void {
@@ -14,8 +14,15 @@ export class SetValueCommand<T> implements Command {
         return true;
     }
 }
+function sharedActivity(commands: readonly Command[]): CommandActivity | undefined {
+    const activity = commands[0]?.activity;
+    return commands.every((command) => command.activity === activity) ? activity : undefined;
+}
 export class CompositeCommand implements Command {
-    constructor(readonly label: string, private readonly commands: Command[]) { }
+    readonly activity: CommandActivity | undefined;
+    constructor(readonly label: string, private readonly commands: Command[]) {
+        this.activity = sharedActivity(commands);
+    }
     execute(): void {
         for (const command of this.commands)
             command.execute();

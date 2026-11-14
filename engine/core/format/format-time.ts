@@ -1,5 +1,7 @@
 const relativeTime = new Intl.RelativeTimeFormat('pt-BR', { numeric: 'auto' });
 const dateTime = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+const preciseDateTime = new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'medium' });
+const clockTime = new Intl.DateTimeFormat('pt-BR', { timeStyle: 'medium' });
 const MINUTE = 60000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -17,6 +19,12 @@ export function formatRelativeTime(epochMs: number, now = Date.now()): string {
 }
 export function formatDateTime(epochMs: number): string {
     return dateTime.format(epochMs);
+}
+export function formatPreciseDateTime(epochMs: number): string {
+    return preciseDateTime.format(epochMs);
+}
+export function formatClockTime(epochMs: number): string {
+    return clockTime.format(epochMs);
 }
 export function plural(count: number, singular: string, pluralForm: string): string {
     return `${count.toLocaleString('pt-BR')} ${count === 1 ? singular : pluralForm}`;
