@@ -1,6 +1,6 @@
 import { readPreference, writePreference } from '@/engine/core/storage/preferences';
 export type DockArea = 'left' | 'right' | 'bottom';
-export type DockPanelId = 'hierarchy' | 'inspector' | 'lights' | 'terrain' | 'character' | 'environment' | 'postprocess' | 'physics' | 'performance' | 'assets' | 'animation' | 'audio' | 'vfx' | 'interface' | 'scripts' | 'console';
+export type DockPanelId = 'hierarchy' | 'inspector' | 'lights' | 'terrain' | 'character' | 'environment' | 'postprocess' | 'physics' | 'performance' | 'assets' | 'animation' | 'audio' | 'vfx' | 'interface' | 'scripts' | 'console' | 'activity';
 export const DOCK_AREAS: readonly DockArea[] = ['left', 'right', 'bottom'];
 export const DOCK_PANEL_IDS: readonly DockPanelId[] = [
     'hierarchy',
@@ -19,6 +19,7 @@ export const DOCK_PANEL_IDS: readonly DockPanelId[] = [
     'interface',
     'scripts',
     'console',
+    'activity',
 ];
 export const DOCK_AREA_LABELS: Record<DockArea, string> = { left: 'Esquerda', right: 'Direita', bottom: 'Inferior' };
 export interface DockAreaLimits {
@@ -59,6 +60,7 @@ export const DEFAULT_PANEL_AREA: Record<DockPanelId, DockArea> = {
     interface: 'bottom',
     scripts: 'left',
     console: 'bottom',
+    activity: 'bottom',
 };
 const PREFERENCE_KEY = 'dock-layout';
 const PERSIST_VERSION = 2;

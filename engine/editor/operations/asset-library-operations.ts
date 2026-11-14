@@ -61,7 +61,7 @@ async function ingestIntoLibrary(session: EditorSession, files: File[], options:
         library.setBusy(null);
     }
     if (report.added.length > 0) {
-        const commands = report.added.map((item) => new AddAssetCommand(library, item.snapshot, item.scene));
+        const commands = report.added.map((item) => new AddAssetCommand(library, item.snapshot, item.scene, 'import'));
         session.history.execute(commands.length === 1 ? commands[0] : new CompositeCommand(`Adicionar ${commands.length} ativos à biblioteca`, commands));
         const added = report.added.map((item) => item.snapshot.asset);
         session.log.info(LOG_SOURCE, added.length === 1 ? `${added[0].name} adicionado à biblioteca.` : `${added.length} ativos adicionados à biblioteca: ${listNames(added)}.`);

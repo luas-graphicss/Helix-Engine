@@ -12,7 +12,7 @@ import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import type { Material } from '@/engine/core/scene/material';
 import { getLocalBounds } from '@/engine/renderer/geometry/bounds';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
-import type { Command } from '@/engine/editor/history/command';
+import type { Command, CommandActivity } from '@/engine/editor/history/command';
 import { AddEntityCommand, RemoveEntityCommand, ReparentEntityCommand } from '@/engine/editor/commands/entity-commands';
 import { CompositeCommand, SetValueCommand } from '@/engine/editor/commands/set-value-command';
 import { getPrimitive, type PrimitiveKind } from '@/engine/editor/primitives/primitive-catalog';
@@ -48,9 +48,9 @@ export function spawnPosition(session: EditorSession, mesh: MeshData | null): Fl
 export function describeEntities(entities: readonly Entity[]): string {
     return entities.length === 1 ? entities[0].name : `${entities.length} atores`;
 }
-export function addEntity(session: EditorSession, entity: Entity, parent: Entity = defaultParent(session), label = `Adicionar ${entity.name}`): Entity {
+export function addEntity(session: EditorSession, entity: Entity, parent: Entity = defaultParent(session), label = `Adicionar ${entity.name}`, activity: CommandActivity = 'insert'): Entity {
     entity.name = uniqueEntityName(session.scene, entity.name);
-    session.history.execute(new AddEntityCommand(label, entity, parent));
+    session.history.execute(new AddEntityCommand(label, entity, parent, parent.children.length, activity));
     session.select(entity);
     session.log.info('Cena', `${entity.name} adicionado em ${parent.name}.`);
     return entity;

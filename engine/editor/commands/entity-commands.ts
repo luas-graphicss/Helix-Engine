@@ -1,7 +1,7 @@
-import type { Command } from '@/engine/editor/history/command';
+import type { Command, CommandActivity } from '@/engine/editor/history/command';
 import type { Entity } from '@/engine/core/scene/entity';
 export class AddEntityCommand implements Command {
-    constructor(readonly label: string, private readonly entity: Entity, private readonly parent: Entity, private readonly index: number = parent.children.length) { }
+    constructor(readonly label: string, private readonly entity: Entity, private readonly parent: Entity, private readonly index: number = parent.children.length, readonly activity: CommandActivity = 'insert') { }
     execute(): void {
         this.parent.insert(this.entity, this.index);
     }
@@ -10,6 +10,7 @@ export class AddEntityCommand implements Command {
     }
 }
 export class RemoveEntityCommand implements Command {
+    readonly activity = 'remove' as const;
     readonly label: string;
     private readonly parent: Entity;
     private readonly index: number;

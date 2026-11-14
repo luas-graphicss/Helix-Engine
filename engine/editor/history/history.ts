@@ -1,9 +1,15 @@
 import type { Command } from './command';
 const MERGE_WINDOW_MS = 1200;
+export type HistoryEventKind = 'execute' | 'undo' | 'redo';
+export interface HistoryEvent {
+    readonly kind: HistoryEventKind;
+    readonly command: Command;
+}
 export interface HistoryOptions {
     limit?: number;
     isDragging?: () => boolean;
     onLiveChange?: (command: Command) => void;
+    onEvent?: (event: HistoryEvent) => void;
 }
 export class History {
     private readonly undoStack: Command[] = [];
@@ -12,12 +18,14 @@ export class History {
     private readonly limit: number;
     private readonly isDragging: () => boolean;
     private readonly onLiveChange: ((command: Command) => void) | null;
+    private readonly onEvent: ((event: HistoryEvent) => void) | null;
     private pendingLive: Command | null = null;
     revision = 0;
     constructor(private readonly onChange: (command?: Command) => void, options: HistoryOptions = {}) {
         this.limit = options.limit ?? 200;
         this.isDragging = options.isDragging ?? (() => false);
         this.onLiveChange = options.onLiveChange ?? null;
+        this.onEvent = options.onEvent ?? null;
     }
     get liveEditPending(): boolean {
         return this.pendingLive !== null;
@@ -54,6 +62,7 @@ export class History {
             this.undoStack.push(command);
             if (this.undoStack.length > this.limit)
                 this.undoStack.shift();
+            this.onEvent?.({ kind: 'execute', command });
         }
         this.lastPushTime = now;
         this.revision++;
@@ -84,6 +93,7 @@ export class History {
         this.undoStack.push(command);
         if (this.undoStack.length > this.limit)
             this.undoStack.shift();
+        this.onEvent?.({ kind: 'execute', command });
         this.lastPushTime = -Infinity;
         this.revision++;
         this.flushLive(command);
@@ -94,6 +104,7 @@ export class History {
             return;
         command.undo();
         this.redoStack.push(command);
+        this.onEvent?.({ kind: 'undo', command });
         this.lastPushTime = -Infinity;
         this.revision++;
         this.flushLive(command);
@@ -104,6 +115,7 @@ export class History {
             return;
         command.execute();
         this.undoStack.push(command);
+        this.onEvent?.({ kind: 'redo', command });
         this.lastPushTime = -Infinity;
         this.revision++;
         this.flushLive(command);
