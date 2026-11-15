@@ -70,6 +70,9 @@ export class EditorAssistant implements ToolExecutionHost {
         else
             this.conversation.clear();
     }
+    dismissPlan(): void {
+        this.conversation.clearPlan();
+    }
     confirm(entryId: number, signal: AbortSignal): Promise<boolean> {
         return new Promise((resolve) => {
             if (signal.aborted)

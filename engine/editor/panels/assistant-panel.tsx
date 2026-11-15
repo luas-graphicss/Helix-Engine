@@ -11,11 +11,12 @@ import { AssistantEmptyState } from './assistant/assistant-empty-state';
 import { AssistantTranscript } from './assistant/assistant-transcript';
 import { ConnectionForm } from './assistant/connection-form';
 import { ModeSelect } from './assistant/mode-select';
+import { PlanPanel } from './assistant/plan-panel';
 export function AssistantPanel() {
     const { assistant } = useEditorSession();
     const { connection, conversation } = assistant;
     const settings = useSyncExternalStore(connection.subscribe, connection.getSnapshot, connection.getSnapshot);
-    const { entries, activity } = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot, conversation.getSnapshot);
+    const { entries, activity, plan } = useSyncExternalStore(conversation.subscribe, conversation.getSnapshot, conversation.getSnapshot);
     const modeId = useSyncExternalStore(assistant.subscribeMode, assistant.getModeId, assistant.getModeId);
     const [connectionOpen, setConnectionOpen] = useState(false);
     const problem = connectionProblem(settings);
@@ -32,6 +33,7 @@ export function AssistantPanel() {
       </PanelToolbar>
       {connectionOpen && <ConnectionForm key={settings.providerId} connection={connection} settings={settings}/>}
       {entries.length === 0 ? (<AssistantEmptyState configured={problem === null} onConfigure={() => setConnectionOpen(true)}/>) : (<AssistantTranscript entries={entries} activity={activity} onResolveApproval={(entryId, approved) => assistant.resolveApproval(entryId, approved)}/>)}
+      {plan && <PlanPanel steps={plan} onDismiss={() => assistant.dismissPlan()}/>}
       <AssistantComposer busy={activity !== 'idle'} hint={problem ?? mode.description} onSend={(text) => assistant.send(text)} onStop={() => assistant.stop()}/>
     </div>);
 }

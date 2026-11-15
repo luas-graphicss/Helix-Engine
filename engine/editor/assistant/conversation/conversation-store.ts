@@ -1,5 +1,5 @@
 import type { ChatMessage, ModelTurn } from '@/engine/editor/assistant/providers/chat-protocol';
-import type { AssistantActivity, ConversationEntry, ConversationSnapshot, NoticeTone, ToolCallEntry } from './conversation-entry';
+import type { AssistantActivity, ConversationEntry, ConversationSnapshot, NoticeTone, PlanStep, ToolCallEntry } from './conversation-entry';
 type Listener = () => void;
 export type ToolCallDraft = Omit<ToolCallEntry, 'id' | 'kind'>;
 export type ToolCallPatch = Partial<Pick<ToolCallEntry, 'status' | 'output'>>;
@@ -7,7 +7,7 @@ interface OpenReasoning {
     readonly id: number;
     readonly startedAt: number;
 }
-const EMPTY_CONVERSATION: ConversationSnapshot = { entries: [], activity: 'idle' };
+const EMPTY_CONVERSATION: ConversationSnapshot = { entries: [], activity: 'idle', plan: null };
 export class ConversationStore {
     private snapshot = EMPTY_CONVERSATION;
     private messages: ChatMessage[] = [];
@@ -32,7 +32,16 @@ export class ConversationStore {
     }
     addUserMessage(text: string): void {
         this.messages.push({ role: 'user', text });
-        this.append({ id: this.nextId++, kind: 'user', text });
+        const finished = this.snapshot.plan?.every((step) => step.status === 'completed') ?? false;
+        const plan = finished ? null : this.snapshot.plan;
+        this.publish({ ...this.snapshot, plan, entries: [...this.snapshot.entries, { id: this.nextId++, kind: 'user', text }] });
+    }
+    setPlan(steps: readonly PlanStep[]): void {
+        this.publish({ ...this.snapshot, plan: steps });
+    }
+    clearPlan(): void {
+        if (this.snapshot.plan)
+            this.publish({ ...this.snapshot, plan: null });
     }
     appendAssistantText(delta: string): void {
         this.turnText += delta;
@@ -42,7 +51,7 @@ export class ConversationStore {
             return;
         }
         const entries = this.snapshot.entries.map((entry) => (entry.id === openId && entry.kind === 'assistant' ? { ...entry, text: `${entry.text}${delta}` } : entry));
-        this.publish({ entries, activity: 'responding' });
+        this.publish({ ...this.snapshot, entries, activity: 'responding' });
     }
     appendReasoning(delta: string): void {
         this.openTextId = null;
@@ -53,10 +62,10 @@ export class ConversationStore {
             return;
         }
         const entries = this.snapshot.entries.map((entry) => (entry.id === open.id && entry.kind === 'reasoning' ? { ...entry, text: `${entry.text}${delta}` } : entry));
-        this.publish({ entries, activity: 'responding' });
+        this.publish({ ...this.snapshot, entries, activity: 'responding' });
     }
     beginToolCall(): void {
-        this.publish({ entries: this.settleReasoning(), activity: 'preparing' });
+        this.publish({ ...this.snapshot, entries: this.settleReasoning(), activity: 'preparing' });
     }
     commitAssistantTurn(turn: ModelTurn): void {
         this.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, native: turn.native });
@@ -95,7 +104,7 @@ export class ConversationStore {
             return;
         this.unopenedText = '';
         this.openTextId = this.nextId++;
-        this.publish({ entries: [...this.settleReasoning(), { id: this.openTextId, kind: 'assistant', text }], activity: 'responding' });
+        this.publish({ ...this.snapshot, entries: [...this.settleReasoning(), { id: this.openTextId, kind: 'assistant', text }], activity: 'responding' });
     }
     private startReasoning(delta: string): void {
         this.unopenedReasoning += delta;
@@ -104,7 +113,7 @@ export class ConversationStore {
             return;
         this.unopenedReasoning = '';
         this.openReasoning = { id: this.nextId++, startedAt: Date.now() };
-        this.publish({ entries: [...this.snapshot.entries, { id: this.openReasoning.id, kind: 'reasoning', text, durationMs: null }], activity: 'responding' });
+        this.publish({ ...this.snapshot, entries: [...this.snapshot.entries, { id: this.openReasoning.id, kind: 'reasoning', text, durationMs: null }], activity: 'responding' });
     }
     private settleReasoning(): readonly ConversationEntry[] {
         const open = this.openReasoning;
@@ -119,7 +128,7 @@ export class ConversationStore {
         const entries = this.settleReasoning();
         this.resetTurn();
         if (entries !== this.snapshot.entries || activity !== this.snapshot.activity)
-            this.publish({ entries, activity });
+            this.publish({ ...this.snapshot, entries, activity });
     }
     private resetTurn(): void {
         this.turnText = '';

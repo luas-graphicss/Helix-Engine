@@ -1,3 +1,4 @@
+import { isRecord } from '@/engine/editor/assistant/providers/json-value';
 import { ToolFailure } from './tool-failure';
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === 'number' && Number.isFinite(value);
@@ -86,6 +87,14 @@ export class ToolInput {
         if (!Array.isArray(value) || value.length === 0 || !value.every(isText))
             throw new ToolFailure(`"${key}" must be a non-empty array of strings.`);
         return value;
+    }
+    records(key: string, maxItems: number): ToolInput[] {
+        const value = this.read(key);
+        if (!Array.isArray(value) || value.length === 0 || !value.every(isRecord))
+            throw new ToolFailure(`"${key}" must be a non-empty array of objects.`);
+        if (value.length > maxItems)
+            throw new ToolFailure(`"${key}" accepts at most ${maxItems} items.`);
+        return value.map((item) => new ToolInput(item));
     }
     private read(key: string): unknown {
         const value = Object.hasOwn(this.values, key) ? this.values[key] : undefined;

@@ -13,7 +13,18 @@ export interface ListParameter {
     readonly minItems?: number;
     readonly maxItems?: number;
 }
-export type ToolParameter = ScalarParameter | ListParameter;
+export interface RecordListParameter {
+    readonly type: 'array';
+    readonly description: string;
+    readonly items: {
+        readonly type: 'object';
+        readonly properties: Readonly<Record<string, ScalarParameter>>;
+        readonly required: readonly string[];
+    };
+    readonly minItems: number;
+    readonly maxItems: number;
+}
+export type ToolParameter = ScalarParameter | ListParameter | RecordListParameter;
 export interface ToolParameters {
     readonly type: 'object';
     readonly properties: Readonly<Record<string, ToolParameter>>;

@@ -1,4 +1,4 @@
-import type { ListParameter, ScalarParameter, ScalarParameterType, ToolParameter, ToolParameters } from '@/engine/editor/assistant/providers/tool-declaration';
+import type { ListParameter, RecordListParameter, ScalarParameter, ScalarParameterType, ToolParameter, ToolParameters } from '@/engine/editor/assistant/providers/tool-declaration';
 export function parameters(properties: Readonly<Record<string, ToolParameter>>, required: readonly string[] = []): ToolParameters {
     return { type: 'object', properties, required };
 }
@@ -28,4 +28,7 @@ export function integerList(description: string): ListParameter {
 }
 export function textList(description: string): ListParameter {
     return list(description, 'string');
+}
+export function recordList(description: string, properties: Readonly<Record<string, ScalarParameter>>, maxItems: number): RecordListParameter {
+    return { type: 'array', description, items: { type: 'object', properties, required: Object.keys(properties) }, minItems: 1, maxItems };
 }

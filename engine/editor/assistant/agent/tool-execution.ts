@@ -1,4 +1,6 @@
 import type { ConversationStore } from '@/engine/editor/assistant/conversation/conversation-store';
+import type { InteractionTool } from '@/engine/editor/assistant/interaction/interaction-tool';
+import { findInteractionTool } from '@/engine/editor/assistant/interaction/interaction-tool-registry';
 import type { AssistantMode } from '@/engine/editor/assistant/modes/assistant-mode';
 import type { ToolCall } from '@/engine/editor/assistant/providers/chat-protocol';
 import type { ToolOutput } from '@/engine/editor/assistant/tools/assistant-tool';
@@ -35,7 +37,19 @@ function describeFailure(cause: unknown): string {
         return cause.message;
     return `The tool failed unexpectedly: ${cause instanceof Error ? cause.message : String(cause)}`;
 }
-export async function executeToolCall(host: ToolExecutionHost, call: ToolCall, signal: AbortSignal): Promise<ToolOutcome> {
+async function runInteractionTool(host: ToolExecutionHost, tool: InteractionTool, call: ToolCall): Promise<ToolOutcome> {
+    if (call.inputError)
+        return { output: call.inputError, failed: true };
+    try {
+        return { output: formatOutput(await tool.run({ conversation: host.conversation }, new ToolInput(call.input))), failed: false };
+    }
+    catch (cause) {
+        if (!(cause instanceof ToolFailure))
+            throw cause;
+        return { output: cause.message, failed: true };
+    }
+}
+async function runProjectTool(host: ToolExecutionHost, call: ToolCall, signal: AbortSignal): Promise<ToolOutcome> {
     const { conversation, session } = host;
     const tool = findAssistantTool(call.name);
     const entryId = conversation.addToolCall({ title: tool?.title ?? call.name, summary: summarizeInput(call.input), input: detailInput(call.input), status: 'running', output: '' });
@@ -74,4 +88,8 @@ export async function executeToolCall(host: ToolExecutionHost, call: ToolCall, s
             session.log.error(LOG_SOURCE, `${tool.title} falhou: ${cause instanceof Error ? cause.message : String(cause)}`);
         return fail(describeFailure(cause));
     }
+}
+export function executeToolCall(host: ToolExecutionHost, call: ToolCall, signal: AbortSignal): Promise<ToolOutcome> {
+    const interaction = findInteractionTool(call.name);
+    return interaction ? runInteractionTool(host, interaction, call) : runProjectTool(host, call, signal);
 }

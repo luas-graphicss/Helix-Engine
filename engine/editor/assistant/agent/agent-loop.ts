@@ -1,9 +1,11 @@
+import { INTERACTION_TOOL_DECLARATIONS } from '@/engine/editor/assistant/interaction/interaction-tool-registry';
 import type { ChatProtocol, ModelTurn, ProviderEndpoint, ReasoningEffort } from '@/engine/editor/assistant/providers/chat-protocol';
 import { TOOL_DECLARATIONS } from '@/engine/editor/assistant/tools/tool-registry';
 import { DeltaBuffer } from './delta-buffer';
 import { buildSystemPrompt } from './system-prompt';
 import { CANCELLED_OUTCOME, executeToolCall, type ToolExecutionHost } from './tool-execution';
 const MAX_STEPS = 40;
+const AGENT_TOOLS = [...INTERACTION_TOOL_DECLARATIONS, ...TOOL_DECLARATIONS];
 export interface AgentRun {
     readonly host: ToolExecutionHost;
     readonly protocol: ChatProtocol;
@@ -23,7 +25,7 @@ async function requestTurn({ host, protocol, endpoint, reasoningEffort, signal }
             endpoint,
             system: buildSystemPrompt(session, host.mode),
             messages: conversation.transcript,
-            tools: TOOL_DECLARATIONS,
+            tools: AGENT_TOOLS,
             signal,
             reasoningEffort,
             observer: deltas,
