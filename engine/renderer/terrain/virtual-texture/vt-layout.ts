@@ -22,3 +22,6 @@ export function vtPageLevel(uvPerTexel: number, sourceSize: number): number {
 export function vtPageKey(sourceId: number, level: number, px: number, py: number): number {
     return ((sourceId * 4 + level) * VT_PAGES_PER_SIDE + py) * VT_PAGES_PER_SIDE + px;
 }
+export function vtPageKeySource(key: number): number {
+    return Math.floor(key / (4 * VT_PAGES_PER_SIDE * VT_PAGES_PER_SIDE));
+}

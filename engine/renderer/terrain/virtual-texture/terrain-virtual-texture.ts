@@ -4,7 +4,8 @@ import type { Terrain } from '@/engine/terrain/core/terrain';
 import { MAX_TERRAIN_LAYERS } from '@/engine/terrain/core/splat-map';
 import type { HiresMapKind, HiresMapSource } from '@/engine/terrain/materials/material-catalog';
 import { TERRAIN_VT_ALBEDO_TEXTURE_UNIT, TERRAIN_VT_NORMAL_TEXTURE_UNIT, TERRAIN_VT_PAGES_TEXTURE_UNIT } from '../terrain-texture-units';
-import { VT_CACHE_TEXELS, VT_LEVELS, VT_MAX_IN_FLIGHT, VT_PAGE_TABLE_SLICES, VT_PAGES_PER_SIDE, VT_SLOT_TEXELS, VT_SLOTS_PER_SIDE, VT_SLOTS_PER_SLICE, VT_UPLOADS_PER_FRAME, VT_VIRTUAL_SIZE_LOG2, vtPageKey, vtPageLevel, vtSourceLevels, } from './vt-layout';
+import { VT_CACHE_TEXELS, VT_MAX_IN_FLIGHT, VT_PAGES_PER_SIDE, VT_SLOT_TEXELS, VT_SLOTS_PER_SIDE, VT_SLOTS_PER_SLICE, VT_UPLOADS_PER_FRAME, VT_VIRTUAL_SIZE_LOG2, vtPageKey, vtPageKeySource, vtPageLevel, vtSourceLevels, } from './vt-layout';
+import { VtPageTable } from './vt-page-table';
 import { VtTileStreamer, type VtSourceEvent } from './vt-tile-streamer';
 const KINDS: readonly HiresMapKind[] = ['albedo', 'normal'];
 const STALE_REQUEST_FRAMES = 2;
@@ -30,6 +31,7 @@ class VirtualSource {
     size = 0;
     sizeLog2 = 0;
     levels = 0;
+    residency = 0;
     state: 'opening' | 'ready' | 'error' = 'opening';
     downloadLoaded = 0;
     downloadTotal = 0;
@@ -144,10 +146,7 @@ export class TerrainVirtualTexture {
     private inFlight = 0;
     private frame = 0;
     private disposed = false;
-    private readonly pageTable: WebGLTexture | null;
-    private readonly pageTableMips: Uint8Array[] = [];
-    private pageTableDirty = true;
-    private boundSignature = '';
+    private readonly pageTable: VtPageTable | null;
     private readonly layerInfo = new Float32Array(MAX_TERRAIN_LAYERS * 4);
     constructor(private readonly gl: GL, slices: number) {
         if (!supportsTerrainVirtualTexture(slices)) {
@@ -163,21 +162,7 @@ export class TerrainVirtualTexture {
         this.streamer = new VtTileStreamer();
         this.stats.capacity = this.caches.albedo.capacity + this.caches.normal.capacity;
         this.stats.physicalBytes = 2 * slices * VT_CACHE_TEXELS * VT_CACHE_TEXELS * 4;
-        const table = gl.createTexture();
-        if (!table)
-            throw new Error('Não foi possível alocar a tabela de páginas da textura virtual.');
-        this.pageTable = table;
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, table);
-        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, VT_LEVELS, gl.RGBA8UI, VT_PAGES_PER_SIDE, VT_PAGES_PER_SIDE, VT_PAGE_TABLE_SLICES);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
-        for (let level = 0; level < VT_LEVELS; level++) {
-            const pages = VT_PAGES_PER_SIDE >> level;
-            this.pageTableMips.push(new Uint8Array(VT_PAGE_TABLE_SLICES * pages * pages * 4));
-        }
+        this.pageTable = new VtPageTable(gl);
     }
     get enabled(): boolean {
         return this.caches !== null;
@@ -280,30 +265,26 @@ export class TerrainVirtualTexture {
     bind(program: ShaderProgram, terrain: Terrain): void {
         if (!this.caches || !this.pageTable)
             return;
-        const { gl, layerInfo } = this;
-        let signature = '';
+        const { gl, layerInfo, caches, pageTable } = this;
         for (let i = 0; i < MAX_TERRAIN_LAYERS; i++) {
             const layer = terrain.layers[i];
             for (let k = 0; k < KINDS.length; k++) {
-                const source = layer ? this.readySource(layer.material.hires[KINDS[k]]) : null;
+                const kind = KINDS[k];
+                const source = layer ? this.readySource(layer.material.hires[kind]) : null;
                 layerInfo[i * 4 + k] = source ? source.sizeLog2 : 0;
-                signature += source ? `${source.id},` : '-,';
+                pageTable.assign(k * MAX_TERRAIN_LAYERS + i, source, caches[kind].resident);
             }
             layerInfo[i * 4 + 2] = 0;
             layerInfo[i * 4 + 3] = 0;
         }
-        if (this.pageTableDirty || signature !== this.boundSignature) {
-            this.rebuildPageTable(terrain);
-            this.boundSignature = signature;
-            this.pageTableDirty = false;
-        }
+        pageTable.upload();
         gl.uniform4fv(program.uniform('u_vtLayer[0]'), layerInfo);
         gl.activeTexture(gl.TEXTURE0 + TERRAIN_VT_PAGES_TEXTURE_UNIT);
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.pageTable);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, pageTable.texture);
         gl.activeTexture(gl.TEXTURE0 + TERRAIN_VT_ALBEDO_TEXTURE_UNIT);
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.caches.albedo.texture);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, caches.albedo.texture);
         gl.activeTexture(gl.TEXTURE0 + TERRAIN_VT_NORMAL_TEXTURE_UNIT);
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.caches.normal.texture);
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, caches.normal.texture);
     }
     unbind(): void {
         if (!this.enabled)
@@ -319,8 +300,7 @@ export class TerrainVirtualTexture {
         this.streamer?.dispose();
         this.caches?.albedo.dispose();
         this.caches?.normal.dispose();
-        if (this.pageTable)
-            this.gl.deleteTexture(this.pageTable);
+        this.pageTable?.dispose();
         for (const page of this.arrived)
             page.bitmap.close();
         this.arrived.length = 0;
@@ -389,7 +369,6 @@ export class TerrainVirtualTexture {
                 source.sizeLog2 = Math.round(Math.log2(event.size));
                 source.levels = event.levels;
                 source.state = 'ready';
-                this.pageTableDirty = true;
                 break;
             case 'error':
                 source.state = 'error';
@@ -497,10 +476,11 @@ export class TerrainVirtualTexture {
                         gl.bindTexture(gl.TEXTURE_2D_ARRAY, cache.texture);
                         bound = cache;
                     }
+                    this.noteEviction(cache.slotKey[slot]);
                     cache.upload(slot, pending.key, this.frame, bitmap);
+                    pending.source.residency++;
                     this.stats.uploads++;
                     this.residencyVersion++;
-                    this.pageTableDirty = true;
                 }
             }
             bitmap.close();
@@ -509,57 +489,12 @@ export class TerrainVirtualTexture {
         if (bound)
             gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
     }
-    private rebuildPageTable(terrain: Terrain): void {
-        const caches = this.caches as Record<HiresMapKind, PhysicalCache>;
-        const { gl, pageTableMips } = this;
-        for (let slice = 0; slice < VT_PAGE_TABLE_SLICES; slice++) {
-            const kind = KINDS[Math.floor(slice / MAX_TERRAIN_LAYERS)];
-            const layer = terrain.layers[slice % MAX_TERRAIN_LAYERS];
-            const source = layer ? this.readySource(layer.material.hires[kind]) : null;
-            const cache = caches[kind];
-            for (let mip = VT_LEVELS - 1; mip >= 0; mip--) {
-                const pages = VT_PAGES_PER_SIDE >> mip;
-                const data = pageTableMips[mip];
-                const parent = mip + 1 < VT_LEVELS ? pageTableMips[mip + 1] : null;
-                const parentPages = pages >> 1;
-                const base = slice * pages * pages * 4;
-                const parentBase = slice * parentPages * parentPages * 4;
-                const level = source ? mip - (VT_VIRTUAL_SIZE_LOG2 - source.sizeLog2) : -1;
-                const served = source !== null && level >= 0 && level < source.levels;
-                for (let py = 0; py < pages; py++) {
-                    for (let px = 0; px < pages; px++) {
-                        const offset = base + (py * pages + px) * 4;
-                        const slot = served ? cache.resident.get(vtPageKey((source as VirtualSource).id, level, px, py)) : undefined;
-                        if (slot !== undefined) {
-                            const cacheSlice = Math.floor(slot / VT_SLOTS_PER_SLICE);
-                            const within = slot - cacheSlice * VT_SLOTS_PER_SLICE;
-                            data[offset] = within % VT_SLOTS_PER_SIDE;
-                            data[offset + 1] = Math.floor(within / VT_SLOTS_PER_SIDE);
-                            data[offset + 2] = cacheSlice;
-                            data[offset + 3] = mip + 1;
-                        }
-                        else if (parent) {
-                            const parentOffset = parentBase + ((py >> 1) * parentPages + (px >> 1)) * 4;
-                            data[offset] = parent[parentOffset];
-                            data[offset + 1] = parent[parentOffset + 1];
-                            data[offset + 2] = parent[parentOffset + 2];
-                            data[offset + 3] = parent[parentOffset + 3];
-                        }
-                        else {
-                            data[offset] = data[offset + 1] = data[offset + 2] = data[offset + 3] = 0;
-                        }
-                    }
-                }
-            }
-        }
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-        gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, this.pageTable);
-        for (let mip = 0; mip < VT_LEVELS; mip++) {
-            const pages = VT_PAGES_PER_SIDE >> mip;
-            gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, mip, 0, 0, 0, pages, pages, VT_PAGE_TABLE_SLICES, gl.RGBA_INTEGER, gl.UNSIGNED_BYTE, pageTableMips[mip]);
-        }
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
+    private noteEviction(evictedKey: number): void {
+        if (evictedKey < 0)
+            return;
+        const source = this.sourcesById.get(vtPageKeySource(evictedKey));
+        if (source)
+            source.residency++;
     }
 }
 function layerMask(terrain: Terrain, x0: number, z0: number, x1: number, z1: number): number {
