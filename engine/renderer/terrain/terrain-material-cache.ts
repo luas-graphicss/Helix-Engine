@@ -61,8 +61,21 @@ function bakeSignature(terrain: Terrain): string {
     const grassShade = `${grass.enabled ? 1 : 0},${grass.density},${grass.baseColor[0]},${grass.baseColor[1]},${grass.baseColor[2]}`;
     return `${terrain.resolution}|${terrain.splat.resolution}|${terrain.grassMap.resolution}|${layers}|${shade}|${grassShade}`;
 }
+type ScanSkip = 'never' | 'while-view-holds' | 'always';
 function wrapIndex(value: number, count: number): number {
     return ((value % count) + count) % count;
+}
+function firstTileInside(origin: number, count: number, tileSize: number, half: number): number {
+    let tile = origin;
+    while (tile < origin + count && tile * tileSize + tileSize <= -half)
+        tile++;
+    return tile;
+}
+function lastTileInside(origin: number, count: number, tileSize: number, half: number): number {
+    let tile = origin + count - 1;
+    while (tile >= origin && tile * tileSize >= half)
+        tile--;
+    return tile;
 }
 function createTextureArray(gl: GL, internalFormat: number, size: number, layers: number, filter: number, wrap: number): WebGLTexture {
     const texture = gl.createTexture();
@@ -85,6 +98,7 @@ class CacheLevel {
     originZ: number;
     pagesDirty = true;
     far = 0;
+    scanSkip: ScanSkip = 'never';
     constructor(readonly index: number, readonly coverage: number, readonly tileSize: number, readonly texelSize: number, readonly lodIndex: number, readonly isStatic: boolean, tilesPerSide: number) {
         this.pages = new Int16Array(tilesPerSide * tilesPerSide * 2).fill(PAGE_EMPTY);
         this.edited = new Uint8Array(tilesPerSide * tilesPerSide);
@@ -119,6 +133,7 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     private splatVersion = -1;
     private grassVersion = -1;
     private readonly region = createRegion();
+    private readonly scannedView = new Float64Array(4).fill(Number.NaN);
     constructor(private readonly gl: GL, readonly terrain: Terrain, readonly texels: number, readonly tilesPerSide: number, texelsPerMeter: number, maxLevels: number) {
         this.size = terrain.size;
         const { baseCoverage: base, ringCount } = terrainCacheLadder(texels, texelsPerMeter, terrain.size, maxLevels);
@@ -157,13 +172,27 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
         for (const level of this.levels) {
             if (level.isStatic)
                 continue;
-            level.originX = Math.floor((this.center[0] - level.coverage / 2) / level.tileSize);
-            level.originZ = Math.floor((this.center[2] - level.coverage / 2) / level.tileSize);
+            const originX = Math.floor((this.center[0] - level.coverage / 2) / level.tileSize);
+            const originZ = Math.floor((this.center[2] - level.coverage / 2) / level.tileSize);
+            if (originX === level.originX && originZ === level.originZ)
+                continue;
+            level.originX = originX;
+            level.originZ = originZ;
+            level.scanSkip = 'never';
         }
         this.syncFar();
         this.syncSignature();
         this.consumeEdits();
         return true;
+    }
+    trackView(heightAbove: number, texelsPerPixel: number): boolean {
+        const { scannedView, center } = this;
+        const moved = scannedView[0] !== center[0] || scannedView[1] !== center[2] || scannedView[2] !== heightAbove || scannedView[3] !== texelsPerPixel;
+        scannedView[0] = center[0];
+        scannedView[1] = center[2];
+        scannedView[2] = heightAbove;
+        scannedView[3] = texelsPerPixel;
+        return moved;
     }
     slotOf(tileX: number, tileZ: number): number {
         const tiles = this.tilesPerSide;
@@ -185,6 +214,7 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
         level.edited[slot] = 0;
         level.provisional[slot] = complete ? 0 : 1;
         level.pagesDirty = true;
+        level.scanSkip = 'never';
     }
     uploadPages(): void {
         const { gl, tilesPerSide } = this;
@@ -248,12 +278,15 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
         return log.version;
     }
     private invalidateAll(): void {
-        for (const level of this.levels)
+        for (const level of this.levels) {
             level.edited.fill(1);
+            level.scanSkip = 'never';
+        }
     }
     private invalidateRect(x0: number, z0: number, x1: number, z1: number): void {
         const tiles = this.tilesPerSide;
         for (const level of this.levels) {
+            level.scanSkip = 'never';
             const tx0 = Math.max(Math.floor(x0 / level.tileSize), level.originX);
             const tx1 = Math.min(Math.floor(x1 / level.tileSize), level.originX + tiles - 1);
             const tz0 = Math.max(Math.floor(z0 / level.tileSize), level.originZ);
@@ -372,57 +405,82 @@ export class TerrainMaterialCache {
         return this.virtualTexture;
     }
     private collect(clip: TerrainClipmap, entity: Entity, frustum: Frustum, pixelScale: number): void {
-        const { wanted, stats, tileBounds, worldBounds } = this;
-        const { terrain, center, tilesPerSide } = clip;
+        const { tileBounds } = this;
+        const { terrain, center } = clip;
         const half = terrain.halfSize;
         const groundX = clamp(center[0], -half, half);
         const groundZ = clamp(center[2], -half, half);
         const heightAbove = center[1] - terrain.heightAtLocal(groundX, groundZ);
         const texelsPerPixel = clip.texelsPerMeter / Math.max(pixelScale, 1);
+        const viewMoved = clip.trackView(heightAbove, texelsPerPixel);
         tileBounds.min[1] = terrain.localBounds.min[1];
         tileBounds.max[1] = terrain.localBounds.max[1];
         for (const level of clip.levels) {
-            const { tileSize } = level;
-            const halfTile = tileSize / 2;
-            for (let slotZ = 0; slotZ < tilesPerSide; slotZ++) {
-                for (let slotX = 0; slotX < tilesPerSide; slotX++) {
-                    clip.wantedTile(level, slotX, slotZ, wanted);
-                    const tileX = wanted[0];
-                    const tileZ = wanted[1];
-                    const minX = tileX * tileSize;
-                    const minZ = tileZ * tileSize;
-                    if (minX >= half || minX + tileSize <= -half || minZ >= half || minZ + tileSize <= -half)
-                        continue;
-                    const slot = slotZ * tilesPerSide + slotX;
-                    const dirty = clip.isDirty(level, slot, tileX, tileZ);
-                    if (!dirty && level.provisional[slot] === 0)
-                        continue;
-                    if (dirty)
-                        stats.pending++;
-                    const dx = Math.max(Math.abs(minX + halfTile - center[0]) - halfTile, 0);
-                    const dz = Math.max(Math.abs(minZ + halfTile - center[2]) - halfTile, 0);
-                    const distance = Math.sqrt(dx * dx + dz * dz + heightAbove * heightAbove);
-                    const lodFootprint = Math.log2(Math.max(distance * texelsPerPixel, 1e-6));
-                    let score = distance;
-                    if (lodFootprint - level.lodIndex > 1) {
-                        if (!dirty)
-                            continue;
-                        score += DEFERRED_PENALTY;
-                    }
-                    else {
-                        if (!dirty)
-                            score += REFINEMENT_PENALTY;
-                        tileBounds.min[0] = minX;
-                        tileBounds.min[2] = minZ;
-                        tileBounds.max[0] = minX + tileSize;
-                        tileBounds.max[2] = minZ + tileSize;
-                        if (!frustum.intersectsAabb(aabb.transform(worldBounds, tileBounds, entity.worldMatrix)))
-                            score += OFFSCREEN_PENALTY;
-                    }
-                    this.offer(clip, level, slot, tileX, tileZ, score);
+            if (level.scanSkip === 'always' || (level.scanSkip === 'while-view-holds' && !viewMoved))
+                continue;
+            this.scanLevel(clip, level, entity, frustum, heightAbove * heightAbove, texelsPerPixel);
+        }
+    }
+    private scanLevel(clip: TerrainClipmap, level: CacheLevel, entity: Entity, frustum: Frustum, heightSq: number, texelsPerPixel: number): void {
+        const { center, tilesPerSide } = clip;
+        const { tileSize, pages, edited, provisional } = level;
+        const half = clip.terrain.halfSize;
+        const halfTile = tileSize / 2;
+        const reach = 2 ** (level.lodIndex + 1) / texelsPerPixel;
+        const reachSq = reach * reach;
+        const firstX = firstTileInside(level.originX, tilesPerSide, tileSize, half);
+        const lastX = lastTileInside(level.originX, tilesPerSide, tileSize, half);
+        const firstZ = firstTileInside(level.originZ, tilesPerSide, tileSize, half);
+        const lastZ = lastTileInside(level.originZ, tilesPerSide, tileSize, half);
+        let dirtyCount = 0;
+        let offered = 0;
+        let outOfReach = 0;
+        for (let tileZ = firstZ; tileZ <= lastZ; tileZ++) {
+            const dz = Math.max(Math.abs(tileZ * tileSize + halfTile - center[2]) - halfTile, 0);
+            const row = wrapIndex(tileZ, tilesPerSide) * tilesPerSide;
+            let slotX = wrapIndex(firstX, tilesPerSide);
+            for (let tileX = firstX; tileX <= lastX; tileX++) {
+                const slot = row + slotX;
+                slotX = slotX + 1 === tilesPerSide ? 0 : slotX + 1;
+                const dirty = edited[slot] !== 0 || pages[slot * 2] !== tileX || pages[slot * 2 + 1] !== tileZ;
+                if (!dirty && provisional[slot] === 0)
+                    continue;
+                const dx = Math.max(Math.abs(tileX * tileSize + halfTile - center[0]) - halfTile, 0);
+                const distanceSq = dx * dx + dz * dz + heightSq;
+                const withinReach = distanceSq <= reachSq;
+                if (dirty)
+                    dirtyCount++;
+                else if (!withinReach) {
+                    outOfReach++;
+                    continue;
                 }
+                let score = Math.sqrt(distanceSq);
+                if (!withinReach)
+                    score += DEFERRED_PENALTY;
+                else {
+                    if (!dirty)
+                        score += REFINEMENT_PENALTY;
+                    if (!this.tileOnScreen(level, entity, frustum, tileX, tileZ))
+                        score += OFFSCREEN_PENALTY;
+                }
+                this.offer(clip, level, slot, tileX, tileZ, score);
+                offered++;
             }
         }
+        this.stats.pending += dirtyCount;
+        if (dirtyCount > 0 || offered > 0)
+            level.scanSkip = 'never';
+        else
+            level.scanSkip = outOfReach > 0 ? 'while-view-holds' : 'always';
+    }
+    private tileOnScreen(level: CacheLevel, entity: Entity, frustum: Frustum, tileX: number, tileZ: number): boolean {
+        const { tileBounds, worldBounds } = this;
+        const { tileSize } = level;
+        tileBounds.min[0] = tileX * tileSize;
+        tileBounds.min[2] = tileZ * tileSize;
+        tileBounds.max[0] = tileX * tileSize + tileSize;
+        tileBounds.max[2] = tileZ * tileSize + tileSize;
+        return frustum.intersectsAabb(aabb.transform(worldBounds, tileBounds, entity.worldMatrix));
     }
     private offer(clip: TerrainClipmap, level: CacheLevel, slot: number, tileX: number, tileZ: number, score: number): void {
         const { jobs } = this;
