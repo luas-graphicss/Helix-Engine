@@ -112,6 +112,9 @@ class PhysicalCache {
         this.gl.deleteTexture(this.texture);
     }
 }
+export function supportsTerrainVirtualTexture(slices: number): boolean {
+    return slices > 0 && typeof Worker !== 'undefined' && typeof OffscreenCanvas !== 'undefined' && typeof createImageBitmap === 'function';
+}
 export class TerrainVirtualTexture {
     readonly stats: TerrainVirtualTextureStats = {
         sources: 0,
@@ -147,7 +150,7 @@ export class TerrainVirtualTexture {
     private boundSignature = '';
     private readonly layerInfo = new Float32Array(MAX_TERRAIN_LAYERS * 4);
     constructor(private readonly gl: GL, slices: number) {
-        if (slices <= 0 || typeof Worker === 'undefined' || typeof OffscreenCanvas === 'undefined' || typeof createImageBitmap !== 'function') {
+        if (!supportsTerrainVirtualTexture(slices)) {
             this.caches = null;
             this.streamer = null;
             this.pageTable = null;
@@ -189,32 +192,18 @@ export class TerrainVirtualTexture {
                 return true;
         return false;
     }
+    wantsPages(terrain: Terrain, x0: number, z0: number, x1: number, z1: number, texelSize: number, far: number): boolean {
+        return this.enabled && this.layersNeedingPages(terrain, x0, z0, x1, z1, texelSize, far) !== 0;
+    }
     requestTile(terrain: Terrain, x0: number, z0: number, x1: number, z1: number, texelSize: number, far: number): boolean {
         if (!this.enabled)
+            return true;
+        const mask = this.layersNeedingPages(terrain, x0, z0, x1, z1, texelSize, far);
+        if (mask === 0)
             return true;
         const { layers } = terrain;
         const count = Math.min(layers.length, MAX_TERRAIN_LAYERS);
         const distanceTiling = Math.max(terrain.shading.distanceTiling, 1);
-        let needMask = 0;
-        for (let i = 0; i < count; i++) {
-            const layer = layers[i];
-            const tiling = Math.max(layer.tiling, 0.01);
-            for (const kind of KINDS) {
-                const hires = layer.material.hires[kind];
-                if (!hires)
-                    continue;
-                const levels = vtSourceLevels(Math.round(Math.log2(hires.size)));
-                const near = far < 1 ? vtPageLevel(texelSize / tiling, hires.size) : levels;
-                const distant = far > 0 ? vtPageLevel(texelSize / (tiling * distanceTiling), hires.size) : levels;
-                if (near < levels || distant < levels)
-                    needMask |= 1 << i;
-            }
-        }
-        if (needMask === 0)
-            return true;
-        const mask = layerMask(terrain, x0, z0, x1, z1) & needMask;
-        if (mask === 0)
-            return true;
         let complete = true;
         for (let i = 0; i < count; i++) {
             if ((mask & (1 << i)) === 0)
@@ -338,6 +327,27 @@ export class TerrainVirtualTexture {
         this.pending.clear();
         this.sources.clear();
         this.sourcesById.clear();
+    }
+    private layersNeedingPages(terrain: Terrain, x0: number, z0: number, x1: number, z1: number, texelSize: number, far: number): number {
+        const { layers } = terrain;
+        const count = Math.min(layers.length, MAX_TERRAIN_LAYERS);
+        const distanceTiling = Math.max(terrain.shading.distanceTiling, 1);
+        let needMask = 0;
+        for (let i = 0; i < count; i++) {
+            const layer = layers[i];
+            const tiling = Math.max(layer.tiling, 0.01);
+            for (const kind of KINDS) {
+                const hires = layer.material.hires[kind];
+                if (!hires)
+                    continue;
+                const levels = vtSourceLevels(Math.round(Math.log2(hires.size)));
+                const near = far < 1 ? vtPageLevel(texelSize / tiling, hires.size) : levels;
+                const distant = far > 0 ? vtPageLevel(texelSize / (tiling * distanceTiling), hires.size) : levels;
+                if (near < levels || distant < levels)
+                    needMask |= 1 << i;
+            }
+        }
+        return needMask === 0 ? 0 : layerMask(terrain, x0, z0, x1, z1) & needMask;
     }
     private readySource(hires: HiresMapSource | null): VirtualSource | null {
         if (!hires)
