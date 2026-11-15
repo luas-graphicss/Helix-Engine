@@ -16,17 +16,19 @@ import { clamp } from '@/engine/core/math/scalar';
 import type { Terrain } from '@/engine/terrain/core/terrain';
 import { createRegion, isRegionEmpty } from '@/engine/terrain/core/heightfield';
 import type { RegionChangeLog } from '@/engine/terrain/chunks/region-change-log';
-import { terrainMaterialSignature, TERRAIN_COLOR_TEXTURE_SIZE } from '@/engine/terrain/materials/terrain-material';
+import { terrainMaterialSignature } from '@/engine/terrain/materials/terrain-material';
 import { materialSupportsGrass } from '@/engine/terrain/foliage/grass-placement';
 import type { TerrainGpuCache } from './terrain-gpu-cache';
 import { TerrainMaterialUniforms } from './terrain-material-uniforms';
-import { MAX_TERRAIN_CACHE_LEVELS, TERRAIN_CACHE_TILE_TEXELS, terrainCacheBaseCoverage, terrainCacheUsableRadius, } from './terrain-cache-layout';
+import { MAX_TERRAIN_CACHE_LEVELS, TERRAIN_CACHE_TILE_TEXELS, terrainCacheLadder, terrainCacheTexels, terrainCacheUsableRadius, } from './terrain-cache-layout';
+import { supportsTerrainVirtualTexture, TerrainVirtualTexture } from './virtual-texture/terrain-virtual-texture';
 const RETENTION_FRAMES = 300;
 const PAGE_EMPTY = -32768;
 const RING_FAR_DISTANCE = 0.375;
 const STATIC_FAR_DISTANCE = 0.75;
 const DEFERRED_PENALTY = 1e6;
 const OFFSCREEN_PENALTY = 1e4;
+const REFINEMENT_PENALTY = 2 * OFFSCREEN_PENALTY;
 export const TERRAIN_CACHE_BURST_FACTOR = 8;
 export interface TerrainMaterialCacheStats {
     baked: number;
@@ -74,6 +76,7 @@ function createTextureArray(gl: GL, internalFormat: number, size: number, layers
 class CacheLevel {
     readonly pages: Int16Array;
     readonly edited: Uint8Array;
+    readonly provisional: Uint8Array;
     originX: number;
     originZ: number;
     pagesDirty = true;
@@ -81,6 +84,7 @@ class CacheLevel {
     constructor(readonly index: number, readonly coverage: number, readonly tileSize: number, readonly texelSize: number, readonly lodIndex: number, readonly isStatic: boolean, tilesPerSide: number) {
         this.pages = new Int16Array(tilesPerSide * tilesPerSide * 2).fill(PAGE_EMPTY);
         this.edited = new Uint8Array(tilesPerSide * tilesPerSide);
+        this.provisional = new Uint8Array(tilesPerSide * tilesPerSide);
         this.originX = this.originZ = isStatic ? -tilesPerSide / 2 : 0;
     }
 }
@@ -102,7 +106,7 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     readonly center = vec3.create();
     readonly ringCount: number;
     readonly usableRadius: number;
-    readonly texelsPerMeter = TERRAIN_COLOR_TEXTURE_SIZE;
+    readonly texelsPerMeter: number;
     readonly size: number;
     readonly memoryBytes: number;
     lastUsedFrame = 0;
@@ -111,10 +115,11 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     private splatVersion = -1;
     private grassVersion = -1;
     private readonly region = createRegion();
-    constructor(private readonly gl: GL, readonly terrain: Terrain, readonly texels: number, readonly tilesPerSide: number, maxLevels: number) {
+    constructor(private readonly gl: GL, readonly terrain: Terrain, readonly texels: number, readonly tilesPerSide: number, texelsPerMeter: number, maxLevels: number) {
         this.size = terrain.size;
-        const base = terrainCacheBaseCoverage(texels, this.texelsPerMeter);
-        this.ringCount = Math.max(0, Math.min(maxLevels - 1, Math.ceil(Math.log2(terrain.size / base))));
+        const { baseCoverage: base, ringCount } = terrainCacheLadder(texels, texelsPerMeter, terrain.size, maxLevels);
+        this.ringCount = ringCount;
+        this.texelsPerMeter = texels / base;
         this.usableRadius = terrainCacheUsableRadius(base, tilesPerSide);
         for (let k = 0; k < this.ringCount; k++) {
             const coverage = base * 2 ** k;
@@ -170,10 +175,11 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     isDirty(level: CacheLevel, slot: number, tileX: number, tileZ: number): boolean {
         return level.edited[slot] !== 0 || level.pages[slot * 2] !== tileX || level.pages[slot * 2 + 1] !== tileZ;
     }
-    markBaked(level: CacheLevel, slot: number, tileX: number, tileZ: number): void {
+    markBaked(level: CacheLevel, slot: number, tileX: number, tileZ: number, complete: boolean): void {
         level.pages[slot * 2] = tileX;
         level.pages[slot * 2 + 1] = tileZ;
         level.edited[slot] = 0;
+        level.provisional[slot] = complete ? 0 : 1;
         level.pagesDirty = true;
     }
     uploadPages(): void {
@@ -268,10 +274,13 @@ export class TerrainMaterialCache {
     private readonly program: ShaderProgram;
     private readonly materialUniforms: TerrainMaterialUniforms;
     private readonly entries = new Map<Terrain, TerrainClipmap>();
-    private readonly texels: number;
-    private readonly tilesPerSide: number;
+    private readonly maxTexels: number;
+    private readonly texelsPerMeter: number;
     private readonly maxLevels: number;
     private readonly budget: number;
+    private readonly virtualTextureSlices: number;
+    private virtualTexture: TerrainVirtualTexture | null = null;
+    private texels = 0;
     burstScale = 1;
     private readonly jobs: BakeJob[] = [];
     private jobCount = 0;
@@ -282,10 +291,11 @@ export class TerrainMaterialCache {
     private readonly worldBounds = aabb.create();
     private frame = 0;
     constructor(private readonly gl: GL, private readonly triangle: FullscreenTriangle, private readonly resources: TerrainGpuCache, profile: RenderProfile) {
-        this.program = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, terrainMaterialBakeFragmentShader(false));
+        this.virtualTextureSlices = profile.terrainVirtualTextureSlices;
+        this.program = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, terrainMaterialBakeFragmentShader(supportsTerrainVirtualTexture(this.virtualTextureSlices)));
         this.materialUniforms = new TerrainMaterialUniforms(gl);
-        this.texels = profile.terrainCacheSize;
-        this.tilesPerSide = profile.terrainCacheSize / TERRAIN_CACHE_TILE_TEXELS;
+        this.maxTexels = profile.terrainCacheSize;
+        this.texelsPerMeter = profile.terrainCacheTexelsPerMeter;
         this.maxLevels = Math.min(profile.terrainCacheLevels, MAX_TERRAIN_CACHE_LEVELS);
         this.budget = profile.terrainCacheTilesPerFrame;
     }
@@ -295,8 +305,11 @@ export class TerrainMaterialCache {
         stats.pending = 0;
         stats.levels = 0;
         stats.memoryBytes = 0;
-        if (!enabled)
+        if (!enabled || terrains.length === 0)
             return;
+        this.texels = Math.max(this.texels, terrainCacheTexels(pixelScale, this.maxTexels));
+        const virtualTexture = this.resolveVirtualTexture();
+        virtualTexture.beginFrame();
         this.jobCount = 0;
         this.urgentCount = 0;
         for (const entity of terrains) {
@@ -312,7 +325,8 @@ export class TerrainMaterialCache {
             this.collect(clip, entity, frustum, pixelScale);
         }
         if (this.jobCount > 0)
-            stats.baked = this.bake(this.bakeCount());
+            stats.baked = this.bake(this.bakeCount(), virtualTexture);
+        virtualTexture.endFrame();
         for (const clip of this.entries.values())
             clip.uploadPages();
     }
@@ -338,19 +352,23 @@ export class TerrainMaterialCache {
     }
     private resolve(terrain: Terrain): TerrainClipmap {
         let clip = this.entries.get(terrain);
-        if (clip && clip.size !== terrain.size) {
+        if (clip && (clip.size !== terrain.size || clip.texels !== this.texels)) {
             clip.dispose();
             clip = undefined;
         }
         if (!clip) {
-            clip = new TerrainClipmap(this.gl, terrain, this.texels, this.tilesPerSide, this.maxLevels);
+            clip = new TerrainClipmap(this.gl, terrain, this.texels, this.texels / TERRAIN_CACHE_TILE_TEXELS, this.texelsPerMeter, this.maxLevels);
             this.entries.set(terrain, clip);
         }
         return clip;
     }
+    private resolveVirtualTexture(): TerrainVirtualTexture {
+        this.virtualTexture ??= new TerrainVirtualTexture(this.gl, this.virtualTextureSlices);
+        return this.virtualTexture;
+    }
     private collect(clip: TerrainClipmap, entity: Entity, frustum: Frustum, pixelScale: number): void {
-        const { tilesPerSide, wanted, stats, tileBounds, worldBounds } = this;
-        const { terrain, center } = clip;
+        const { wanted, stats, tileBounds, worldBounds } = this;
+        const { terrain, center, tilesPerSide } = clip;
         const half = terrain.halfSize;
         const groundX = clamp(center[0], -half, half);
         const groundZ = clamp(center[2], -half, half);
@@ -371,17 +389,24 @@ export class TerrainMaterialCache {
                     if (minX >= half || minX + tileSize <= -half || minZ >= half || minZ + tileSize <= -half)
                         continue;
                     const slot = slotZ * tilesPerSide + slotX;
-                    if (!clip.isDirty(level, slot, tileX, tileZ))
+                    const dirty = clip.isDirty(level, slot, tileX, tileZ);
+                    if (!dirty && level.provisional[slot] === 0)
                         continue;
-                    stats.pending++;
+                    if (dirty)
+                        stats.pending++;
                     const dx = Math.max(Math.abs(minX + halfTile - center[0]) - halfTile, 0);
                     const dz = Math.max(Math.abs(minZ + halfTile - center[2]) - halfTile, 0);
                     const distance = Math.sqrt(dx * dx + dz * dz + heightAbove * heightAbove);
                     const lodFootprint = Math.log2(Math.max(distance * texelsPerPixel, 1e-6));
                     let score = distance;
-                    if (lodFootprint - level.lodIndex > 1)
+                    if (lodFootprint - level.lodIndex > 1) {
+                        if (!dirty)
+                            continue;
                         score += DEFERRED_PENALTY;
+                    }
                     else {
+                        if (!dirty)
+                            score += REFINEMENT_PENALTY;
                         tileBounds.min[0] = minX;
                         tileBounds.min[2] = minZ;
                         tileBounds.max[0] = minX + tileSize;
@@ -424,16 +449,29 @@ export class TerrainMaterialCache {
         job.tileZ = tileZ;
         job.score = score;
     }
-    private bake(count: number): number {
-        const { gl, program, triangle, jobs, texels, tilesPerSide } = this;
+    private hiresPagesReady(virtualTexture: TerrainVirtualTexture, job: BakeJob): boolean {
+        const { level } = job;
+        const { terrain } = job.clip;
+        const minX = job.tileX * level.tileSize;
+        const minZ = job.tileZ * level.tileSize;
+        const maxX = minX + level.tileSize;
+        const maxZ = minZ + level.tileSize;
+        if (job.score >= DEFERRED_PENALTY)
+            return !virtualTexture.wantsPages(terrain, minX, minZ, maxX, maxZ, level.texelSize, level.far);
+        return virtualTexture.requestTile(terrain, minX, minZ, maxX, maxZ, level.texelSize, level.far);
+    }
+    private bake(count: number, virtualTexture: TerrainVirtualTexture): number {
+        const { gl, program, triangle, jobs } = this;
         const jobCount = Math.min(count, this.jobCount);
         const tile = TERRAIN_CACHE_TILE_TEXELS;
         program.use();
         this.materialUniforms.bindSamplers(program);
+        virtualTexture.bindSamplers(program);
         gl.disable(gl.DEPTH_TEST);
         gl.enable(gl.SCISSOR_TEST);
         let baked = 0;
         for (const clip of this.entries.values()) {
+            const { terrain, texels, tilesPerSide } = clip;
             let terrainBound = false;
             for (const level of clip.levels) {
                 let levelBound = false;
@@ -441,8 +479,12 @@ export class TerrainMaterialCache {
                     const job = jobs[i];
                     if (job.clip !== clip || job.level !== level)
                         continue;
+                    const complete = this.hiresPagesReady(virtualTexture, job);
+                    if (!complete && !clip.isDirty(level, job.slot, job.tileX, job.tileZ))
+                        continue;
                     if (!terrainBound) {
-                        this.materialUniforms.bind(program, clip.terrain, this.resources.resolve(clip.terrain));
+                        this.materialUniforms.bind(program, terrain, this.resources.resolve(terrain));
+                        virtualTexture.bind(program, terrain);
                         terrainBound = true;
                     }
                     if (!levelBound) {
@@ -457,7 +499,7 @@ export class TerrainMaterialCache {
                     gl.scissor(slotX * tile, slotZ * tile, tile, tile);
                     gl.uniform4f(program.uniform('u_tile'), job.tileX * level.tileSize, job.tileZ * level.tileSize, slotX * tile, slotZ * tile);
                     triangle.draw();
-                    clip.markBaked(level, job.slot, job.tileX, job.tileZ);
+                    clip.markBaked(level, job.slot, job.tileX, job.tileZ, complete);
                     baked++;
                 }
             }
@@ -466,6 +508,7 @@ export class TerrainMaterialCache {
         gl.enable(gl.DEPTH_TEST);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         this.materialUniforms.unbindArrays();
+        virtualTexture.unbind();
         return baked;
     }
     dispose(): void {
@@ -473,5 +516,6 @@ export class TerrainMaterialCache {
             clip.dispose();
         this.entries.clear();
         this.program.dispose();
+        this.virtualTexture?.dispose();
     }
 }
