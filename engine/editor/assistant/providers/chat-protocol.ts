@@ -7,6 +7,8 @@ export const PROTOCOL_LABEL: Record<ProtocolId, string> = {
     'openai-chat': 'OpenAI Chat Completions',
     'openai-responses': 'OpenAI Responses',
 };
+export const REASONING_EFFORTS = ['auto', 'low', 'medium', 'high'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 export interface ProviderEndpoint {
     readonly baseUrl: string;
     readonly apiKey: string;
@@ -41,6 +43,7 @@ export interface ToolResultMessage {
 export type ChatMessage = UserMessage | AssistantMessage | ToolResultMessage;
 export interface TurnObserver {
     onText(delta: string): void;
+    onReasoning(delta: string): void;
     onToolCall(name: string): void;
 }
 export interface ChatRequest {
@@ -49,6 +52,7 @@ export interface ChatRequest {
     readonly messages: readonly ChatMessage[];
     readonly tools: readonly ToolDeclaration[];
     readonly signal: AbortSignal;
+    readonly reasoningEffort: ReasoningEffort;
     readonly observer: TurnObserver;
 }
 export interface ModelTurn {

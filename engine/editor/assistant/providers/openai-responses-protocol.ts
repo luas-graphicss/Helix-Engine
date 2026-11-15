@@ -5,6 +5,7 @@ import { bearerHeaders } from './openai-headers';
 import { requestJson, resolveEndpointUrl, streamFailure } from './provider-http';
 import { streamJsonEvents } from './provider-stream';
 import { TurnAssembler } from './turn-assembler';
+const SUMMARY_PART_BREAK = '\n\n';
 type InputItem = {
     role: 'user' | 'assistant';
     content: string;
@@ -54,7 +55,7 @@ function stoppedAtOutputLimit(response: unknown): boolean {
     return isRecord(response) && isRecord(response.incomplete_details) && response.incomplete_details.reason === 'max_output_tokens';
 }
 export const openAiResponsesProtocol: ChatProtocol = {
-    async complete({ endpoint, system, messages, tools, signal, observer }) {
+    async complete({ endpoint, system, messages, tools, signal, reasoningEffort, observer }) {
         const assembler = new TurnAssembler(observer);
         const url = resolveEndpointUrl(endpoint.baseUrl, 'responses');
         const events = streamJsonEvents(url, {
@@ -68,6 +69,7 @@ export const openAiResponsesProtocol: ChatProtocol = {
                 tools: tools.map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.parameters, strict: false })),
                 store: false,
                 stream: true,
+                ...(reasoningEffort === 'auto' ? {} : { reasoning: { effort: reasoningEffort, summary: 'auto' } }),
             },
         });
         let truncated = false;
@@ -76,6 +78,14 @@ export const openAiResponsesProtocol: ChatProtocol = {
                 case 'response.output_text.delta':
                 case 'response.refusal.delta':
                     assembler.appendText(textOf(event.delta));
+                    break;
+                case 'response.reasoning_summary_text.delta':
+                case 'response.reasoning_text.delta':
+                    assembler.appendReasoning(textOf(event.delta));
+                    break;
+                case 'response.reasoning_summary_part.added':
+                    if (typeof event.summary_index === 'number' && event.summary_index > 0)
+                        assembler.appendReasoning(SUMMARY_PART_BREAK);
                     break;
                 case 'response.output_item.added':
                 case 'response.output_item.done':

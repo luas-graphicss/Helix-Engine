@@ -48,6 +48,7 @@ export class AnthropicMessageReader {
                 break;
             case 'thinking_delta':
                 appendTo(block, 'thinking', textOf(delta.thinking));
+                this.assembler.appendReasoning(textOf(delta.thinking));
                 break;
             case 'signature_delta':
                 appendTo(block, 'signature', textOf(delta.signature));

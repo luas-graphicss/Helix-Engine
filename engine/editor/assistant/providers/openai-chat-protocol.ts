@@ -4,6 +4,7 @@ import { readModelIds } from './model-list';
 import { bearerHeaders } from './openai-headers';
 import { requestJson, resolveEndpointUrl } from './provider-http';
 import { streamJsonEvents } from './provider-stream';
+import { ThinkTagSplitter } from './think-tag-splitter';
 import { TurnAssembler } from './turn-assembler';
 interface WireToolCall {
     id: string;
@@ -57,8 +58,9 @@ function readToolCallFragment(assembler: TurnAssembler, fragment: JsonRecord): v
     assembler.appendToolArguments(index, textOf(target.arguments));
 }
 export const openAiChatProtocol: ChatProtocol = {
-    async complete({ endpoint, system, messages, tools, signal, observer }) {
+    async complete({ endpoint, system, messages, tools, signal, reasoningEffort, observer }) {
         const assembler = new TurnAssembler(observer);
+        const splitter = new ThinkTagSplitter({ onText: (text) => assembler.appendText(text), onReasoning: (text) => assembler.appendReasoning(text) });
         const systemMessage: WireMessage = { role: 'system', content: system };
         const chunks = streamJsonEvents(resolveEndpointUrl(endpoint.baseUrl, 'chat/completions'), {
             method: 'POST',
@@ -69,6 +71,7 @@ export const openAiChatProtocol: ChatProtocol = {
                 messages: [systemMessage, ...messages.map(toWireMessage)],
                 tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
                 stream: true,
+                ...(reasoningEffort === 'auto' ? {} : { reasoning_effort: reasoningEffort }),
             },
         });
         let truncated = false;
@@ -79,10 +82,12 @@ export const openAiChatProtocol: ChatProtocol = {
             truncated ||= choice.finish_reason === 'length';
             if (!isRecord(choice.delta))
                 continue;
-            assembler.appendText(readContent(choice.delta.content));
+            assembler.appendReasoning(textOf(choice.delta.reasoning_content) || textOf(choice.delta.reasoning));
+            splitter.push(readContent(choice.delta.content));
             for (const fragment of recordsOf(choice.delta.tool_calls))
                 readToolCallFragment(assembler, fragment);
         }
+        splitter.flush();
         return assembler.assemble(truncated);
     },
     async listModels(endpoint, signal) {

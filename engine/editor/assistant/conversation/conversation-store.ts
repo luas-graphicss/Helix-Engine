@@ -3,6 +3,10 @@ import type { AssistantActivity, ConversationEntry, ConversationSnapshot, Notice
 type Listener = () => void;
 export type ToolCallDraft = Omit<ToolCallEntry, 'id' | 'kind'>;
 export type ToolCallPatch = Partial<Pick<ToolCallEntry, 'status' | 'output'>>;
+interface OpenReasoning {
+    readonly id: number;
+    readonly startedAt: number;
+}
 const EMPTY_CONVERSATION: ConversationSnapshot = { entries: [], activity: 'idle' };
 export class ConversationStore {
     private snapshot = EMPTY_CONVERSATION;
@@ -11,6 +15,8 @@ export class ConversationStore {
     private turnText = '';
     private unopenedText = '';
     private openTextId: number | null = null;
+    private unopenedReasoning = '';
+    private openReasoning: OpenReasoning | null = null;
     private readonly listeners = new Set<Listener>();
     readonly subscribe = (listener: Listener): (() => void) => {
         this.listeners.add(listener);
@@ -38,15 +44,28 @@ export class ConversationStore {
         const entries = this.snapshot.entries.map((entry) => (entry.id === openId && entry.kind === 'assistant' ? { ...entry, text: `${entry.text}${delta}` } : entry));
         this.publish({ entries, activity: 'responding' });
     }
+    appendReasoning(delta: string): void {
+        this.openTextId = null;
+        this.unopenedText = '';
+        const open = this.openReasoning;
+        if (!open) {
+            this.startReasoning(delta);
+            return;
+        }
+        const entries = this.snapshot.entries.map((entry) => (entry.id === open.id && entry.kind === 'reasoning' ? { ...entry, text: `${entry.text}${delta}` } : entry));
+        this.publish({ entries, activity: 'responding' });
+    }
+    beginToolCall(): void {
+        this.publish({ entries: this.settleReasoning(), activity: 'preparing' });
+    }
     commitAssistantTurn(turn: ModelTurn): void {
         this.messages.push({ role: 'assistant', text: turn.text, toolCalls: turn.toolCalls, native: turn.native });
-        this.closeTurn();
+        this.closeTurn(this.snapshot.activity);
     }
     endRun(): void {
         if (this.turnText.trim())
             this.messages.push({ role: 'assistant', text: this.turnText, toolCalls: [], native: null });
-        this.closeTurn();
-        this.setActivity('idle');
+        this.closeTurn('idle');
     }
     addToolResult(callId: string, output: string, failed: boolean): void {
         this.messages.push({ role: 'tool', callId, output, failed });
@@ -65,7 +84,8 @@ export class ConversationStore {
     }
     clear(): void {
         this.messages = [];
-        this.closeTurn();
+        this.openReasoning = null;
+        this.resetTurn();
         this.publish(EMPTY_CONVERSATION);
     }
     private openText(delta: string): void {
@@ -75,12 +95,37 @@ export class ConversationStore {
             return;
         this.unopenedText = '';
         this.openTextId = this.nextId++;
-        this.publish({ entries: [...this.snapshot.entries, { id: this.openTextId, kind: 'assistant', text }], activity: 'responding' });
+        this.publish({ entries: [...this.settleReasoning(), { id: this.openTextId, kind: 'assistant', text }], activity: 'responding' });
     }
-    private closeTurn(): void {
+    private startReasoning(delta: string): void {
+        this.unopenedReasoning += delta;
+        const text = this.unopenedReasoning.trimStart();
+        if (!text)
+            return;
+        this.unopenedReasoning = '';
+        this.openReasoning = { id: this.nextId++, startedAt: Date.now() };
+        this.publish({ entries: [...this.snapshot.entries, { id: this.openReasoning.id, kind: 'reasoning', text, durationMs: null }], activity: 'responding' });
+    }
+    private settleReasoning(): readonly ConversationEntry[] {
+        const open = this.openReasoning;
+        this.openReasoning = null;
+        this.unopenedReasoning = '';
+        if (!open)
+            return this.snapshot.entries;
+        const durationMs = Date.now() - open.startedAt;
+        return this.snapshot.entries.map((entry) => (entry.id === open.id && entry.kind === 'reasoning' ? { ...entry, durationMs } : entry));
+    }
+    private closeTurn(activity: AssistantActivity): void {
+        const entries = this.settleReasoning();
+        this.resetTurn();
+        if (entries !== this.snapshot.entries || activity !== this.snapshot.activity)
+            this.publish({ entries, activity });
+    }
+    private resetTurn(): void {
         this.turnText = '';
         this.unopenedText = '';
         this.openTextId = null;
+        this.unopenedReasoning = '';
     }
     private append(entry: ConversationEntry): void {
         this.publish({ ...this.snapshot, entries: [...this.snapshot.entries, entry] });

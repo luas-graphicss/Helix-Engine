@@ -1,4 +1,5 @@
 import { ANTHROPIC_PROTOCOL_ID, AnthropicMessageReader } from './anthropic-message-reader';
+import { reasoningFields } from './anthropic-reasoning';
 import type { AssistantMessage, ChatMessage, ChatProtocol, ProviderEndpoint } from './chat-protocol';
 import { textOf, type JsonRecord } from './json-value';
 import { readModelIds } from './model-list';
@@ -60,11 +61,13 @@ function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
     return wire;
 }
 export const anthropicProtocol: ChatProtocol = {
-    async complete({ endpoint, system, messages, tools, signal, observer }) {
+    async complete({ endpoint, system, messages, tools, signal, reasoningEffort, observer }) {
+        const headers = requestHeaders(endpoint);
+        const reasoning = await reasoningFields(endpoint, reasoningEffort, headers, signal);
         const reader = new AnthropicMessageReader(observer);
         const events = streamJsonEvents(resolveEndpointUrl(endpoint.baseUrl, 'messages'), {
             method: 'POST',
-            headers: requestHeaders(endpoint),
+            headers,
             signal,
             body: {
                 model: endpoint.model,
@@ -73,6 +76,7 @@ export const anthropicProtocol: ChatProtocol = {
                 messages: toWireMessages(messages),
                 tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })),
                 stream: true,
+                ...reasoning,
             },
         });
         for await (const event of events)

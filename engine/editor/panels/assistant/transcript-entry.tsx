@@ -4,6 +4,7 @@ import type { ConversationEntry } from '@/engine/editor/assistant/conversation/c
 import { WELL_CLASS } from '@/engine/ui/surface-styles';
 import { cn } from '@/lib/utils';
 import { AssistantMarkdown } from './assistant-markdown';
+import { ReasoningBlock } from './reasoning-block';
 import { ToolCallRow } from './tool-call-row';
 type TranscriptEntryProps = {
     entry: ConversationEntry;
@@ -21,6 +22,8 @@ export function TranscriptEntry({ entry, onResolveApproval }: TranscriptEntryPro
           <span className="sr-only">Assistente: </span>
           <AssistantMarkdown text={entry.text}/>
         </div>);
+        case 'reasoning':
+            return <ReasoningBlock entry={entry}/>;
         case 'tool':
             return <ToolCallRow entry={entry} onResolve={onResolveApproval}/>;
         case 'notice': {

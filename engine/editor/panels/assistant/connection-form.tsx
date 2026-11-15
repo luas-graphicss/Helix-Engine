@@ -1,7 +1,7 @@
 'use client';
 import { useId, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
-import { PROTOCOL_IDS, PROTOCOL_LABEL } from '@/engine/editor/assistant/providers/chat-protocol';
+import { PROTOCOL_IDS, PROTOCOL_LABEL, REASONING_EFFORTS, type ReasoningEffort } from '@/engine/editor/assistant/providers/chat-protocol';
 import { activeProfile, type ConnectionSettings } from '@/engine/editor/assistant/providers/connection-settings';
 import type { ConnectionStore } from '@/engine/editor/assistant/providers/connection-store';
 import { CUSTOM_PROVIDER_ID, findProviderPreset, PROVIDER_PRESETS } from '@/engine/editor/assistant/providers/provider-catalog';
@@ -14,6 +14,13 @@ const MODEL_LIST_TIMEOUT_MS = 20000;
 const PRIVACY_NOTE = 'A chave sai do navegador só para o provedor escolhido.';
 const PROVIDER_OPTIONS = PROVIDER_PRESETS.map((preset) => ({ value: preset.id, label: preset.label }));
 const PROTOCOL_OPTIONS = PROTOCOL_IDS.map((id) => ({ value: id, label: PROTOCOL_LABEL[id] }));
+const REASONING_LABEL: Record<ReasoningEffort, string> = {
+    auto: 'Automático',
+    low: 'Baixo',
+    medium: 'Médio',
+    high: 'Alto',
+};
+const REASONING_OPTIONS = REASONING_EFFORTS.map((effort) => ({ value: effort, label: REASONING_LABEL[effort] }));
 type ModelListing = {
     status: 'idle' | 'loading';
 } | {
@@ -77,6 +84,9 @@ export function ConnectionForm({ connection, settings }: ConnectionFormProps) {
         <IconButton label="Listar modelos do provedor" size="sm" disabled={listing.status === 'loading'} onClick={() => void loadModels()}>
           <RefreshCw />
         </IconButton>
+      </PropertyRow>
+      <PropertyRow label="Raciocínio" hint="Quanto o modelo pensa antes de responder. Nem todo modelo aceita um nível fixo.">
+        <SelectField label="Raciocínio" options={REASONING_OPTIONS} value={profile.reasoningEffort} onChange={(reasoningEffort) => connection.updateProfile({ reasoningEffort })}/>
       </PropertyRow>
       <datalist id={modelListId}>{listing.status === 'ready' && listing.models.map((model) => <option key={model} value={model}/>)}</datalist>
       <ToggleField label="Guardar chave" hint="Guarda a chave neste navegador. Desligado, ela vale só até fechar o editor." on={settings.rememberKeys} onToggle={() => connection.setRememberKeys(!settings.rememberKeys)}/>

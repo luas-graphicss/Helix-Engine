@@ -94,7 +94,7 @@ export class EditorAssistant implements ToolExecutionHost {
         const run = new AbortController();
         this.run = run;
         try {
-            await runAgent({ host: this, protocol: this.connection.protocol, endpoint: this.connection.endpoint, signal: run.signal });
+            await runAgent({ host: this, protocol: this.connection.protocol, endpoint: this.connection.endpoint, reasoningEffort: this.connection.reasoningEffort, signal: run.signal });
         }
         catch (cause) {
             if (run.signal.aborted)

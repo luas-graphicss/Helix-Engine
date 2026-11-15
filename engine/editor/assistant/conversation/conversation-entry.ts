@@ -10,6 +10,12 @@ export interface AssistantEntry {
     readonly kind: 'assistant';
     readonly text: string;
 }
+export interface ReasoningEntry {
+    readonly id: number;
+    readonly kind: 'reasoning';
+    readonly text: string;
+    readonly durationMs: number | null;
+}
 export interface ToolCallEntry {
     readonly id: number;
     readonly kind: 'tool';
@@ -25,7 +31,7 @@ export interface NoticeEntry {
     readonly tone: NoticeTone;
     readonly text: string;
 }
-export type ConversationEntry = UserEntry | AssistantEntry | ToolCallEntry | NoticeEntry;
+export type ConversationEntry = UserEntry | AssistantEntry | ReasoningEntry | ToolCallEntry | NoticeEntry;
 export type AssistantActivity = 'idle' | 'thinking' | 'responding' | 'preparing' | 'working' | 'awaiting';
 export interface ConversationSnapshot {
     readonly entries: readonly ConversationEntry[];

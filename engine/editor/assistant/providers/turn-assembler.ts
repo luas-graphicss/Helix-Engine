@@ -24,6 +24,10 @@ export class TurnAssembler {
         this.text += delta;
         this.observer.onText(delta);
     }
+    appendReasoning(delta: string): void {
+        if (delta)
+            this.observer.onReasoning(delta);
+    }
     isOpenToolCall(index: number, id: string): boolean {
         return id !== '' && this.openDrafts.get(index)?.id === id;
     }

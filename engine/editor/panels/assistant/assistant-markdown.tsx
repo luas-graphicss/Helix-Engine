@@ -31,10 +31,12 @@ const COMPONENTS: Components = {
     th: ({ children }) => <th className="border border-border px-1.5 py-0.5 text-left font-semibold">{children}</th>,
     td: ({ children }) => <td className="border border-border px-1.5 py-0.5">{children}</td>,
 };
-export function AssistantMarkdown({ text }: {
+type AssistantMarkdownProps = {
     text: string;
-}) {
-    return (<div className="min-w-0 text-xs leading-relaxed break-words text-foreground/90">
+    className?: string;
+};
+export function AssistantMarkdown({ text, className }: AssistantMarkdownProps) {
+    return (<div className={cn('min-w-0 text-xs leading-relaxed break-words text-foreground/90', className)}>
       <Markdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS} disallowedElements={BLOCKED_ELEMENTS}>
         {text}
       </Markdown>

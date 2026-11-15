@@ -1,4 +1,4 @@
-import type { ChatProtocol, ModelTurn, ProviderEndpoint } from '@/engine/editor/assistant/providers/chat-protocol';
+import type { ChatProtocol, ModelTurn, ProviderEndpoint, ReasoningEffort } from '@/engine/editor/assistant/providers/chat-protocol';
 import { TOOL_DECLARATIONS } from '@/engine/editor/assistant/tools/tool-registry';
 import { DeltaBuffer } from './delta-buffer';
 import { buildSystemPrompt } from './system-prompt';
@@ -8,13 +8,15 @@ export interface AgentRun {
     readonly host: ToolExecutionHost;
     readonly protocol: ChatProtocol;
     readonly endpoint: ProviderEndpoint;
+    readonly reasoningEffort: ReasoningEffort;
     readonly signal: AbortSignal;
 }
-async function requestTurn({ host, protocol, endpoint, signal }: AgentRun): Promise<ModelTurn> {
+async function requestTurn({ host, protocol, endpoint, reasoningEffort, signal }: AgentRun): Promise<ModelTurn> {
     const { conversation, session } = host;
     const deltas = new DeltaBuffer({
         onText: (delta) => conversation.appendAssistantText(delta),
-        onToolCall: () => conversation.setActivity('preparing'),
+        onReasoning: (delta) => conversation.appendReasoning(delta),
+        onToolCall: () => conversation.beginToolCall(),
     });
     try {
         return await protocol.complete({
@@ -23,6 +25,7 @@ async function requestTurn({ host, protocol, endpoint, signal }: AgentRun): Prom
             messages: conversation.transcript,
             tools: TOOL_DECLARATIONS,
             signal,
+            reasoningEffort,
             observer: deltas,
         });
     }

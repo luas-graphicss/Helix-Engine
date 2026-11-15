@@ -1,4 +1,4 @@
-import type { ChatProtocol, ProviderEndpoint } from './chat-protocol';
+import type { ChatProtocol, ProviderEndpoint, ReasoningEffort } from './chat-protocol';
 import { activeProfile, createConnectionSettings, endpointOf, loadConnectionSettings, presetProfile, saveConnectionSettings, type ConnectionSettings, type ProviderProfile, } from './connection-settings';
 import { CHAT_PROTOCOLS } from './protocol-registry';
 import { CUSTOM_PROVIDER_ID, findProviderPreset } from './provider-catalog';
@@ -16,6 +16,9 @@ export class ConnectionStore {
     readonly getSnapshot = (): ConnectionSettings => this.settings;
     get endpoint(): ProviderEndpoint {
         return endpointOf(this.settings);
+    }
+    get reasoningEffort(): ReasoningEffort {
+        return activeProfile(this.settings).reasoningEffort;
     }
     get protocol(): ChatProtocol {
         return CHAT_PROTOCOLS[activeProfile(this.settings).protocol];

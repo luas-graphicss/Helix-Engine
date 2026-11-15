@@ -1,5 +1,5 @@
 import { readPreference, writePreference } from '@/engine/core/storage/preferences';
-import { PROTOCOL_IDS, type ProtocolId, type ProviderEndpoint } from './chat-protocol';
+import { PROTOCOL_IDS, REASONING_EFFORTS, type ProtocolId, type ProviderEndpoint, type ReasoningEffort } from './chat-protocol';
 import { isRecord } from './json-value';
 import { CUSTOM_PROVIDER_ID, DEFAULT_PROVIDER_ID, findProviderPreset, PROVIDER_PRESETS } from './provider-catalog';
 export interface ProviderProfile {
@@ -7,6 +7,7 @@ export interface ProviderProfile {
     readonly baseUrl: string;
     readonly model: string;
     readonly apiKey: string;
+    readonly reasoningEffort: ReasoningEffort;
 }
 export interface ConnectionSettings {
     readonly providerId: string;
@@ -16,7 +17,7 @@ export interface ConnectionSettings {
 const PREFERENCE_KEY = 'assistant-connection';
 export function presetProfile(providerId: string): ProviderProfile {
     const preset = findProviderPreset(providerId);
-    return { protocol: preset.protocol, baseUrl: preset.baseUrl, model: '', apiKey: '' };
+    return { protocol: preset.protocol, baseUrl: preset.baseUrl, model: '', apiKey: '', reasoningEffort: 'auto' };
 }
 export function createConnectionSettings(): ConnectionSettings {
     return { providerId: DEFAULT_PROVIDER_ID, rememberKeys: false, profiles: {} };
@@ -46,6 +47,7 @@ function readProfile(stored: unknown, providerId: string, keepKey: boolean): Pro
         baseUrl: typeof stored.baseUrl === 'string' ? stored.baseUrl : preset.baseUrl,
         model: typeof stored.model === 'string' ? stored.model : '',
         apiKey: keepKey && typeof stored.apiKey === 'string' ? stored.apiKey : '',
+        reasoningEffort: REASONING_EFFORTS.find((effort) => effort === stored.reasoningEffort) ?? preset.reasoningEffort,
     };
 }
 function restoreSettings(persisted: unknown): ConnectionSettings {
