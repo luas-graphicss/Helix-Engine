@@ -28,7 +28,7 @@ export function AssistantTranscript({ entries, activity, onResolveApproval, onAn
         if (scroller)
             pinnedRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < PINNED_DISTANCE_PX;
     };
-    return (<div ref={scrollerRef} role="log" aria-label="Conversa com o assistente" onScroll={trackPinned} className="min-h-0 flex-1 overflow-y-auto p-2">
+    return (<div ref={scrollerRef} role="log" aria-label="Conversa com o assistente" aria-busy={activity === 'responding'} onScroll={trackPinned} className="min-h-0 flex-1 overflow-y-auto p-2">
       <ol className="flex flex-col gap-2">
         {entries.map((entry) => (<li key={entry.id}>
             <TranscriptEntry entry={entry} onResolveApproval={onResolveApproval} onAnswerQuestion={onAnswerQuestion}/>

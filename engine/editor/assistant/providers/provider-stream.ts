@@ -1,6 +1,6 @@
 import { isRecord, parseJson, type JsonRecord } from './json-value';
 import { connectionFailure, openResponse, ProviderError, streamFailure, type JsonRequest } from './provider-http';
-const IDLE_TIMEOUT_MS = 120000;
+const IDLE_TIMEOUT_MS = 240000;
 const MAX_LINE_LENGTH = 4000000;
 const LINE_BREAK = /\r\n|\n|\r(?!$)/;
 const DATA_PREFIX = 'data:';
