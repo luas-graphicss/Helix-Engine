@@ -1,16 +1,18 @@
 'use client';
 import { CircleAlert, Info } from 'lucide-react';
-import type { ConversationEntry } from '@/engine/editor/assistant/conversation/conversation-entry';
+import type { ConversationEntry, QuestionAnswer } from '@/engine/editor/assistant/conversation/conversation-entry';
 import { WELL_CLASS } from '@/engine/ui/surface-styles';
 import { cn } from '@/lib/utils';
 import { AssistantMarkdown } from './assistant-markdown';
+import { QuestionCard } from './question-card';
 import { ReasoningBlock } from './reasoning-block';
 import { ToolCallRow } from './tool-call-row';
 type TranscriptEntryProps = {
     entry: ConversationEntry;
     onResolveApproval: (entryId: number, approved: boolean) => void;
+    onAnswerQuestion: (entryId: number, answer: QuestionAnswer) => void;
 };
-export function TranscriptEntry({ entry, onResolveApproval }: TranscriptEntryProps) {
+export function TranscriptEntry({ entry, onResolveApproval, onAnswerQuestion }: TranscriptEntryProps) {
     switch (entry.kind) {
         case 'user':
             return (<p className={cn('rounded-sm px-2 py-1.5 text-xs leading-relaxed break-words whitespace-pre-wrap text-foreground', WELL_CLASS)}>
@@ -24,6 +26,8 @@ export function TranscriptEntry({ entry, onResolveApproval }: TranscriptEntryPro
         </div>);
         case 'reasoning':
             return <ReasoningBlock entry={entry}/>;
+        case 'question':
+            return <QuestionCard entry={entry} onAnswer={onAnswerQuestion}/>;
         case 'tool':
             return <ToolCallRow entry={entry} onResolve={onResolveApproval}/>;
         case 'notice': {

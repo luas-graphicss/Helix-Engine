@@ -1,5 +1,5 @@
 import type { ChatMessage, ModelTurn } from '@/engine/editor/assistant/providers/chat-protocol';
-import type { AssistantActivity, ConversationEntry, ConversationSnapshot, NoticeTone, PlanStep, ToolCallEntry } from './conversation-entry';
+import type { AssistantActivity, ConversationEntry, ConversationSnapshot, NoticeTone, PlanStep, QuestionAnswer, QuestionOption, QuestionResolution, ToolCallEntry } from './conversation-entry';
 type Listener = () => void;
 export type ToolCallDraft = Omit<ToolCallEntry, 'id' | 'kind'>;
 export type ToolCallPatch = Partial<Pick<ToolCallEntry, 'status' | 'output'>>;
@@ -90,6 +90,16 @@ export class ConversationStore {
     updateToolCall(id: number, patch: ToolCallPatch): void {
         const entries = this.snapshot.entries.map((entry) => (entry.id === id && entry.kind === 'tool' ? { ...entry, ...patch } : entry));
         this.publish({ ...this.snapshot, entries });
+    }
+    addQuestion(question: string, options: readonly QuestionOption[]): number {
+        const id = this.nextId++;
+        this.publish({ ...this.snapshot, activity: 'awaiting', entries: [...this.snapshot.entries, { id, kind: 'question', question, options, resolution: { status: 'awaiting' } }] });
+        return id;
+    }
+    resolveQuestion(id: number, answer: QuestionAnswer | null): void {
+        const resolution: QuestionResolution = answer ? { status: 'answered', answer } : { status: 'cancelled' };
+        const entries = this.snapshot.entries.map((entry) => (entry.id === id && entry.kind === 'question' ? { ...entry, resolution } : entry));
+        this.publish({ ...this.snapshot, entries, activity: 'working' });
     }
     clear(): void {
         this.messages = [];

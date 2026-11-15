@@ -1,5 +1,6 @@
+import type { QuestionAnswer } from '@/engine/editor/assistant/conversation/conversation-entry';
 import type { ConversationStore } from '@/engine/editor/assistant/conversation/conversation-store';
-import type { InteractionTool } from '@/engine/editor/assistant/interaction/interaction-tool';
+import type { InteractionContext, InteractionTool } from '@/engine/editor/assistant/interaction/interaction-tool';
 import { findInteractionTool } from '@/engine/editor/assistant/interaction/interaction-tool-registry';
 import type { AssistantMode } from '@/engine/editor/assistant/modes/assistant-mode';
 import type { ToolCall } from '@/engine/editor/assistant/providers/chat-protocol';
@@ -20,6 +21,7 @@ export interface ToolExecutionHost {
     readonly conversation: ConversationStore;
     readonly mode: AssistantMode;
     confirm(entryId: number, signal: AbortSignal): Promise<boolean>;
+    ask(entryId: number, signal: AbortSignal): Promise<QuestionAnswer | null>;
 }
 export const CANCELLED_OUTCOME: ToolOutcome = { output: 'Cancelled: the user stopped the assistant before this tool ran.', failed: true };
 const DENIED_OUTCOME: ToolOutcome = { output: 'The user denied this action. Do not retry it. Ask how they want to proceed.', failed: true };
@@ -37,11 +39,12 @@ function describeFailure(cause: unknown): string {
         return cause.message;
     return `The tool failed unexpectedly: ${cause instanceof Error ? cause.message : String(cause)}`;
 }
-async function runInteractionTool(host: ToolExecutionHost, tool: InteractionTool, call: ToolCall): Promise<ToolOutcome> {
+async function runInteractionTool(host: ToolExecutionHost, tool: InteractionTool, call: ToolCall, signal: AbortSignal): Promise<ToolOutcome> {
     if (call.inputError)
         return { output: call.inputError, failed: true };
+    const context: InteractionContext = { conversation: host.conversation, awaitAnswer: (entryId) => host.ask(entryId, signal) };
     try {
-        return { output: formatOutput(await tool.run({ conversation: host.conversation }, new ToolInput(call.input))), failed: false };
+        return { output: formatOutput(await tool.run(context, new ToolInput(call.input))), failed: false };
     }
     catch (cause) {
         if (!(cause instanceof ToolFailure))
@@ -91,5 +94,5 @@ async function runProjectTool(host: ToolExecutionHost, call: ToolCall, signal: A
 }
 export function executeToolCall(host: ToolExecutionHost, call: ToolCall, signal: AbortSignal): Promise<ToolOutcome> {
     const interaction = findInteractionTool(call.name);
-    return interaction ? runInteractionTool(host, interaction, call) : runProjectTool(host, call, signal);
+    return interaction ? runInteractionTool(host, interaction, call, signal) : runProjectTool(host, call, signal);
 }

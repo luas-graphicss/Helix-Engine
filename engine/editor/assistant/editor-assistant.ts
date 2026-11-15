@@ -2,12 +2,15 @@ import { readPreference, writePreference } from '@/engine/core/storage/preferenc
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { runAgent } from './agent/agent-loop';
 import type { ToolExecutionHost } from './agent/tool-execution';
+import type { QuestionAnswer } from './conversation/conversation-entry';
 import { ConversationStore } from './conversation/conversation-store';
+import { PendingRequests } from './interaction/pending-requests';
 import { DEFAULT_MODE_ID, findAssistantMode, isAssistantModeId, type AssistantMode, type AssistantModeId } from './modes/assistant-mode';
 import { connectionProblem } from './providers/connection-settings';
 import { ConnectionStore } from './providers/connection-store';
 import { ProviderError } from './providers/provider-http';
 const MODE_PREFERENCE_KEY = 'assistant-mode';
+const ANSWER_LIMIT = 2000;
 type Listener = () => void;
 function describeFailure(cause: unknown): string {
     if (cause instanceof ProviderError)
@@ -21,7 +24,8 @@ export class EditorAssistant implements ToolExecutionHost {
     private modeChosen = false;
     private run: AbortController | null = null;
     private resetRequested = false;
-    private readonly approvals = new Map<number, (approved: boolean) => void>();
+    private readonly approvals = new PendingRequests<boolean>(false);
+    private readonly questions = new PendingRequests<QuestionAnswer | null>(null);
     private readonly modeListeners = new Set<Listener>();
     constructor(readonly session: EditorSession) { }
     readonly subscribeMode = (listener: Listener): (() => void) => {
@@ -58,10 +62,8 @@ export class EditorAssistant implements ToolExecutionHost {
     }
     stop(): void {
         this.run?.abort();
-        for (const [entryId, settle] of this.approvals) {
-            this.approvals.delete(entryId);
-            settle(false);
-        }
+        this.approvals.cancelAll();
+        this.questions.cancelAll();
     }
     reset(): void {
         this.stop();
@@ -74,19 +76,18 @@ export class EditorAssistant implements ToolExecutionHost {
         this.conversation.clearPlan();
     }
     confirm(entryId: number, signal: AbortSignal): Promise<boolean> {
-        return new Promise((resolve) => {
-            if (signal.aborted)
-                resolve(false);
-            else
-                this.approvals.set(entryId, resolve);
-        });
+        return this.approvals.wait(entryId, signal);
     }
     resolveApproval(entryId: number, approved: boolean): void {
-        const settle = this.approvals.get(entryId);
-        if (!settle)
-            return;
-        this.approvals.delete(entryId);
-        settle(approved);
+        this.approvals.settle(entryId, approved);
+    }
+    ask(entryId: number, signal: AbortSignal): Promise<QuestionAnswer | null> {
+        return this.questions.wait(entryId, signal);
+    }
+    answerQuestion(entryId: number, answer: QuestionAnswer): void {
+        const text = answer.text.trim().slice(0, ANSWER_LIMIT);
+        if (text)
+            this.questions.settle(entryId, { ...answer, text });
     }
     private applyMode(modeId: AssistantModeId): void {
         this.modeId = modeId;

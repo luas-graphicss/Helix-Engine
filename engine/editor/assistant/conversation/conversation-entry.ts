@@ -16,6 +16,27 @@ export interface ReasoningEntry {
     readonly text: string;
     readonly durationMs: number | null;
 }
+export interface QuestionOption {
+    readonly label: string;
+    readonly description: string;
+}
+export interface QuestionAnswer {
+    readonly text: string;
+    readonly custom: boolean;
+}
+export type QuestionResolution = {
+    readonly status: 'awaiting' | 'cancelled';
+} | {
+    readonly status: 'answered';
+    readonly answer: QuestionAnswer;
+};
+export interface QuestionEntry {
+    readonly id: number;
+    readonly kind: 'question';
+    readonly question: string;
+    readonly options: readonly QuestionOption[];
+    readonly resolution: QuestionResolution;
+}
 export interface ToolCallEntry {
     readonly id: number;
     readonly kind: 'tool';
@@ -31,7 +52,7 @@ export interface NoticeEntry {
     readonly tone: NoticeTone;
     readonly text: string;
 }
-export type ConversationEntry = UserEntry | AssistantEntry | ReasoningEntry | ToolCallEntry | NoticeEntry;
+export type ConversationEntry = UserEntry | AssistantEntry | ReasoningEntry | QuestionEntry | ToolCallEntry | NoticeEntry;
 export const PLAN_STEP_STATUSES = ['pending', 'in_progress', 'completed'] as const;
 export type PlanStepStatus = (typeof PLAN_STEP_STATUSES)[number];
 export interface PlanStep {

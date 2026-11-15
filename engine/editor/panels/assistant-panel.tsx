@@ -32,7 +32,7 @@ export function AssistantPanel() {
         </IconButton>
       </PanelToolbar>
       {connectionOpen && <ConnectionForm key={settings.providerId} connection={connection} settings={settings}/>}
-      {entries.length === 0 ? (<AssistantEmptyState configured={problem === null} onConfigure={() => setConnectionOpen(true)}/>) : (<AssistantTranscript entries={entries} activity={activity} onResolveApproval={(entryId, approved) => assistant.resolveApproval(entryId, approved)}/>)}
+      {entries.length === 0 ? (<AssistantEmptyState configured={problem === null} onConfigure={() => setConnectionOpen(true)}/>) : (<AssistantTranscript entries={entries} activity={activity} onResolveApproval={(entryId, approved) => assistant.resolveApproval(entryId, approved)} onAnswerQuestion={(entryId, answer) => assistant.answerQuestion(entryId, answer)}/>)}
       {plan && <PlanPanel steps={plan} onDismiss={() => assistant.dismissPlan()}/>}
       <AssistantComposer busy={activity !== 'idle'} hint={problem ?? mode.description} onSend={(text) => assistant.send(text)} onStop={() => assistant.stop()}/>
     </div>);
