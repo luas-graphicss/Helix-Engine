@@ -16,6 +16,7 @@ import { PollGate } from './poll-gate';
 import type { SessionOverview } from './session-overview';
 import { createSessionStats } from './session-stats';
 const MILLISECONDS_PER_SECOND = 1000;
+const PAYLOAD_TOO_LARGE = 413;
 function decodeSegment(segment: string): string {
     try {
         return decodeURIComponent(segment);
@@ -57,7 +58,10 @@ export class EngineSession {
         catch (cause) {
             if (!(cause instanceof RequestBodyError))
                 throw cause;
-            return onBridge ? jsonResponse({ error: { code: 'BAD_REQUEST', message: cause.message } } satisfies BridgeErrorBody, cause.status) : textResponse(`${cause.message}\n`, cause.status);
+            if (!onBridge)
+                return textResponse(`${cause.message}\n`, cause.status);
+            const code = cause.status === PAYLOAD_TOO_LARGE ? 'BODY_TOO_LARGE' : 'BAD_REQUEST';
+            return jsonResponse({ error: { code, message: cause.message } } satisfies BridgeErrorBody, cause.status);
         }
     }
     private get engineOnline(): boolean {

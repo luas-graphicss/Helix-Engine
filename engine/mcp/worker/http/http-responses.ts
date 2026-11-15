@@ -2,6 +2,7 @@ const BASE_HEADERS: Readonly<Record<string, string>> = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, HEAD, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type, Idempotency-Key, Last-Event-ID, Mcp-Protocol-Version, Mcp-Session-Id, X-Mcp-Agent',
+    'Access-Control-Expose-Headers': 'Content-Disposition',
     'Access-Control-Max-Age': '86400',
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',

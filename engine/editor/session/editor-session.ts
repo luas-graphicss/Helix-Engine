@@ -33,6 +33,7 @@ import { VfxWorldHost } from '@/engine/editor/vfx/vfx-world-host';
 import { CodeEditor } from '@/engine/editor/code/code-editor';
 import { ShaderPreview } from '@/engine/editor/code/shader-preview';
 import { EditorAssistant } from '@/engine/editor/assistant/editor-assistant';
+import { McpBridge } from '@/engine/editor/mcp/mcp-bridge';
 import { ScriptRuntime } from '@/engine/scripting/runtime/script-runtime';
 import { syncCodeEditorWithLibrary } from '@/engine/editor/operations/script-operations';
 import { syncVfxEditorWithLibrary } from '@/engine/editor/operations/vfx-operations';
@@ -126,6 +127,7 @@ export class EditorSession {
     readonly scripts = new ScriptRuntime(this);
     readonly shaderPreview = new ShaderPreview(this);
     readonly assistant = new EditorAssistant(this);
+    readonly mcp = new McpBridge(this);
     workspace: EditorWorkspace = 'scene';
     readonly transformInterceptors = new Set<TransformInterceptor>();
     readonly colorPicker = new ViewportColorPicker(() => this.notify('view'));
@@ -190,6 +192,7 @@ export class EditorSession {
             this.disposers.push(() => window.removeEventListener('pagehide', flushLibraries));
             this.trackPointerDrags();
             void this.assistant.load();
+            void this.mcp.load();
         }
     }
     private trackPointerDrags(): void {
@@ -234,6 +237,7 @@ export class EditorSession {
         this.scripts.stop();
         this.shaderPreview.stop();
         this.assistant.stop();
+        this.mcp.stop();
         this.autosave.stop();
         if (this.autosave.dirty)
             await this.autosave.saveNow();

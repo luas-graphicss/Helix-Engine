@@ -1,6 +1,6 @@
 import type { ToolDescriptor } from './tool-descriptor';
 export const BRIDGE_PROTOCOL_VERSION = 1;
-export const BRIDGE_ERROR_CODES = ['BAD_REQUEST', 'UNAUTHORIZED', 'PROTOCOL_MISMATCH', 'UNKNOWN_PEER', 'PEER_REPLACED', 'FILE_NOT_FOUND', 'FILE_TOO_LARGE'] as const;
+export const BRIDGE_ERROR_CODES = ['BAD_REQUEST', 'UNAUTHORIZED', 'PROTOCOL_MISMATCH', 'UNKNOWN_PEER', 'PEER_REPLACED', 'FILE_NOT_FOUND', 'BODY_TOO_LARGE'] as const;
 export type BridgeErrorCode = (typeof BRIDGE_ERROR_CODES)[number];
 export interface BridgeErrorBody {
     readonly error: {
