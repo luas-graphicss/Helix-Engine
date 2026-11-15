@@ -5,6 +5,9 @@ export function isRecord(value: unknown): value is JsonRecord {
 export function recordsOf(value: unknown): JsonRecord[] {
     return Array.isArray(value) ? value.filter(isRecord) : [];
 }
+export function textOf(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
 export function parseJson(text: string): unknown {
     try {
         return JSON.parse(text);

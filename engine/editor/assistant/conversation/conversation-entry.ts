@@ -26,7 +26,7 @@ export interface NoticeEntry {
     readonly text: string;
 }
 export type ConversationEntry = UserEntry | AssistantEntry | ToolCallEntry | NoticeEntry;
-export type AssistantActivity = 'idle' | 'thinking' | 'working' | 'awaiting';
+export type AssistantActivity = 'idle' | 'thinking' | 'responding' | 'preparing' | 'working' | 'awaiting';
 export interface ConversationSnapshot {
     readonly entries: readonly ConversationEntry[];
     readonly activity: AssistantActivity;

@@ -1,5 +1,6 @@
-import type { ChatProtocol, ProviderEndpoint } from '@/engine/editor/assistant/providers/chat-protocol';
+import type { ChatProtocol, ModelTurn, ProviderEndpoint } from '@/engine/editor/assistant/providers/chat-protocol';
 import { TOOL_DECLARATIONS } from '@/engine/editor/assistant/tools/tool-registry';
+import { DeltaBuffer } from './delta-buffer';
 import { buildSystemPrompt } from './system-prompt';
 import { CANCELLED_OUTCOME, executeToolCall, type ToolExecutionHost } from './tool-execution';
 const MAX_STEPS = 40;
@@ -9,18 +10,33 @@ export interface AgentRun {
     readonly endpoint: ProviderEndpoint;
     readonly signal: AbortSignal;
 }
-export async function runAgent({ host, protocol, endpoint, signal }: AgentRun): Promise<void> {
+async function requestTurn({ host, protocol, endpoint, signal }: AgentRun): Promise<ModelTurn> {
     const { conversation, session } = host;
-    for (let step = 0; step < MAX_STEPS; step++) {
-        conversation.setActivity('thinking');
-        const turn = await protocol.complete({
+    const deltas = new DeltaBuffer({
+        onText: (delta) => conversation.appendAssistantText(delta),
+        onToolCall: () => conversation.setActivity('preparing'),
+    });
+    try {
+        return await protocol.complete({
             endpoint,
             system: buildSystemPrompt(session, host.mode),
             messages: conversation.transcript,
             tools: TOOL_DECLARATIONS,
             signal,
+            observer: deltas,
         });
-        conversation.addAssistantTurn(turn);
+    }
+    finally {
+        deltas.flush();
+    }
+}
+export async function runAgent(run: AgentRun): Promise<void> {
+    const { host, signal } = run;
+    const { conversation } = host;
+    for (let step = 0; step < MAX_STEPS; step++) {
+        conversation.setActivity('thinking');
+        const turn = await requestTurn(run);
+        conversation.commitAssistantTurn(turn);
         if (turn.truncated)
             conversation.addNotice('info', 'A resposta foi cortada pelo limite de saída do modelo.');
         if (turn.toolCalls.length === 0) {

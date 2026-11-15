@@ -20,6 +20,7 @@ export class EditorAssistant implements ToolExecutionHost {
     private modeId: AssistantModeId = DEFAULT_MODE_ID;
     private modeChosen = false;
     private run: AbortController | null = null;
+    private resetRequested = false;
     private readonly approvals = new Map<number, (approved: boolean) => void>();
     private readonly modeListeners = new Set<Listener>();
     constructor(readonly session: EditorSession) { }
@@ -64,7 +65,10 @@ export class EditorAssistant implements ToolExecutionHost {
     }
     reset(): void {
         this.stop();
-        this.conversation.clear();
+        if (this.run)
+            this.resetRequested = true;
+        else
+            this.conversation.clear();
     }
     confirm(entryId: number, signal: AbortSignal): Promise<boolean> {
         return new Promise((resolve) => {
@@ -100,7 +104,11 @@ export class EditorAssistant implements ToolExecutionHost {
         }
         finally {
             this.run = null;
-            this.conversation.setActivity('idle');
+            this.conversation.endRun();
+            if (this.resetRequested) {
+                this.resetRequested = false;
+                this.conversation.clear();
+            }
         }
     }
 }

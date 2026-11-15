@@ -4,6 +4,10 @@ import { LoaderCircle } from 'lucide-react';
 import type { AssistantActivity, ConversationEntry } from '@/engine/editor/assistant/conversation/conversation-entry';
 import { TranscriptEntry } from './transcript-entry';
 const PINNED_DISTANCE_PX = 48;
+const ACTIVITY_STATUS: Partial<Record<AssistantActivity, string>> = {
+    thinking: 'Pensando…',
+    preparing: 'Preparando a próxima ação…',
+};
 type AssistantTranscriptProps = {
     entries: readonly ConversationEntry[];
     activity: AssistantActivity;
@@ -12,6 +16,7 @@ type AssistantTranscriptProps = {
 export function AssistantTranscript({ entries, activity, onResolveApproval }: AssistantTranscriptProps) {
     const scrollerRef = useRef<HTMLDivElement>(null);
     const pinnedRef = useRef(true);
+    const status = ACTIVITY_STATUS[activity];
     useEffect(() => {
         const scroller = scrollerRef.current;
         if (scroller && pinnedRef.current)
@@ -28,9 +33,9 @@ export function AssistantTranscript({ entries, activity, onResolveApproval }: As
             <TranscriptEntry entry={entry} onResolveApproval={onResolveApproval}/>
           </li>))}
       </ol>
-      {activity === 'thinking' && (<p role="status" className="mt-2 flex items-center gap-1.5 text-2xs text-muted-foreground">
+      {status && (<p role="status" className="mt-2 flex items-center gap-1.5 text-2xs text-muted-foreground">
           <LoaderCircle aria-hidden className="size-3 motion-safe:animate-spin"/>
-          Pensando…
+          {status}
         </p>)}
     </div>);
 }

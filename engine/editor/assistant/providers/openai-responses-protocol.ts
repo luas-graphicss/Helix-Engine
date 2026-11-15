@@ -1,9 +1,10 @@
-import type { ChatMessage, ChatProtocol, ModelTurn, ToolCall } from './chat-protocol';
-import { isRecord, recordsOf, type JsonRecord } from './json-value';
+import type { ChatMessage, ChatProtocol } from './chat-protocol';
+import { isRecord, textOf, type JsonRecord } from './json-value';
 import { readModelIds } from './model-list';
 import { bearerHeaders } from './openai-headers';
-import { ProviderError, requestJson, resolveEndpointUrl } from './provider-http';
-import { parseToolCallInput } from './tool-call-input';
+import { requestJson, resolveEndpointUrl, streamFailure } from './provider-http';
+import { streamJsonEvents } from './provider-stream';
+import { TurnAssembler } from './turn-assembler';
 type InputItem = {
     role: 'user' | 'assistant';
     content: string;
@@ -37,29 +38,26 @@ function toInputItems(messages: readonly ChatMessage[]): InputItem[] {
     }
     return items;
 }
-function readPartText(part: JsonRecord): string {
-    if (part.type === 'output_text' && typeof part.text === 'string')
-        return part.text;
-    return part.type === 'refusal' && typeof part.refusal === 'string' ? part.refusal : '';
+function readFunctionCall(assembler: TurnAssembler, event: JsonRecord): void {
+    const { item, output_index: index } = event;
+    if (typeof index !== 'number' || !isRecord(item) || item.type !== 'function_call')
+        return;
+    const callId = textOf(item.call_id);
+    if (!callId)
+        return;
+    if (!assembler.isOpenToolCall(index, callId))
+        assembler.openToolCall(index, callId, textOf(item.name));
+    if (event.type === 'response.output_item.done')
+        assembler.setToolArguments(index, textOf(item.arguments));
 }
-function readTurn(payload: unknown): ModelTurn {
-    if (!isRecord(payload) || !Array.isArray(payload.output))
-        throw new ProviderError('O provedor respondeu sem nenhuma saída.', null);
-    let text = '';
-    const toolCalls: ToolCall[] = [];
-    for (const item of recordsOf(payload.output)) {
-        if (item.type === 'message')
-            text += recordsOf(item.content).map(readPartText).join('');
-        else if (item.type === 'function_call' && typeof item.call_id === 'string' && typeof item.name === 'string')
-            toolCalls.push({ id: item.call_id, name: item.name, ...parseToolCallInput(item.arguments) });
-    }
-    const details = payload.incomplete_details;
-    const truncated = payload.status === 'incomplete' && isRecord(details) && details.reason === 'max_output_tokens';
-    return { text, toolCalls, truncated };
+function stoppedAtOutputLimit(response: unknown): boolean {
+    return isRecord(response) && isRecord(response.incomplete_details) && response.incomplete_details.reason === 'max_output_tokens';
 }
 export const openAiResponsesProtocol: ChatProtocol = {
-    async complete({ endpoint, system, messages, tools, signal }) {
-        const payload = await requestJson(resolveEndpointUrl(endpoint.baseUrl, 'responses'), {
+    async complete({ endpoint, system, messages, tools, signal, observer }) {
+        const assembler = new TurnAssembler(observer);
+        const url = resolveEndpointUrl(endpoint.baseUrl, 'responses');
+        const events = streamJsonEvents(url, {
             method: 'POST',
             headers: bearerHeaders(endpoint),
             signal,
@@ -69,9 +67,32 @@ export const openAiResponsesProtocol: ChatProtocol = {
                 input: toInputItems(messages),
                 tools: tools.map((tool) => ({ type: 'function', name: tool.name, description: tool.description, parameters: tool.parameters, strict: false })),
                 store: false,
+                stream: true,
             },
         });
-        return readTurn(payload);
+        let truncated = false;
+        for await (const event of events) {
+            switch (event.type) {
+                case 'response.output_text.delta':
+                case 'response.refusal.delta':
+                    assembler.appendText(textOf(event.delta));
+                    break;
+                case 'response.output_item.added':
+                case 'response.output_item.done':
+                    readFunctionCall(assembler, event);
+                    break;
+                case 'response.function_call_arguments.delta':
+                    if (typeof event.output_index === 'number')
+                        assembler.appendToolArguments(event.output_index, textOf(event.delta));
+                    break;
+                case 'response.incomplete':
+                    truncated = stoppedAtOutputLimit(event.response);
+                    break;
+                case 'response.failed':
+                    throw streamFailure(url, event.response);
+            }
+        }
+        return assembler.assemble(truncated);
     },
     async listModels(endpoint, signal) {
         return readModelIds(await requestJson(resolveEndpointUrl(endpoint.baseUrl, 'models'), { method: 'GET', headers: bearerHeaders(endpoint), signal }));

@@ -1,9 +1,10 @@
-import type { ChatMessage, ChatProtocol, ModelTurn, ToolCall } from './chat-protocol';
-import { isRecord, recordsOf } from './json-value';
+import type { ChatMessage, ChatProtocol, ToolCall } from './chat-protocol';
+import { isRecord, recordsOf, textOf, type JsonRecord } from './json-value';
 import { readModelIds } from './model-list';
 import { bearerHeaders } from './openai-headers';
-import { ProviderError, requestJson, resolveEndpointUrl } from './provider-http';
-import { parseToolCallInput } from './tool-call-input';
+import { requestJson, resolveEndpointUrl } from './provider-http';
+import { streamJsonEvents } from './provider-stream';
+import { TurnAssembler } from './turn-assembler';
 interface WireToolCall {
     id: string;
     type: 'function';
@@ -43,29 +44,23 @@ function readContent(content: unknown): string {
     if (typeof content === 'string')
         return content;
     return recordsOf(content)
-        .map((part) => (typeof part.text === 'string' ? part.text : ''))
+        .map((part) => textOf(part.text))
         .join('');
 }
-function readToolCalls(value: unknown): ToolCall[] {
-    return recordsOf(value).flatMap((call) => {
-        const target = call.function;
-        if (!isRecord(target) || typeof target.name !== 'string')
-            return [];
-        const id = typeof call.id === 'string' && call.id ? call.id : `call_${crypto.randomUUID()}`;
-        return [{ id, name: target.name, ...parseToolCallInput(target.arguments) }];
-    });
-}
-function readTurn(payload: unknown): ModelTurn {
-    const choice = isRecord(payload) ? recordsOf(payload.choices).at(0) : undefined;
-    const message = choice?.message;
-    if (!choice || !isRecord(message))
-        throw new ProviderError('O provedor respondeu sem nenhuma mensagem.', null);
-    return { text: readContent(message.content), toolCalls: readToolCalls(message.tool_calls), truncated: choice.finish_reason === 'length' };
+function readToolCallFragment(assembler: TurnAssembler, fragment: JsonRecord): void {
+    const index = typeof fragment.index === 'number' ? fragment.index : 0;
+    const target = isRecord(fragment.function) ? fragment.function : {};
+    const id = textOf(fragment.id);
+    const name = textOf(target.name);
+    if (name && !assembler.isOpenToolCall(index, id))
+        assembler.openToolCall(index, id, name);
+    assembler.appendToolArguments(index, textOf(target.arguments));
 }
 export const openAiChatProtocol: ChatProtocol = {
-    async complete({ endpoint, system, messages, tools, signal }) {
+    async complete({ endpoint, system, messages, tools, signal, observer }) {
+        const assembler = new TurnAssembler(observer);
         const systemMessage: WireMessage = { role: 'system', content: system };
-        const payload = await requestJson(resolveEndpointUrl(endpoint.baseUrl, 'chat/completions'), {
+        const chunks = streamJsonEvents(resolveEndpointUrl(endpoint.baseUrl, 'chat/completions'), {
             method: 'POST',
             headers: bearerHeaders(endpoint),
             signal,
@@ -73,9 +68,22 @@ export const openAiChatProtocol: ChatProtocol = {
                 model: endpoint.model,
                 messages: [systemMessage, ...messages.map(toWireMessage)],
                 tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } })),
+                stream: true,
             },
         });
-        return readTurn(payload);
+        let truncated = false;
+        for await (const chunk of chunks) {
+            const choice = recordsOf(chunk.choices).at(0);
+            if (!choice)
+                continue;
+            truncated ||= choice.finish_reason === 'length';
+            if (!isRecord(choice.delta))
+                continue;
+            assembler.appendText(readContent(choice.delta.content));
+            for (const fragment of recordsOf(choice.delta.tool_calls))
+                readToolCallFragment(assembler, fragment);
+        }
+        return assembler.assemble(truncated);
     },
     async listModels(endpoint, signal) {
         return readModelIds(await requestJson(resolveEndpointUrl(endpoint.baseUrl, 'models'), { method: 'GET', headers: bearerHeaders(endpoint), signal }));

@@ -1,27 +1,15 @@
-import type { ChatMessage, ChatProtocol, ModelTurn, ProviderEndpoint, ToolCall } from './chat-protocol';
-import { isRecord, recordsOf } from './json-value';
+import { ANTHROPIC_PROTOCOL_ID, AnthropicMessageReader } from './anthropic-message-reader';
+import type { AssistantMessage, ChatMessage, ChatProtocol, ProviderEndpoint } from './chat-protocol';
+import { textOf, type JsonRecord } from './json-value';
 import { readModelIds } from './model-list';
-import { ProviderError, requestJson, resolveEndpointUrl } from './provider-http';
+import { requestJson, resolveEndpointUrl } from './provider-http';
+import { streamJsonEvents } from './provider-stream';
 const API_VERSION = '2023-06-01';
-const MAX_OUTPUT_TOKENS = 8192;
+const MAX_OUTPUT_TOKENS = 16000;
 const MODEL_PAGE_SIZE = 1000;
-type ContentBlock = {
-    type: 'text';
-    text: string;
-} | {
-    type: 'tool_use';
-    id: string;
-    name: string;
-    input: Readonly<Record<string, unknown>>;
-} | {
-    type: 'tool_result';
-    tool_use_id: string;
-    content: string;
-    is_error: boolean;
-};
 interface WireMessage {
     role: 'user' | 'assistant';
-    content: ContentBlock[];
+    content: JsonRecord[];
 }
 function requestHeaders(endpoint: ProviderEndpoint): Record<string, string> {
     return {
@@ -34,6 +22,17 @@ function requestHeaders(endpoint: ProviderEndpoint): Record<string, string> {
 function collectsToolResults(message: WireMessage | undefined): message is WireMessage {
     return message !== undefined && message.role === 'user' && message.content.every((block) => block.type === 'tool_result');
 }
+function isSendable(block: JsonRecord): boolean {
+    return block.type !== 'text' || textOf(block.text).trim() !== '';
+}
+function assistantContent(message: AssistantMessage): JsonRecord[] {
+    if (message.native?.protocol === ANTHROPIC_PROTOCOL_ID)
+        return message.native.content.filter(isSendable);
+    const content: JsonRecord[] = message.text.trim() ? [{ type: 'text', text: message.text }] : [];
+    for (const call of message.toolCalls)
+        content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
+    return content;
+}
 function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
     const wire: WireMessage[] = [];
     for (const message of messages) {
@@ -42,15 +41,13 @@ function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
                 wire.push({ role: 'user', content: [{ type: 'text', text: message.text }] });
                 break;
             case 'assistant': {
-                const content: ContentBlock[] = message.text ? [{ type: 'text', text: message.text }] : [];
-                for (const call of message.toolCalls)
-                    content.push({ type: 'tool_use', id: call.id, name: call.name, input: call.input });
+                const content = assistantContent(message);
                 if (content.length > 0)
                     wire.push({ role: 'assistant', content });
                 break;
             }
             case 'tool': {
-                const block: ContentBlock = { type: 'tool_result', tool_use_id: message.callId, content: message.output, is_error: message.failed };
+                const block: JsonRecord = { type: 'tool_result', tool_use_id: message.callId, content: message.output, is_error: message.failed };
                 const last = wire.at(-1);
                 if (collectsToolResults(last))
                     last.content.push(block);
@@ -62,22 +59,10 @@ function toWireMessages(messages: readonly ChatMessage[]): WireMessage[] {
     }
     return wire;
 }
-function readTurn(payload: unknown): ModelTurn {
-    if (!isRecord(payload) || !Array.isArray(payload.content))
-        throw new ProviderError('A API Anthropic respondeu sem conteúdo.', null);
-    let text = '';
-    const toolCalls: ToolCall[] = [];
-    for (const block of recordsOf(payload.content)) {
-        if (block.type === 'text' && typeof block.text === 'string')
-            text += block.text;
-        else if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string')
-            toolCalls.push({ id: block.id, name: block.name, input: isRecord(block.input) ? block.input : {}, inputError: null });
-    }
-    return { text, toolCalls, truncated: payload.stop_reason === 'max_tokens' };
-}
 export const anthropicProtocol: ChatProtocol = {
-    async complete({ endpoint, system, messages, tools, signal }) {
-        const payload = await requestJson(resolveEndpointUrl(endpoint.baseUrl, 'messages'), {
+    async complete({ endpoint, system, messages, tools, signal, observer }) {
+        const reader = new AnthropicMessageReader(observer);
+        const events = streamJsonEvents(resolveEndpointUrl(endpoint.baseUrl, 'messages'), {
             method: 'POST',
             headers: requestHeaders(endpoint),
             signal,
@@ -87,9 +72,12 @@ export const anthropicProtocol: ChatProtocol = {
                 system,
                 messages: toWireMessages(messages),
                 tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.parameters })),
+                stream: true,
             },
         });
-        return readTurn(payload);
+        for await (const event of events)
+            reader.accept(event);
+        return reader.finish();
     },
     async listModels(endpoint, signal) {
         const url = resolveEndpointUrl(endpoint.baseUrl, 'models');

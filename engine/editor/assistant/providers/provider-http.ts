@@ -32,30 +32,33 @@ export function resolveEndpointUrl(baseUrl: string, path: string): URL {
         throw new ProviderError('Use uma URL https. Endereços http só valem para servidores locais (localhost).', null);
     return url;
 }
-function failureDetail(status: number, body: string): string {
-    const parsed = parseJson(body);
-    let detail = body;
-    if (isRecord(parsed)) {
-        const { error, message } = parsed;
-        if (typeof error === 'string')
-            detail = error;
-        else if (isRecord(error) && typeof error.message === 'string')
-            detail = error.message;
-        else if (typeof message === 'string')
-            detail = message;
-    }
-    const summary = detail.trim().slice(0, FAILURE_DETAIL_LIMIT);
-    return [STATUS_HINT[status], summary].filter(Boolean).join(' ');
+function errorMessageOf(payload: unknown): string | undefined {
+    if (!isRecord(payload))
+        return undefined;
+    const { error, message } = payload;
+    if (typeof error === 'string')
+        return error;
+    if (isRecord(error) && typeof error.message === 'string')
+        return error.message;
+    return typeof message === 'string' ? message : undefined;
 }
-function connectionFailure(url: URL, cause: unknown): ProviderError {
+function summarize(detail: string): string {
+    return detail.trim().slice(0, FAILURE_DETAIL_LIMIT);
+}
+function failureDetail(status: number, body: string): string {
+    return [STATUS_HINT[status], summarize(errorMessageOf(parseJson(body)) ?? body)].filter(Boolean).join(' ');
+}
+export function connectionFailure(url: URL, cause: unknown): ProviderError {
     const timedOut = cause instanceof DOMException && cause.name === 'TimeoutError';
     const message = timedOut
         ? `${url.host} demorou demais para responder.`
         : `Sem resposta de ${url.host}. Confira a URL, a conexão e se o provedor aceita chamadas feitas pelo navegador (CORS).`;
     return new ProviderError(message, null, { cause });
 }
-export async function requestJson(url: URL, request: JsonRequest): Promise<unknown> {
-    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]);
+export function streamFailure(url: URL, payload: unknown): ProviderError {
+    return new ProviderError(`${url.host} interrompeu a resposta. ${summarize(errorMessageOf(payload) ?? 'O provedor não informou o motivo.')}`, null);
+}
+export async function openResponse(url: URL, request: JsonRequest, signal: AbortSignal): Promise<Response> {
     let response: Response;
     try {
         response = await fetch(url, {
@@ -73,10 +76,13 @@ export async function requestJson(url: URL, request: JsonRequest): Promise<unkno
             throw cause;
         throw connectionFailure(url, cause);
     }
-    const body = await response.text();
     if (!response.ok)
-        throw new ProviderError(`${url.host} respondeu ${response.status}. ${failureDetail(response.status, body)}`, response.status);
-    const parsed = parseJson(body);
+        throw new ProviderError(`${url.host} respondeu ${response.status}. ${failureDetail(response.status, await response.text())}`, response.status);
+    return response;
+}
+export async function requestJson(url: URL, request: JsonRequest): Promise<unknown> {
+    const response = await openResponse(url, request, AbortSignal.any([request.signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]));
+    const parsed = parseJson(await response.text());
     if (parsed === undefined)
         throw new ProviderError(`${url.host} devolveu uma resposta que não é JSON.`, response.status);
     return parsed;
