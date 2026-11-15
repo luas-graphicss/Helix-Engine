@@ -29,9 +29,9 @@ export interface RenderProfile {
     readonly depthOfFieldTaps: number;
     readonly hdrFormat: HdrFormat;
     readonly reflectionProbeSize: number;
-    readonly screenReflectionScale: number;
-    readonly screenReflectionSteps: number;
-    readonly screenReflectionStride: number;
+    readonly screenReflectionBudget: number;
+    readonly waterReflectionSteps: number;
+    readonly waterReflectionStride: number;
 }
 const PROFILES: Record<GpuTier, RenderProfile> = {
     low: {
@@ -63,9 +63,9 @@ const PROFILES: Record<GpuTier, RenderProfile> = {
         depthOfFieldTaps: 12,
         hdrFormat: 'rg11b10f',
         reflectionProbeSize: 64,
-        screenReflectionScale: 0.5,
-        screenReflectionSteps: 40,
-        screenReflectionStride: 16,
+        screenReflectionBudget: 64,
+        waterReflectionSteps: 40,
+        waterReflectionStride: 16,
     },
     mid: {
         tier: 'mid',
@@ -96,9 +96,9 @@ const PROFILES: Record<GpuTier, RenderProfile> = {
         depthOfFieldTaps: 36,
         hdrFormat: 'rg11b10f',
         reflectionProbeSize: 128,
-        screenReflectionScale: 0.5,
-        screenReflectionSteps: 64,
-        screenReflectionStride: 12,
+        screenReflectionBudget: 80,
+        waterReflectionSteps: 64,
+        waterReflectionStride: 12,
     },
     high: {
         tier: 'high',
@@ -129,9 +129,9 @@ const PROFILES: Record<GpuTier, RenderProfile> = {
         depthOfFieldTaps: 48,
         hdrFormat: 'rgba16f',
         reflectionProbeSize: 192,
-        screenReflectionScale: 0.5,
-        screenReflectionSteps: 96,
-        screenReflectionStride: 8,
+        screenReflectionBudget: 96,
+        waterReflectionSteps: 96,
+        waterReflectionStride: 8,
     },
 };
 export function renderProfileForTier(tier: GpuTier): RenderProfile {
