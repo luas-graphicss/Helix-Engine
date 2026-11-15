@@ -21,6 +21,7 @@ import { materialSupportsGrass } from '@/engine/terrain/foliage/grass-placement'
 import type { TerrainGpuCache } from './terrain-gpu-cache';
 import { TerrainMaterialUniforms } from './terrain-material-uniforms';
 import { MAX_TERRAIN_CACHE_LEVELS, TERRAIN_CACHE_TILE_TEXELS, terrainCacheLadder, terrainCacheTexels, terrainCacheUsableRadius, } from './terrain-cache-layout';
+import { TILE_BLOCK_FIELDS, TileBlockMerger } from './material-cache/tile-block-merger';
 import { supportsTerrainVirtualTexture, TerrainVirtualTexture } from './virtual-texture/terrain-virtual-texture';
 const RETENTION_FRAMES = 300;
 const PAGE_EMPTY = -32768;
@@ -59,6 +60,9 @@ function bakeSignature(terrain: Terrain): string {
     const shade = `${shading.heightBlendDepth},${shading.triplanarStart},${shading.triplanarRange},${shading.macroVariation},${shading.macroScale},${shading.distanceTiling},${shading.distanceBlendStart},${shading.distanceBlendEnd}`;
     const grassShade = `${grass.enabled ? 1 : 0},${grass.density},${grass.baseColor[0]},${grass.baseColor[1]},${grass.baseColor[2]}`;
     return `${terrain.resolution}|${terrain.splat.resolution}|${terrain.grassMap.resolution}|${layers}|${shade}|${grassShade}`;
+}
+function wrapIndex(value: number, count: number): number {
+    return ((value % count) + count) % count;
 }
 function createTextureArray(gl: GL, internalFormat: number, size: number, layers: number, filter: number, wrap: number): WebGLTexture {
     const texture = gl.createTexture();
@@ -286,6 +290,7 @@ export class TerrainMaterialCache {
     private jobCount = 0;
     private urgentCount = 0;
     private readonly wanted = new Int32Array(2);
+    private readonly merger = new TileBlockMerger();
     private readonly scratch = mat4.create();
     private readonly tileBounds = aabb.create();
     private readonly worldBounds = aabb.create();
@@ -461,9 +466,8 @@ export class TerrainMaterialCache {
         return virtualTexture.requestTile(terrain, minX, minZ, maxX, maxZ, level.texelSize, level.far);
     }
     private bake(count: number, virtualTexture: TerrainVirtualTexture): number {
-        const { gl, program, triangle, jobs } = this;
+        const { gl, program, jobs, merger } = this;
         const jobCount = Math.min(count, this.jobCount);
-        const tile = TERRAIN_CACHE_TILE_TEXELS;
         program.use();
         this.materialUniforms.bindSamplers(program);
         virtualTexture.bindSamplers(program);
@@ -473,8 +477,9 @@ export class TerrainMaterialCache {
         for (const clip of this.entries.values()) {
             const { terrain, texels, tilesPerSide } = clip;
             let terrainBound = false;
+            merger.resize(tilesPerSide);
             for (const level of clip.levels) {
-                let levelBound = false;
+                let marked = 0;
                 for (let i = 0; i < jobCount; i++) {
                     const job = jobs[i];
                     if (job.clip !== clip || job.level !== level)
@@ -482,26 +487,23 @@ export class TerrainMaterialCache {
                     const complete = this.hiresPagesReady(virtualTexture, job);
                     if (!complete && !clip.isDirty(level, job.slot, job.tileX, job.tileZ))
                         continue;
-                    if (!terrainBound) {
-                        this.materialUniforms.bind(program, terrain, this.resources.resolve(terrain));
-                        virtualTexture.bind(program, terrain);
-                        terrainBound = true;
-                    }
-                    if (!levelBound) {
-                        gl.bindFramebuffer(gl.FRAMEBUFFER, clip.framebuffers[level.index]);
-                        gl.viewport(0, 0, texels, texels);
-                        gl.uniform1f(program.uniform('u_texelSize'), level.texelSize);
-                        gl.uniform1f(program.uniform('u_far'), level.far);
-                        levelBound = true;
-                    }
-                    const slotX = job.slot % tilesPerSide;
-                    const slotZ = (job.slot - slotX) / tilesPerSide;
-                    gl.scissor(slotX * tile, slotZ * tile, tile, tile);
-                    gl.uniform4f(program.uniform('u_tile'), job.tileX * level.tileSize, job.tileZ * level.tileSize, slotX * tile, slotZ * tile);
-                    triangle.draw();
                     clip.markBaked(level, job.slot, job.tileX, job.tileZ, complete);
-                    baked++;
+                    merger.mark(job.slot);
+                    marked++;
                 }
+                if (marked === 0)
+                    continue;
+                if (!terrainBound) {
+                    this.materialUniforms.bind(program, terrain, this.resources.resolve(terrain));
+                    virtualTexture.bind(program, terrain);
+                    terrainBound = true;
+                }
+                gl.bindFramebuffer(gl.FRAMEBUFFER, clip.framebuffers[level.index]);
+                gl.viewport(0, 0, texels, texels);
+                gl.uniform1f(program.uniform('u_texelSize'), level.texelSize);
+                gl.uniform1f(program.uniform('u_far'), level.far);
+                this.drawMarkedBlocks(clip, level);
+                baked += marked;
             }
         }
         gl.disable(gl.SCISSOR_TEST);
@@ -510,6 +512,22 @@ export class TerrainMaterialCache {
         this.materialUniforms.unbindArrays();
         virtualTexture.unbind();
         return baked;
+    }
+    private drawMarkedBlocks(clip: TerrainClipmap, level: CacheLevel): void {
+        const { gl, program, triangle, merger, wanted } = this;
+        const { tilesPerSide } = clip;
+        const tile = TERRAIN_CACHE_TILE_TEXELS;
+        const blockCount = merger.merge(wrapIndex(level.originX, tilesPerSide), wrapIndex(level.originZ, tilesPerSide));
+        const { blocks } = merger;
+        for (let block = 0; block < blockCount; block++) {
+            const offset = block * TILE_BLOCK_FIELDS;
+            const slotX = blocks[offset];
+            const slotZ = blocks[offset + 1];
+            clip.wantedTile(level, slotX, slotZ, wanted);
+            gl.scissor(slotX * tile, slotZ * tile, blocks[offset + 2] * tile, blocks[offset + 3] * tile);
+            gl.uniform4f(program.uniform('u_tile'), wanted[0] * level.tileSize, wanted[1] * level.tileSize, slotX * tile, slotZ * tile);
+            triangle.draw();
+        }
     }
     dispose(): void {
         for (const clip of this.entries.values())
