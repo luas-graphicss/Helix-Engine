@@ -8,3 +8,6 @@ export const INTERACTION_TOOL_DECLARATIONS: readonly ToolDeclaration[] = INTERAC
 export function findInteractionTool(name: string): InteractionTool | undefined {
     return TOOLS_BY_NAME.get(name);
 }
+export function awaitsUser(toolName: string): boolean {
+    return TOOLS_BY_NAME.get(toolName)?.awaitsUser ?? false;
+}

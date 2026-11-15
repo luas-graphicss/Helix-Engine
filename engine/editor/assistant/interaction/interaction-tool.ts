@@ -11,5 +11,6 @@ export interface InteractionTool {
     readonly name: string;
     readonly description: string;
     readonly parameters: ToolParameters;
+    readonly awaitsUser: boolean;
     run(context: InteractionContext, input: ToolInput): ToolOutput | Promise<ToolOutput>;
 }

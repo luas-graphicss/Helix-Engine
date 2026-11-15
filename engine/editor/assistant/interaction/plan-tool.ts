@@ -20,6 +20,7 @@ export const updatePlanTool: InteractionTool = {
             status: choice('Progress of the step.', PLAN_STEP_STATUSES),
         }, MAX_STEPS),
     }, ['steps']),
+    awaitsUser: false,
     run({ conversation }, input) {
         const steps = input.records('steps', MAX_STEPS).map(readStep);
         conversation.setPlan(steps);

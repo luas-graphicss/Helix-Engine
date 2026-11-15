@@ -25,6 +25,7 @@ export const askUserTool: InteractionTool = {
             description: text('What choosing this option leads to.'),
         }, MAX_OPTIONS),
     }, ['question', 'options']),
+    awaitsUser: true,
     async run({ conversation, awaitAnswer }, input) {
         const question = input.text('question').trim();
         if (!question)

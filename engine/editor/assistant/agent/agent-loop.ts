@@ -1,9 +1,9 @@
-import { INTERACTION_TOOL_DECLARATIONS } from '@/engine/editor/assistant/interaction/interaction-tool-registry';
-import type { ChatProtocol, ModelTurn, ProviderEndpoint, ReasoningEffort } from '@/engine/editor/assistant/providers/chat-protocol';
+import { awaitsUser, INTERACTION_TOOL_DECLARATIONS } from '@/engine/editor/assistant/interaction/interaction-tool-registry';
+import type { ChatProtocol, ModelTurn, ProviderEndpoint, ReasoningEffort, ToolCall } from '@/engine/editor/assistant/providers/chat-protocol';
 import { TOOL_DECLARATIONS } from '@/engine/editor/assistant/tools/tool-registry';
 import { DeltaBuffer } from './delta-buffer';
 import { buildSystemPrompt } from './system-prompt';
-import { CANCELLED_OUTCOME, executeToolCall, type ToolExecutionHost } from './tool-execution';
+import { CANCELLED_OUTCOME, DEFERRED_OUTCOME, executeToolCall, type ToolExecutionHost, type ToolOutcome } from './tool-execution';
 const MAX_STEPS = 40;
 const AGENT_TOOLS = [...INTERACTION_TOOL_DECLARATIONS, ...TOOL_DECLARATIONS];
 export interface AgentRun {
@@ -35,6 +35,19 @@ async function requestTurn({ host, protocol, endpoint, reasoningEffort, signal }
         deltas.flush();
     }
 }
+function skippedOutcome(signal: AbortSignal, questionAsked: boolean): ToolOutcome | null {
+    if (signal.aborted)
+        return CANCELLED_OUTCOME;
+    return questionAsked ? DEFERRED_OUTCOME : null;
+}
+async function runToolCalls(host: ToolExecutionHost, toolCalls: readonly ToolCall[], signal: AbortSignal): Promise<void> {
+    let questionAsked = false;
+    for (const call of toolCalls) {
+        const outcome = skippedOutcome(signal, questionAsked) ?? (await executeToolCall(host, call, signal));
+        host.conversation.addToolResult(call.id, outcome.output, outcome.failed);
+        questionAsked ||= awaitsUser(call.name);
+    }
+}
 export async function runAgent(run: AgentRun): Promise<void> {
     const { host, signal } = run;
     const { conversation } = host;
@@ -49,10 +62,7 @@ export async function runAgent(run: AgentRun): Promise<void> {
                 conversation.addNotice('info', 'O modelo não respondeu nada. Reformule o pedido.');
             return;
         }
-        for (const call of turn.toolCalls) {
-            const outcome = signal.aborted ? CANCELLED_OUTCOME : await executeToolCall(host, call, signal);
-            conversation.addToolResult(call.id, outcome.output, outcome.failed);
-        }
+        await runToolCalls(host, turn.toolCalls, signal);
         signal.throwIfAborted();
     }
     conversation.addNotice('info', `O assistente parou após ${MAX_STEPS} passos. Envie "continue" para seguir.`);

@@ -24,6 +24,7 @@ export interface ToolExecutionHost {
     ask(entryId: number, signal: AbortSignal): Promise<QuestionAnswer | null>;
 }
 export const CANCELLED_OUTCOME: ToolOutcome = { output: 'Cancelled: the user stopped the assistant before this tool ran.', failed: true };
+export const DEFERRED_OUTCOME: ToolOutcome = { output: 'Not run: this call was sent together with a question to the user. Decide again now that you have the answer.', failed: true };
 const DENIED_OUTCOME: ToolOutcome = { output: 'The user denied this action. Do not retry it. Ask how they want to proceed.', failed: true };
 function formatOutput(output: ToolOutput): string {
     const rendered = typeof output === 'string' ? output : JSON.stringify(output);
