@@ -3,19 +3,24 @@ import { OCTAHEDRAL_CHUNK } from '@/engine/renderer/shaders/chunks/octahedral.gl
 export const SURFACE_BUFFER_ENCODING_CHUNK = `
 ${OCTAHEDRAL_CHUNK}
 
-vec4 encodeSurfaceBuffer(vec3 N, float roughness) {
-  return vec4(octEncode(N) * 0.5 + 0.5, clamp(roughness, 0.0, 1.0), 1.0);
+const float SURFACE_SHELL = 1.0;
+const float SURFACE_SOLID = 2.0 / 3.0;
+
+vec4 encodeSurfaceBuffer(vec3 N, float roughness, float kind) {
+  return vec4(octEncode(N) * 0.5 + 0.5, clamp(roughness, 0.0, 1.0), kind);
 }
 
 struct SurfaceSample {
   vec3 N;
   float roughness;
   bool valid;
+  bool solid;
 };
 
 SurfaceSample decodeSurfaceBuffer(vec4 texel) {
   SurfaceSample s;
   s.valid = texel.a > 0.5;
+  s.solid = s.valid && texel.a < 0.83;
   s.N = octDecode(texel.rg * 2.0 - 1.0);
   s.roughness = texel.b;
   return s;
@@ -45,7 +50,7 @@ void main() {
   if ((u_textureMask & 2) != 0) roughness *= texture(u_metallicRoughnessMap, v_uv).g;
   vec3 N = normalize(v_worldNormal.xyz);
   if (!gl_FrontFacing) N = -N;
-  fragSurface = encodeSurfaceBuffer(N, roughness);
+  fragSurface = encodeSurfaceBuffer(N, roughness, SURFACE_SHELL);
 }
 `;
 export const TERRAIN_SURFACE_PREPASS_FRAGMENT_SHADER = `#version 300 es
@@ -64,6 +69,6 @@ layout(location = 0) out vec4 fragSurface;
 void main() {
   vec3 N = normalize(u_normalMatrix * v_localNormal);
   if (!gl_FrontFacing) N = -N;
-  fragSurface = encodeSurfaceBuffer(N, TERRAIN_PREPASS_ROUGHNESS);
+  fragSurface = encodeSurfaceBuffer(N, TERRAIN_PREPASS_ROUGHNESS, SURFACE_SOLID);
 }
 `;
