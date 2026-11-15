@@ -10,8 +10,7 @@ struct ScreenRay {
   bool permuted;
 };
 
-ScreenRay projectScreenRay(vec3 origin, vec3 direction) {
-  float maxDistance = u_traceParams.w;
+ScreenRay projectScreenRay(vec3 origin, vec3 direction, float maxDistance) {
   float rayLength = (origin.z + direction.z * maxDistance > -u_nearPlane) ? (-u_nearPlane - origin.z) / direction.z : maxDistance;
   vec3 endPoint = origin + direction * rayLength;
 
