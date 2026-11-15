@@ -127,6 +127,8 @@ export interface CreateScriptOptions {
     templateId?: ScriptTemplateId;
     language?: ScriptLanguageId;
     name?: string;
+    source?: string;
+    runContext?: ScriptRunContext;
     attachTo?: Entity | null;
     open?: boolean;
     presentation?: CodePresentation;
@@ -146,7 +148,8 @@ export async function createScript(session: EditorSession, options: CreateScript
     }
     const templateId = options.templateId ?? 'blank';
     const template = findScriptTemplate(templateId);
-    const document = buildScriptDocument(language, templateId, options.name);
+    const blueprint = buildScriptDocument(language, templateId, options.name);
+    const document: ScriptDocument = { ...blueprint, source: options.source ?? blueprint.source, runContext: options.runContext ?? blueprint.runContext };
     library.setBusy(`Criando ${document.name}…`);
     try {
         const result = await ingestScriptDocument(library, document, { forceNew: true });
@@ -177,6 +180,30 @@ export async function createScript(session: EditorSession, options: CreateScript
         library.setBusy(null);
     }
 }
+async function storeScriptDocument(session: EditorSession, existing: LibraryAsset, document: ScriptDocument): Promise<LibraryAsset | null> {
+    const { code, library } = session;
+    const after = await ingestScriptReplacement(library, existing, document);
+    if (!after)
+        return null;
+    library.remove(existing.id);
+    library.add(after);
+    const stored = { ...document, name: after.asset.name };
+    documentCache.set(existing.id, { hash: after.asset.contentHash, document: stored });
+    code.markSaved(existing.id, stored);
+    scriptSync.announce(session, existing.id);
+    return after.asset;
+}
+export async function writeScriptSource(session: EditorSession, asset: LibraryAsset, source: string): Promise<LibraryAsset> {
+    const current = session.code.tab(asset.id)?.document ?? (await loadScriptAsset(session, asset));
+    const document: ScriptDocument = { ...current, source };
+    const stored = await storeScriptDocument(session, asset, document);
+    if (!stored) {
+        session.code.markSaved(asset.id, document);
+        return asset;
+    }
+    hotReloadIfRunning(session, stored);
+    return stored;
+}
 export async function saveScriptTab(session: EditorSession, assetId: string, options: {
     silent?: boolean;
 } = {}): Promise<LibraryAsset | null> {
@@ -188,20 +215,15 @@ export async function saveScriptTab(session: EditorSession, assetId: string, opt
     const existing = library.get(assetId);
     if (existing && existing.kind === 'script') {
         try {
-            const after = await ingestScriptReplacement(library, existing, document);
-            if (!after) {
+            const stored = await storeScriptDocument(session, existing, document);
+            if (!stored) {
                 code.markSaved(assetId);
                 return existing;
             }
-            library.remove(existing.id);
-            library.add(after);
-            documentCache.set(existing.id, { hash: after.asset.contentHash, document: { ...document, name: after.asset.name } });
-            code.markSaved(assetId, { ...document, name: after.asset.name });
-            scriptSync.announce(session, existing.id);
             if (!options.silent)
-                session.log.info(LOG_SOURCE, `${after.asset.name} salvo (${countScriptLines(document.source)} linhas).`);
-            hotReloadIfRunning(session, after.asset);
-            return after.asset;
+                session.log.info(LOG_SOURCE, `${stored.name} salvo (${countScriptLines(document.source)} linhas).`);
+            hotReloadIfRunning(session, stored);
+            return stored;
         }
         catch (cause) {
             session.log.error(LOG_SOURCE, `Não foi possível salvar ${document.name}: ${describeError(cause)}`);
