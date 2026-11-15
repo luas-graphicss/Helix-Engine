@@ -1,4 +1,5 @@
 import { HDR_ENCODING_CHUNK, HDR_RANGE_SCENE } from '@/engine/renderer/shaders/chunks/hdr-encoding.glsl';
+import { CUBE_DIRECTION_CHUNK } from './cube-direction.glsl';
 export const PROBE_PREFILTER_SAMPLES = 24;
 export const PROBE_PREFILTER_FRAGMENT_SHADER = `#version 300 es
 precision highp float;
@@ -15,15 +16,7 @@ ${HDR_ENCODING_CHUNK}
 const float PI = 3.14159265359;
 const int SAMPLES = ${PROBE_PREFILTER_SAMPLES};
 
-                                                                                                               
-vec3 cubeDirection(int face, vec2 uv) {
-  if (face == 0) return vec3(1.0, -uv.y, -uv.x);
-  if (face == 1) return vec3(-1.0, -uv.y, uv.x);
-  if (face == 2) return vec3(uv.x, 1.0, uv.y);
-  if (face == 3) return vec3(uv.x, -1.0, -uv.y);
-  if (face == 4) return vec3(uv.x, -uv.y, 1.0);
-  return vec3(-uv.x, -uv.y, -1.0);
-}
+${CUBE_DIRECTION_CHUNK}
 
 float radicalInverse(uint bits) {
   bits = (bits << 16u) | (bits >> 16u);

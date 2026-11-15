@@ -781,7 +781,7 @@ export class Renderer {
         const sceneSettled = !resized && !rescaled && !cameraMoved && !historyStale && this.frameSettled();
         this.viewChangedLastFrame = resized || rescaled || cameraMoved;
         this.lastSceneAnimating = !sceneSettled;
-        this.stats.settled = sceneSettled && !this.reflections.capturing;
+        this.stats.settled = sceneSettled && !this.reflections.refreshing;
         this.stats.transient = resized || rescaled || this.didTransientWork();
     }
     private renderProbeFace(scene: Scene, camera: PerspectiveCamera, options: RenderOptions, skyFrame: SkyFrame, passes: ProbePasses): number {

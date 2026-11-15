@@ -1,7 +1,7 @@
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import type { GL } from '@/engine/renderer/gl/context';
-import { clearHdrColor, colorInternalFormat, type ColorFormat } from '@/engine/renderer/gl/color-render-target';
+import { clearHdrColor, type ColorFormat } from '@/engine/renderer/gl/color-render-target';
 import { framebufferStatus } from '@/engine/renderer/gl/framebuffer-status';
 import type { FullscreenTriangle } from '@/engine/renderer/gl/fullscreen-triangle';
 import { ShaderProgram } from '@/engine/renderer/gl/shader-program';
@@ -10,9 +10,10 @@ import { FULLSCREEN_VERTEX_SHADER } from '@/engine/renderer/shaders/chunks/fulls
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { PROBE_PREFILTER_FRAGMENT_SHADER } from '../shaders/probe-prefilter.glsl';
 import { CubeFaceCamera } from './cube-face-camera';
-const FACES = 6;
+import { CROSSFADE_FRAMES, ProbeCrossfade } from './probe-crossfade';
+import { CUBE_FACE_COUNT, createProbeCubemap } from './probe-cubemap';
 const REFRESH_DISTANCE = 0.02;
-const LEAD_FRAMES = 8;
+const LEAD_FRAMES = CUBE_FACE_COUNT - 1 + CROSSFADE_FRAMES;
 const MAX_LEAD = 1.0;
 const SUN_REFRESH_COS = Math.cos((0.5 * Math.PI) / 180);
 const EXPOSURE_REFRESH = 0.01;
@@ -41,14 +42,16 @@ export class ReflectionProbe {
     private readonly faceFramebuffer: WebGLFramebuffer;
     private readonly prefilterFramebuffer: WebGLFramebuffer;
     private readonly prefilterProgram: ShaderProgram;
+    private readonly crossfade: ProbeCrossfade;
     private readonly captureLevels: number;
     constructor(private readonly gl: GL, private readonly triangle: FullscreenTriangle, readonly size: number, readonly format: ColorFormat, defines: ShaderDefines) {
         this.captureLevels = Math.floor(Math.log2(size)) + 1;
         this.levels = Math.min(MAX_LEVELS, this.captureLevels - 1);
-        for (let face = 0; face < FACES; face++)
+        for (let face = 0; face < CUBE_FACE_COUNT; face++)
             this.cameras.push(new CubeFaceCamera(face));
-        this.capture = this.allocateCubemap(this.captureLevels);
-        this.prefiltered = this.allocateCubemap(this.levels);
+        this.capture = createProbeCubemap(gl, { size, levels: this.captureLevels, format });
+        this.crossfade = new ProbeCrossfade(gl, triangle, { size, levels: this.levels, format }, defines);
+        this.prefiltered = this.crossfade.displayed;
         const depth = gl.createTexture();
         const faceFramebuffer = gl.createFramebuffer();
         const prefilterFramebuffer = gl.createFramebuffer();
@@ -76,8 +79,8 @@ export class ReflectionProbe {
     get maxLod(): number {
         return this.levels - 1;
     }
-    get capturing(): boolean {
-        return this.cycleActive;
+    get refreshing(): boolean {
+        return this.cycleActive || this.crossfade.active;
     }
     invalidate(): void {
         this.invalidated = true;
@@ -85,7 +88,7 @@ export class ReflectionProbe {
     update(camera: PerspectiveCamera, sunDirection: Vec3, sceneAnimating: boolean): boolean {
         this.stats.facesRendered = 0;
         this.stats.prefiltered = false;
-        this.stats.drawCalls = 0;
+        this.stats.drawCalls = this.crossfade.advance();
         vec3.subtract(this.cameraStep, camera.position, this.lastCameraPosition);
         vec3.copy(this.lastCameraPosition, camera.position);
         if (this.cycleActive)
@@ -134,8 +137,9 @@ export class ReflectionProbe {
         const { gl } = this;
         this.stats.facesRendered = 1;
         this.nextFace++;
-        if (this.nextFace >= FACES) {
+        if (this.nextFace >= CUBE_FACE_COUNT) {
             this.prefilter();
+            this.presentCapture();
             this.nextFace = 0;
             this.cycleActive = false;
             this.valid = true;
@@ -145,14 +149,22 @@ export class ReflectionProbe {
     dispose(): void {
         const { gl } = this;
         gl.deleteTexture(this.capture);
-        gl.deleteTexture(this.prefiltered);
         gl.deleteTexture(this.depth);
         gl.deleteFramebuffer(this.faceFramebuffer);
         gl.deleteFramebuffer(this.prefilterFramebuffer);
         this.prefilterProgram.dispose();
+        this.crossfade.dispose();
+    }
+    private presentCapture(): void {
+        if (this.valid) {
+            this.crossfade.fadeIn();
+            return;
+        }
+        this.stats.drawCalls += this.crossfade.show();
     }
     private prefilter(): void {
         const { gl, prefilterProgram: program, triangle } = this;
+        const target = this.crossfade.incoming;
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, this.capture);
         gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
         gl.bindFramebuffer(gl.FRAMEBUFFER, this.prefilterFramebuffer);
@@ -167,8 +179,8 @@ export class ReflectionProbe {
             gl.viewport(0, 0, levelSize, levelSize);
             gl.uniform1f(program.uniform('u_targetSize'), levelSize);
             gl.uniform1f(program.uniform('u_roughness'), level / Math.max(1, this.levels - 1));
-            for (let face = 0; face < FACES; face++) {
-                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, this.prefiltered, level);
+            for (let face = 0; face < CUBE_FACE_COUNT; face++) {
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, target, level);
                 gl.uniform1i(program.uniform('u_face'), face);
                 triangle.draw();
                 this.stats.drawCalls++;
@@ -177,20 +189,5 @@ export class ReflectionProbe {
         gl.enable(gl.DEPTH_TEST);
         gl.bindTexture(gl.TEXTURE_CUBE_MAP, null);
         this.stats.prefiltered = true;
-    }
-    private allocateCubemap(levels: number): WebGLTexture {
-        const { gl } = this;
-        const texture = gl.createTexture();
-        if (!texture)
-            throw new Error('Não foi possível alocar o cubemap da sonda de reflexo.');
-        gl.bindTexture(gl.TEXTURE_CUBE_MAP, texture);
-        gl.texStorage2D(gl.TEXTURE_CUBE_MAP, levels, colorInternalFormat(gl, this.format), this.size, this.size);
-        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-        gl.bindTexture(gl.TEXTURE_CUBE_MAP, null);
-        return texture;
     }
 }

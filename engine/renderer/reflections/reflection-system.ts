@@ -64,9 +64,12 @@ export class ReflectionSystem {
         return this.waterTrace;
     }
     wantsProbeFace(camera: PerspectiveCamera, sunDirection: Vec3, sceneAnimating: boolean): boolean {
-        if (!this.settings || !this.settings.probe || this.binding.intensity <= 0)
+        if (!this.probeWanted)
             return false;
-        return this.probe.update(camera, sunDirection, sceneAnimating);
+        const faceWanted = this.probe.update(camera, sunDirection, sceneAnimating);
+        if (!faceWanted)
+            this.stats.drawCalls += this.probe.stats.drawCalls;
+        return faceWanted;
     }
     endProbeFace(): void {
         this.probe.endFace();
@@ -110,8 +113,11 @@ export class ReflectionSystem {
         }
         this.history.capture(scene, camera);
     }
-    get capturing(): boolean {
-        return this.probe.capturing;
+    get refreshing(): boolean {
+        return this.probeWanted && this.probe.refreshing;
+    }
+    private get probeWanted(): boolean {
+        return (this.settings?.probe ?? false) && this.binding.intensity > 0;
     }
     dispose(): void {
         this.probe.dispose();
