@@ -44,6 +44,11 @@ export function parseWorkerOrigin(workerUrl: string): string | null {
     const trusted = url.protocol === 'https:' || (url.protocol === 'http:' && LOCAL_HOSTS.has(url.hostname));
     return trusted && !url.username && !url.password ? url.origin : null;
 }
+export function workerUrlProblem(settings: BridgeSettings): string | null {
+    if (!settings.workerUrl.trim())
+        return settings.enabled ? 'Informe a URL do Worker para conectar.' : null;
+    return parseWorkerOrigin(settings.workerUrl) ? null : 'URL do Worker inválida. Use o endereço https que o wrangler mostrou.';
+}
 export function agentUrlOf(settings: BridgeSettings): string | null {
     const origin = parseWorkerOrigin(settings.workerUrl);
     return origin ? agentEndpoint(origin, settings.address) : null;
