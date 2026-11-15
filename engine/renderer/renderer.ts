@@ -810,7 +810,7 @@ export class Renderer {
         const terrainInput = { ...input, brush: null, frustum, pixelScale: probeVisible.pixelScale, lod: options.lod };
         let drawCalls = 0;
         if (passes.meshes)
-            this.meshPass.prepare(probeVisible, input, this.meshInstances, this.lod.resolveMesh);
+            this.meshPass.prepare(probeVisible, input, this.meshInstances, this.lod.resolveProbeMesh);
         if (passes.terrain)
             this.terrainPass.prepare(probeVisible.terrains, terrainInput);
         if (passes.meshes)

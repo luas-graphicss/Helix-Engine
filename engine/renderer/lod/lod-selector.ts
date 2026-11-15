@@ -19,8 +19,8 @@ export function selectLodLevel(pixelSize: number, threshold: number, levelCount:
         return level;
     const fraction = octaves - level;
     if (level > previousLevel && fraction < HYSTERESIS)
-        level = previousLevel;
+        level -= 1;
     else if (level < previousLevel && fraction > 1 - HYSTERESIS)
-        level = previousLevel;
+        level += 1;
     return level;
 }
