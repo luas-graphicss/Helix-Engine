@@ -1,0 +1,38 @@
+import type { ChatProtocol, ProviderEndpoint } from '@/engine/editor/assistant/providers/chat-protocol';
+import { TOOL_DECLARATIONS } from '@/engine/editor/assistant/tools/tool-registry';
+import { buildSystemPrompt } from './system-prompt';
+import { CANCELLED_OUTCOME, executeToolCall, type ToolExecutionHost } from './tool-execution';
+const MAX_STEPS = 40;
+export interface AgentRun {
+    readonly host: ToolExecutionHost;
+    readonly protocol: ChatProtocol;
+    readonly endpoint: ProviderEndpoint;
+    readonly signal: AbortSignal;
+}
+export async function runAgent({ host, protocol, endpoint, signal }: AgentRun): Promise<void> {
+    const { conversation, session } = host;
+    for (let step = 0; step < MAX_STEPS; step++) {
+        conversation.setActivity('thinking');
+        const turn = await protocol.complete({
+            endpoint,
+            system: buildSystemPrompt(session, host.mode),
+            messages: conversation.transcript,
+            tools: TOOL_DECLARATIONS,
+            signal,
+        });
+        conversation.addAssistantTurn(turn);
+        if (turn.truncated)
+            conversation.addNotice('info', 'A resposta foi cortada pelo limite de saída do modelo.');
+        if (turn.toolCalls.length === 0) {
+            if (!turn.text.trim())
+                conversation.addNotice('info', 'O modelo não respondeu nada. Reformule o pedido.');
+            return;
+        }
+        for (const call of turn.toolCalls) {
+            const outcome = signal.aborted ? CANCELLED_OUTCOME : await executeToolCall(host, call, signal);
+            conversation.addToolResult(call.id, outcome.output, outcome.failed);
+        }
+        signal.throwIfAborted();
+    }
+    conversation.addNotice('info', `O assistente parou após ${MAX_STEPS} passos. Envie "continue" para seguir.`);
+}
