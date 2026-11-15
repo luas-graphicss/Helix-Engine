@@ -30,6 +30,7 @@ const STATIC_FAR_DISTANCE = 0.75;
 const DEFERRED_PENALTY = 1e6;
 const OFFSCREEN_PENALTY = 1e4;
 const REFINEMENT_PENALTY = 2 * OFFSCREEN_PENALTY;
+const SPECULATION_STILL_FRAMES = 12;
 export const TERRAIN_CACHE_BURST_FACTOR = 8;
 export interface TerrainMaterialCacheStats {
     baked: number;
@@ -99,11 +100,15 @@ class CacheLevel {
     pagesDirty = true;
     far = 0;
     scanSkip: ScanSkip = 'never';
+    stillFrames = 0;
     constructor(readonly index: number, readonly coverage: number, readonly tileSize: number, readonly texelSize: number, readonly lodIndex: number, readonly isStatic: boolean, tilesPerSide: number) {
         this.pages = new Int16Array(tilesPerSide * tilesPerSide * 2).fill(PAGE_EMPTY);
         this.edited = new Uint8Array(tilesPerSide * tilesPerSide);
         this.provisional = new Uint8Array(tilesPerSide * tilesPerSide);
         this.originX = this.originZ = isStatic ? -tilesPerSide / 2 : 0;
+    }
+    get speculates(): boolean {
+        return this.isStatic || this.stillFrames >= SPECULATION_STILL_FRAMES;
     }
 }
 interface BakeJob {
@@ -172,12 +177,14 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
         for (const level of this.levels) {
             if (level.isStatic)
                 continue;
+            level.stillFrames++;
             const originX = Math.floor((this.center[0] - level.coverage / 2) / level.tileSize);
             const originZ = Math.floor((this.center[2] - level.coverage / 2) / level.tileSize);
             if (originX === level.originX && originZ === level.originZ)
                 continue;
             level.originX = originX;
             level.originZ = originZ;
+            level.stillFrames = 0;
             level.scanSkip = 'never';
         }
         this.syncFar();
@@ -432,6 +439,7 @@ export class TerrainMaterialCache {
         const lastX = lastTileInside(level.originX, tilesPerSide, tileSize, half);
         const firstZ = firstTileInside(level.originZ, tilesPerSide, tileSize, half);
         const lastZ = lastTileInside(level.originZ, tilesPerSide, tileSize, half);
+        const { speculates } = level;
         let dirtyCount = 0;
         let offered = 0;
         let outOfReach = 0;
@@ -450,10 +458,10 @@ export class TerrainMaterialCache {
                 const withinReach = distanceSq <= reachSq;
                 if (dirty)
                     dirtyCount++;
-                else if (!withinReach) {
+                else if (!withinReach)
                     outOfReach++;
+                if (!withinReach && (!dirty || !speculates))
                     continue;
-                }
                 let score = Math.sqrt(distanceSq);
                 if (!withinReach)
                     score += DEFERRED_PENALTY;
