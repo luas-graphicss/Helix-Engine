@@ -64,6 +64,6 @@ void main() {
 
   vec3 color = decodeHdr(texture(u_history, previousUv), ${HDR_RANGE_SCENE}.0).rgb;
   confidence *= facingFade * screenEdgeFade(previousUv);
-  fragColor = encodeHdr(color, confidence, ${HDR_RANGE_SCENE}.0);
+  fragColor = encodeHdr(color * confidence, confidence, ${HDR_RANGE_SCENE}.0);
 }
 `;
