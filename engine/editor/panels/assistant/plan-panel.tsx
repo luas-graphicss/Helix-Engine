@@ -1,6 +1,6 @@
 'use client';
 import { useState } from 'react';
-import { Check, ChevronRight, Circle, ListChecks, LoaderCircle, X, type LucideIcon } from 'lucide-react';
+import { Check, ChevronRight, Circle, CircleDashed, ListChecks, LoaderCircle, X, type LucideIcon } from 'lucide-react';
 import type { PlanStep, PlanStepStatus } from '@/engine/editor/assistant/conversation/conversation-entry';
 import { IconButton } from '@/engine/ui/icon-button';
 import { FOCUS_RING_CLASS } from '@/engine/ui/surface-styles';
@@ -13,25 +13,29 @@ interface StatusMeta {
 }
 const STATUS_META: Record<PlanStepStatus, StatusMeta> = {
     pending: { label: 'Pendente', icon: Circle, iconClass: 'text-muted-foreground/60', titleClass: 'text-muted-foreground' },
-    in_progress: { label: 'Em andamento', icon: LoaderCircle, iconClass: 'text-primary motion-safe:animate-spin', titleClass: 'text-foreground' },
+    in_progress: { label: 'Em andamento', icon: CircleDashed, iconClass: 'text-primary', titleClass: 'text-foreground' },
     completed: { label: 'Concluído', icon: Check, iconClass: 'text-success', titleClass: 'text-muted-foreground' },
 };
 type PlanPanelProps = {
     steps: readonly PlanStep[];
+    running: boolean;
     onDismiss: () => void;
 };
-function PlanStepRow({ step }: {
+type PlanStepRowProps = {
     step: PlanStep;
-}) {
+    running: boolean;
+};
+function PlanStepRow({ step, running }: PlanStepRowProps) {
     const meta = STATUS_META[step.status];
-    const Icon = meta.icon;
+    const spinning = running && step.status === 'in_progress';
+    const Icon = spinning ? LoaderCircle : meta.icon;
     return (<li className="flex items-start gap-1.5 text-2xs">
-      <Icon aria-hidden className={cn('mt-0.5 size-3 shrink-0', meta.iconClass)}/>
+      <Icon aria-hidden className={cn('mt-0.5 size-3 shrink-0', meta.iconClass, spinning && 'motion-safe:animate-spin')}/>
       <span className={cn('min-w-0 break-words', meta.titleClass)}>{step.title}</span>
       <span className="sr-only">{meta.label}</span>
     </li>);
 }
-export function PlanPanel({ steps, onDismiss }: PlanPanelProps) {
+export function PlanPanel({ steps, running, onDismiss }: PlanPanelProps) {
     const [open, setOpen] = useState(true);
     const completed = steps.filter((step) => step.status === 'completed').length;
     const current = steps.find((step) => step.status === 'in_progress');
@@ -54,7 +58,7 @@ export function PlanPanel({ steps, onDismiss }: PlanPanelProps) {
         </IconButton>
       </div>
       {open && (<ol className="flex min-h-0 flex-col gap-0.5 overflow-y-auto px-2 pb-1.5">
-          {steps.map((step, index) => (<PlanStepRow key={`${index}-${step.title}`} step={step}/>))}
+          {steps.map((step, index) => (<PlanStepRow key={`${index}-${step.title}`} step={step} running={running}/>))}
         </ol>)}
     </section>);
 }
