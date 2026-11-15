@@ -371,7 +371,7 @@ export class Renderer {
         const hdrFormat: ColorFormat = packedFloatColorTargets ? this.profile.hdrFormat : hdrAlphaFormat;
         this.sceneTarget = new SceneRenderTarget(this.gl, hdrFormat);
         this.shadowMaskPass = new ShadowMaskPass(this.gl, this.triangle, this.profile.shadowMaskScale);
-        this.reflections = new ReflectionSystem(this.gl, this.triangle, this.profile, { scene: hdrFormat, sceneAlpha: hdrAlphaFormat }, defines);
+        this.reflections = new ReflectionSystem(this.gl, this.triangle, this.profile, { scene: hdrFormat, sceneAlpha: hdrAlphaFormat, depthSlabs: packedFloatColorTargets }, defines);
         this.probeShadowMask = new ShadowMaskPass(this.gl, this.triangle, 1);
         this.postPass = new PostPass(this.gl, this.triangle, this.profile, hdrFormat, hdrAlphaFormat, defines);
         this.grassPass = new GrassPass(this.gl, this.triangle, hdrAlphaFormat, defines);

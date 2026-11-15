@@ -10,12 +10,14 @@ import type { WaterScreenReflections } from '@/engine/renderer/passes/water-pass
 import { ReflectionProbe } from './probe/reflection-probe';
 import { createReflectionBinding, type ReflectionBinding } from './reflection-binding';
 import type { ReflectionSettings } from './reflection-settings';
+import { DepthSlabPyramid } from './screen/depth-slab-pyramid';
 import { SceneHistory } from './screen/scene-history';
 import { ScreenReflectionPass } from './screen/screen-reflection-pass';
 import { SurfaceBuffer } from './screen/surface-buffer';
 export interface ReflectionFormats {
     scene: ColorFormat;
     sceneAlpha: ColorFormat;
+    depthSlabs: boolean;
 }
 export interface ReflectionStats {
     probeFaces: number;
@@ -29,6 +31,7 @@ export class ReflectionSystem {
     readonly surfaceBuffer: SurfaceBuffer;
     readonly history: SceneHistory;
     readonly stats: ReflectionStats = { probeFaces: 0, probePrefiltered: false, screenTraced: false, drawCalls: 0 };
+    private readonly slabs: DepthSlabPyramid | null;
     private readonly screenPass: ScreenReflectionPass;
     private readonly waterTrace: WaterScreenReflections;
     private settings: ReflectionSettings | null = null;
@@ -36,11 +39,11 @@ export class ReflectionSystem {
         this.probe = new ReflectionProbe(gl, triangle, profile.reflectionProbeSize, formats.scene, defines);
         this.surfaceBuffer = new SurfaceBuffer(gl);
         this.history = new SceneHistory(gl, formats.scene);
+        this.slabs = formats.depthSlabs ? new DepthSlabPyramid(gl, triangle) : null;
         this.screenPass = new ScreenReflectionPass(gl, triangle, formats.sceneAlpha, defines);
         this.binding = createReflectionBinding(this.probe.prefiltered, this.screenPass.texture);
         this.binding.probeMaxLod = this.probe.maxLod;
-        this.binding.screenMaxLod = this.screenPass.maxLod;
-        this.waterTrace = { steps: profile.screenReflectionSteps, stride: profile.screenReflectionStride };
+        this.waterTrace = { steps: profile.waterReflectionSteps, stride: profile.waterReflectionStride };
     }
     beginFrame(settings: ReflectionSettings, sceneWidth: number, sceneHeight: number): void {
         const { binding } = this;
@@ -56,7 +59,7 @@ export class ReflectionSystem {
         binding.screenInverseSceneSize[1] = 1 / sceneHeight;
     }
     get screenReflectionsWanted(): boolean {
-        return (this.settings?.screenSpace ?? false) && this.binding.intensity > 0;
+        return this.slabs !== null && (this.settings?.screenSpace ?? false) && this.binding.intensity > 0;
     }
     get waterScreenReflections(): WaterScreenReflections | null {
         if (!this.settings?.water || this.binding.intensity <= 0)
@@ -84,30 +87,27 @@ export class ReflectionSystem {
         this.surfaceBuffer.bindAndClear();
     }
     renderScreenReflections(camera: PerspectiveCamera, scene: SceneRenderTarget): void {
-        const settings = this.settings;
-        if (!settings || !settings.screenSpace || this.binding.intensity <= 0 || !this.history.valid || !camera.invertible)
+        const { slabs } = this;
+        if (!slabs || !this.screenReflectionsWanted || !this.history.valid || !camera.invertible)
             return;
-        const { profile } = this;
-        const width = Math.max(1, Math.round(scene.width * profile.screenReflectionScale));
-        const height = Math.max(1, Math.round(scene.height * profile.screenReflectionScale));
+        slabs.build({ camera, depth: scene.depth, surface: this.surfaceBuffer, width: scene.width, height: scene.height });
         this.screenPass.render({
             camera,
             depth: scene.depth,
             surface: this.surfaceBuffer,
             history: this.history,
-            sceneWidth: scene.width,
-            sceneHeight: scene.height,
-            steps: profile.screenReflectionSteps,
-            stride: profile.screenReflectionStride,
+            slabs,
+            budget: this.profile.screenReflectionBudget,
             roughnessCutoff: this.binding.screenRoughnessCutoff,
-        }, width, height);
+        }, scene.width, scene.height);
         this.binding.screen = this.screenPass.texture;
+        this.binding.screenMaxLod = this.screenPass.maxLod;
         this.binding.screenValid = true;
         this.stats.screenTraced = true;
-        this.stats.drawCalls += this.screenPass.stats.drawCalls;
+        this.stats.drawCalls += slabs.stats.drawCalls + this.screenPass.stats.drawCalls;
     }
     captureHistory(scene: SceneRenderTarget, camera: PerspectiveCamera): void {
-        if (!this.settings || !this.settings.screenSpace || this.binding.intensity <= 0) {
+        if (!this.screenReflectionsWanted) {
             this.history.invalidate();
             return;
         }
@@ -123,6 +123,7 @@ export class ReflectionSystem {
         this.probe.dispose();
         this.surfaceBuffer.dispose();
         this.history.dispose();
+        this.slabs?.dispose();
         this.screenPass.dispose();
     }
 }

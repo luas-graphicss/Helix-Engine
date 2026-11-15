@@ -1,8 +1,10 @@
 import { SCREEN_RAY_CHUNK } from './screen-ray.glsl';
+import { SCREEN_SAMPLING_CHUNK } from './screen-sampling.glsl';
 const FINE_STEPS_PER_STRIDE = 8;
 const SPECULATIVE_SCAN_BUDGET = 4;
 export const SCREEN_TRACE_CHUNK = `
 ${SCREEN_RAY_CHUNK}
+${SCREEN_SAMPLING_CHUNK}
 
 const int TRACE_FINE_STEPS = ${FINE_STEPS_PER_STRIDE};
 const float TRACE_SPECULATIVE_SCANS = ${SPECULATIVE_SCAN_BUDGET}.0;
@@ -13,11 +15,6 @@ struct ScreenTrace {
   float confidence;
 };
 
-float viewZFromDepth(float depth) {
-  float ndcZ = depth * 2.0 - 1.0;
-  return -u_projection[3][2] / (ndcZ + u_projection[2][2]);
-}
-
 float sceneViewZAt(vec2 pixel) {
   ivec2 texel = clamp(ivec2(pixel), ivec2(0), ivec2(u_sceneSize) - 1);
   return viewZFromDepth(texelFetch(u_sceneDepth, texel, 0).r);
@@ -25,22 +22,6 @@ float sceneViewZAt(vec2 pixel) {
 
 float surfaceThickness(float sceneZ) {
   return u_traceParams.z * (1.0 + 0.04 * abs(sceneZ));
-}
-
-float screenEdgeFade(vec2 uv) {
-  vec2 fade = smoothstep(vec2(0.0), vec2(0.08), uv) * smoothstep(vec2(0.0), vec2(0.08), 1.0 - uv);
-  return fade.x * fade.y;
-}
-
-float skyDirectionUv(vec3 viewDirection, out vec2 uv) {
-  vec4 clip = u_projection * vec4(viewDirection, 0.0);
-  uv = vec2(0.0);
-  if (clip.w <= 1e-4) return 0.0;
-  uv = clip.xy / clip.w * 0.5 + 0.5;
-  if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return 0.0;
-  float depth = texelFetch(u_sceneDepth, clamp(ivec2(uv * u_sceneSize), ivec2(0), ivec2(u_sceneSize) - 1), 0).r;
-  if (depth < 1.0) return 0.0;
-  return screenEdgeFade(uv);
 }
 
 ScreenTrace traceScreenRay(vec3 origin, vec3 direction) {
@@ -52,7 +33,7 @@ ScreenTrace traceScreenRay(vec3 origin, vec3 direction) {
   float maxSteps = u_traceParams.x;
   float stride = u_traceParams.y;
   float fineStride = stride / float(TRACE_FINE_STEPS);
-  ScreenRay ray = projectScreenRay(origin, direction);
+  ScreenRay ray = projectScreenRay(origin, direction, u_traceParams.w);
 
   float traveled = 0.0;
   float previousRayZ = origin.z;

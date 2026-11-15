@@ -48,11 +48,12 @@ vec3 reflectionRadiance(vec3 R, float roughness, vec3 fallback) {
 #ifndef SCENE_LIGHTING_DIRECT_SHADOW
   if (u_screenReflectionsEnabled > 0.5) {
     vec2 uv = gl_FragCoord.xy * u_screenReflectionsInverseSceneSize;
-    float lod = roughness * u_screenReflectionsMaxLod;
+    float spread = roughness / max(u_screenReflectionsRoughnessCutoff, 1e-3);
+    float lod = spread * spread * u_screenReflectionsMaxLod;
     vec4 screen = decodeHdr(textureLod(u_screenReflections, uv, lod), ${HDR_RANGE_SCENE}.0);
     float roughnessFade = 1.0 - smoothstep(u_screenReflectionsRoughnessCutoff * 0.6, u_screenReflectionsRoughnessCutoff, roughness);
     vec3 screenRadiance = screen.rgb / max(u_exposure, 1e-3) * u_reflectionIntensity;
-    radiance = mix(radiance, screenRadiance, screen.a * roughnessFade);
+    radiance = radiance * (1.0 - screen.a * roughnessFade) + screenRadiance * roughnessFade;
   }
 #endif
   return radiance;
