@@ -50,7 +50,6 @@ export interface ResultBatch {
 }
 export interface PollResponse {
     readonly calls: readonly ToolCallEvent[];
-    readonly cancelled: readonly string[];
 }
 export interface ByeRequest {
     readonly peer: string;

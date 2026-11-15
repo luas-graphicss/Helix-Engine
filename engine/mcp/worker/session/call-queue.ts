@@ -26,16 +26,12 @@ interface PendingCall {
 }
 export class CallQueue {
     private readonly pending = new Map<string, PendingCall>();
-    private readonly cancelled = new Set<string>();
     constructor(private readonly settings: WorkerSettings, private readonly stats: SessionStats, private readonly onWork: () => void) { }
     get waitingCount(): number {
         return this.count(false);
     }
     get runningCount(): number {
         return this.count(true);
-    }
-    get hasWork(): boolean {
-        return this.cancelled.size > 0 || this.waitingCount > 0;
     }
     submit(request: CallRequest): Promise<CallOutcome> {
         const { queueLimit, callTimeoutMs } = this.settings;
@@ -69,9 +65,7 @@ export class CallQueue {
             call.delivered = true;
             calls.push({ callId: call.callId, tool: call.request.tool, arguments: call.request.arguments, agent: call.request.agent, remainingMs });
         }
-        const cancelled = Array.from(this.cancelled);
-        this.cancelled.clear();
-        return { calls, cancelled };
+        return { calls };
     }
     settle(results: readonly ToolCallResult[]): number {
         let accepted = 0;
@@ -89,14 +83,12 @@ export class CallQueue {
         return accepted;
     }
     abandonDelivered(): void {
-        this.cancelled.clear();
         for (const call of Array.from(this.pending.values())) {
             if (call.delivered)
                 this.fail(call, engineDisconnected(true));
         }
     }
     abandonAll(): void {
-        this.cancelled.clear();
         for (const call of Array.from(this.pending.values()))
             this.fail(call, engineDisconnected(call.delivered));
     }
@@ -113,8 +105,6 @@ export class CallQueue {
         if (!call)
             return;
         this.stats.expired++;
-        if (call.delivered)
-            this.cancelled.add(callId);
         this.finish(call, { status: 'failed', failure: call.delivered ? callTimedOut(this.settings.callTimeoutMs) : queueExpired() });
     }
     private fail(call: PendingCall, failure: CallFailure): void {

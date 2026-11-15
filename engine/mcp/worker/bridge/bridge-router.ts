@@ -10,7 +10,7 @@ import type { EngineLink } from '@/engine/mcp/worker/session/engine-link';
 import { describeFile, FILE_LIMIT_BYTES, type FileStore } from '@/engine/mcp/worker/session/file-store';
 import type { PollGate } from '@/engine/mcp/worker/session/poll-gate';
 const BRIDGE_BODY_LIMIT_BYTES = 2 * 1024 * 1024;
-const EMPTY_BATCH: PollResponse = { calls: [], cancelled: [] };
+const EMPTY_BATCH: PollResponse = { calls: [] };
 function bridgeError(code: BridgeErrorCode, message: string, status: number): Response {
     return jsonResponse({ error: { code, message } } satisfies BridgeErrorBody, status);
 }
@@ -59,7 +59,7 @@ export class BridgeRouter {
             return rejection;
         this.link.touch();
         this.queue.settle(batch.results);
-        if (!this.queue.hasWork) {
+        if (this.queue.waitingCount === 0) {
             const wake = await this.gate.wait(this.settings.pollWaitMs, request.signal);
             if (wake === 'superseded' || wake === 'aborted')
                 return jsonResponse(EMPTY_BATCH);

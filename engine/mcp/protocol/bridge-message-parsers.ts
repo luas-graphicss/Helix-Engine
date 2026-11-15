@@ -1,5 +1,5 @@
 import { BRIDGE_ERROR_CODES, type BridgeErrorBody, type ByeRequest, type EngineIdentity, type HelloRequest, type HelloResponse, type PollResponse, type ResultBatch, type ToolAttachment, type ToolCallEvent, type ToolCallResult } from './bridge-messages';
-import { isFiniteNumber, isRecord, isText, isTextList } from './json-shape';
+import { isFiniteNumber, isRecord, isText } from './json-shape';
 import { isToolName, parseToolDescriptor } from './tool-descriptor';
 const PEER_PATTERN = /^[A-Za-z0-9_-]{8,64}$/;
 const MAX_TOOLS = 256;
@@ -80,9 +80,8 @@ function parseToolCallEvent(value: unknown): ToolCallEvent | null {
 export function parsePollResponse(value: unknown): PollResponse | null {
     if (!isRecord(value))
         return null;
-    const { cancelled } = value;
     const calls = parseList(value.calls, MAX_BATCH_SIZE, parseToolCallEvent);
-    return isTextList(cancelled) && calls ? { calls, cancelled } : null;
+    return calls ? { calls } : null;
 }
 export function parseByeRequest(value: unknown): ByeRequest | null {
     if (!isRecord(value))
