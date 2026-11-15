@@ -1,6 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
-import { Aperture, Atom, AudioLines, Clapperboard, CloudSun, FileClock, FileCode2, FolderOpen, Gauge, LayoutPanelTop, Lightbulb, ListTree, Mountain, PersonStanding, SlidersHorizontal, Sparkles, Terminal, type LucideIcon, } from 'lucide-react';
+import { Aperture, Atom, AudioLines, BotMessageSquare, Clapperboard, CloudSun, FileClock, FileCode2, FolderOpen, Gauge, LayoutPanelTop, Lightbulb, ListTree, Mountain, PersonStanding, SlidersHorizontal, Sparkles, Terminal, type LucideIcon, } from 'lucide-react';
 import { AnimationPanel } from '@/engine/editor/panels/animation-panel';
 import { AudioPanel } from '@/engine/editor/panels/audio-panel';
 import { VfxPanel } from '@/engine/editor/panels/vfx-panel';
@@ -14,6 +14,7 @@ import { PerformancePanel } from '@/engine/editor/panels/performance-panel';
 import { AssetsPanel } from '@/engine/editor/panels/assets-panel';
 import { ConsolePanel } from '@/engine/editor/panels/console-panel';
 import { ActivityPanel } from '@/engine/editor/panels/activity-panel';
+import { AssistantPanel } from '@/engine/editor/panels/assistant-panel';
 import { InterfacePanel } from '@/engine/editor/panels/interface-panel';
 import { ScriptsPanel } from '@/engine/editor/panels/scripts-panel';
 import type { EditorWorkspace } from '@/engine/editor/session/editor-session';
@@ -47,6 +48,7 @@ export const DOCK_PANELS: Record<DockPanelId, DockPanelDefinition> = {
     scripts: { id: 'scripts', label: 'Scripts', icon: FileCode2, shortcut: 'panel.scripts', inToolbar: true, render: () => <ScriptsPanel /> },
     console: { id: 'console', label: 'Console', icon: Terminal, shortcut: 'panel.console', inToolbar: true, render: () => <ConsolePanel /> },
     activity: { id: 'activity', label: 'Histórico de atividade', icon: FileClock, render: () => <ActivityPanel /> },
+    assistant: { id: 'assistant', label: 'Assistente de IA', icon: BotMessageSquare, inToolbar: true, render: () => <AssistantPanel /> },
 };
 export const TOOLBAR_PANELS: readonly DockPanelDefinition[] = Object.values(DOCK_PANELS).filter((panel) => panel.inToolbar);
 export function panelLabel(id: DockPanelId, workspace: EditorWorkspace): string {
