@@ -14,15 +14,21 @@ const DEPTH_UNIT = 0;
 const SURFACE_UNIT = 1;
 const HISTORY_UNIT = 2;
 const SLABS_UNIT = 3;
+const MIRROR_UNIT = 4;
 const MAX_RESULT_LEVELS = 5;
 const DEPTH_BUFFER_ULP = 2 ** -24;
 const DEPTH_NOISE_ULPS = 4;
+export interface ScreenMirror {
+    readonly color: WebGLTexture;
+    readonly viewPlane: Float32Array;
+}
 export interface ScreenReflectionInput {
     camera: PerspectiveCamera;
     depth: WebGLTexture;
     surface: SurfaceBuffer;
     history: SceneHistory;
     slabs: DepthSlabPyramid;
+    mirror: ScreenMirror | null;
     budget: number;
     roughnessCutoff: number;
 }
@@ -48,7 +54,7 @@ export class ScreenReflectionPass {
     }
     render(input: ScreenReflectionInput, width: number, height: number): void {
         const { gl, program, triangle } = this;
-        const { camera, slabs } = input;
+        const { camera, slabs, mirror } = input;
         if (width !== this.width || height !== this.height) {
             this.dispose();
             this.allocate(width, height);
@@ -71,6 +77,12 @@ export class ScreenReflectionPass {
         gl.activeTexture(gl.TEXTURE0 + SLABS_UNIT);
         gl.bindTexture(gl.TEXTURE_2D, slabs.texture);
         gl.uniform1i(program.uniform('u_depthSlabs'), SLABS_UNIT);
+        gl.activeTexture(gl.TEXTURE0 + MIRROR_UNIT);
+        gl.bindTexture(gl.TEXTURE_2D, mirror ? mirror.color : input.history.texture);
+        gl.uniform1i(program.uniform('u_mirrorColor'), MIRROR_UNIT);
+        gl.uniform1f(program.uniform('u_mirrorEnabled'), mirror ? 1 : 0);
+        if (mirror)
+            gl.uniform4fv(program.uniform('u_mirrorPlane'), mirror.viewPlane);
         gl.uniformMatrix4fv(program.uniform('u_view'), false, camera.viewMatrix);
         gl.uniformMatrix4fv(program.uniform('u_projection'), false, camera.projectionMatrix);
         gl.uniformMatrix4fv(program.uniform('u_reprojection'), false, this.reprojection);

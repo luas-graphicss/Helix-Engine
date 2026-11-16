@@ -5,8 +5,10 @@ import type { FullscreenTriangle } from '@/engine/renderer/gl/fullscreen-triangl
 import type { SceneRenderTarget } from '@/engine/renderer/gl/scene-render-target';
 import type { ShaderDefines } from '@/engine/renderer/gl/shader-source';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
+import type { VisibleSet } from '@/engine/renderer/culling/visible-set';
 import type { RenderProfile } from '@/engine/renderer/quality/render-profile';
 import type { WaterScreenReflections } from '@/engine/renderer/passes/water-pass';
+import { PlanarReflection } from './planar/planar-reflection';
 import { ReflectionProbe } from './probe/reflection-probe';
 import { createReflectionBinding, type ReflectionBinding } from './reflection-binding';
 import type { ReflectionSettings } from './reflection-settings';
@@ -30,6 +32,7 @@ export class ReflectionSystem {
     readonly probe: ReflectionProbe;
     readonly surfaceBuffer: SurfaceBuffer;
     readonly history: SceneHistory;
+    readonly mirror: PlanarReflection;
     readonly stats: ReflectionStats = { probeFaces: 0, probePrefiltered: false, screenTraced: false, drawCalls: 0 };
     private readonly slabs: DepthSlabPyramid | null;
     private readonly screenPass: ScreenReflectionPass;
@@ -39,6 +42,7 @@ export class ReflectionSystem {
         this.probe = new ReflectionProbe(gl, triangle, profile.reflectionProbeSize, formats.scene, defines);
         this.surfaceBuffer = new SurfaceBuffer(gl);
         this.history = new SceneHistory(gl, formats.scene);
+        this.mirror = new PlanarReflection(gl, formats.scene);
         this.slabs = formats.depthSlabs ? new DepthSlabPyramid(gl, triangle) : null;
         this.screenPass = new ScreenReflectionPass(gl, triangle, formats.sceneAlpha, defines);
         this.binding = createReflectionBinding(this.probe.prefiltered, this.screenPass.texture);
@@ -52,6 +56,7 @@ export class ReflectionSystem {
         this.stats.probePrefiltered = false;
         this.stats.screenTraced = false;
         this.stats.drawCalls = 0;
+        this.mirror.beginFrame();
         binding.intensity = Math.max(0, settings.intensity);
         binding.probeValid = settings.probe && this.probe.valid;
         binding.screenValid = false;
@@ -65,6 +70,9 @@ export class ReflectionSystem {
         if (!this.settings?.water || this.binding.intensity <= 0)
             return null;
         return this.waterTrace;
+    }
+    wantsMirrorView(visible: VisibleSet, camera: PerspectiveCamera): boolean {
+        return this.screenReflectionsWanted && camera.invertible && this.mirror.aim(visible, camera);
     }
     wantsProbeFace(camera: PerspectiveCamera, sunDirection: Vec3, sceneAnimating: boolean): boolean {
         if (!this.probeWanted)
@@ -97,6 +105,7 @@ export class ReflectionSystem {
             surface: this.surfaceBuffer,
             history: this.history,
             slabs,
+            mirror: this.mirror.rendered ? this.mirror : null,
             budget: this.profile.screenReflectionBudget,
             roughnessCutoff: this.binding.screenRoughnessCutoff,
         }, scene.width, scene.height);
@@ -123,6 +132,7 @@ export class ReflectionSystem {
         this.probe.dispose();
         this.surfaceBuffer.dispose();
         this.history.dispose();
+        this.mirror.dispose();
         this.slabs?.dispose();
         this.screenPass.dispose();
     }
