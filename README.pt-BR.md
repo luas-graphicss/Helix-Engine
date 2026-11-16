@@ -12,6 +12,8 @@ Pelo menu de adicionar dá para colocar primitivas, terreno, luz direcional, luz
 
 Você precisa do Node.js e do pnpm. Clone o repositório, rode pnpm install e depois pnpm dev. O editor abre na página inicial, em localhost na porta 3000. Para gerar a versão de produção, rode pnpm build e depois pnpm start.
 
+Para conferir uma mudança, rode pnpm typecheck e pnpm test. O segundo roda as suítes de teste da engine em engine/debug, que cobrem os módulos de matemática, ruído, cores, culling, malhas e física no Node, sem navegador. O GitHub Actions roda os dois, e o build de produção, a cada push na main e a cada pull request.
+
 ## Tempo de desenvolvimento
 
 Até agora a Helix levou três dias de trabalho. Ela ainda está em desenvolvimento, então falta bastante coisa e muita coisa pode mudar de um commit para outro.
