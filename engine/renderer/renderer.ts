@@ -265,6 +265,9 @@ interface ProbePasses {
     terrain: boolean;
     sky: boolean;
 }
+interface MirrorPasses extends ProbePasses {
+    water: boolean;
+}
 export interface RendererOptions {
     tier?: GpuTier;
     benchmark?: GpuBenchmarkMode;
@@ -316,6 +319,8 @@ export class Renderer {
     private readonly reflections: ReflectionSystem;
     private readonly probeShadowMask: ShadowMaskPass;
     private readonly probeVisible = new VisibleSet();
+    private readonly mirrorShadowMask: ShadowMaskPass;
+    private readonly mirrorVisible = new VisibleSet();
     private probeLocalLights: LocalLightsBinding | null = null;
     private lastSceneAnimating = true;
     private viewChangedLastFrame = true;
@@ -373,6 +378,7 @@ export class Renderer {
         this.shadowMaskPass = new ShadowMaskPass(this.gl, this.triangle, this.profile.shadowMaskScale);
         this.reflections = new ReflectionSystem(this.gl, this.triangle, this.profile, { scene: hdrFormat, sceneAlpha: hdrAlphaFormat, depthSlabs: packedFloatColorTargets }, defines);
         this.probeShadowMask = new ShadowMaskPass(this.gl, this.triangle, 1);
+        this.mirrorShadowMask = new ShadowMaskPass(this.gl, this.triangle, this.profile.shadowMaskScale);
         this.postPass = new PostPass(this.gl, this.triangle, this.profile, hdrFormat, hdrAlphaFormat, defines);
         this.grassPass = new GrassPass(this.gl, this.triangle, hdrAlphaFormat, defines);
         this.waterPass = new WaterPass(this.gl, this.terrainGpu, defines, hdrFormat);
@@ -535,6 +541,9 @@ export class Renderer {
         const probeOn = probePasses.meshes || probePasses.terrain || probePasses.sky;
         if (probeOn && this.reflections.wantsProbeFace(camera, lighting.sunDirection, this.lastSceneAnimating)) {
             drawCalls += this.renderProbeFace(scene, camera, options, skyFrame, probePasses);
+        }
+        if (probeOn && this.reflections.wantsMirrorView(visible, camera)) {
+            drawCalls += this.renderMirrorView(scene, options, skyFrame, { ...probePasses, water: passOn('water') }, width, height);
         }
         stageStart = this.endCpuStage('probe', stageStart);
         if (warming && this.pauseWarmup('probe', started))
@@ -839,6 +848,62 @@ export class Renderer {
         reflections.endProbeFace();
         return drawCalls;
     }
+    private renderMirrorView(scene: Scene, options: RenderOptions, skyFrame: SkyFrame, passes: MirrorPasses, width: number, height: number): number {
+        const { reflections, mirrorVisible, lighting } = this;
+        const { mirror } = reflections;
+        const skyOn = skyFrame.enabled && passes.sky;
+        const mirrorCamera = mirror.beginView(width, height, SCENE_CLEAR_HDR, HDR_RANGE_SCENE, !skyOn);
+        mirrorVisible.collect(scene, mirrorCamera, height, options.culling, false);
+        const frustum = options.culling.frustumCulling ? mirrorVisible.frustum : null;
+        const input = {
+            camera: mirrorCamera,
+            lighting,
+            shadowMask: this.mirrorShadowMask.binding,
+            shadow: this.shadowPass.binding,
+            sky: this.sky.binding,
+            localLights: this.probeLocalLightsBinding(),
+            reflections: reflections.binding,
+            fogDensity: fogDensityForSky(scene.sky.enabled, scene.sky.haze),
+            selection: null,
+        };
+        const terrainInput = { ...input, brush: null, frustum, pixelScale: mirrorVisible.pixelScale, lod: options.lod };
+        let drawCalls = 0;
+        if (passes.meshes)
+            this.meshPass.prepare(mirrorVisible, input, this.meshInstances, this.lod.resolveMirrorMesh);
+        if (passes.terrain)
+            this.terrainPass.prepare(mirrorVisible.terrains, terrainInput);
+        if (passes.meshes)
+            this.meshPass.renderDepth();
+        if (passes.terrain)
+            this.terrainPass.renderDepth(terrainInput);
+        const shadowBinding = this.shadowPass.binding;
+        const skyBinding = this.sky.binding;
+        if (shadowBinding.active || skyBinding.cloudShadow.enabled) {
+            drawCalls += this.mirrorShadowMask.render({ camera: mirrorCamera, depth: mirror.target.depth, shadow: shadowBinding, sky: skyBinding, lightDirection: skyFrame.shadowCasterDirection }, width, height);
+            mirror.bindView();
+        }
+        else {
+            this.mirrorShadowMask.skip();
+        }
+        if (passes.meshes) {
+            this.meshPass.renderOpaque();
+            drawCalls += this.meshPass.stats.drawCalls;
+        }
+        if (passes.terrain) {
+            this.terrainPass.render(terrainInput);
+            drawCalls += this.terrainPass.stats.drawCalls;
+        }
+        if (skyOn)
+            drawCalls += this.sky.renderMirrorBackground(mirror.backdropCamera, width, height, options.elapsedSeconds);
+        if (passes.water) {
+            this.waterPass.render(mirrorVisible.terrains, { ...input, frustum, elapsedSeconds: options.elapsedSeconds, width, height, sceneTarget: mirror.target, screenReflections: null });
+            drawCalls += this.waterPass.stats.drawCalls;
+        }
+        if (passes.meshes)
+            this.meshPass.renderTransparent();
+        mirror.endView();
+        return drawCalls;
+    }
     private probeLocalLightsBinding(): LocalLightsBinding {
         const data = this.localLights.binding;
         let binding = this.probeLocalLights;
@@ -1112,6 +1177,7 @@ export class Renderer {
         this.terrainCache.dispose();
         this.shadowMaskPass.dispose();
         this.probeShadowMask.dispose();
+        this.mirrorShadowMask.dispose();
         this.reflections.dispose();
         this.sceneTarget.dispose();
         this.localShadowPass.dispose();
