@@ -5,7 +5,7 @@ import { withDefines, type ShaderDefines } from '@/engine/renderer/gl/shader-sou
 import { FULLSCREEN_VERTEX_SHADER } from '@/engine/renderer/shaders/chunks/fullscreen.glsl';
 import { PROBE_CROSSFADE_FRAGMENT_SHADER } from '../shaders/probe-crossfade.glsl';
 import { CUBE_FACE_COUNT, createProbeCubemap, type ProbeCubemapLayout } from './probe-cubemap';
-export const CROSSFADE_FRAMES = CUBE_FACE_COUNT;
+const CROSSFADE_FRAMES = CUBE_FACE_COUNT;
 const OUTGOING_UNIT = 0;
 const INCOMING_UNIT = 1;
 export class ProbeCrossfade {
@@ -47,6 +47,12 @@ export class ProbeCrossfade {
             return 0;
         this.frame++;
         return this.blend(this.frame / CROSSFADE_FRAMES);
+    }
+    finish(): number {
+        if (!this.active)
+            return 0;
+        this.frame = CROSSFADE_FRAMES;
+        return this.blend(1);
     }
     dispose(): void {
         const { gl } = this;

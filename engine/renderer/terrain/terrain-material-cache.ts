@@ -16,17 +16,21 @@ import { clamp } from '@/engine/core/math/scalar';
 import type { Terrain } from '@/engine/terrain/core/terrain';
 import { createRegion, isRegionEmpty } from '@/engine/terrain/core/heightfield';
 import type { RegionChangeLog } from '@/engine/terrain/chunks/region-change-log';
-import { terrainMaterialSignature, TERRAIN_COLOR_TEXTURE_SIZE } from '@/engine/terrain/materials/terrain-material';
+import { terrainMaterialSignature } from '@/engine/terrain/materials/terrain-material';
 import { materialSupportsGrass } from '@/engine/terrain/foliage/grass-placement';
 import type { TerrainGpuCache } from './terrain-gpu-cache';
 import { TerrainMaterialUniforms } from './terrain-material-uniforms';
-import { MAX_TERRAIN_CACHE_LEVELS, TERRAIN_CACHE_TILE_TEXELS, terrainCacheBaseCoverage, terrainCacheUsableRadius, } from './terrain-cache-layout';
+import { MAX_TERRAIN_CACHE_LEVELS, TERRAIN_CACHE_TILE_TEXELS, terrainCacheLadder, terrainCacheTexels, terrainCacheUsableRadius, } from './terrain-cache-layout';
+import { TILE_BLOCK_FIELDS, TileBlockMerger } from './material-cache/tile-block-merger';
+import { supportsTerrainVirtualTexture, TerrainVirtualTexture } from './virtual-texture/terrain-virtual-texture';
 const RETENTION_FRAMES = 300;
 const PAGE_EMPTY = -32768;
 const RING_FAR_DISTANCE = 0.375;
 const STATIC_FAR_DISTANCE = 0.75;
 const DEFERRED_PENALTY = 1e6;
 const OFFSCREEN_PENALTY = 1e4;
+const REFINEMENT_PENALTY = 2 * OFFSCREEN_PENALTY;
+const SPECULATION_STILL_FRAMES = 12;
 export const TERRAIN_CACHE_BURST_FACTOR = 8;
 export interface TerrainMaterialCacheStats {
     baked: number;
@@ -58,6 +62,22 @@ function bakeSignature(terrain: Terrain): string {
     const grassShade = `${grass.enabled ? 1 : 0},${grass.density},${grass.baseColor[0]},${grass.baseColor[1]},${grass.baseColor[2]}`;
     return `${terrain.resolution}|${terrain.splat.resolution}|${terrain.grassMap.resolution}|${layers}|${shade}|${grassShade}`;
 }
+type ScanSkip = 'never' | 'while-view-holds' | 'always';
+function wrapIndex(value: number, count: number): number {
+    return ((value % count) + count) % count;
+}
+function firstTileInside(origin: number, count: number, tileSize: number, half: number): number {
+    let tile = origin;
+    while (tile < origin + count && tile * tileSize + tileSize <= -half)
+        tile++;
+    return tile;
+}
+function lastTileInside(origin: number, count: number, tileSize: number, half: number): number {
+    let tile = origin + count - 1;
+    while (tile >= origin && tile * tileSize >= half)
+        tile--;
+    return tile;
+}
 function createTextureArray(gl: GL, internalFormat: number, size: number, layers: number, filter: number, wrap: number): WebGLTexture {
     const texture = gl.createTexture();
     if (!texture)
@@ -74,14 +94,21 @@ function createTextureArray(gl: GL, internalFormat: number, size: number, layers
 class CacheLevel {
     readonly pages: Int16Array;
     readonly edited: Uint8Array;
+    readonly provisional: Uint8Array;
     originX: number;
     originZ: number;
     pagesDirty = true;
     far = 0;
+    scanSkip: ScanSkip = 'never';
+    stillFrames = 0;
     constructor(readonly index: number, readonly coverage: number, readonly tileSize: number, readonly texelSize: number, readonly lodIndex: number, readonly isStatic: boolean, tilesPerSide: number) {
         this.pages = new Int16Array(tilesPerSide * tilesPerSide * 2).fill(PAGE_EMPTY);
         this.edited = new Uint8Array(tilesPerSide * tilesPerSide);
+        this.provisional = new Uint8Array(tilesPerSide * tilesPerSide);
         this.originX = this.originZ = isStatic ? -tilesPerSide / 2 : 0;
+    }
+    get speculates(): boolean {
+        return this.isStatic || this.stillFrames >= SPECULATION_STILL_FRAMES;
     }
 }
 interface BakeJob {
@@ -102,7 +129,7 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     readonly center = vec3.create();
     readonly ringCount: number;
     readonly usableRadius: number;
-    readonly texelsPerMeter = TERRAIN_COLOR_TEXTURE_SIZE;
+    readonly texelsPerMeter: number;
     readonly size: number;
     readonly memoryBytes: number;
     lastUsedFrame = 0;
@@ -111,10 +138,12 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     private splatVersion = -1;
     private grassVersion = -1;
     private readonly region = createRegion();
-    constructor(private readonly gl: GL, readonly terrain: Terrain, readonly texels: number, readonly tilesPerSide: number, maxLevels: number) {
+    private readonly scannedView = new Float64Array(4).fill(Number.NaN);
+    constructor(private readonly gl: GL, readonly terrain: Terrain, readonly texels: number, readonly tilesPerSide: number, texelsPerMeter: number, maxLevels: number) {
         this.size = terrain.size;
-        const base = terrainCacheBaseCoverage(texels, this.texelsPerMeter);
-        this.ringCount = Math.max(0, Math.min(maxLevels - 1, Math.ceil(Math.log2(terrain.size / base))));
+        const { baseCoverage: base, ringCount } = terrainCacheLadder(texels, texelsPerMeter, terrain.size, maxLevels);
+        this.ringCount = ringCount;
+        this.texelsPerMeter = texels / base;
         this.usableRadius = terrainCacheUsableRadius(base, tilesPerSide);
         for (let k = 0; k < this.ringCount; k++) {
             const coverage = base * 2 ** k;
@@ -148,13 +177,29 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
         for (const level of this.levels) {
             if (level.isStatic)
                 continue;
-            level.originX = Math.floor((this.center[0] - level.coverage / 2) / level.tileSize);
-            level.originZ = Math.floor((this.center[2] - level.coverage / 2) / level.tileSize);
+            level.stillFrames++;
+            const originX = Math.floor((this.center[0] - level.coverage / 2) / level.tileSize);
+            const originZ = Math.floor((this.center[2] - level.coverage / 2) / level.tileSize);
+            if (originX === level.originX && originZ === level.originZ)
+                continue;
+            level.originX = originX;
+            level.originZ = originZ;
+            level.stillFrames = 0;
+            level.scanSkip = 'never';
         }
         this.syncFar();
         this.syncSignature();
         this.consumeEdits();
         return true;
+    }
+    trackView(heightAbove: number, texelsPerPixel: number): boolean {
+        const { scannedView, center } = this;
+        const moved = scannedView[0] !== center[0] || scannedView[1] !== center[2] || scannedView[2] !== heightAbove || scannedView[3] !== texelsPerPixel;
+        scannedView[0] = center[0];
+        scannedView[1] = center[2];
+        scannedView[2] = heightAbove;
+        scannedView[3] = texelsPerPixel;
+        return moved;
     }
     slotOf(tileX: number, tileZ: number): number {
         const tiles = this.tilesPerSide;
@@ -170,11 +215,13 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
     isDirty(level: CacheLevel, slot: number, tileX: number, tileZ: number): boolean {
         return level.edited[slot] !== 0 || level.pages[slot * 2] !== tileX || level.pages[slot * 2 + 1] !== tileZ;
     }
-    markBaked(level: CacheLevel, slot: number, tileX: number, tileZ: number): void {
+    markBaked(level: CacheLevel, slot: number, tileX: number, tileZ: number, complete: boolean): void {
         level.pages[slot * 2] = tileX;
         level.pages[slot * 2 + 1] = tileZ;
         level.edited[slot] = 0;
+        level.provisional[slot] = complete ? 0 : 1;
         level.pagesDirty = true;
+        level.scanSkip = 'never';
     }
     uploadPages(): void {
         const { gl, tilesPerSide } = this;
@@ -238,12 +285,15 @@ class TerrainClipmap implements TerrainMaterialCacheBinding {
         return log.version;
     }
     private invalidateAll(): void {
-        for (const level of this.levels)
+        for (const level of this.levels) {
             level.edited.fill(1);
+            level.scanSkip = 'never';
+        }
     }
     private invalidateRect(x0: number, z0: number, x1: number, z1: number): void {
         const tiles = this.tilesPerSide;
         for (const level of this.levels) {
+            level.scanSkip = 'never';
             const tx0 = Math.max(Math.floor(x0 / level.tileSize), level.originX);
             const tx1 = Math.min(Math.floor(x1 / level.tileSize), level.originX + tiles - 1);
             const tz0 = Math.max(Math.floor(z0 / level.tileSize), level.originZ);
@@ -268,24 +318,29 @@ export class TerrainMaterialCache {
     private readonly program: ShaderProgram;
     private readonly materialUniforms: TerrainMaterialUniforms;
     private readonly entries = new Map<Terrain, TerrainClipmap>();
-    private readonly texels: number;
-    private readonly tilesPerSide: number;
+    private readonly maxTexels: number;
+    private readonly texelsPerMeter: number;
     private readonly maxLevels: number;
     private readonly budget: number;
+    private readonly virtualTextureSlices: number;
+    private virtualTexture: TerrainVirtualTexture | null = null;
+    private texels = 0;
     burstScale = 1;
     private readonly jobs: BakeJob[] = [];
     private jobCount = 0;
     private urgentCount = 0;
     private readonly wanted = new Int32Array(2);
+    private readonly merger = new TileBlockMerger();
     private readonly scratch = mat4.create();
     private readonly tileBounds = aabb.create();
     private readonly worldBounds = aabb.create();
     private frame = 0;
     constructor(private readonly gl: GL, private readonly triangle: FullscreenTriangle, private readonly resources: TerrainGpuCache, profile: RenderProfile) {
-        this.program = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, terrainMaterialBakeFragmentShader(false));
+        this.virtualTextureSlices = profile.terrainVirtualTextureSlices;
+        this.program = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, terrainMaterialBakeFragmentShader(supportsTerrainVirtualTexture(this.virtualTextureSlices)));
         this.materialUniforms = new TerrainMaterialUniforms(gl);
-        this.texels = profile.terrainCacheSize;
-        this.tilesPerSide = profile.terrainCacheSize / TERRAIN_CACHE_TILE_TEXELS;
+        this.maxTexels = profile.terrainCacheSize;
+        this.texelsPerMeter = profile.terrainCacheTexelsPerMeter;
         this.maxLevels = Math.min(profile.terrainCacheLevels, MAX_TERRAIN_CACHE_LEVELS);
         this.budget = profile.terrainCacheTilesPerFrame;
     }
@@ -295,8 +350,11 @@ export class TerrainMaterialCache {
         stats.pending = 0;
         stats.levels = 0;
         stats.memoryBytes = 0;
-        if (!enabled)
+        if (!enabled || terrains.length === 0)
             return;
+        this.texels = Math.max(this.texels, terrainCacheTexels(pixelScale, this.maxTexels));
+        const virtualTexture = this.resolveVirtualTexture();
+        virtualTexture.beginFrame();
         this.jobCount = 0;
         this.urgentCount = 0;
         for (const entity of terrains) {
@@ -312,7 +370,8 @@ export class TerrainMaterialCache {
             this.collect(clip, entity, frustum, pixelScale);
         }
         if (this.jobCount > 0)
-            stats.baked = this.bake(this.bakeCount());
+            stats.baked = this.bake(this.bakeCount(), virtualTexture);
+        virtualTexture.endFrame();
         for (const clip of this.entries.values())
             clip.uploadPages();
     }
@@ -338,61 +397,98 @@ export class TerrainMaterialCache {
     }
     private resolve(terrain: Terrain): TerrainClipmap {
         let clip = this.entries.get(terrain);
-        if (clip && clip.size !== terrain.size) {
+        if (clip && (clip.size !== terrain.size || clip.texels !== this.texels)) {
             clip.dispose();
             clip = undefined;
         }
         if (!clip) {
-            clip = new TerrainClipmap(this.gl, terrain, this.texels, this.tilesPerSide, this.maxLevels);
+            clip = new TerrainClipmap(this.gl, terrain, this.texels, this.texels / TERRAIN_CACHE_TILE_TEXELS, this.texelsPerMeter, this.maxLevels);
             this.entries.set(terrain, clip);
         }
         return clip;
     }
+    private resolveVirtualTexture(): TerrainVirtualTexture {
+        this.virtualTexture ??= new TerrainVirtualTexture(this.gl, this.virtualTextureSlices);
+        return this.virtualTexture;
+    }
     private collect(clip: TerrainClipmap, entity: Entity, frustum: Frustum, pixelScale: number): void {
-        const { tilesPerSide, wanted, stats, tileBounds, worldBounds } = this;
+        const { tileBounds } = this;
         const { terrain, center } = clip;
         const half = terrain.halfSize;
         const groundX = clamp(center[0], -half, half);
         const groundZ = clamp(center[2], -half, half);
         const heightAbove = center[1] - terrain.heightAtLocal(groundX, groundZ);
         const texelsPerPixel = clip.texelsPerMeter / Math.max(pixelScale, 1);
+        const viewMoved = clip.trackView(heightAbove, texelsPerPixel);
         tileBounds.min[1] = terrain.localBounds.min[1];
         tileBounds.max[1] = terrain.localBounds.max[1];
         for (const level of clip.levels) {
-            const { tileSize } = level;
-            const halfTile = tileSize / 2;
-            for (let slotZ = 0; slotZ < tilesPerSide; slotZ++) {
-                for (let slotX = 0; slotX < tilesPerSide; slotX++) {
-                    clip.wantedTile(level, slotX, slotZ, wanted);
-                    const tileX = wanted[0];
-                    const tileZ = wanted[1];
-                    const minX = tileX * tileSize;
-                    const minZ = tileZ * tileSize;
-                    if (minX >= half || minX + tileSize <= -half || minZ >= half || minZ + tileSize <= -half)
-                        continue;
-                    const slot = slotZ * tilesPerSide + slotX;
-                    if (!clip.isDirty(level, slot, tileX, tileZ))
-                        continue;
-                    stats.pending++;
-                    const dx = Math.max(Math.abs(minX + halfTile - center[0]) - halfTile, 0);
-                    const dz = Math.max(Math.abs(minZ + halfTile - center[2]) - halfTile, 0);
-                    const distance = Math.sqrt(dx * dx + dz * dz + heightAbove * heightAbove);
-                    const lodFootprint = Math.log2(Math.max(distance * texelsPerPixel, 1e-6));
-                    let score = distance;
-                    if (lodFootprint - level.lodIndex > 1)
-                        score += DEFERRED_PENALTY;
-                    else {
-                        tileBounds.min[0] = minX;
-                        tileBounds.min[2] = minZ;
-                        tileBounds.max[0] = minX + tileSize;
-                        tileBounds.max[2] = minZ + tileSize;
-                        if (!frustum.intersectsAabb(aabb.transform(worldBounds, tileBounds, entity.worldMatrix)))
-                            score += OFFSCREEN_PENALTY;
-                    }
-                    this.offer(clip, level, slot, tileX, tileZ, score);
+            if (level.scanSkip === 'always' || (level.scanSkip === 'while-view-holds' && !viewMoved))
+                continue;
+            this.scanLevel(clip, level, entity, frustum, heightAbove * heightAbove, texelsPerPixel);
+        }
+    }
+    private scanLevel(clip: TerrainClipmap, level: CacheLevel, entity: Entity, frustum: Frustum, heightSq: number, texelsPerPixel: number): void {
+        const { center, tilesPerSide } = clip;
+        const { tileSize, pages, edited, provisional } = level;
+        const half = clip.terrain.halfSize;
+        const halfTile = tileSize / 2;
+        const reach = 2 ** (level.lodIndex + 1) / texelsPerPixel;
+        const reachSq = reach * reach;
+        const firstX = firstTileInside(level.originX, tilesPerSide, tileSize, half);
+        const lastX = lastTileInside(level.originX, tilesPerSide, tileSize, half);
+        const firstZ = firstTileInside(level.originZ, tilesPerSide, tileSize, half);
+        const lastZ = lastTileInside(level.originZ, tilesPerSide, tileSize, half);
+        const { speculates } = level;
+        let dirtyCount = 0;
+        let offered = 0;
+        let outOfReach = 0;
+        for (let tileZ = firstZ; tileZ <= lastZ; tileZ++) {
+            const dz = Math.max(Math.abs(tileZ * tileSize + halfTile - center[2]) - halfTile, 0);
+            const row = wrapIndex(tileZ, tilesPerSide) * tilesPerSide;
+            let slotX = wrapIndex(firstX, tilesPerSide);
+            for (let tileX = firstX; tileX <= lastX; tileX++) {
+                const slot = row + slotX;
+                slotX = slotX + 1 === tilesPerSide ? 0 : slotX + 1;
+                const dirty = edited[slot] !== 0 || pages[slot * 2] !== tileX || pages[slot * 2 + 1] !== tileZ;
+                if (!dirty && provisional[slot] === 0)
+                    continue;
+                const dx = Math.max(Math.abs(tileX * tileSize + halfTile - center[0]) - halfTile, 0);
+                const distanceSq = dx * dx + dz * dz + heightSq;
+                const withinReach = distanceSq <= reachSq;
+                if (dirty)
+                    dirtyCount++;
+                else if (!withinReach)
+                    outOfReach++;
+                if (!withinReach && (!dirty || !speculates))
+                    continue;
+                let score = Math.sqrt(distanceSq);
+                if (!withinReach)
+                    score += DEFERRED_PENALTY;
+                else {
+                    if (!dirty)
+                        score += REFINEMENT_PENALTY;
+                    if (!this.tileOnScreen(level, entity, frustum, tileX, tileZ))
+                        score += OFFSCREEN_PENALTY;
                 }
+                this.offer(clip, level, slot, tileX, tileZ, score);
+                offered++;
             }
         }
+        this.stats.pending += dirtyCount;
+        if (dirtyCount > 0 || offered > 0)
+            level.scanSkip = 'never';
+        else
+            level.scanSkip = outOfReach > 0 ? 'while-view-holds' : 'always';
+    }
+    private tileOnScreen(level: CacheLevel, entity: Entity, frustum: Frustum, tileX: number, tileZ: number): boolean {
+        const { tileBounds, worldBounds } = this;
+        const { tileSize } = level;
+        tileBounds.min[0] = tileX * tileSize;
+        tileBounds.min[2] = tileZ * tileSize;
+        tileBounds.max[0] = tileX * tileSize + tileSize;
+        tileBounds.max[2] = tileZ * tileSize + tileSize;
+        return frustum.intersectsAabb(aabb.transform(worldBounds, tileBounds, entity.worldMatrix));
     }
     private offer(clip: TerrainClipmap, level: CacheLevel, slot: number, tileX: number, tileZ: number, score: number): void {
         const { jobs } = this;
@@ -424,54 +520,86 @@ export class TerrainMaterialCache {
         job.tileZ = tileZ;
         job.score = score;
     }
-    private bake(count: number): number {
-        const { gl, program, triangle, jobs, texels, tilesPerSide } = this;
+    private hiresPagesReady(virtualTexture: TerrainVirtualTexture, job: BakeJob): boolean {
+        const { level } = job;
+        const { terrain } = job.clip;
+        const minX = job.tileX * level.tileSize;
+        const minZ = job.tileZ * level.tileSize;
+        const maxX = minX + level.tileSize;
+        const maxZ = minZ + level.tileSize;
+        if (job.score >= DEFERRED_PENALTY)
+            return !virtualTexture.wantsPages(terrain, minX, minZ, maxX, maxZ, level.texelSize, level.far);
+        return virtualTexture.requestTile(terrain, minX, minZ, maxX, maxZ, level.texelSize, level.far);
+    }
+    private bake(count: number, virtualTexture: TerrainVirtualTexture): number {
+        const { gl, program, jobs, merger } = this;
         const jobCount = Math.min(count, this.jobCount);
-        const tile = TERRAIN_CACHE_TILE_TEXELS;
         program.use();
         this.materialUniforms.bindSamplers(program);
+        virtualTexture.bindSamplers(program);
         gl.disable(gl.DEPTH_TEST);
         gl.enable(gl.SCISSOR_TEST);
         let baked = 0;
         for (const clip of this.entries.values()) {
+            const { terrain, texels, tilesPerSide } = clip;
             let terrainBound = false;
+            merger.resize(tilesPerSide);
             for (const level of clip.levels) {
-                let levelBound = false;
+                let marked = 0;
                 for (let i = 0; i < jobCount; i++) {
                     const job = jobs[i];
                     if (job.clip !== clip || job.level !== level)
                         continue;
-                    if (!terrainBound) {
-                        this.materialUniforms.bind(program, clip.terrain, this.resources.resolve(clip.terrain));
-                        terrainBound = true;
-                    }
-                    if (!levelBound) {
-                        gl.bindFramebuffer(gl.FRAMEBUFFER, clip.framebuffers[level.index]);
-                        gl.viewport(0, 0, texels, texels);
-                        gl.uniform1f(program.uniform('u_texelSize'), level.texelSize);
-                        gl.uniform1f(program.uniform('u_far'), level.far);
-                        levelBound = true;
-                    }
-                    const slotX = job.slot % tilesPerSide;
-                    const slotZ = (job.slot - slotX) / tilesPerSide;
-                    gl.scissor(slotX * tile, slotZ * tile, tile, tile);
-                    gl.uniform4f(program.uniform('u_tile'), job.tileX * level.tileSize, job.tileZ * level.tileSize, slotX * tile, slotZ * tile);
-                    triangle.draw();
-                    clip.markBaked(level, job.slot, job.tileX, job.tileZ);
-                    baked++;
+                    const complete = this.hiresPagesReady(virtualTexture, job);
+                    if (!complete && !clip.isDirty(level, job.slot, job.tileX, job.tileZ))
+                        continue;
+                    clip.markBaked(level, job.slot, job.tileX, job.tileZ, complete);
+                    merger.mark(job.slot);
+                    marked++;
                 }
+                if (marked === 0)
+                    continue;
+                if (!terrainBound) {
+                    this.materialUniforms.bind(program, terrain, this.resources.resolve(terrain));
+                    virtualTexture.bind(program, terrain);
+                    terrainBound = true;
+                }
+                gl.bindFramebuffer(gl.FRAMEBUFFER, clip.framebuffers[level.index]);
+                gl.viewport(0, 0, texels, texels);
+                gl.uniform1f(program.uniform('u_texelSize'), level.texelSize);
+                gl.uniform1f(program.uniform('u_far'), level.far);
+                this.drawMarkedBlocks(clip, level);
+                baked += marked;
             }
         }
         gl.disable(gl.SCISSOR_TEST);
         gl.enable(gl.DEPTH_TEST);
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         this.materialUniforms.unbindArrays();
+        virtualTexture.unbind();
         return baked;
+    }
+    private drawMarkedBlocks(clip: TerrainClipmap, level: CacheLevel): void {
+        const { gl, program, triangle, merger, wanted } = this;
+        const { tilesPerSide } = clip;
+        const tile = TERRAIN_CACHE_TILE_TEXELS;
+        const blockCount = merger.merge(wrapIndex(level.originX, tilesPerSide), wrapIndex(level.originZ, tilesPerSide));
+        const { blocks } = merger;
+        for (let block = 0; block < blockCount; block++) {
+            const offset = block * TILE_BLOCK_FIELDS;
+            const slotX = blocks[offset];
+            const slotZ = blocks[offset + 1];
+            clip.wantedTile(level, slotX, slotZ, wanted);
+            gl.scissor(slotX * tile, slotZ * tile, blocks[offset + 2] * tile, blocks[offset + 3] * tile);
+            gl.uniform4f(program.uniform('u_tile'), wanted[0] * level.tileSize, wanted[1] * level.tileSize, slotX * tile, slotZ * tile);
+            triangle.draw();
+        }
     }
     dispose(): void {
         for (const clip of this.entries.values())
             clip.dispose();
         this.entries.clear();
         this.program.dispose();
+        this.virtualTexture?.dispose();
     }
 }

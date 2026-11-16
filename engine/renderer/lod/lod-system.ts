@@ -15,6 +15,7 @@ export class LodSystem {
     private readonly chains = new LodChainCache();
     private readonly viewLevels: LevelMemory = new WeakMap();
     private readonly probeLevels: LevelMemory = new WeakMap();
+    private readonly mirrorLevels: LevelMemory = new WeakMap();
     private settings: LodSettings = { enabled: true, bias: 0 };
     beginFrame(settings: LodSettings): void {
         this.settings = settings;
@@ -24,6 +25,7 @@ export class LodSystem {
     }
     readonly resolveMesh = (visible: VisibleMesh): MeshData => this.resolve(visible, this.viewLevels);
     readonly resolveProbeMesh = (visible: VisibleMesh): MeshData => this.resolve(visible, this.probeLevels);
+    readonly resolveMirrorMesh = (visible: VisibleMesh): MeshData => this.resolve(visible, this.mirrorLevels);
     createShadowResolver(binding: ShadowMapBinding): (candidate: ShadowCasterCandidate, cascade: number) => MeshData {
         return (candidate, cascade) => {
             if (!this.settings.enabled)

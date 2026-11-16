@@ -67,6 +67,7 @@ interface SourceState {
 const sources = new Map<number, SourceState>();
 const decodeOptions: ImageBitmapOptions = { premultiplyAlpha: 'none', colorSpaceConversion: 'none' };
 let encodeType: 'image/webp' | 'image/jpeg' | null = null;
+let buildTurn: Promise<void> = Promise.resolve();
 let tileCanvas: OffscreenCanvas | null = null;
 let tileContext: OffscreenCanvasRenderingContext2D | null = null;
 function tileKey(sourceKey: string, level: number, px: number, py: number): string {
@@ -189,6 +190,20 @@ async function storeTiles(db: IDBDatabase | null, source: SourceState, entries: 
     for (const [key, blob] of entries)
         memory.set(key, blob);
 }
+async function buildInTurn(build: () => Promise<void>): Promise<void> {
+    const previous = buildTurn;
+    let release = (): void => { };
+    buildTurn = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    await previous;
+    try {
+        await build();
+    }
+    finally {
+        release();
+    }
+}
 async function prepare(source: SourceState, url: string): Promise<void> {
     const db = await database;
     const record = db ? await idbGet<SourceRecord>(db, SOURCES_STORE, source.key) : undefined;
@@ -198,6 +213,11 @@ async function prepare(source: SourceState, url: string): Promise<void> {
         scope.postMessage({ type: 'ready', sourceId: source.id, size: source.size, levels: source.levels, fromCache: true });
         return;
     }
+    await buildInTurn(() => buildTiles(db, source, url));
+}
+async function buildTiles(db: IDBDatabase | null, source: SourceState, url: string): Promise<void> {
+    if (sources.get(source.id) !== source)
+        return;
     const blob = await download(url, (loaded, total) => {
         scope.postMessage({ type: 'progress', sourceId: source.id, phase: 'download', loaded, total });
     });

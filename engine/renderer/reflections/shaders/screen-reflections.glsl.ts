@@ -1,5 +1,6 @@
 import { HDR_ENCODING_CHUNK, HDR_RANGE_SCENE } from '@/engine/renderer/shaders/chunks/hdr-encoding.glsl';
 import { DEPTH_SLAB_TRACE_CHUNK } from './depth-slab-trace.glsl';
+import { PLANAR_REFLECTION_CHUNK } from './planar-reflection.glsl';
 import { SCREEN_SAMPLING_CHUNK } from './screen-sampling.glsl';
 import { SURFACE_BUFFER_ENCODING_CHUNK } from './surface-buffer.glsl';
 export const SCREEN_REFLECTIONS_FRAGMENT_SHADER = `#version 300 es
@@ -21,6 +22,7 @@ ${HDR_ENCODING_CHUNK}
 ${SURFACE_BUFFER_ENCODING_CHUNK}
 ${SCREEN_SAMPLING_CHUNK}
 ${DEPTH_SLAB_TRACE_CHUNK}
+${PLANAR_REFLECTION_CHUNK}
 
 out vec4 fragColor;
 
@@ -34,7 +36,12 @@ void main() {
   }
 
   vec3 origin = viewRayAt(gl_FragCoord.xy) * -viewZFromDepth(bufferDepth);
-  vec3 direction = reflect(normalize(origin), mat3(u_view) * surface.N);
+  vec3 normal = mat3(u_view) * surface.N;
+  if (liesOnMirror(origin, normal)) {
+    fragColor = encodeHdr(mirrorRadiance(gl_FragCoord.xy / u_sceneSize), 1.0, ${HDR_RANGE_SCENE}.0);
+    return;
+  }
+  vec3 direction = reflect(normalize(origin), normal);
   float facingFade = 1.0 - smoothstep(0.55, 0.95, direction.z);
   if (facingFade <= 0.0) {
     fragColor = vec4(0.0);

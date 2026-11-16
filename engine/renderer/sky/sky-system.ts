@@ -154,6 +154,12 @@ export class SkySystem {
         return 1;
     }
     renderProbeBackground(camera: PerspectiveCamera, size: number, elapsedSeconds: number): number {
+        return this.renderLayeredBackground(camera, size, size, elapsedSeconds, false);
+    }
+    renderMirrorBackground(camera: PerspectiveCamera, width: number, height: number, elapsedSeconds: number): number {
+        return this.renderLayeredBackground(camera, width, height, elapsedSeconds, true);
+    }
+    private renderLayeredBackground(camera: PerspectiveCamera, width: number, height: number, elapsedSeconds: number, sunDisk: boolean): number {
         if (!this.frame.enabled || !camera.invertible)
             return 0;
         const { cloudShadow } = this.binding;
@@ -163,9 +169,9 @@ export class SkySystem {
             luts: this.luts,
             clouds: null,
             cloudLayer: this.frame.cloudsEnabled && cloudShadow.enabled ? cloudShadow : null,
-            sunDisk: false,
-            width: size,
-            height: size,
+            sunDisk,
+            width,
+            height,
             elapsedSeconds,
         });
         return 1;
