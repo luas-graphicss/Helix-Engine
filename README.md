@@ -12,6 +12,8 @@ From the add menu you can place primitives, terrain, a directional light, ambien
 
 You need Node.js and pnpm. Clone the repository, run pnpm install and then pnpm dev. The editor opens on the home page, at localhost on port 3000. For a production build run pnpm build and then pnpm start.
 
+To check a change, run pnpm typecheck and pnpm test. The second runs the engine test suites under engine/debug, which cover the math, noise, color, culling, mesh and physics modules in Node, without a browser. GitHub Actions runs both, and the production build, on every push to main and on every pull request.
+
 ## Development time
 
 So far Helix took three days of work. It is still in development, so a lot is missing and things can change from one commit to the next.
