@@ -10,11 +10,9 @@ import { FULLSCREEN_VERTEX_SHADER } from '@/engine/renderer/shaders/chunks/fulls
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { PROBE_PREFILTER_FRAGMENT_SHADER } from '../shaders/probe-prefilter.glsl';
 import { CubeFaceCamera } from './cube-face-camera';
-import { CROSSFADE_FRAMES, ProbeCrossfade } from './probe-crossfade';
+import { ProbeAnchor } from './probe-anchor';
+import { ProbeCrossfade } from './probe-crossfade';
 import { CUBE_FACE_COUNT, createProbeCubemap } from './probe-cubemap';
-const REFRESH_DISTANCE = 0.02;
-const LEAD_FRAMES = CUBE_FACE_COUNT - 1 + CROSSFADE_FRAMES;
-const MAX_LEAD = 1.0;
 const SUN_REFRESH_COS = Math.cos((0.5 * Math.PI) / 180);
 const EXPOSURE_REFRESH = 0.01;
 const MAX_LEVELS = 6;
@@ -30,13 +28,14 @@ export class ReflectionProbe {
     readonly depth: WebGLTexture;
     readonly stats: ReflectionProbeStats = { facesRendered: 0, prefiltered: false, drawCalls: 0 };
     valid = false;
-    readonly position = vec3.create();
+    private readonly anchor = new ProbeAnchor();
+    private readonly capturePosition = vec3.create();
     private readonly capturedSun = vec3.create(0, 1, 0);
-    private readonly lastCameraPosition = vec3.create();
-    private readonly cameraStep = vec3.create();
     private capturedExposure = 1;
     private nextFace = 0;
     private cycleActive = false;
+    private cycleFollowsCamera = false;
+    private fadeEndsWithTravel = false;
     private invalidated = true;
     private readonly cameras: CubeFaceCamera[] = [];
     private readonly faceFramebuffer: WebGLFramebuffer;
@@ -88,22 +87,22 @@ export class ReflectionProbe {
     update(camera: PerspectiveCamera, sunDirection: Vec3, sceneAnimating: boolean): boolean {
         this.stats.facesRendered = 0;
         this.stats.prefiltered = false;
-        this.stats.drawCalls = this.crossfade.advance();
-        vec3.subtract(this.cameraStep, camera.position, this.lastCameraPosition);
-        vec3.copy(this.lastCameraPosition, camera.position);
+        this.anchor.trackCamera(camera.position);
+        this.stats.drawCalls = this.fadeEndsWithTravel && !this.anchor.cameraMoving ? this.crossfade.finish() : this.crossfade.advance();
+        const followCamera = !this.valid || this.anchor.shouldFollow(camera.position);
+        if (this.cycleActive && this.cycleFollowsCamera && !followCamera)
+            this.abandonCycle();
         if (this.cycleActive)
             return true;
-        const moved = vec3.distance(camera.position, this.position) > REFRESH_DISTANCE;
         const sunTurned = vec3.dot(sunDirection, this.capturedSun) < SUN_REFRESH_COS;
         const exposureChanged = Math.abs(camera.exposure - this.capturedExposure) > EXPOSURE_REFRESH * Math.max(this.capturedExposure, 1e-3);
-        if (!(this.invalidated || !this.valid || moved || sunTurned || exposureChanged || sceneAnimating))
+        if (!(followCamera || this.invalidated || sunTurned || exposureChanged || sceneAnimating))
             return false;
-        const stepLength = vec3.length(this.cameraStep);
-        const lead = stepLength > 0 && stepLength < MAX_LEAD ? Math.min(stepLength * LEAD_FRAMES, MAX_LEAD) / stepLength : 0;
-        vec3.scaleAndAdd(this.position, camera.position, this.cameraStep, lead);
+        vec3.copy(this.capturePosition, followCamera ? camera.position : this.anchor.position);
         vec3.copy(this.capturedSun, sunDirection);
         this.capturedExposure = camera.exposure;
         this.invalidated = false;
+        this.cycleFollowsCamera = followCamera;
         this.nextFace = 0;
         this.cycleActive = true;
         return true;
@@ -115,7 +114,7 @@ export class ReflectionProbe {
     ] | null, encodedRange: number): CubeFaceCamera {
         const { gl } = this;
         const camera = this.cameras[this.nextFace];
-        vec3.copy(camera.position, this.position);
+        vec3.copy(camera.position, this.capturePosition);
         camera.near = mainCamera.near;
         camera.far = mainCamera.far;
         camera.exposure = this.capturedExposure;
@@ -140,6 +139,7 @@ export class ReflectionProbe {
         if (this.nextFace >= CUBE_FACE_COUNT) {
             this.prefilter();
             this.presentCapture();
+            this.anchor.moveTo(this.capturePosition);
             this.nextFace = 0;
             this.cycleActive = false;
             this.valid = true;
@@ -155,8 +155,14 @@ export class ReflectionProbe {
         this.prefilterProgram.dispose();
         this.crossfade.dispose();
     }
+    private abandonCycle(): void {
+        this.cycleActive = false;
+        this.nextFace = 0;
+        this.invalidated = true;
+    }
     private presentCapture(): void {
         if (this.valid) {
+            this.fadeEndsWithTravel = this.cycleFollowsCamera && this.anchor.cameraTraveling;
             this.crossfade.fadeIn();
             return;
         }
