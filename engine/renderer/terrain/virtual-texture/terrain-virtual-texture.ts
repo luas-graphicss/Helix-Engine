@@ -4,7 +4,7 @@ import type { Terrain } from '@/engine/terrain/core/terrain';
 import { MAX_TERRAIN_LAYERS } from '@/engine/terrain/core/splat-map';
 import type { HiresMapKind, HiresMapSource } from '@/engine/terrain/materials/material-catalog';
 import { TERRAIN_VT_ALBEDO_TEXTURE_UNIT, TERRAIN_VT_NORMAL_TEXTURE_UNIT, TERRAIN_VT_PAGES_TEXTURE_UNIT } from '../terrain-texture-units';
-import { VT_CACHE_TEXELS, VT_MAX_IN_FLIGHT, VT_PAGES_PER_SIDE, VT_SLOT_TEXELS, VT_SLOTS_PER_SIDE, VT_SLOTS_PER_SLICE, VT_UPLOADS_PER_FRAME, VT_VIRTUAL_SIZE_LOG2, vtPageKey, vtPageKeySource, vtPageLevel, vtSourceLevels, } from './vt-layout';
+import { VT_CACHE_TEXELS, VT_MAX_IN_FLIGHT, VT_PAGES_PER_SIDE, VT_SLOT_TEXELS, VT_SLOTS_PER_SIDE, VT_SLOTS_PER_SLICE, VT_UPLOAD_BUDGET_MS, VT_UPLOADS_PER_FRAME, VT_VIRTUAL_SIZE_LOG2, vtPageKey, vtPageKeySource, vtPageLevel, vtSourceLevels, } from './vt-layout';
 import { VtPageTable } from './vt-page-table';
 import { VtTileStreamer, type VtSourceEvent } from './vt-tile-streamer';
 const KINDS: readonly HiresMapKind[] = ['albedo', 'normal'];
@@ -464,9 +464,11 @@ export class TerrainVirtualTexture {
         gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
         gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
         let bound: PhysicalCache | null = null;
-        const count = Math.min(arrived.length, VT_UPLOADS_PER_FRAME);
-        for (let i = 0; i < count; i++) {
-            const { pending, bitmap } = arrived[i];
+        const limit = Math.min(arrived.length, VT_UPLOADS_PER_FRAME);
+        const deadline = performance.now() + VT_UPLOAD_BUDGET_MS;
+        let taken = 0;
+        while (taken < limit && (taken === 0 || performance.now() < deadline)) {
+            const { pending, bitmap } = arrived[taken++];
             this.pending.delete(pending.key);
             const cache = caches[pending.source.kind];
             if (!cache.resident.has(pending.key)) {
@@ -485,7 +487,7 @@ export class TerrainVirtualTexture {
             }
             bitmap.close();
         }
-        arrived.splice(0, count);
+        arrived.splice(0, taken);
         if (bound)
             gl.bindTexture(gl.TEXTURE_2D_ARRAY, null);
     }
