@@ -7,6 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "node engine/debug/tests/run-test-suites.mjs",
     "bench:physics": "node engine/debug/bench/run-physics-benchmark.mjs",
     "test:physics-worker": "node engine/debug/bench/run-physics-benchmark.mjs --entry engine/debug/bench/physics-worker-test.entry.ts",
     "test:physics-joints": "node engine/debug/bench/run-physics-benchmark.mjs --entry engine/debug/bench/physics-joints-test.entry.ts",
