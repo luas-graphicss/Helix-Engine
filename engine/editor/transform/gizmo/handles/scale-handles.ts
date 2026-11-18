@@ -1,4 +1,5 @@
 import * as vec3 from '@/engine/core/math/vec3';
+import type { Vec3 } from '@/engine/core/math/vec3';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { AXIS_INDICES, type GizmoFrame } from '../gizmo-frame';
 import type { GizmoLayout, HandleAction } from '../gizmo-handle';
@@ -15,7 +16,20 @@ const AXIS_END = 0.92;
 const PLANE_NEAR = 0.28;
 const PLANE_FAR = 0.5;
 const CENTER_RADIUS = 0.075;
+const TIP_RADIUS = 0.05;
 const toCamera = vec3.create();
+const tipCenter = vec3.create();
+export function addUniformScaleCube(layout: GizmoLayout, frame: GizmoFrame): void {
+    placeOrientedPoint(layout.add(UNIFORM_ID, 'cube', 'neutral', UNIFORM_ACTION, POINT_PRIORITY), frame, frame.origin, CENTER_RADIUS);
+}
+export function addScaleTips(layout: GizmoLayout, frame: GizmoFrame, towardCamera: Vec3, distance: number): void {
+    for (const axis of AXIS_INDICES) {
+        if (isAxisEdgeOn(frame.axes[axis], towardCamera))
+            continue;
+        vec3.scaleAndAdd(tipCenter, frame.origin, frame.axes[axis], distance * frame.size);
+        placeOrientedPoint(layout.add(AXIS_IDS[axis], 'cube', axis, AXIS_ACTIONS[axis], POINT_PRIORITY), frame, tipCenter, TIP_RADIUS);
+    }
+}
 export function addScaleHandles(layout: GizmoLayout, frame: GizmoFrame, camera: PerspectiveCamera): void {
     directionToCamera(toCamera, camera, frame.origin);
     for (const normal of AXIS_INDICES) {
@@ -26,5 +40,5 @@ export function addScaleHandles(layout: GizmoLayout, frame: GizmoFrame, camera: 
         if (!isAxisEdgeOn(frame.axes[axis], toCamera))
             placeAxisSegment(layout.add(AXIS_IDS[axis], 'stem', axis, AXIS_ACTIONS[axis], SEGMENT_PRIORITY), frame, axis, AXIS_START, AXIS_END);
     }
-    placeOrientedPoint(layout.add(UNIFORM_ID, 'cube', 'neutral', UNIFORM_ACTION, POINT_PRIORITY), frame, frame.origin, CENTER_RADIUS);
+    addUniformScaleCube(layout, frame);
 }

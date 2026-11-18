@@ -1,5 +1,5 @@
 'use client';
-import { Mountain, MousePointer2, Move3d, Rotate3d, Scale3d } from 'lucide-react';
+import { Axis3d, Mountain, MousePointer2, Move3d, Orbit, Rotate3d, Scale3d } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/engine/ui/icon-button';
@@ -13,6 +13,8 @@ const TOOL_ICON: Record<TransformTool, LucideIcon> = {
     translate: Move3d,
     rotate: Rotate3d,
     scale: Scale3d,
+    transform: Axis3d,
+    universal: Orbit,
     terrain: Mountain,
 };
 export function ToolRail() {

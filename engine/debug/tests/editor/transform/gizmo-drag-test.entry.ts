@@ -1,65 +1,17 @@
 import { degToRad } from '@/engine/core/math/scalar';
 import * as vec3 from '@/engine/core/math/vec3';
-import type { Entity } from '@/engine/core/scene/entity';
 import { Scene } from '@/engine/core/scene/scene';
-import { GizmoDrag } from '@/engine/editor/transform/drag/gizmo-drag';
-import { createGizmoFrame, type AxisIndex, type GizmoFrame } from '@/engine/editor/transform/gizmo/gizmo-frame';
-import { GizmoLayout } from '@/engine/editor/transform/gizmo/gizmo-handle';
-import { buildGizmoLayout } from '@/engine/editor/transform/gizmo/gizmo-layout';
-import type { GizmoPointer } from '@/engine/editor/transform/gizmo/gizmo-pointer';
-import type { GizmoTool, PivotMode } from '@/engine/editor/transform/transform-settings';
-import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
+import { createGizmoFrame } from '@/engine/editor/transform/gizmo/gizmo-frame';
 import { createBox } from '@/engine/renderer/geometry/primitives';
 import { createCheckList } from '../../support/check-list';
+import { alongAxis, beginDrag, createStage, onRing, type Stage } from './drag-stage';
 import { createCamera, NO_SNAP, pointerAt, pointerOver, VIEWPORT_SIZE, worldAxisOf, worldPositionOf, type Triple } from './transform-fixture';
 const TOLERANCE = 5e-3;
 const SNAPPING = { ...NO_SNAP, enabled: true };
 const SCREEN_CENTER = VIEWPORT_SIZE / 2;
 const checks = createCheckList('Arrasto das alças do gizmo');
-interface Stage {
-    readonly scene: Scene;
-    readonly camera: PerspectiveCamera;
-    readonly boxes: readonly Entity[];
-}
-interface ActiveDrag {
-    readonly drag: GizmoDrag;
-    readonly frame: GizmoFrame;
-}
-function createStage(...positions: Triple[]): Stage {
-    const scene = new Scene();
-    const boxes = positions.map((position, index) => {
-        const box = scene.createEntity({ name: `Caixa ${index + 1}`, kind: 'mesh', mesh: createBox(1, 1, 1) });
-        vec3.set(box.transform.position, ...position);
-        return box;
-    });
-    scene.updateWorldMatrices();
-    return { scene, camera: createCamera([0, 0, 10]), boxes };
-}
-function alongAxis(frame: GizmoFrame, axis: AxisIndex, units: number): Triple {
-    const point = vec3.scaleAndAdd(vec3.create(), frame.origin, frame.axes[axis], units * frame.size);
-    return [point[0], point[1], point[2]];
-}
-function onRing(frame: GizmoFrame, degrees: number): Triple {
-    const angle = degToRad(degrees);
-    return [frame.origin[0] + Math.cos(angle) * frame.size, frame.origin[1] + Math.sin(angle) * frame.size, frame.origin[2]];
-}
 function shifted(point: Triple, x: number): Triple {
     return [point[0] + x, point[1], point[2]];
-}
-function beginDrag({ scene, camera, boxes }: Stage, tool: GizmoTool, handleId: string, pivotMode: PivotMode, start: (frame: GizmoFrame) => GizmoPointer): ActiveDrag {
-    scene.updateWorldMatrices();
-    const targets = { entities: boxes, active: boxes[boxes.length - 1] };
-    const layout = new GizmoLayout();
-    const frame = createGizmoFrame();
-    if (!buildGizmoLayout(layout, frame, { tool, targets, pivotMode, space: 'global', camera, scale: 1, frozenAxes: null }))
-        throw new Error('O gizmo deveria estar na frente da câmera');
-    const handle = layout.find(handleId);
-    if (!handle)
-        throw new Error(`A alça ${handleId} deveria existir nesta vista`);
-    const drag = GizmoDrag.begin({ camera, frame, handle, targets, pivotMode, pointer: start(frame) });
-    if (!drag)
-        throw new Error(`O arrasto de ${handleId} deveria começar`);
-    return { drag, frame };
 }
 function translation(): void {
     const stage = createStage([0, 0, 0]);

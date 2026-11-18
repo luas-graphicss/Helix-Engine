@@ -17,7 +17,7 @@ import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { focusInspectorName } from './focus-targets';
 import type { ShortcutActionId } from './shortcut-actions';
 import { shortcutBindings } from './shortcut-bindings';
-import { terrainToolForAction } from './tool-actions';
+import { terrainToolForAction, viewportToolForAction } from './tool-actions';
 type Router = ReturnType<typeof useRouter>;
 const BRUSH_RADIUS_STEP = 1.25;
 interface ShortcutContext {
@@ -43,6 +43,11 @@ function runEditorAction(action: ShortcutActionId, { session, dock, router, even
         if (session.tool !== 'terrain')
             return false;
         session.terrain.setTool(terrainTool);
+        return true;
+    }
+    const viewportTool = viewportToolForAction(action);
+    if (viewportTool) {
+        session.setTool(viewportTool);
         return true;
     }
     switch (action) {
@@ -147,21 +152,6 @@ function runEditorAction(action: ShortcutActionId, { session, dock, router, even
             return true;
         case 'selection.unlockAll':
             unlockAllEntities(session);
-            return true;
-        case 'tool.select':
-            session.setTool('select');
-            return true;
-        case 'tool.translate':
-            session.setTool('translate');
-            return true;
-        case 'tool.rotate':
-            session.setTool('rotate');
-            return true;
-        case 'tool.scale':
-            session.setTool('scale');
-            return true;
-        case 'tool.terrain':
-            session.setTool('terrain');
             return true;
         case 'transform.togglePivot':
             session.togglePivotMode();

@@ -85,6 +85,8 @@ export const ENGINE_SETTINGS = {
             { value: 'translate', label: 'Mover' },
             { value: 'rotate', label: 'Rotacionar' },
             { value: 'scale', label: 'Escalar' },
+            { value: 'transform', label: 'Transformar' },
+            { value: 'universal', label: 'Universal' },
         ],
     }),
     'editor.open.space': selectSetting({

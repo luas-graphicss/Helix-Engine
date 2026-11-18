@@ -88,6 +88,8 @@ export const SHORTCUT_ACTION_GROUPS = [
             action('tool.translate', 'Mover', ['w']),
             action('tool.rotate', 'Rotacionar', ['e']),
             action('tool.scale', 'Escalar', ['r']),
+            action('tool.transform', 'Transformar', ['y'], 'Setas, anéis e escala uniforme no mesmo gizmo'),
+            action('tool.universal', 'Universal', ['u'], 'Todas as alças de mover, rotacionar e escalar'),
             action('tool.terrain', 'Terreno', ['t'], 'Esculpir e pintar'),
         ],
     },

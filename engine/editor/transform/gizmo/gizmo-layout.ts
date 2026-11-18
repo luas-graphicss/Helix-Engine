@@ -7,6 +7,8 @@ import type { GizmoLayout } from './gizmo-handle';
 import { addMoveHandles } from './handles/move-handles';
 import { addRotateHandles } from './handles/rotate-handles';
 import { addScaleHandles } from './handles/scale-handles';
+import { addTransformHandles } from './handles/transform-handles';
+import { addUniversalHandles } from './handles/universal-handles';
 export interface GizmoLayoutRequest {
     readonly tool: GizmoTool;
     readonly targets: TransformTargets;
@@ -21,6 +23,8 @@ const HANDLE_SETS: Record<GizmoTool, HandleSet> = {
     translate: addMoveHandles,
     rotate: addRotateHandles,
     scale: addScaleHandles,
+    transform: addTransformHandles,
+    universal: addUniversalHandles,
 };
 export function toolHonorsSpace(tool: GizmoTool): boolean {
     return tool !== 'scale';

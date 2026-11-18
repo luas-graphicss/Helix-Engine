@@ -12,6 +12,10 @@ export const VIEWPORT_TOOL_GROUPS: readonly (readonly ViewportToolDefinition[])[
         { id: 'rotate', label: 'Rotacionar', shortcut: 'tool.rotate' },
         { id: 'scale', label: 'Escalar', shortcut: 'tool.scale' },
     ],
+    [
+        { id: 'transform', label: 'Transformar', shortcut: 'tool.transform' },
+        { id: 'universal', label: 'Universal', shortcut: 'tool.universal' },
+    ],
     [{ id: 'terrain', label: 'Terreno', shortcut: 'tool.terrain' }],
 ];
 export const VIEWPORT_TOOLS: readonly ViewportToolDefinition[] = VIEWPORT_TOOL_GROUPS.flat();

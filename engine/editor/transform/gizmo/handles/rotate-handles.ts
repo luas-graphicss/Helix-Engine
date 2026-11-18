@@ -10,18 +10,24 @@ const AXIS_ACTIONS = AXIS_INDICES.map<HandleAction>((axis) => ({ kind: 'rotateAx
 const VIEW_ACTION: HandleAction = { kind: 'rotateView' };
 const AXIS_RING_RADIUS = 1;
 const VIEW_RING_RADIUS = 1.16;
-export function addRotateHandles(layout: GizmoLayout, frame: GizmoFrame, camera: PerspectiveCamera): void {
+export function addViewRing(layout: GizmoLayout, frame: GizmoFrame, camera: PerspectiveCamera, radius: number): void {
     const view = layout.add(VIEW_ID, 'ring', 'neutral', VIEW_ACTION, SEGMENT_PRIORITY);
     vec3.copy(view.points[0], frame.origin);
     cameraRight(view.points[1], camera);
     cameraUp(view.points[2], camera);
-    view.radius = VIEW_RING_RADIUS * frame.size;
+    view.radius = radius * frame.size;
+}
+export function addAxisRings(layout: GizmoLayout, frame: GizmoFrame, radius: number): void {
     for (const axis of AXIS_INDICES) {
         const ring = layout.add(AXIS_IDS[axis], 'ring', axis, AXIS_ACTIONS[axis], SEGMENT_PRIORITY);
         vec3.copy(ring.points[0], frame.origin);
         vec3.copy(ring.points[1], frame.axes[nextAxis(axis)]);
         vec3.copy(ring.points[2], frame.axes[previousAxis(axis)]);
-        ring.radius = AXIS_RING_RADIUS * frame.size;
+        ring.radius = radius * frame.size;
         ring.frontOnly = true;
     }
+}
+export function addRotateHandles(layout: GizmoLayout, frame: GizmoFrame, camera: PerspectiveCamera): void {
+    addViewRing(layout, frame, camera, VIEW_RING_RADIUS);
+    addAxisRings(layout, frame, AXIS_RING_RADIUS);
 }
