@@ -4,15 +4,19 @@ import { cn } from '@/lib/utils';
 import { IconButton } from '@/engine/ui/icon-button';
 import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { useDockLayout } from '@/engine/editor/layout/dock-layout-context';
+import { HUD_GROUP_CLASS } from './hud-styles';
+import { AlignmentMenu } from './tools/alignment-menu';
+import { TransformOptions } from './tools/transform-options';
 import { ViewModeMenu } from './view-mode-menu';
-export const HUD_GROUP_CLASS = 'pointer-events-auto flex items-center gap-px rounded-sm border border-border bg-surface-sunken/85 p-px shadow-raised backdrop-blur-sm';
 export function ViewportToolbar() {
     const session = useSessionTopic('scene', 'selection', 'view');
     const [layout, dock] = useDockLayout();
-    return (<div className="pointer-events-none flex w-full items-start justify-between gap-1.5">
+    return (<div className="pointer-events-none flex w-full flex-wrap items-start gap-1.5">
       <div className={HUD_GROUP_CLASS}>
         <ViewModeMenu />
       </div>
+      <TransformOptions />
+      <AlignmentMenu />
 
       <div className={cn(HUD_GROUP_CLASS, 'ml-auto')}>
         <IconButton label="Grade (G)" size="sm" active={session.showGrid} onClick={() => session.toggleGrid()}>

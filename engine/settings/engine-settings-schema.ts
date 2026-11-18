@@ -85,6 +85,9 @@ export const ENGINE_SETTINGS = {
             { value: 'translate', label: 'Mover' },
             { value: 'rotate', label: 'Rotacionar' },
             { value: 'scale', label: 'Escalar' },
+            { value: 'transform', label: 'Transformar' },
+            { value: 'universal', label: 'Universal' },
+            { value: 'rect', label: 'Retângulo' },
         ],
     }),
     'editor.open.space': selectSetting({
@@ -94,6 +97,15 @@ export const ENGINE_SETTINGS = {
         options: [
             { value: 'global', label: 'Global' },
             { value: 'local', label: 'Local' },
+        ],
+    }),
+    'editor.open.pivot': selectSetting({
+        label: 'Posição inicial do gizmo',
+        description: 'Se o gizmo começa na origem do ator ativo ou no centro da seleção.',
+        default: 'pivot',
+        options: [
+            { value: 'pivot', label: 'Pivô' },
+            { value: 'center', label: 'Centro' },
         ],
     }),
     'editor.open.grid': booleanSetting({
@@ -252,6 +264,17 @@ export const ENGINE_SETTINGS = {
         label: 'Alinhar à grade ao abrir',
         description: 'O encaixe de transformação começa ligado (Ctrl durante o arrasto inverte).',
         default: false,
+    }),
+    'snap.target': selectSetting({
+        label: 'Alvo do encaixe',
+        description: 'Em que o movimento encaixa quando o encaixe está ligado: incrementos, grade do mundo, vértices ou superfícies.',
+        default: 'increment',
+        options: [
+            { value: 'increment', label: 'Incremento' },
+            { value: 'grid', label: 'Grade' },
+            { value: 'vertex', label: 'Vértice' },
+            { value: 'surface', label: 'Superfície' },
+        ],
     }),
     'snap.translate': numberSetting({
         label: 'Passo de translação',
@@ -817,7 +840,7 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
         description: 'Câmera, estado inicial do viewport, interface do editor, console e importação.',
         groups: [
             { title: 'Câmera', settings: ['editor.camera.orbitSpeed', 'editor.camera.panSpeed', 'editor.camera.zoomSpeed', 'editor.camera.fov', 'editor.camera.invertZoom', 'editor.camera.invertOrbitY'] },
-            { title: 'Ao abrir um jogo', settings: ['editor.open.tool', 'editor.open.space', 'editor.open.grid', 'editor.open.shadows', 'editor.open.perfHud'] },
+            { title: 'Ao abrir um jogo', settings: ['editor.open.tool', 'editor.open.space', 'editor.open.pivot', 'editor.open.grid', 'editor.open.shadows', 'editor.open.perfHud'] },
             { title: 'Interface do editor', settings: ['editor.ui.scale', 'editor.ui.statusBar', 'editor.ui.menuShortcuts', 'editor.hierarchy.kindLabels', 'editor.ui.reduceMotion'] },
             { title: 'Console', settings: ['editor.console.order', 'editor.console.limit', 'editor.console.revealOnError'] },
             { title: 'Importação de modelos', settings: ['editor.import.placement', 'editor.import.frameAfterImport', 'editor.import.saveToLibrary', 'editor.import.convertUnits'] },
@@ -843,7 +866,7 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
         description: 'Enquadramento, gizmo e o encaixe de transformação da cena 3D.',
         groups: [
             { title: 'Seleção e gizmo', settings: ['selection.focusPadding', 'editor.gizmo.size'] },
-            { title: 'Encaixe de transformação', settings: ['snap.enabled', 'snap.translate', 'snap.rotate', 'snap.scale'] },
+            { title: 'Encaixe de transformação', settings: ['snap.enabled', 'snap.target', 'snap.translate', 'snap.rotate', 'snap.scale'] },
         ],
     },
     {

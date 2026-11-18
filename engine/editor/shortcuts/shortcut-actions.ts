@@ -88,7 +88,18 @@ export const SHORTCUT_ACTION_GROUPS = [
             action('tool.translate', 'Mover', ['w']),
             action('tool.rotate', 'Rotacionar', ['e']),
             action('tool.scale', 'Escalar', ['r']),
+            action('tool.transform', 'Transformar', ['y'], 'Setas, anéis e escala uniforme no mesmo gizmo'),
+            action('tool.universal', 'Universal', ['u'], 'Todas as alças de mover, rotacionar e escalar'),
+            action('tool.rect', 'Retângulo', ['i'], 'Redimensionar pelas bordas e cantos dos limites da seleção'),
             action('tool.terrain', 'Terreno', ['t'], 'Esculpir e pintar'),
+        ],
+    },
+    {
+        title: 'Transformação',
+        scope: 'editor',
+        actions: [
+            action('transform.togglePivot', 'Alternar o gizmo entre Pivô e Centro', ['z']),
+            action('transform.toggleSpace', 'Alternar os eixos entre Global e Local', ['x']),
         ],
     },
     {

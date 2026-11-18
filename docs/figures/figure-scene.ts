@@ -12,7 +12,7 @@ export interface FigureScene {
     readonly height: number;
     readonly showGrid: boolean;
     build(camera: PerspectiveCamera): Scene;
-    gizmo?(scene: Scene): GizmoRenderRequest;
+    gizmo?(scene: Scene, camera: PerspectiveCamera): GizmoRenderRequest;
 }
 export const FIGURE_COLORS = {
     amber: [0.92, 0.4, 0.07],

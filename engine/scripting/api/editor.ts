@@ -5,14 +5,16 @@ import { editorDialogs, type EditorDialogId } from '@/engine/editor/dialogs/edit
 import { dockLayoutRegistry } from '@/engine/editor/layout/dock-layout-context';
 import { DOCK_AREAS, DOCK_PANEL_IDS, type DockArea, type DockPanelId } from '@/engine/editor/layout/dock-layout';
 import { compileProject, openScriptAssetInEditor, runScript, saveActiveScript, saveAllScripts, saveScriptTab } from '@/engine/editor/operations/script-operations';
-import type { TransformSpace, TransformTool } from '@/engine/editor/session/editor-session';
+import type { TransformTool } from '@/engine/editor/session/editor-session';
+import { VIEWPORT_TOOLS } from '@/engine/editor/transform/tool-catalog';
+import type { TransformSpace } from '@/engine/editor/transform/transform-settings';
 import { ENGINE_SETTINGS, type SettingId, type SettingValue } from '@/engine/settings/engine-settings-schema';
 import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { HelixArgumentError, HelixError } from '../runtime/script-errors';
 import type { RuntimeHost } from '../runtime/runtime-host';
 import { requireEntity, requireFunction, requireNumber, requireOneOf, requireString } from '../runtime/values';
 const DIALOG_IDS: readonly EditorDialogId[] = ['settings', 'shortcuts', 'autosaves', 'beta', 'about', 'exit', 'renameProject', 'baseLanguage'];
-const TOOLS: readonly TransformTool[] = ['select', 'translate', 'rotate', 'scale', 'terrain'];
+const TOOLS: readonly TransformTool[] = VIEWPORT_TOOLS.map((tool) => tool.id);
 const SPACES: readonly TransformSpace[] = ['global', 'local'];
 const SETTING_IDS = Object.keys(ENGINE_SETTINGS) as SettingId[];
 export interface ScriptTool {

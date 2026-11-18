@@ -1,11 +1,13 @@
 import type { SessionOverview } from '@/engine/mcp/worker/session/session-overview';
 const CONNECT_HINT = 'ask the user to open the game in the Helix editor and switch on the MCP connection in the Assistant panel';
 const WORKFLOW = 'Workflow: get_project_overview -> list_scene or list_scripts -> change the game -> compile_scripts -> control_playtest action=play -> read_console.';
+const EXTERNAL_ASSETS = 'External assets: list_asset_sources shows the libraries of models, textures, HDRIs, audio and images that the user allowed, search_assets returns the results with a sheet of thumbnails, inspect_asset lists formats and sizes, and insert_asset puts the chosen one in the game.';
 const FAILURE_RULE = 'A failure that says "Nothing was executed" is safe to retry. Otherwise inspect the project before repeating the call.';
 export const AGENT_INSTRUCTIONS = [
     'Helix Engine MCP controls the Helix game editor open in the browser of the user: scene, scripts, terrain, interface, playtest, imports and screenshots.',
     WORKFLOW,
     'Files: upload with PUT <this URL>/files/<name>, or call fetch_file with a public https URL, then pass the returned file id to import_model, import_asset or apply_texture. capture_viewport returns a screenshot of the viewport.',
+    EXTERNAL_ASSETS,
     `engine_status tells whether the editor is connected. When a call fails with ENGINE_OFFLINE, ${CONNECT_HINT}.`,
     FAILURE_RULE,
 ].join('\n');
@@ -45,6 +47,7 @@ OPTION 2 - plain curl:
 OPTION 3 - MCP client (Streamable HTTP): POST ${baseUrl} with JSON-RPC.
 
 ${WORKFLOW}
+${EXTERNAL_ASSETS}
 ${FAILURE_RULE}
 `;
 }

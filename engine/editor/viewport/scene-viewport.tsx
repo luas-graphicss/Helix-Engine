@@ -4,6 +4,8 @@ import { Pipette } from 'lucide-react';
 import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu';
 import { cn } from '@/lib/utils';
 import { ViewportToolbar } from './viewport-toolbar';
+import { GizmoReadout } from './tools/gizmo-readout';
+import { ToolRail } from './tools/tool-rail';
 import { AxisGizmo } from './axis-gizmo';
 import { useViewportRenderer } from './use-viewport-renderer';
 import { useViewportInput, type ViewportInputHandlers } from './use-viewport-input';
@@ -64,9 +66,18 @@ export function SceneViewport() {
           </div>)}
 
         
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col items-center gap-1.5 p-1.5">
+        <div className="pointer-events-none absolute inset-0 flex flex-col gap-1.5 p-1.5">
           <ViewportToolbar />
-          <ColorPickerHint />
+          <div className="flex min-h-0 flex-1 items-start gap-1.5">
+            <ToolRail />
+            <div className="flex min-w-0 flex-1 justify-center">
+              <ColorPickerHint />
+            </div>
+          </div>
+        </div>
+
+        <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
+          <GizmoReadout />
         </div>
 
         <div className="pointer-events-none absolute right-2 bottom-2">

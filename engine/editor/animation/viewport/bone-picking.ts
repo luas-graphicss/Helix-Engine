@@ -4,7 +4,7 @@ import type { Vec3 } from '@/engine/core/math/vec3';
 import { createRay } from '@/engine/core/math/ray';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { LIMB_IDS, resolveLimb, type LimbId } from '@/engine/animation/ik/limb-chains';
-import { createScreenPoint, distanceToSegment2D, projectToScreen } from '@/engine/editor/gizmo/screen-space';
+import { createScreenPoint, distanceToSegment2D, projectToScreen } from '@/engine/editor/viewport/screen-space';
 import { buildPickRay } from '@/engine/editor/viewport/pick-entity';
 import type { AnimationEditor, Performer } from '../animation-editor';
 export interface BoneHit {

@@ -1,12 +1,14 @@
 import type { ToolParameters } from '@/engine/editor/assistant/providers/tool-declaration';
 import type { AssistantTool, ToolAccess, ToolOutput } from '@/engine/editor/assistant/tools/assistant-tool';
 import type { ToolInput } from '@/engine/editor/assistant/tools/tool-input';
+import type { SourcePermissions } from '@/engine/editor/mcp/asset-sources/permissions/source-permissions';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { ToolAttachment } from '@/engine/mcp/protocol/bridge-messages';
 import type { FileTransfer } from './file-transfer';
 export interface McpToolContext {
     readonly session: EditorSession;
     readonly files: FileTransfer;
+    readonly sourcePermissions: SourcePermissions;
 }
 export interface McpToolOutput {
     readonly output: ToolOutput;

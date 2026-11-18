@@ -2,6 +2,7 @@ import { ENGINE_NAME, ENGINE_VERSION } from '@/engine/core/engine-info';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { EngineIdentity, ToolCallEvent, ToolCallResult } from '@/engine/mcp/protocol/bridge-messages';
 import type { ToolDescriptor } from '@/engine/mcp/protocol/tool-descriptor';
+import { SourcePermissionsStore } from './asset-sources/permissions/source-permissions-store';
 import type { McpAccessModeId } from './execution/access-policy';
 import { CallActivity } from './execution/call-activity';
 import { executeCall } from './execution/call-executor';
@@ -15,6 +16,7 @@ const LOG_SOURCE = 'MCP';
 type Listener = () => void;
 export class McpBridge implements ConnectionHost {
     readonly settings = new BridgeSettingsStore();
+    readonly assetSources = new SourcePermissionsStore();
     readonly activity = new CallActivity();
     readonly tools: readonly ToolDescriptor[] = MCP_TOOL_DESCRIPTORS;
     private status: ConnectionStatus = { state: 'off' };
@@ -44,7 +46,7 @@ export class McpBridge implements ConnectionHost {
             window.removeEventListener('pagehide', suspend);
             window.removeEventListener('pageshow', resume);
         });
-        await this.settings.load();
+        await Promise.all([this.settings.load(), this.assetSources.load()]);
     }
     stop(): void {
         this.suspend();
@@ -54,7 +56,7 @@ export class McpBridge implements ConnectionHost {
     }
     async execute(call: ToolCallEvent, files: FileTransfer): Promise<ToolCallResult> {
         this.activity.begin(call, findMcpTool(call.tool)?.title ?? call.tool);
-        const result = await executeCall({ session: this.session, files }, this.accessMode, call);
+        const result = await executeCall({ session: this.session, files, sourcePermissions: this.assetSources.getSnapshot() }, this.accessMode, call);
         this.activity.finish(call.callId, result.failed, result.durationMs);
         return result;
     }

@@ -1,5 +1,7 @@
 import type { GuiTool } from '@/engine/editor/gui/gui-designer';
+import type { TransformTool } from '@/engine/editor/session/editor-session';
 import { TERRAIN_TOOLS, type TerrainToolId } from '@/engine/editor/terrain/terrain-editor';
+import { VIEWPORT_TOOLS } from '@/engine/editor/transform/tool-catalog';
 import { GUI_ELEMENT_KINDS } from '@/engine/gui/document/gui-document';
 import type { ShortcutActionId } from './shortcut-actions';
 export function terrainToolAction(tool: TerrainToolId): ShortcutActionId {
@@ -19,9 +21,13 @@ export function guiToolAction(tool: GuiTool): ShortcutActionId {
             return `gui.element.${tool}`;
     }
 }
+const VIEWPORT_TOOL_BY_ACTION = new Map<ShortcutActionId, TransformTool>(VIEWPORT_TOOLS.map((tool) => [tool.shortcut, tool.id]));
 const TERRAIN_TOOL_BY_ACTION = new Map<ShortcutActionId, TerrainToolId>(TERRAIN_TOOLS.map((tool) => [terrainToolAction(tool.id), tool.id]));
 const GUI_TOOLS: readonly GuiTool[] = ['select', 'hand', ...GUI_ELEMENT_KINDS];
 const GUI_TOOL_BY_ACTION = new Map<ShortcutActionId, GuiTool>(GUI_TOOLS.map((tool) => [guiToolAction(tool), tool]));
+export function viewportToolForAction(action: ShortcutActionId): TransformTool | null {
+    return VIEWPORT_TOOL_BY_ACTION.get(action) ?? null;
+}
 export function terrainToolForAction(action: ShortcutActionId): TerrainToolId | null {
     return TERRAIN_TOOL_BY_ACTION.get(action) ?? null;
 }

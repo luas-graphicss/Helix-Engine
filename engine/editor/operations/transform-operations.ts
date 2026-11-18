@@ -2,7 +2,8 @@ import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
-import { SetValueCommand } from '@/engine/editor/commands/set-value-command';
+import type { Command } from '@/engine/editor/history/command';
+import { CompositeCommand, SetValueCommand } from '@/engine/editor/commands/set-value-command';
 export type TransformField = 'position' | 'rotation' | 'scale';
 export type Axis = 0 | 1 | 2;
 export interface TransformSnapshot {
@@ -10,7 +11,12 @@ export interface TransformSnapshot {
     rotation: Vec3;
     scale: Vec3;
 }
-const FIELD_LABEL: Record<TransformField, string> = { position: 'Posição', rotation: 'Rotação', scale: 'Escala' };
+export interface TransformChange {
+    readonly entity: Entity;
+    readonly before: TransformSnapshot;
+    readonly after: TransformSnapshot;
+}
+export const FIELD_LABEL: Record<TransformField, string> = { position: 'Posição', rotation: 'Rotação', scale: 'Escala' };
 const DEFAULT_VALUE: Record<TransformField, [
     number,
     number,
@@ -63,6 +69,16 @@ export function commitTransform(session: EditorSession, entity: Entity, before: 
     if (intercepted(session, entity, before, after))
         return;
     session.history.execute(new SetValueCommand(label, (value) => applyTransformSnapshot(entity, value), before, after, `transform:${entity.id}:gizmo`));
+}
+export function commitTransforms(session: EditorSession, changes: readonly TransformChange[], label: string): void {
+    const commands: Command[] = [];
+    for (const { entity, before, after } of changes) {
+        if (!intercepted(session, entity, before, after))
+            commands.push(new SetValueCommand(label, (value) => applyTransformSnapshot(entity, value), before, after));
+    }
+    if (commands.length === 0)
+        return;
+    session.history.execute(commands.length === 1 ? commands[0] : new CompositeCommand(label, commands));
 }
 export function resetTransform(session: EditorSession, entity: Entity, field?: TransformField): void {
     const fields: TransformField[] = field ? [field] : ['position', 'rotation', 'scale'];

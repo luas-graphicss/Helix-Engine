@@ -2,11 +2,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Renderer } from '@/engine/renderer/renderer';
 import { WebGLContextLostError, WebGLUnsupportedError } from '@/engine/renderer/gl/context';
-import type { GizmoRenderRequest } from '@/engine/renderer/passes/gizmo-pass';
 import type { LightHelperRequest } from '@/engine/renderer/passes/light-helper-pass';
 import type { SoundHelperRequest } from '@/engine/renderer/passes/sound-helper-pass';
 import type { VfxHelperRequest } from '@/engine/renderer/passes/vfx-helper-pass';
-import * as mat4 from '@/engine/core/math/mat4';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { EDITOR_QUALITY_LADDER, FrameGovernor, FULL_QUALITY, QUALITY_LADDER, type QualityStep } from '@/engine/renderer/quality/frame-governor';
 import { FrameClock } from '@/engine/core/time/frame-clock';
@@ -36,21 +34,6 @@ function isTextEntryTarget(target: EventTarget | null): boolean {
         return type !== 'checkbox' && type !== 'radio' && type !== 'button' && type !== 'range';
     }
     return false;
-}
-function resolveGizmoRequest(session: EditorSession, request: GizmoRenderRequest): GizmoRenderRequest | null {
-    const mode = session.gizmoMode;
-    if (!mode)
-        return null;
-    const entity = session.selectedEntity;
-    if (!entity || entity.locked)
-        return null;
-    request.mode = mode;
-    request.worldMatrix = entity.worldMatrix;
-    request.localAxes = session.gizmoUsesLocalAxes;
-    request.scale = engineSettings.get('editor.gizmo.size');
-    request.hovered = session.gizmo.hovered;
-    request.active = session.gizmo.active;
-    return request;
 }
 function resolveLightHelpers(session: EditorSession, request: LightHelperRequest, selection: ReadonlySet<number> | null): LightHelperRequest | null {
     const mode = session.render.lightHelpers;
@@ -85,6 +68,7 @@ function sessionSignature(session: EditorSession): string {
         session.getSceneVersion(),
         session.gizmo.hovered ?? '',
         session.gizmo.active ?? '',
+        session.gizmo.vertexGripKey,
         session.showGrid ? 1 : 0,
         session.shadowsEnabled ? 1 : 0,
         session.playtest.state,
@@ -173,7 +157,6 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
                 session.notify('view');
         };
         const unsubscribeSettings = engineSettings.subscribe(applyPreferences);
-        const gizmoRequest: GizmoRenderRequest = { mode: 'translate', worldMatrix: mat4.create(), localAxes: false, scale: 1, hovered: null, active: null };
         const lightHelperRequest: LightHelperRequest = { mode: 'all', selection: null };
         const soundHelperRequest: SoundHelperRequest = {
             mode: 'all',
@@ -229,7 +212,7 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
                 shadows: session.shadowsEnabled,
                 selection,
                 showCsgBrushes: session.render.showCsgBrushes && session.playtest.state !== 'playing',
-                gizmo: resolveGizmoRequest(session, gizmoRequest),
+                gizmo: session.gizmo.renderRequest(),
                 terrainBrush: session.terrain.brushOverlay,
                 lightHelpers: resolveLightHelpers(session, lightHelperRequest, selection),
                 soundHelpers: resolveSoundHelpers(session, soundHelperRequest, selection, elapsedSeconds),

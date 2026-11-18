@@ -21,7 +21,8 @@ import { assignPostProcessSettings, findPostProcessPreset, type PostProcessEffec
 import { History } from '@/engine/editor/history/history';
 import { ActivityLog } from '@/engine/editor/activity/activity-log';
 import { createHistoryActivityRecorder } from '@/engine/editor/activity/history-activity-recorder';
-import type { GizmoHandle, GizmoMode } from '@/engine/renderer/gizmo/gizmo-frame';
+import { TransformGizmo } from '@/engine/editor/transform/transform-gizmo';
+import type { GizmoTool, PivotMode, SnapTarget, TransformSpace } from '@/engine/editor/transform/transform-settings';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
 import { AnimationEditor } from '@/engine/editor/animation/animation-editor';
@@ -59,16 +60,12 @@ import { createRenderSettings, type PostCompareSettings, type RenderSettings } f
 import { createCsgPreferences, type CsgPreferences } from './csg-preferences';
 import { IMAGE_TOPICS, type NotifyOptions, type SessionTopic } from './session-topics';
 export type { NotifyOptions, SessionTopic } from './session-topics';
-export type TransformTool = 'select' | 'translate' | 'rotate' | 'scale' | 'terrain';
-export type TransformSpace = 'global' | 'local';
+export type TransformTool = 'select' | GizmoTool | 'terrain';
 export type EditorWorkspace = 'scene' | 'gui' | 'code';
-export interface GizmoInteraction {
-    hovered: GizmoHandle | null;
-    active: GizmoHandle | null;
-}
 export type TransformInterceptor = (entity: Entity, before: TransformSnapshot, after: TransformSnapshot) => boolean;
 export interface SnapSettings {
     enabled: boolean;
+    target: SnapTarget;
     translate: number;
     rotate: number;
     scale: number;
@@ -147,9 +144,10 @@ export class EditorSession {
     shadowsEnabled = true;
     tool: TransformTool = 'select';
     space: TransformSpace = 'global';
+    pivotMode: PivotMode = 'pivot';
     focusPadding = 1.1;
-    readonly snap: SnapSettings = { enabled: false, translate: 0.5, rotate: 15, scale: 0.1 };
-    readonly gizmo: GizmoInteraction = { hovered: null, active: null };
+    readonly snap: SnapSettings = { enabled: false, target: 'increment', translate: 0.5, rotate: 15, scale: 0.1 };
+    readonly gizmo = new TransformGizmo(this);
     readonly stats: ViewportStats = { ...createFrameStats(), fps: 0, idle: false };
     readonly render: RenderSettings = createRenderSettings();
     private version = 0;
@@ -656,14 +654,11 @@ export class EditorSession {
             this.terrain.clearHover();
         }
         this.tool = tool;
-        this.gizmo.hovered = null;
+        this.gizmo.clearHover();
         this.notify('tool');
     }
-    get gizmoMode(): GizmoMode | null {
+    get gizmoMode(): GizmoTool | null {
         return this.tool === 'select' || this.tool === 'terrain' ? null : this.tool;
-    }
-    get gizmoUsesLocalAxes(): boolean {
-        return this.space === 'local' || this.tool === 'scale';
     }
     setSpace(space: TransformSpace): void {
         if (this.space === space)
@@ -673,6 +668,15 @@ export class EditorSession {
     }
     toggleSpace(): void {
         this.setSpace(this.space === 'global' ? 'local' : 'global');
+    }
+    setPivotMode(pivotMode: PivotMode): void {
+        if (this.pivotMode === pivotMode)
+            return;
+        this.pivotMode = pivotMode;
+        this.notify('tool');
+    }
+    togglePivotMode(): void {
+        this.setPivotMode(this.pivotMode === 'pivot' ? 'center' : 'pivot');
     }
     updateSnap(patch: Partial<SnapSettings>): void {
         Object.assign(this.snap, patch);

@@ -9,6 +9,7 @@ import { SelectField } from '@/engine/ui/select-field';
 import { ToggleField } from '@/engine/ui/toggle-field';
 import { AgentCallList } from './agent-call-list';
 import { AgentUrlRow } from './agent-url-row';
+import { AssetSourceList } from './asset-sources/asset-source-list';
 import { BridgeStatusLine } from './bridge-status-line';
 import { CommittedField } from './committed-field';
 import { KitDownloadLink } from './kit-download-link';
@@ -38,6 +39,7 @@ export function McpBridgeForm({ bridge }: McpBridgeFormProps) {
         <KitDownloadLink />
         <span className="min-w-0 text-3xs text-muted-foreground">Na pasta do kit, rode npx wrangler deploy.</span>
       </div>
+      <AssetSourceList store={bridge.assetSources}/>
       <AgentCallList calls={calls}/>
     </section>);
 }
