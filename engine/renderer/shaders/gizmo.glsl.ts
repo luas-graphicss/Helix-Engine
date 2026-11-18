@@ -9,30 +9,42 @@ uniform mat4 u_model;
 
 out vec3 v_worldPosition;
 out vec3 v_worldNormal;
+out vec2 v_planePosition;
 
 void main() {
   vec4 worldPosition = u_model * vec4(a_position, 1.0);
   v_worldPosition = worldPosition.xyz;
   v_worldNormal = mat3(u_model) * a_normal;
+  v_planePosition = a_position.xy;
   gl_Position = u_viewProjection * worldPosition;
 }
 `;
 export const GIZMO_FRAGMENT_SHADER = `#version 300 es
-precision mediump float;
+precision highp float;
 
 uniform vec3 u_color;
 uniform float u_alpha;
 uniform vec3 u_cameraPosition;
 uniform vec3 u_origin;
-                                                                                   
 uniform float u_dimBack;
+uniform float u_sweep;
 
 in vec3 v_worldPosition;
 in vec3 v_worldNormal;
+in vec2 v_planePosition;
 
 out vec4 fragColor;
 
+const float TWO_PI = 6.28318530718;
+const float FULL_SWEEP = 6.28;
+
 void main() {
+  if (u_sweep < FULL_SWEEP) {
+    float angle = atan(v_planePosition.y, v_planePosition.x);
+    if (angle < 0.0) angle += TWO_PI;
+    if (angle > u_sweep) discard;
+  }
+
   vec3 viewDirection = normalize(u_cameraPosition - v_worldPosition);
   float shade = 0.74 + 0.26 * abs(dot(normalize(v_worldNormal), viewDirection));
 

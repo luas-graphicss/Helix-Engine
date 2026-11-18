@@ -12,7 +12,7 @@ interface SurfaceSample {
         number
     ];
 }
-class MeshBuilder {
+export class MeshBuilder {
     readonly positions: number[] = [];
     readonly normals: number[] = [];
     readonly uvs: number[] = [];

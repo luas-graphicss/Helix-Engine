@@ -1,22 +1,13 @@
 'use client';
 import { useEffect } from 'react';
-import type { Entity } from '@/engine/core/scene/entity';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
-import { GizmoDrag, type PointerSample } from '@/engine/editor/gizmo/gizmo-drag';
-import { hitTestGizmo } from '@/engine/editor/gizmo/gizmo-hit-test';
-import { computeGizmoFrame, createGizmoFrame, type GizmoHandle, type GizmoMode } from '@/engine/renderer/gizmo/gizmo-frame';
-import { engineSettings } from '@/engine/settings/engine-settings-store';
+import type { GizmoPointer } from '@/engine/editor/transform/gizmo/gizmo-pointer';
 import * as vec3 from '@/engine/core/math/vec3';
 import { dragPointOnViewPlane, pickBone, pickEffector } from '@/engine/editor/animation/viewport/bone-picking';
+import { gizmoCursor } from './gizmo-cursor';
 import { pickEntity } from './pick-entity';
 type DragMode = 'orbit' | 'pan' | 'gizmo' | 'terrain' | 'ik' | 'gui' | 'hud' | null;
-interface GizmoHit {
-    handle: GizmoHandle;
-    mode: GizmoMode;
-    entity: Entity;
-}
 const CLICK_DRAG_THRESHOLD_PX = 4;
-const GIZMO_CURSOR: Record<GizmoMode, string> = { translate: 'move', rotate: 'grab', scale: 'nwse-resize' };
 export interface ViewportInputHandlers {
     onContextMenu: (clientX: number, clientY: number) => void;
 }
@@ -25,8 +16,6 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
         const canvas = canvasRef.current;
         if (!canvas)
             return;
-        const frame = createGizmoFrame();
-        let gizmoDrag: GizmoDrag | null = null;
         let mode: DragMode = null;
         let button = 0;
         let lastX = 0;
@@ -39,7 +28,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
         const invalidateRect = () => {
             rectCache = null;
         };
-        const samplePointer = (event: PointerEvent): PointerSample => {
+        const samplePointer = (event: PointerEvent): GizmoPointer => {
             const rect = canvasRect();
             return {
                 x: event.clientX - rect.left,
@@ -47,29 +36,19 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 width: rect.width,
                 height: rect.height,
                 ctrl: event.ctrlKey || event.metaKey,
+                shift: event.shiftKey,
+                alt: event.altKey,
             };
         };
-        const pickAt = (pointer: PointerSample) => pickEntity(session.scene, session.camera, pointer.x / pointer.width, pointer.y / pointer.height, {
+        const pickAt = (pointer: GizmoPointer) => pickEntity(session.scene, session.camera, pointer.x / pointer.width, pointer.y / pointer.height, {
             lightHelpers: session.render.lightHelpers,
             soundHelpers: session.render.soundHelpers,
             vfxHelpers: session.render.vfxHelpers,
             selection: session.selectedIds,
         });
-        const gizmoHitAt = (pointer: PointerSample): GizmoHit | null => {
-            const gizmoMode = session.gizmoMode;
-            if (!gizmoMode)
-                return null;
-            const entity = session.selectedEntity;
-            if (!entity)
-                return null;
-            if (!computeGizmoFrame(frame, entity.worldMatrix, session.camera, session.gizmoUsesLocalAxes, engineSettings.get('editor.gizmo.size')))
-                return null;
-            const handle = hitTestGizmo(gizmoMode, frame, session.camera, pointer.x, pointer.y, pointer);
-            return handle ? { handle, mode: gizmoMode, entity } : null;
-        };
         const ikTarget = vec3.create();
         const animating = () => session.animation.active && session.animation.showSkeleton;
-        const updateGuiHover = (pointer: PointerSample): boolean => {
+        const updateGuiHover = (pointer: GizmoPointer): boolean => {
             if (session.hud.pointerMove(pointer.x, pointer.y)) {
                 session.guiWorld.pointerLeave();
                 canvas.style.cursor = session.hud.cursor ?? '';
@@ -81,12 +60,11 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             canvas.style.cursor = over ? (session.guiWorld.cursor ?? '') : '';
             return over;
         };
-        const updateHover = (pointer: PointerSample) => {
-            const hit = gizmoHitAt(pointer);
-            session.gizmo.hovered = hit?.handle ?? null;
-            if (hit) {
+        const updateHover = (pointer: GizmoPointer) => {
+            const action = session.gizmo.hover(pointer);
+            if (action) {
                 session.animation.setHoveredBone(null);
-                canvas.style.cursor = GIZMO_CURSOR[hit.mode];
+                canvas.style.cursor = gizmoCursor(action, false);
                 return;
             }
             if (!animating()) {
@@ -108,7 +86,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             canvas.style.cursor = '';
             updateHover(samplePointer(event));
         };
-        const updateTerrainHover = (pointer: PointerSample, shift: boolean): boolean => {
+        const updateTerrainHover = (pointer: GizmoPointer, shift: boolean): boolean => {
             const hit = session.terrain.updateHover(pointer.x / pointer.width, pointer.y / pointer.height);
             session.terrain.setInvert(shift);
             canvas.style.cursor = hit ? 'crosshair' : '';
@@ -123,11 +101,9 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
         };
         const finishGizmoDrag = (event: PointerEvent, cancelled: boolean) => {
             if (cancelled)
-                gizmoDrag?.cancel();
+                session.gizmo.cancelDrag();
             else
-                gizmoDrag?.commit();
-            gizmoDrag = null;
-            session.gizmo.active = null;
+                session.gizmo.commitDrag();
             mode = null;
             canvas.style.cursor = '';
             updateHover(samplePointer(event));
@@ -183,13 +159,11 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             }
             if (event.button === 0 && !event.shiftKey) {
                 const pointer = samplePointer(event);
-                const hit = gizmoHitAt(pointer);
-                if (hit) {
+                const action = session.gizmo.beginDrag(pointer);
+                if (action) {
                     mode = 'gizmo';
-                    gizmoDrag = new GizmoDrag(session, hit.entity, hit.mode, hit.handle, frame, pointer);
-                    session.gizmo.active = hit.handle;
                     canvas.setPointerCapture(event.pointerId);
-                    canvas.style.cursor = hit.mode === 'rotate' ? 'grabbing' : GIZMO_CURSOR[hit.mode];
+                    canvas.style.cursor = gizmoCursor(action, true);
                     canvas.focus();
                     event.preventDefault();
                     return;
@@ -230,7 +204,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 return;
             }
             if (mode === 'gizmo') {
-                gizmoDrag?.update(samplePointer(event));
+                session.gizmo.updateDrag(samplePointer(event));
                 return;
             }
             if (mode === 'ik') {
@@ -349,7 +323,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             session.hud.pointerLeave();
             if (!session.playtest.pointerLocked)
                 session.guiWorld.pointerLeave();
-            session.gizmo.hovered = null;
+            session.gizmo.clearHover();
             session.animation.setHoveredBone(null);
             session.terrain.clearHover();
             canvas.style.cursor = '';
@@ -372,9 +346,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
             if (event.key !== 'Escape' || (mode !== 'gizmo' && mode !== 'terrain' && mode !== 'ik'))
                 return;
             if (mode === 'gizmo') {
-                gizmoDrag?.cancel();
-                gizmoDrag = null;
-                session.gizmo.active = null;
+                session.gizmo.cancelDrag();
                 mode = null;
             }
             else if (mode === 'ik') {

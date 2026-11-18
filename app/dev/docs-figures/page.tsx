@@ -40,7 +40,7 @@ export default function DocsFiguresPage() {
                             shadows: true,
                             selection: null,
                             showCsgBrushes: false,
-                            gizmo: figure.gizmo?.(scene) ?? null,
+                            gizmo: figure.gizmo?.(scene, camera) ?? null,
                             skeletons: null,
                             terrainBrush: null,
                             lightHelpers: null,

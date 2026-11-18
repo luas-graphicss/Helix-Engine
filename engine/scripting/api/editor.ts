@@ -5,7 +5,8 @@ import { editorDialogs, type EditorDialogId } from '@/engine/editor/dialogs/edit
 import { dockLayoutRegistry } from '@/engine/editor/layout/dock-layout-context';
 import { DOCK_AREAS, DOCK_PANEL_IDS, type DockArea, type DockPanelId } from '@/engine/editor/layout/dock-layout';
 import { compileProject, openScriptAssetInEditor, runScript, saveActiveScript, saveAllScripts, saveScriptTab } from '@/engine/editor/operations/script-operations';
-import type { TransformSpace, TransformTool } from '@/engine/editor/session/editor-session';
+import type { TransformTool } from '@/engine/editor/session/editor-session';
+import type { TransformSpace } from '@/engine/editor/transform/transform-settings';
 import { ENGINE_SETTINGS, type SettingId, type SettingValue } from '@/engine/settings/engine-settings-schema';
 import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { HelixArgumentError, HelixError } from '../runtime/script-errors';
