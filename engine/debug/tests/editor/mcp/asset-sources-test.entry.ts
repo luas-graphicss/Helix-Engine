@@ -1,8 +1,10 @@
+import { creditLine, presentAsset, presentVariant } from '@/engine/editor/mcp/asset-sources/catalog/asset-presentation';
 import { formatAssetReference, parseAssetReference } from '@/engine/editor/mcp/asset-sources/catalog/asset-reference';
-import type { AssetVariant } from '@/engine/editor/mcp/asset-sources/catalog/asset-source';
+import type { AssetVariant, RemoteAsset } from '@/engine/editor/mcp/asset-sources/catalog/asset-source';
 import { licenseLabelFromCode, licenseLabelFromUrl, requiresAttribution } from '@/engine/editor/mcp/asset-sources/catalog/license-label';
 import { findAssetSource } from '@/engine/editor/mcp/asset-sources/catalog/source-catalog';
 import { chooseVariant, describeVariant } from '@/engine/editor/mcp/asset-sources/catalog/variant-selection';
+import { openSource } from '@/engine/editor/mcp/asset-sources/permissions/source-gate';
 import { parseSourcePermissions, permissionOf, readinessOf, serializeSourcePermissions } from '@/engine/editor/mcp/asset-sources/permissions/source-permissions';
 import { listPolyHavenVariants, resolvePolyHavenFiles } from '@/engine/editor/mcp/asset-sources/providers/poly-haven/poly-haven-files';
 import { fileExtensionOf, fileStemOf, safeFileName } from '@/engine/editor/mcp/asset-sources/transport/file-naming';
@@ -149,6 +151,35 @@ function permissions(): void {
     checks.check('uma fonte com chave liberada sem ela avisa a falta', readinessOf(sketchfab, { allowed: true, apiKey: '' }) === 'missingKey');
     checks.check('uma fonte com chave fica pronta quando a chave chega', readinessOf(sketchfab, { allowed: true, apiKey: 'token' }) === 'ready');
 }
+function sourceGate(): void {
+    const granted = parseSourcePermissions({ polyhaven: { allowed: true }, sketchfab: { allowed: true }, freesound: { allowed: true, apiKey: 'sound-key' } });
+    checks.check('uma fonte liberada abre sem chave', openSource(granted, 'polyhaven', 'texture').session.apiKey === '');
+    checks.check('a chave guardada segue para a fonte', openSource(granted, 'freesound', 'audio').session.apiKey === 'sound-key');
+    checks.throws('uma fonte bloqueada pede a permissão do usuário', () => openSource(granted, 'openverse', 'image'), 'has not allowed Openverse');
+    checks.throws('uma fonte sem a chave pede a chave', () => openSource(granted, 'sketchfab', 'model'), 'needs an API key');
+    checks.throws('uma fonte desconhecida lista as existentes', () => openSource(granted, 'unknown', 'model'), 'Sources: polyhaven, sketchfab, freesound, openverse');
+    checks.throws('um tipo que a fonte não tem é recusado', () => openSource(granted, 'polyhaven', 'audio'), 'has no audio assets');
+}
+function presentation(): void {
+    const asset: RemoteAsset = {
+        id: 'Barrel_01',
+        kind: 'model',
+        name: 'Barrel 01',
+        author: 'Jorge Camacho',
+        license: 'CC BY 4.0',
+        pageUrl: 'https://polyhaven.com/a/Barrel_01',
+        thumbnailUrl: new URL('https://cdn.polyhaven.com/asset_img/thumbs/Barrel_01.png'),
+        tags: ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'],
+        facts: { polygons: 2682 },
+    };
+    const shown = JSON.stringify(presentAsset('polyhaven', asset));
+    checks.check('o resultado leva a referência para as outras ferramentas', shown.includes('"ref":"polyhaven:model:Barrel_01"'), shown);
+    checks.check('o resultado avisa quando a licença exige crédito', shown.includes('"creditRequired":true'), shown);
+    checks.check('os fatos entram no resultado', shown.includes('"polygons":2682'), shown);
+    checks.check('as etiquetas são limitadas', !shown.includes('"i"'), shown);
+    checks.check('a linha de crédito junta nome, autor, licença e página', creditLine(asset) === '"Barrel 01" by Jorge Camacho, CC BY 4.0, https://polyhaven.com/a/Barrel_01');
+    checks.check('o tamanho da variante sai em megabytes', JSON.stringify(presentVariant({ format: 'glb', quality: null, bytes: 1572864 })) === '{"format":"glb","megabytes":1.5}');
+}
 references();
 variantChoice();
 licenses();
@@ -158,4 +189,6 @@ polyHavenModels();
 polyHavenTextures();
 polyHavenPanoramas();
 permissions();
+sourceGate();
+presentation();
 checks.finish();

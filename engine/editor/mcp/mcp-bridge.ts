@@ -56,7 +56,7 @@ export class McpBridge implements ConnectionHost {
     }
     async execute(call: ToolCallEvent, files: FileTransfer): Promise<ToolCallResult> {
         this.activity.begin(call, findMcpTool(call.tool)?.title ?? call.tool);
-        const result = await executeCall({ session: this.session, files }, this.accessMode, call);
+        const result = await executeCall({ session: this.session, files, sourcePermissions: this.assetSources.getSnapshot() }, this.accessMode, call);
         this.activity.finish(call.callId, result.failed, result.durationMs);
         return result;
     }
