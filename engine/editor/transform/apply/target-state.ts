@@ -5,6 +5,7 @@ import type { Quat } from '@/engine/core/math/quat';
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
+import { snapshotTransform, type TransformChange } from '@/engine/editor/operations/transform-operations';
 import { createGizmoAxes, type GizmoAxes } from '../gizmo/gizmo-frame';
 import { entityWorldAxes } from '../selection/entity-axes';
 export interface TargetState {
@@ -48,4 +49,11 @@ export function hasTargetChanged(state: TargetState): boolean {
             return true;
     }
     return false;
+}
+export function collectTargetChanges(states: readonly TargetState[]): TransformChange[] {
+    return states.filter(hasTargetChanged).map(({ entity, position, rotation, scale }) => ({
+        entity,
+        before: { position, rotation, scale },
+        after: snapshotTransform(entity),
+    }));
 }

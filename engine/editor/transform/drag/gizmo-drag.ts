@@ -1,10 +1,10 @@
 import { createRay } from '@/engine/core/math/ray';
 import * as vec3 from '@/engine/core/math/vec3';
-import { snapshotTransform, type TransformChange } from '@/engine/editor/operations/transform-operations';
+import type { TransformChange } from '@/engine/editor/operations/transform-operations';
 import { buildPickRay } from '@/engine/editor/viewport/pick-entity';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { applyTransformDelta } from '../apply/apply-transform-delta';
-import { captureTargetState, hasTargetChanged, restoreTargetState, type TargetState } from '../apply/target-state';
+import { captureTargetState, collectTargetChanges, restoreTargetState, type TargetState } from '../apply/target-state';
 import { clearTransformDelta, createTransformDelta } from '../apply/transform-delta';
 import { copyGizmoAxes, copyGizmoFrame, createGizmoFrame, type GizmoFrame } from '../gizmo/gizmo-frame';
 import type { GizmoHandle, GizmoLayout } from '../gizmo/gizmo-handle';
@@ -85,10 +85,6 @@ export class GizmoDrag {
             restoreTargetState(state);
     }
     changes(): TransformChange[] {
-        return this.states.filter(hasTargetChanged).map(({ entity, position, rotation, scale }) => ({
-            entity,
-            before: { position, rotation, scale },
-            after: snapshotTransform(entity),
-        }));
+        return collectTargetChanges(this.states);
     }
 }

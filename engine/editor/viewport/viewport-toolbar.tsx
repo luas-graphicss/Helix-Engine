@@ -5,6 +5,7 @@ import { IconButton } from '@/engine/ui/icon-button';
 import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { useDockLayout } from '@/engine/editor/layout/dock-layout-context';
 import { HUD_GROUP_CLASS } from './hud-styles';
+import { AlignmentMenu } from './tools/alignment-menu';
 import { TransformOptions } from './tools/transform-options';
 import { ViewModeMenu } from './view-mode-menu';
 export function ViewportToolbar() {
@@ -15,6 +16,7 @@ export function ViewportToolbar() {
         <ViewModeMenu />
       </div>
       <TransformOptions />
+      <AlignmentMenu />
 
       <div className={cn(HUD_GROUP_CLASS, 'ml-auto')}>
         <IconButton label="Grade (G)" size="sm" active={session.showGrid} onClick={() => session.toggleGrid()}>
