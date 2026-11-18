@@ -1,12 +1,15 @@
 import type { Ray } from '@/engine/core/math/ray';
 import type { MeshData } from './mesh-data';
 const PARALLEL_EPSILON = 1e-12;
-export function raycastMesh(ray: Ray, mesh: MeshData, maxDistance = Infinity): number | null {
+export interface MeshRayHit {
+    triangle: number;
+}
+export function raycastMesh(ray: Ray, mesh: MeshData, maxDistance = Infinity, hit?: MeshRayHit): number | null {
     const { positions, indices } = mesh;
     const ox = ray.origin[0], oy = ray.origin[1], oz = ray.origin[2];
     const dx = ray.direction[0], dy = ray.direction[1], dz = ray.direction[2];
     let best = maxDistance;
-    let hit = false;
+    let triangle = -1;
     for (let i = 0; i < indices.length; i += 3) {
         const a = indices[i] * 3;
         const b = indices[i + 1] * 3;
@@ -34,8 +37,12 @@ export function raycastMesh(ray: Ray, mesh: MeshData, maxDistance = Infinity): n
         const t = (e2x * qx + e2y * qy + e2z * qz) * inv;
         if (t > 0 && t < best) {
             best = t;
-            hit = true;
+            triangle = i / 3;
         }
     }
-    return hit ? best : null;
+    if (triangle < 0)
+        return null;
+    if (hit)
+        hit.triangle = triangle;
+    return best;
 }

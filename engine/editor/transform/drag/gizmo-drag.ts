@@ -10,7 +10,8 @@ import { copyGizmoAxes, copyGizmoFrame, createGizmoFrame, type GizmoFrame } from
 import type { GizmoHandle, GizmoLayout } from '../gizmo/gizmo-handle';
 import type { GizmoPointer } from '../gizmo/gizmo-pointer';
 import type { TransformTargets } from '../selection/transform-targets';
-import type { PivotMode } from '../transform-settings';
+import type { SnapTargets } from '../snap/snap-targets';
+import type { PivotMode, SnapTarget } from '../transform-settings';
 import { createManipulation } from './create-manipulation';
 import type { DragEnvironment, HandleManipulation } from './handle-manipulation';
 export interface GizmoDragRequest {
@@ -20,9 +21,11 @@ export interface GizmoDragRequest {
     readonly targets: TransformTargets;
     readonly pivotMode: PivotMode;
     readonly pointer: GizmoPointer;
+    readonly snapTargets: SnapTargets;
 }
 export interface SnapSource {
     readonly enabled: boolean;
+    readonly target: SnapTarget;
     readonly translate: number;
     readonly rotate: number;
     readonly scale: number;
@@ -35,7 +38,7 @@ export class GizmoDrag {
         copyGizmoAxes(this.delta.scaleAxes, frame.axes);
         this.delta.sharedPivot = pivotMode === 'center';
     }
-    static begin({ camera, frame, handle, targets, pivotMode, pointer }: GizmoDragRequest): GizmoDrag | null {
+    static begin({ camera, frame, handle, targets, pivotMode, pointer, snapTargets }: GizmoDragRequest): GizmoDrag | null {
         const ray = createRay();
         if (!buildPickRay(ray, camera, pointer.x / pointer.width, pointer.y / pointer.height))
             return null;
@@ -43,7 +46,8 @@ export class GizmoDrag {
             camera,
             frame: copyGizmoFrame(createGizmoFrame(), frame),
             ray,
-            snap: { active: false, translate: 0, rotate: 0, scale: 0 },
+            snap: { active: false, target: 'increment', translate: 0, rotate: 0, scale: 0 },
+            snapTargets,
         };
         const manipulation = createManipulation(handle, environment, pointer);
         if (!manipulation)
@@ -64,6 +68,7 @@ export class GizmoDrag {
         if (!buildPickRay(ray, camera, pointer.x / pointer.width, pointer.y / pointer.height))
             return;
         steps.active = snap.enabled !== pointer.ctrl;
+        steps.target = snap.target;
         steps.translate = snap.translate;
         steps.rotate = snap.rotate;
         steps.scale = snap.scale;

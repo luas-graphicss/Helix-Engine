@@ -7,6 +7,7 @@ import { createGizmoFrame, type AxisIndex, type GizmoFrame } from '@/engine/edit
 import { GizmoLayout } from '@/engine/editor/transform/gizmo/gizmo-handle';
 import { buildGizmoLayout } from '@/engine/editor/transform/gizmo/gizmo-layout';
 import type { GizmoPointer } from '@/engine/editor/transform/gizmo/gizmo-pointer';
+import { SnapTargets } from '@/engine/editor/transform/snap/snap-targets';
 import type { GizmoTool, PivotMode } from '@/engine/editor/transform/transform-settings';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { createBox } from '@/engine/renderer/geometry/primitives';
@@ -52,13 +53,13 @@ export function buildStageGizmo({ scene, camera, boxes }: Stage, tool: GizmoTool
     return { layout, frame };
 }
 export function beginDrag(stage: Stage, tool: GizmoTool, handleId: string, pivotMode: PivotMode, start: (frame: GizmoFrame) => GizmoPointer): ActiveDrag {
-    const { camera, boxes } = stage;
+    const { scene, camera, boxes } = stage;
     const { layout, frame } = buildStageGizmo(stage, tool, pivotMode);
     const handle = layout.find(handleId);
     if (!handle)
         throw new Error(`A alça ${handleId} deveria existir nesta vista`);
     const targets = { entities: boxes, active: boxes[boxes.length - 1] };
-    const drag = GizmoDrag.begin({ camera, frame, handle, targets, pivotMode, pointer: start(frame) });
+    const drag = GizmoDrag.begin({ camera, frame, handle, targets, pivotMode, pointer: start(frame), snapTargets: new SnapTargets(scene, boxes) });
     if (!drag)
         throw new Error(`O arrasto de ${handleId} deveria começar`);
     return { drag, frame };

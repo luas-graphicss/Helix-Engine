@@ -4,6 +4,7 @@ export function gizmoCursor(action: HandleAction, dragging: boolean): string {
         case 'translateAxis':
         case 'translatePlane':
         case 'translateView':
+        case 'translateVertex':
             return 'move';
         case 'rotateAxis':
         case 'rotateView':

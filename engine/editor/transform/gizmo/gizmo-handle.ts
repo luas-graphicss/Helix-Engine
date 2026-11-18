@@ -11,6 +11,8 @@ export type HandleAction = {
 } | {
     readonly kind: 'translateView';
 } | {
+    readonly kind: 'translateVertex';
+} | {
     readonly kind: 'rotateAxis';
     readonly axis: AxisIndex;
 } | {

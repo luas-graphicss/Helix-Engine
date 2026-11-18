@@ -68,6 +68,7 @@ function sessionSignature(session: EditorSession): string {
         session.getSceneVersion(),
         session.gizmo.hovered ?? '',
         session.gizmo.active ?? '',
+        session.gizmo.vertexGripKey,
         session.showGrid ? 1 : 0,
         session.shadowsEnabled ? 1 : 0,
         session.playtest.state,

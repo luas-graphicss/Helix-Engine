@@ -265,6 +265,17 @@ export const ENGINE_SETTINGS = {
         description: 'O encaixe de transformação começa ligado (Ctrl durante o arrasto inverte).',
         default: false,
     }),
+    'snap.target': selectSetting({
+        label: 'Alvo do encaixe',
+        description: 'Em que o movimento encaixa quando o encaixe está ligado: incrementos, grade do mundo, vértices ou superfícies.',
+        default: 'increment',
+        options: [
+            { value: 'increment', label: 'Incremento' },
+            { value: 'grid', label: 'Grade' },
+            { value: 'vertex', label: 'Vértice' },
+            { value: 'surface', label: 'Superfície' },
+        ],
+    }),
     'snap.translate': numberSetting({
         label: 'Passo de translação',
         description: 'Incremento do encaixe ao mover, em metros.',
@@ -855,7 +866,7 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
         description: 'Enquadramento, gizmo e o encaixe de transformação da cena 3D.',
         groups: [
             { title: 'Seleção e gizmo', settings: ['selection.focusPadding', 'editor.gizmo.size'] },
-            { title: 'Encaixe de transformação', settings: ['snap.enabled', 'snap.translate', 'snap.rotate', 'snap.scale'] },
+            { title: 'Encaixe de transformação', settings: ['snap.enabled', 'snap.target', 'snap.translate', 'snap.rotate', 'snap.scale'] },
         ],
     },
     {

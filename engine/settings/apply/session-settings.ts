@@ -13,6 +13,7 @@ export function applySessionOpenDefaults(session: EditorSession): void {
     session.showGrid = get('editor.open.grid');
     session.shadowsEnabled = get('editor.open.shadows');
     session.snap.enabled = get('snap.enabled');
+    session.snap.target = get('snap.target');
     session.snap.translate = get('snap.translate');
     session.snap.rotate = get('snap.rotate');
     session.snap.scale = get('snap.scale');

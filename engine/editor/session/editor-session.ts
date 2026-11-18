@@ -22,7 +22,7 @@ import { History } from '@/engine/editor/history/history';
 import { ActivityLog } from '@/engine/editor/activity/activity-log';
 import { createHistoryActivityRecorder } from '@/engine/editor/activity/history-activity-recorder';
 import { TransformGizmo } from '@/engine/editor/transform/transform-gizmo';
-import type { GizmoTool, PivotMode, TransformSpace } from '@/engine/editor/transform/transform-settings';
+import type { GizmoTool, PivotMode, SnapTarget, TransformSpace } from '@/engine/editor/transform/transform-settings';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
 import { AnimationEditor } from '@/engine/editor/animation/animation-editor';
@@ -65,6 +65,7 @@ export type EditorWorkspace = 'scene' | 'gui' | 'code';
 export type TransformInterceptor = (entity: Entity, before: TransformSnapshot, after: TransformSnapshot) => boolean;
 export interface SnapSettings {
     enabled: boolean;
+    target: SnapTarget;
     translate: number;
     rotate: number;
     scale: number;
@@ -145,7 +146,7 @@ export class EditorSession {
     space: TransformSpace = 'global';
     pivotMode: PivotMode = 'pivot';
     focusPadding = 1.1;
-    readonly snap: SnapSettings = { enabled: false, translate: 0.5, rotate: 15, scale: 0.1 };
+    readonly snap: SnapSettings = { enabled: false, target: 'increment', translate: 0.5, rotate: 15, scale: 0.1 };
     readonly gizmo = new TransformGizmo(this);
     readonly stats: ViewportStats = { ...createFrameStats(), fps: 0, idle: false };
     readonly render: RenderSettings = createRenderSettings();

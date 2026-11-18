@@ -1,12 +1,13 @@
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
-import { snapValue } from '@/engine/editor/operations/transform-operations';
 import type { TransformDelta } from '../apply/transform-delta';
 import { AXIS_LABELS, type AxisIndex } from '../gizmo/gizmo-frame';
 import type { GizmoLayout } from '../gizmo/gizmo-handle';
+import type { GizmoPointer } from '../gizmo/gizmo-pointer';
 import { formatDistance, formatOffset } from './drag-readout';
 import type { DragEnvironment, HandleManipulation } from './handle-manipulation';
 import { closestParamOnLine, intersectRayPlane } from './ray-math';
+import { TranslateSnap } from './translate-snap';
 const TRAVEL_GUIDE_ID = 'guide.travel';
 const TRAVEL_START_ID = 'guide.travel.start';
 const START_MARKER_RADIUS = 0.035;
@@ -23,17 +24,20 @@ export class AxisTranslation implements HandleManipulation {
     readonly verb = VERB;
     private readonly startParam: number;
     private readonly travel = vec3.create();
+    private readonly snap: TranslateSnap;
     private distance = 0;
     constructor(private readonly environment: DragEnvironment, private readonly axis: AxisIndex) {
         const { frame, ray } = environment;
         this.startParam = closestParamOnLine(frame.origin, frame.axes[axis], ray) ?? 0;
+        this.snap = new TranslateSnap(environment, frame.origin);
     }
-    update(delta: TransformDelta): void {
-        const { frame, ray, snap } = this.environment;
-        const param = closestParamOnLine(frame.origin, frame.axes[this.axis], ray);
+    update(delta: TransformDelta, pointer: GizmoPointer): void {
+        const { frame, ray } = this.environment;
+        const direction = frame.axes[this.axis];
+        const param = closestParamOnLine(frame.origin, direction, ray);
         if (param !== null)
-            this.distance = snap.active ? snapValue(param - this.startParam, snap.translate) : param - this.startParam;
-        vec3.scale(this.travel, frame.axes[this.axis], this.distance);
+            this.distance = this.snap.axisDistance(direction, param - this.startParam, pointer);
+        vec3.scale(this.travel, direction, this.distance);
         vec3.copy(delta.translation, this.travel);
     }
     readout(): string {
@@ -41,39 +45,50 @@ export class AxisTranslation implements HandleManipulation {
     }
     decorate(layout: GizmoLayout): void {
         addTravelGuide(layout, this.environment.frame.origin, this.travel);
+        this.snap.decorate(layout);
     }
 }
-export class PlaneTranslation implements HandleManipulation {
+abstract class PlaneBoundTranslation implements HandleManipulation {
     readonly verb = VERB;
-    private readonly normal = vec3.create();
+    protected readonly snap: TranslateSnap;
+    protected readonly normal = vec3.create();
+    private readonly origin = vec3.create();
     private readonly startPoint = vec3.create();
     private readonly hit = vec3.create();
     private readonly travel = vec3.create();
-    constructor(private readonly environment: DragEnvironment, normal: Vec3, private readonly snapAxes: readonly Vec3[]) {
-        const { frame, ray } = environment;
+    constructor(private readonly environment: DragEnvironment, origin: Vec3, normal: Vec3) {
+        vec3.copy(this.origin, origin);
         vec3.copy(this.normal, normal);
-        if (!intersectRayPlane(this.startPoint, ray, frame.origin, normal))
-            vec3.copy(this.startPoint, frame.origin);
+        this.snap = new TranslateSnap(environment, origin);
+        if (!intersectRayPlane(this.startPoint, environment.ray, origin, normal))
+            vec3.copy(this.startPoint, origin);
     }
-    update(delta: TransformDelta): void {
-        const { frame, ray, snap } = this.environment;
-        if (intersectRayPlane(this.hit, ray, frame.origin, this.normal)) {
+    protected abstract settle(travel: Vec3, pointer: GizmoPointer): void;
+    update(delta: TransformDelta, pointer: GizmoPointer): void {
+        if (intersectRayPlane(this.hit, this.environment.ray, this.origin, this.normal)) {
             vec3.subtract(this.travel, this.hit, this.startPoint);
-            if (snap.active)
-                this.snapTravel(snap.translate);
+            this.settle(this.travel, pointer);
         }
         vec3.copy(delta.translation, this.travel);
-    }
-    private snapTravel(step: number): void {
-        for (const axis of this.snapAxes) {
-            const along = vec3.dot(this.travel, axis);
-            vec3.scaleAndAdd(this.travel, this.travel, axis, snapValue(along, step) - along);
-        }
     }
     readout(): string {
         return formatOffset(this.travel[0], this.travel[1], this.travel[2]);
     }
     decorate(layout: GizmoLayout): void {
-        addTravelGuide(layout, this.environment.frame.origin, this.travel);
+        addTravelGuide(layout, this.origin, this.travel);
+        this.snap.decorate(layout);
+    }
+}
+export class PlaneTranslation extends PlaneBoundTranslation {
+    constructor(environment: DragEnvironment, normal: Vec3, private readonly snapAxes: readonly Vec3[]) {
+        super(environment, environment.frame.origin, normal);
+    }
+    protected settle(travel: Vec3, pointer: GizmoPointer): void {
+        this.snap.planeTravel(travel, this.normal, this.snapAxes, pointer);
+    }
+}
+export class FreeTranslation extends PlaneBoundTranslation {
+    protected settle(travel: Vec3, pointer: GizmoPointer): void {
+        this.snap.freeTravel(travel, pointer);
     }
 }

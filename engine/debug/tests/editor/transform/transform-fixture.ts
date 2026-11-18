@@ -1,6 +1,7 @@
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { Scene } from '@/engine/core/scene/scene';
+import type { SnapSource } from '@/engine/editor/transform/drag/gizmo-drag';
 import type { GizmoPointer } from '@/engine/editor/transform/gizmo/gizmo-pointer';
 import { createScreenPoint, projectToScreen } from '@/engine/editor/viewport/screen-space';
 import { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
@@ -11,7 +12,7 @@ export interface PointerModifiers {
     alt?: boolean;
 }
 export const VIEWPORT_SIZE = 800;
-export const NO_SNAP = { enabled: false, translate: 0.5, rotate: 15, scale: 0.1 };
+export const NO_SNAP: SnapSource = { enabled: false, target: 'increment', translate: 0.5, rotate: 15, scale: 0.1 };
 export function createCamera(position: Triple, target: Triple = [0, 0, 0]): PerspectiveCamera {
     const camera = new PerspectiveCamera();
     vec3.set(camera.position, ...position);
