@@ -1,7 +1,9 @@
 import { formatAssetReference, parseAssetReference } from '@/engine/editor/mcp/asset-sources/catalog/asset-reference';
 import type { AssetVariant } from '@/engine/editor/mcp/asset-sources/catalog/asset-source';
 import { licenseLabelFromCode, licenseLabelFromUrl, requiresAttribution } from '@/engine/editor/mcp/asset-sources/catalog/license-label';
+import { findAssetSource } from '@/engine/editor/mcp/asset-sources/catalog/source-catalog';
 import { chooseVariant, describeVariant } from '@/engine/editor/mcp/asset-sources/catalog/variant-selection';
+import { parseSourcePermissions, permissionOf, readinessOf, serializeSourcePermissions } from '@/engine/editor/mcp/asset-sources/permissions/source-permissions';
 import { listPolyHavenVariants, resolvePolyHavenFiles } from '@/engine/editor/mcp/asset-sources/providers/poly-haven/poly-haven-files';
 import { fileExtensionOf, fileStemOf, safeFileName } from '@/engine/editor/mcp/asset-sources/transport/file-naming';
 import { parseHttpsUrl, recordAtPath, textAt } from '@/engine/editor/mcp/asset-sources/transport/json-reading';
@@ -125,6 +127,28 @@ function polyHavenPanoramas(): void {
     checks.check('os panoramas ficam nas qualidades leves', labels(variants) === 'hdr 1k', labels(variants));
     checks.check('uma URL sem https é descartada', listPolyHavenVariants('hdri', INSECURE_FILES).length === 0);
 }
+function permissions(): void {
+    const sketchfab = findAssetSource('sketchfab');
+    const polyHaven = findAssetSource('polyhaven');
+    if (!sketchfab || !polyHaven) {
+        checks.check('as fontes Sketchfab e Poly Haven existem', false);
+        return;
+    }
+    const untouched = parseSourcePermissions(null);
+    checks.check('sem nada guardado toda fonte começa bloqueada', Array.from(untouched.values()).every((permission) => !permission.allowed && permission.apiKey === ''));
+    const stored = parseSourcePermissions({ sketchfab: { allowed: true, apiKey: `  ${'k'.repeat(400)}  ` }, polyhaven: { allowed: 'yes' }, unknown: { allowed: true }, freesound: 'on' });
+    checks.check('a permissão guardada é lida', permissionOf(stored, 'sketchfab').allowed);
+    checks.check('a chave é aparada e limitada', permissionOf(stored, 'sketchfab').apiKey.length === 256);
+    checks.check('só o booleano verdadeiro libera', !permissionOf(stored, 'polyhaven').allowed);
+    checks.check('uma fonte desconhecida é ignorada', !stored.has('unknown'));
+    checks.check('um valor fora do formato bloqueia', !permissionOf(stored, 'freesound').allowed);
+    checks.check('uma fonte ausente responde bloqueada', !permissionOf(stored, '__proto__').allowed);
+    checks.check('a ida e volta preserva as permissões', permissionOf(parseSourcePermissions(serializeSourcePermissions(stored)), 'sketchfab').apiKey.length === 256);
+    checks.check('uma fonte bloqueada não está pronta', readinessOf(polyHaven, { allowed: false, apiKey: '' }) === 'blocked');
+    checks.check('uma fonte sem chave fica pronta ao ser liberada', readinessOf(polyHaven, { allowed: true, apiKey: '' }) === 'ready');
+    checks.check('uma fonte com chave liberada sem ela avisa a falta', readinessOf(sketchfab, { allowed: true, apiKey: '' }) === 'missingKey');
+    checks.check('uma fonte com chave fica pronta quando a chave chega', readinessOf(sketchfab, { allowed: true, apiKey: 'token' }) === 'ready');
+}
 references();
 variantChoice();
 licenses();
@@ -133,4 +157,5 @@ jsonReading();
 polyHavenModels();
 polyHavenTextures();
 polyHavenPanoramas();
+permissions();
 checks.finish();
