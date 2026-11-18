@@ -15,8 +15,8 @@ interface RectGrip {
 }
 const MIN_FACTOR = 0.001;
 const MIN_SPAN = 1e-6;
-const hit = vec3.create();
-const reach = vec3.create();
+const pointerOffset = vec3.create();
+const extent = vec3.create();
 function dominantFactor(grips: readonly RectGrip[]): number {
     let dominant = 1;
     for (const grip of grips) {
@@ -33,27 +33,27 @@ export class RectResize implements HandleManipulation {
     constructor(private readonly environment: DragEnvironment, normal: Vec3, axes: readonly AxisIndex[], grabbed: Vec3, anchor: Vec3) {
         vec3.copy(this.normal, normal);
         vec3.copy(this.anchor, anchor);
-        const started = this.measure();
-        vec3.copy(reach, hit);
+        const started = this.measurePointerOffset();
+        vec3.subtract(extent, grabbed, anchor);
         this.grips = axes.map((axis) => {
             const direction = environment.frame.axes[axis];
-            const span = vec3.dot(vec3.subtract(hit, grabbed, anchor), direction);
-            return { axis, span, start: started ? vec3.dot(reach, direction) : span, factor: 1 };
+            const span = vec3.dot(extent, direction);
+            return { axis, span, start: started ? vec3.dot(pointerOffset, direction) : span, factor: 1 };
         });
     }
-    private measure(): boolean {
-        if (!intersectRayPlane(hit, this.environment.ray, this.anchor, this.normal))
+    private measurePointerOffset(): boolean {
+        if (!intersectRayPlane(pointerOffset, this.environment.ray, this.anchor, this.normal))
             return false;
-        vec3.subtract(hit, hit, this.anchor);
+        vec3.subtract(pointerOffset, pointerOffset, this.anchor);
         return true;
     }
     update(delta: TransformDelta, pointer: GizmoPointer): void {
         const { frame, snap } = this.environment;
-        if (this.measure()) {
+        if (this.measurePointerOffset()) {
             for (const grip of this.grips) {
                 if (Math.abs(grip.span) < MIN_SPAN)
                     continue;
-                const travel = vec3.dot(hit, frame.axes[grip.axis]) - grip.start;
+                const travel = vec3.dot(pointerOffset, frame.axes[grip.axis]) - grip.start;
                 const settled = snap.active ? snapValue(travel, snap.translate) : travel;
                 grip.factor = Math.max((grip.span + settled) / grip.span, MIN_FACTOR);
             }
