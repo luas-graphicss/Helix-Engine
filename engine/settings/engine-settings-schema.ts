@@ -87,6 +87,7 @@ export const ENGINE_SETTINGS = {
             { value: 'scale', label: 'Escalar' },
             { value: 'transform', label: 'Transformar' },
             { value: 'universal', label: 'Universal' },
+            { value: 'rect', label: 'Retângulo' },
         ],
     }),
     'editor.open.space': selectSetting({

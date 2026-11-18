@@ -23,11 +23,22 @@ export type HandleAction = {
     readonly normal: AxisIndex;
 } | {
     readonly kind: 'scaleUniform';
+} | {
+    readonly kind: 'rectEdge';
+    readonly normal: AxisIndex;
+    readonly axis: AxisIndex;
+} | {
+    readonly kind: 'rectCorner';
+    readonly normal: AxisIndex;
+} | {
+    readonly kind: 'rectRotate';
+    readonly normal: AxisIndex;
 };
 type SegmentGlyph = 'arrow' | 'stem' | 'line';
 type CircleGlyph = 'ring' | 'sector';
 type PointGlyph = 'disc' | 'cube';
-export type HandleGlyph = SegmentGlyph | CircleGlyph | PointGlyph | 'fill';
+type QuadGlyph = 'fill' | 'area';
+export type HandleGlyph = SegmentGlyph | CircleGlyph | PointGlyph | QuadGlyph;
 export type HandleTint = AxisIndex | 'neutral' | 'accent';
 export interface GizmoHandle {
     id: string;

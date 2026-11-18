@@ -7,10 +7,13 @@ export function gizmoCursor(action: HandleAction, dragging: boolean): string {
             return 'move';
         case 'rotateAxis':
         case 'rotateView':
+        case 'rectRotate':
             return dragging ? 'grabbing' : 'grab';
         case 'scaleAxis':
         case 'scalePlane':
         case 'scaleUniform':
+        case 'rectEdge':
+        case 'rectCorner':
             return 'nwse-resize';
     }
 }

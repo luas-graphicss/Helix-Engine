@@ -25,6 +25,8 @@ const STEM_CUBE_SIZE = 0.11;
 const EMPHASIS_THICKNESS = 1.6;
 const FILL_ALPHA = 0.45;
 const EMPHASIZED_FILL_ALPHA = 0.8;
+const AREA_ALPHA = 0.05;
+const EMPHASIZED_AREA_ALPHA = 0.14;
 const SECTOR_ALPHA = 0.3;
 const MUTED_ALPHA = 0.22;
 const right = vec3.create();
@@ -85,6 +87,9 @@ function drawPoint(drawList: GizmoDrawList, handle: GizmoHandle, color: Rgb, alp
     }
     basisMatrix(paint(drawList.add('disc'), color, alpha).model, center, right, up, toCamera, radius, radius, radius);
 }
+function drawQuad(drawList: GizmoDrawList, handle: GizmoHandle, color: Rgb, alpha: number): void {
+    quadMatrix(paint(drawList.add('quad'), color, alpha).model, handle.points[0], handle.points[1], handle.points[3]);
+}
 function drawHandle(drawList: GizmoDrawList, handle: GizmoHandle, size: number, emphasis: GizmoEmphasis): void {
     const interactive = handle.action !== null;
     const emphasized = interactive && (handle.id === emphasis.active || (emphasis.active === null && handle.id === emphasis.hovered));
@@ -99,7 +104,10 @@ function drawHandle(drawList: GizmoDrawList, handle: GizmoHandle, size: number, 
             drawSegment(drawList, handle, size, color, alpha, thickness);
             return;
         case 'fill':
-            quadMatrix(paint(drawList.add('quad'), color, alpha * (emphasized ? EMPHASIZED_FILL_ALPHA : FILL_ALPHA)).model, handle.points[0], handle.points[1], handle.points[3]);
+            drawQuad(drawList, handle, color, alpha * (emphasized ? EMPHASIZED_FILL_ALPHA : FILL_ALPHA));
+            return;
+        case 'area':
+            drawQuad(drawList, handle, color, alpha * (emphasized ? EMPHASIZED_AREA_ALPHA : AREA_ALPHA));
             return;
         case 'ring':
         case 'sector':

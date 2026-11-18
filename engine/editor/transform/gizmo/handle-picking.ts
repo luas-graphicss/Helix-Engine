@@ -66,6 +66,7 @@ function handleDistance(handle: GizmoHandle, camera: PerspectiveCamera, pointer:
         case 'line':
             return segmentDistance(handle, camera, pointer);
         case 'fill':
+        case 'area':
             return quadDistance(handle, camera, pointer);
         case 'ring':
         case 'sector':

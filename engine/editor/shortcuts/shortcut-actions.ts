@@ -90,6 +90,7 @@ export const SHORTCUT_ACTION_GROUPS = [
             action('tool.scale', 'Escalar', ['r']),
             action('tool.transform', 'Transformar', ['y'], 'Setas, anéis e escala uniforme no mesmo gizmo'),
             action('tool.universal', 'Universal', ['u'], 'Todas as alças de mover, rotacionar e escalar'),
+            action('tool.rect', 'Retângulo', ['i'], 'Redimensionar pelas bordas e cantos dos limites da seleção'),
             action('tool.terrain', 'Terreno', ['t'], 'Esculpir e pintar'),
         ],
     },

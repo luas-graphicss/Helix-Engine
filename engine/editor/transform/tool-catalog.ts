@@ -15,6 +15,7 @@ export const VIEWPORT_TOOL_GROUPS: readonly (readonly ViewportToolDefinition[])[
     [
         { id: 'transform', label: 'Transformar', shortcut: 'tool.transform' },
         { id: 'universal', label: 'Universal', shortcut: 'tool.universal' },
+        { id: 'rect', label: 'Retângulo', shortcut: 'tool.rect' },
     ],
     [{ id: 'terrain', label: 'Terreno', shortcut: 'tool.terrain' }],
 ];
