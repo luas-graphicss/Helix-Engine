@@ -198,7 +198,7 @@ export function PerformanceHud() {
     const budget = BUDGET_MS;
     const maxLevel = QUALITY_LADDER.length - 1;
     const overBudget = data.frameMs > budget * 1.12;
-    return (<aside aria-label="HUD de orçamento do frame" className="pointer-events-none absolute top-12 left-2 flex w-[19rem] max-w-[calc(100%-1rem)] flex-col gap-1.5 rounded-sm border border-border/70 bg-surface-overlay/92 p-2 font-mono text-2xs text-foreground shadow-overlay backdrop-blur-sm">
+    return (<aside aria-label="HUD de orçamento do frame" className="pointer-events-none absolute top-12 left-10 flex w-[19rem] max-w-[calc(100%-3rem)] flex-col gap-1.5 rounded-sm border border-border/70 bg-surface-overlay/92 p-2 font-mono text-2xs text-foreground shadow-overlay backdrop-blur-sm">
       <header className="flex items-baseline justify-between gap-2 leading-none">
         <span className="flex items-baseline gap-1.5">
           <span className={cn('text-sm font-medium tabular-nums', overBudget ? 'text-warning' : 'text-success')}>{ms(data.frameMs)} ms</span>

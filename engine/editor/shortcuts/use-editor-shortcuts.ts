@@ -163,6 +163,12 @@ function runEditorAction(action: ShortcutActionId, { session, dock, router, even
         case 'tool.terrain':
             session.setTool('terrain');
             return true;
+        case 'transform.togglePivot':
+            session.togglePivotMode();
+            return true;
+        case 'transform.toggleSpace':
+            session.toggleSpace();
+            return true;
         case 'terrain.sampleHeight':
             if (session.tool !== 'terrain')
                 return false;

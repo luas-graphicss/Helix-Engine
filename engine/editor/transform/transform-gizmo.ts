@@ -11,6 +11,9 @@ import type { GizmoPointer } from './gizmo/gizmo-pointer';
 import { drawGizmoLayout } from './gizmo/handle-drawing';
 import { pickHandle } from './gizmo/handle-picking';
 import { resolveTransformTargets, type TransformTargets } from './selection/transform-targets';
+function describeDrag(drag: GizmoDrag): string {
+    return `${drag.verb} · ${drag.readout}`;
+}
 export class TransformGizmo {
     hovered: string | null = null;
     active: string | null = null;
@@ -45,7 +48,8 @@ export class TransformGizmo {
         this.drag = drag;
         this.active = handle.id;
         this.hovered = handle.id;
-        this.readout = drag.readout;
+        this.readout = describeDrag(drag);
+        session.notifyLiveEdit();
         return handle.action;
     }
     updateDrag(pointer: GizmoPointer): void {
@@ -53,7 +57,7 @@ export class TransformGizmo {
         if (!drag)
             return;
         drag.update(pointer, session.snap);
-        this.readout = drag.readout;
+        this.readout = describeDrag(drag);
         session.notifyLiveEdit();
     }
     commitDrag(): void {
@@ -89,6 +93,7 @@ export class TransformGizmo {
         this.drag = null;
         this.active = null;
         this.readout = null;
+        this.session.notifyLiveEdit();
     }
     private currentTargets(): TransformTargets | null {
         const { session } = this;

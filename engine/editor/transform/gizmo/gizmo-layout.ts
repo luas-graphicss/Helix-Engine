@@ -22,8 +22,11 @@ const HANDLE_SETS: Record<GizmoTool, HandleSet> = {
     rotate: addRotateHandles,
     scale: addScaleHandles,
 };
+export function toolHonorsSpace(tool: GizmoTool): boolean {
+    return tool !== 'scale';
+}
 function gizmoOrientation(tool: GizmoTool, space: TransformSpace): TransformSpace {
-    return tool === 'scale' ? 'local' : space;
+    return toolHonorsSpace(tool) ? space : 'local';
 }
 export function buildGizmoLayout(layout: GizmoLayout, frame: GizmoFrame, request: GizmoLayoutRequest): boolean {
     const { tool, targets, camera } = request;

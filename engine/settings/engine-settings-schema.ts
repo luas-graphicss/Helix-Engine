@@ -96,6 +96,15 @@ export const ENGINE_SETTINGS = {
             { value: 'local', label: 'Local' },
         ],
     }),
+    'editor.open.pivot': selectSetting({
+        label: 'Posição inicial do gizmo',
+        description: 'Se o gizmo começa na origem do ator ativo ou no centro da seleção.',
+        default: 'pivot',
+        options: [
+            { value: 'pivot', label: 'Pivô' },
+            { value: 'center', label: 'Centro' },
+        ],
+    }),
     'editor.open.grid': booleanSetting({
         label: 'Grade do editor ao abrir',
         description: 'Mostra a grade complementar do viewport assim que o jogo abre (G alterna depois).',
@@ -817,7 +826,7 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
         description: 'Câmera, estado inicial do viewport, interface do editor, console e importação.',
         groups: [
             { title: 'Câmera', settings: ['editor.camera.orbitSpeed', 'editor.camera.panSpeed', 'editor.camera.zoomSpeed', 'editor.camera.fov', 'editor.camera.invertZoom', 'editor.camera.invertOrbitY'] },
-            { title: 'Ao abrir um jogo', settings: ['editor.open.tool', 'editor.open.space', 'editor.open.grid', 'editor.open.shadows', 'editor.open.perfHud'] },
+            { title: 'Ao abrir um jogo', settings: ['editor.open.tool', 'editor.open.space', 'editor.open.pivot', 'editor.open.grid', 'editor.open.shadows', 'editor.open.perfHud'] },
             { title: 'Interface do editor', settings: ['editor.ui.scale', 'editor.ui.statusBar', 'editor.ui.menuShortcuts', 'editor.hierarchy.kindLabels', 'editor.ui.reduceMotion'] },
             { title: 'Console', settings: ['editor.console.order', 'editor.console.limit', 'editor.console.revealOnError'] },
             { title: 'Importação de modelos', settings: ['editor.import.placement', 'editor.import.frameAfterImport', 'editor.import.saveToLibrary', 'editor.import.convertUnits'] },

@@ -92,6 +92,14 @@ export const SHORTCUT_ACTION_GROUPS = [
         ],
     },
     {
+        title: 'Transformação',
+        scope: 'editor',
+        actions: [
+            action('transform.togglePivot', 'Alternar o gizmo entre Pivô e Centro', ['z']),
+            action('transform.toggleSpace', 'Alternar os eixos entre Global e Local', ['x']),
+        ],
+    },
+    {
         title: 'Terreno',
         scope: 'editor',
         actions: [

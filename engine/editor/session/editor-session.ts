@@ -668,6 +668,15 @@ export class EditorSession {
     toggleSpace(): void {
         this.setSpace(this.space === 'global' ? 'local' : 'global');
     }
+    setPivotMode(pivotMode: PivotMode): void {
+        if (this.pivotMode === pivotMode)
+            return;
+        this.pivotMode = pivotMode;
+        this.notify('tool');
+    }
+    togglePivotMode(): void {
+        this.setPivotMode(this.pivotMode === 'pivot' ? 'center' : 'pivot');
+    }
     updateSnap(patch: Partial<SnapSettings>): void {
         Object.assign(this.snap, patch);
         this.notify('tool');

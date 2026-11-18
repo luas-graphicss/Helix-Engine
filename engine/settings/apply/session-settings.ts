@@ -9,6 +9,7 @@ export function applySessionOpenDefaults(session: EditorSession): void {
     const get = engineSettings.get.bind(engineSettings);
     session.tool = get('editor.open.tool');
     session.space = get('editor.open.space');
+    session.pivotMode = get('editor.open.pivot');
     session.showGrid = get('editor.open.grid');
     session.shadowsEnabled = get('editor.open.shadows');
     session.snap.enabled = get('snap.enabled');
