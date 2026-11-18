@@ -4,6 +4,7 @@ import type { AssetVariant, RemoteAsset } from '@/engine/editor/mcp/asset-source
 import { licenseLabelFromCode, licenseLabelFromUrl, requiresAttribution } from '@/engine/editor/mcp/asset-sources/catalog/license-label';
 import { findAssetSource } from '@/engine/editor/mcp/asset-sources/catalog/source-catalog';
 import { chooseVariant, describeVariant } from '@/engine/editor/mcp/asset-sources/catalog/variant-selection';
+import { downloadPackage } from '@/engine/editor/mcp/asset-sources/insertion/package-download';
 import { openSource } from '@/engine/editor/mcp/asset-sources/permissions/source-gate';
 import { parseSourcePermissions, permissionOf, readinessOf, serializeSourcePermissions } from '@/engine/editor/mcp/asset-sources/permissions/source-permissions';
 import { listPolyHavenVariants, resolvePolyHavenFiles } from '@/engine/editor/mcp/asset-sources/providers/poly-haven/poly-haven-files';
@@ -180,6 +181,25 @@ function presentation(): void {
     checks.check('a linha de crédito junta nome, autor, licença e página', creditLine(asset) === '"Barrel 01" by Jorge Camacho, CC BY 4.0, https://polyhaven.com/a/Barrel_01');
     checks.check('o tamanho da variante sai em megabytes', JSON.stringify(presentVariant({ format: 'glb', quality: null, bytes: 1572864 })) === '{"format":"glb","megabytes":1.5}');
 }
+async function rejectionOf(action: () => Promise<unknown>): Promise<string> {
+    try {
+        await action();
+    }
+    catch (cause) {
+        return cause instanceof Error ? cause.message : String(cause);
+    }
+    return '';
+}
+async function packageLimits(): Promise<void> {
+    const asset: RemoteAsset = { id: 'crate', kind: 'model', name: 'Crate', author: 'Ana', license: 'CC0', pageUrl: 'https://polyhaven.com/a/crate', thumbnailUrl: null, tags: [], facts: {} };
+    const remoteFile = { url: new URL(`${FILE_HOST}/crate.glb`), name: 'crate.glb', bytes: 10, slots: [] };
+    const empty = await rejectionOf(() => downloadPackage({ asset, variant: { format: 'glb', quality: null, bytes: 0 }, files: [] }));
+    checks.check('um pacote sem arquivos é recusado antes de baixar', empty.includes('no file to download as glb'), empty);
+    const crowded = await rejectionOf(() => downloadPackage({ asset, variant: { format: 'gltf', quality: '8k', bytes: 10 }, files: Array.from({ length: 25 }, () => remoteFile) }));
+    checks.check('um pacote com arquivos demais é recusado antes de baixar', crowded.includes('above the limit of 24'), crowded);
+    const heavy = await rejectionOf(() => downloadPackage({ asset, variant: { format: 'fbx', quality: '8k', bytes: 200 * 1024 * 1024 }, files: [remoteFile] }));
+    checks.check('um pacote pesado demais é recusado antes de baixar', heavy.includes('200 MB, above the limit of 160 MB'), heavy);
+}
 references();
 variantChoice();
 licenses();
@@ -191,4 +211,5 @@ polyHavenPanoramas();
 permissions();
 sourceGate();
 presentation();
+await packageLimits();
 checks.finish();

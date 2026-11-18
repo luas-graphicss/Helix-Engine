@@ -83,6 +83,12 @@ export async function addFilesToLibrary(session: EditorSession, files: File[], o
     const report = await ingestIntoLibrary(session, files, options);
     return report.added.map((item) => item.snapshot.asset);
 }
+export async function addOrReuseLibraryFiles(session: EditorSession, files: File[], options: AddToLibraryOptions = {}): Promise<LibraryAsset[]> {
+    if (files.length === 0)
+        return [];
+    const report = await ingestIntoLibrary(session, files, options);
+    return [...report.added.map((item) => item.snapshot.asset), ...report.duplicates.map(({ existing }) => existing)];
+}
 export async function importLibraryAssetOfKind(session: EditorSession, kind: AssetKind, accept = assetKindAccept(kind)): Promise<LibraryAsset | null> {
     const [file] = await pickFiles({ accept });
     if (!file)
