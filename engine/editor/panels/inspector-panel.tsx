@@ -36,6 +36,7 @@ import { ScriptAttachSection, ScriptSection } from './inspector/script-section';
 import { BoneSection, RigSection } from './inspector/rig-section';
 import { LibraryMaterialSection, MaterialPickerButton, OwnMaterialRow } from './inspector/material-library-section';
 import { TransformSection } from './inspector/transform-section';
+import { SelectionInspector } from './inspector/selection-inspector';
 import { formatNumber, ScalarField } from './inspector/number-fields';
 import { INSPECTOR_NAME_INPUT_ID } from '@/engine/editor/shortcuts/focus-targets';
 import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
@@ -162,6 +163,8 @@ function TerrainSection({ entity }: {
 export function InspectorPanel() {
     const session = useSessionTopic('scene', 'selection', 'resources', 'assets', 'playtest', 'view');
     const hint = useShortcutHint();
+    if (session.selectedIds.size > 1)
+        return <SelectionInspector key={Array.from(session.selectedIds).join(':')}/>;
     const entity = session.selectedEntity;
     if (!entity)
         return <EmptySelection />;

@@ -16,7 +16,7 @@ export interface TransformChange {
     readonly before: TransformSnapshot;
     readonly after: TransformSnapshot;
 }
-const FIELD_LABEL: Record<TransformField, string> = { position: 'Posição', rotation: 'Rotação', scale: 'Escala' };
+export const FIELD_LABEL: Record<TransformField, string> = { position: 'Posição', rotation: 'Rotação', scale: 'Escala' };
 const DEFAULT_VALUE: Record<TransformField, [
     number,
     number,
