@@ -35,6 +35,7 @@ import { CodeEditor } from '@/engine/editor/code/code-editor';
 import { ShaderPreview } from '@/engine/editor/code/shader-preview';
 import { EditorAssistant } from '@/engine/editor/assistant/editor-assistant';
 import { McpBridge } from '@/engine/editor/mcp/mcp-bridge';
+import { EditorExtensions } from '@/engine/editor/extensions/editor-extensions';
 import { ScriptRuntime } from '@/engine/scripting/runtime/script-runtime';
 import { syncCodeEditorWithLibrary } from '@/engine/editor/operations/script-operations';
 import { syncVfxEditorWithLibrary } from '@/engine/editor/operations/vfx-operations';
@@ -122,6 +123,7 @@ export class EditorSession {
     readonly hud = new PlaytestHud(this);
     readonly code = new CodeEditor(this);
     readonly scripts = new ScriptRuntime(this);
+    readonly extensions = new EditorExtensions(this);
     readonly shaderPreview = new ShaderPreview(this);
     readonly assistant = new EditorAssistant(this);
     readonly mcp = new McpBridge(this);
@@ -233,6 +235,7 @@ export class EditorSession {
     }
     async dispose(): Promise<void> {
         this.scripts.stop();
+        this.extensions.dispose();
         this.shaderPreview.stop();
         this.assistant.stop();
         this.mcp.stop();
@@ -254,6 +257,7 @@ export class EditorSession {
     attachViewport(canvas: HTMLCanvasElement | null): void {
         this.viewportCanvas = canvas;
         this.scripts.attachViewport(canvas);
+        this.extensions.attachViewport(canvas);
     }
     markViewportReady(): void {
         if (this.viewportReady)
@@ -572,6 +576,7 @@ export class EditorSession {
             this.csg.update(this.scene, { deferHeavy: this.csgPreferences.deferHeavyWhileDragging && this.gizmo.active !== null });
             this.playtest.tick(deltaSeconds, elapsedSeconds);
             this.scripts.tickTool(deltaSeconds);
+            this.extensions.tick(deltaSeconds);
             this.terrain.tick(deltaSeconds);
             this.animation.tick(deltaSeconds);
             this.audio.world.tick(deltaSeconds);

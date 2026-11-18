@@ -90,6 +90,12 @@ function parseTicket(text: string): JsonValue | null {
 }
 export interface RuntimeStartOptions {
     readonly entry?: LibraryAsset;
+    readonly persistent?: boolean;
+}
+function requireToolEntry(options: RuntimeStartOptions): LibraryAsset {
+    if (!options.entry)
+        throw new Error('start("editor") precisa do script a executar.');
+    return options.entry;
 }
 export class ScriptRuntime implements RuntimeHost {
     readonly compiler = new ScriptCompiler();
@@ -141,6 +147,7 @@ export class ScriptRuntime implements RuntimeHost {
     private lastInvokeFailed = false;
     private runToken = 0;
     private entryName: string | null = null;
+    private persistent = false;
     readonly net: NetHub;
     constructor(readonly session: EditorSession) {
         this.bus = new EventBus(this);
@@ -181,6 +188,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.mode = mode;
         this.starting = true;
         this.entryName = options.entry?.name ?? null;
+        this.persistent = options.persistent === true;
         this.resetServices();
         this.session.notify();
         try {
@@ -194,7 +202,7 @@ export class ScriptRuntime implements RuntimeHost {
     }
     private async boot(mode: RuntimeMode, options: RuntimeStartOptions, token: number, startedAt: number): Promise<void> {
         const link = this.planLink(mode);
-        const { inputs, skipped } = await collectScriptSources(this.session);
+        const { inputs, skipped } = await this.bootSources();
         if (token !== this.runToken)
             return;
         const roots = mode === 'play' ? this.playRoots(link) : options.entry ? new Set([options.entry.id]) : undefined;
@@ -249,10 +257,9 @@ export class ScriptRuntime implements RuntimeHost {
             }));
         }
         if (mode === 'editor') {
-            const entry = options.entry;
-            if (!entry)
-                throw new Error('start("editor") precisa do script a executar.');
-            this.startTool(entry, startedAt);
+            this.disposers.add(this.session.subscribeTopic('selection', () => void this.bus.emit('editor.selectionChanged', this.session.selectedEntities())));
+            if (!this.persistent)
+                this.startTool(requireToolEntry(options), startedAt);
         }
         else {
             this.syncActors();
@@ -272,6 +279,9 @@ export class ScriptRuntime implements RuntimeHost {
         }
         this.starting = false;
         this.session.notify();
+    }
+    private bootSources(): ReturnType<typeof collectScriptSources> {
+        return this.persistent ? Promise.resolve({ inputs: [], skipped: [] }) : collectScriptSources(this.session);
     }
     private planLink(mode: RuntimeMode): NetLink {
         const { scripting } = this.session.scene;
@@ -465,7 +475,7 @@ export class ScriptRuntime implements RuntimeHost {
                 return false;
             this.load(instance);
             this.updateActivation();
-            this.say('info', `${asset.name} carregado no jogo em execução.`);
+            this.say('info', this.mode === 'play' ? `${asset.name} carregado no jogo em execução.` : `${asset.name} carregado no editor.`);
             this.session.notify();
             return true;
         }
@@ -516,6 +526,19 @@ export class ScriptRuntime implements RuntimeHost {
         this.updateActivation();
         const others = affected.length - 1;
         this.say('info', `${asset.name} recarregado a quente: ${rebuilt} ${rebuilt === 1 ? 'instância' : 'instâncias'}${others > 0 ? `, ${others} ${others === 1 ? 'módulo dependente' : 'módulos dependentes'}` : ''}.`);
+        this.session.notify();
+        return true;
+    }
+    unload(assetId: string): boolean {
+        if (!this.running || !this.loader.get(assetId))
+            return false;
+        for (const instance of this.instances.slice())
+            if (instance.assetId === assetId)
+                this.removeInstance(instance, { destroy: true });
+        this.props.clear(assetId);
+        this.scriptDebugger.forgetModule(assetId);
+        this.loader.unload(assetId);
+        this.compiled.delete(assetId);
         this.session.notify();
         return true;
     }
@@ -585,7 +608,7 @@ export class ScriptRuntime implements RuntimeHost {
             this.cameraEffects.apply(delta, this.session.camera, this.time.now);
         this.input.endFrame();
         this.scriptDebugger.frameEnd(this.instances);
-        if (this.mode === 'editor' && this.idle) {
+        if (this.mode === 'editor' && !this.persistent && this.idle) {
             if (this.entryName)
                 this.say('info', `${this.entryName} concluído.`);
             this.entryName = null;

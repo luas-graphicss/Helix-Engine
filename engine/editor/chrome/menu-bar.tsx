@@ -18,6 +18,7 @@ import { PanelsMenuItems } from '@/engine/editor/layout/panels-menu-items';
 import { GuiEditMenuItems, InterfaceMenuItems } from '@/engine/editor/menus/gui-menu-items';
 import { CodeMenuItems } from '@/engine/editor/menus/code-menu-items';
 import { HelpMenuItems } from '@/engine/editor/menus/help-menu-items';
+import { ExtensionsMenuItems } from '@/engine/editor/extensions/ui/extensions-menu-items';
 import { HelixLogo } from '@/engine/boot/helix-logo';
 import { UI_SCALE_OPTIONS, type UiScaleValue } from '@/engine/settings/engine-settings-schema';
 import { engineSettings, useEngineSetting } from '@/engine/settings/engine-settings-store';
@@ -246,6 +247,10 @@ export function MenuBar() {
           <PanelsMenuItems />
           <DropdownMenuSeparator />
           <UiScaleMenuItems />
+        </MenuBarMenu>
+
+        <MenuBarMenu label="Extensões">
+          <ExtensionsMenuItems />
         </MenuBarMenu>
 
         <MenuBarMenu label="Ajuda" contentClassName="[&_[role=menuitem]]:whitespace-nowrap">

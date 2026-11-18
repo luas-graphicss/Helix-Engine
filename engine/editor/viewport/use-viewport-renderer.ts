@@ -230,7 +230,7 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
                 postCompareSplit: session.render.postCompare.enabled && session.playtest.state !== 'playing' ? session.render.postCompare.split : null,
                 profileGpu,
                 capture: session.capture.pending,
-                scripts: session.scripts.renderRequest ?? session.shaderPreview.renderRequest,
+                scripts: session.scripts.renderRequest ?? session.extensions.renderRequest ?? session.shaderPreview.renderRequest,
             });
             session.colorPicker.sample(renderer.gl);
             session.frameProfile.add('render', renderer.stats.cpuMs);
