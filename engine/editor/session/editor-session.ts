@@ -25,6 +25,7 @@ import { createHistoryActivityRecorder } from '@/engine/editor/activity/history-
 import { TransformGizmo } from '@/engine/editor/transform/transform-gizmo';
 import type { GizmoTool, PivotMode, SnapTarget, TransformSpace } from '@/engine/editor/transform/transform-settings';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
+import { ClothWorldHost } from '@/engine/editor/cloth/cloth-world-host';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
 import { AnimationEditor } from '@/engine/editor/animation/animation-editor';
 import { AudioEditor } from '@/engine/editor/audio/audio-editor';
@@ -124,6 +125,7 @@ export class EditorSession {
     readonly guiWorld = new GuiWorldHost(this);
     readonly vfx = new VfxEditor(this);
     readonly vfxWorld = new VfxWorldHost(this);
+    readonly clothWorld = new ClothWorldHost(this);
     readonly cameras = new CameraWorldHost(this);
     readonly hud = new PlaytestHud(this);
     readonly code = new CodeEditor(this);
@@ -596,6 +598,7 @@ export class EditorSession {
             this.extensions.tick(deltaSeconds);
             this.terrain.tick(deltaSeconds);
             this.animation.tick(deltaSeconds);
+            this.clothWorld.tick();
             this.audio.world.tick(deltaSeconds);
             const soundAnimating = this.audio.world.animating && this.render.soundHelpers !== 'off' && this.playtest.state !== 'playing';
             const guiAnimating = this.guiWorld.tick(deltaSeconds, elapsedSeconds);

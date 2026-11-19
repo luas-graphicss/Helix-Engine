@@ -1,9 +1,10 @@
-import { Box, Camera, Circle, Cone, Cylinder, Diff, FileCode2, Folder, Layers, LayoutTemplate, Lightbulb, Mountain, Orbit, PersonStanding, Pill, Radio, Shapes, Sparkles, Square, SquareTerminal, Tag, Torus, Tv, Video, Volume2 } from 'lucide-react';
+import { Box, Camera, Circle, Cone, Cylinder, Diff, FileCode2, Flag, Folder, Layers, LayoutTemplate, Lightbulb, Mountain, Orbit, PersonStanding, Pill, Radio, Shapes, Shirt, Sparkles, Square, SquareTerminal, Tag, Torus, Tv, Video, Volume2, Waves, Wind } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { PRIMITIVES, type PrimitiveKind } from '@/engine/editor/primitives/primitive-catalog';
 import { addCamera, addGroup, addLight, addPrimitive } from '@/engine/editor/operations/entity-operations';
 import { addCharacter } from '@/engine/editor/operations/character-operations';
+import { addClothActor } from '@/engine/editor/operations/cloth-operations';
 import { addTerrain } from '@/engine/editor/operations/terrain-operations';
 import { addCsgBrushToSelection } from '@/engine/editor/operations/csg-operations';
 import { addAudioZone, addSoundSource } from '@/engine/editor/operations/audio-world-operations';
@@ -17,6 +18,7 @@ import { VFX_TEMPLATE_CATEGORY_LABEL, VFX_TEMPLATES } from '@/engine/vfx/documen
 import { CSG_SHAPE_LABEL, type CsgBrushShape } from '@/engine/geometry/csg/csg-settings';
 import { LOCAL_LIGHT_LABEL, LOCAL_LIGHT_TYPES } from '@/engine/core/scene/light';
 import { LIGHT_ICON, LOCAL_LIGHT_DESCRIPTION } from '@/engine/editor/lights/light-icons';
+import { CLOTH_PRESETS, type ClothPresetId } from '@/engine/cloth/cloth-presets';
 import { CAMERA_PRESETS, type CameraPresetId } from '@/engine/camera/camera-presets';
 export interface AddMenuEntry {
     readonly id: string;
@@ -55,6 +57,12 @@ const CAMERA_PRESET_ICON: Record<CameraPresetId, LucideIcon> = {
     orthographic: Square,
     overlay: Layers,
     texture: Tv,
+};
+const CLOTH_PRESET_ICON: Record<ClothPresetId, LucideIcon> = {
+    sheet: Waves,
+    flag: Flag,
+    cape: Wind,
+    garment: Shirt,
 };
 const CSG_BRUSH_SHAPES: readonly CsgBrushShape[] = ['box', 'cylinder', 'sphere', 'capsule', 'cone', 'torus'];
 const CSG_BRUSH_DESCRIPTION: Record<CsgBrushShape, string> = {
@@ -122,6 +130,20 @@ export const ADD_MENU_GROUPS: readonly AddMenuGroup[] = [
                 run: (session) => addCharacter(session),
             },
         ],
+    },
+    {
+        id: 'cloth',
+        label: 'Tecidos',
+        icon: Shirt,
+        entries: CLOTH_PRESETS.map((preset): AddMenuEntry => ({
+            id: `cloth-${preset.id}`,
+            label: preset.label,
+            description: preset.description,
+            icon: CLOTH_PRESET_ICON[preset.id],
+            run: (session) => {
+                addClothActor(session, preset.id);
+            },
+        })),
     },
     {
         id: 'world',
