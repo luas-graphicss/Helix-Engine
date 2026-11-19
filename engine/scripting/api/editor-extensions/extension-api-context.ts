@@ -30,6 +30,13 @@ export function guardedPredicate<TArgs extends unknown[]>(context: ExtensionApiC
         return failed ? fallback : result;
     };
 }
+export function guardedAction<TArgs extends unknown[]>(context: ExtensionApiContext, owner: ScriptContext | null, phase: string, action: (...args: TArgs) => void): (...args: TArgs) => void {
+    let failed = false;
+    return (...args) => {
+        if (!failed)
+            failed = !context.run(owner, phase, () => action(...args));
+    };
+}
 export function createExtensionApiContext(host: RuntimeHost): ExtensionApiContext {
     const { extensions } = host.session;
     const registrations = new Set<() => void>();

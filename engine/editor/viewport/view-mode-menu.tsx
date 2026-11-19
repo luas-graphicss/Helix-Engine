@@ -3,6 +3,7 @@ import { ChevronDown, Eye, Grid2x2, Lightbulb, Snowflake, Sparkles, Volume2 } fr
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
 import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS } from '@/engine/editor/menus/menu-styles';
+import { ExtensionGizmosMenuItem } from '@/engine/editor/extensions/ui/gizmos/extension-gizmos-menu-item';
 import { debugViewNeedsMyriad, MYRIAD_DEBUG_VIEW_HINTS, MYRIAD_DEBUG_VIEW_LABELS, MYRIAD_DEBUG_VIEWS, type MyriadDebugView, } from '@/engine/renderer/myriad/runtime/myriad-settings';
 import { LIGHT_HELPER_MODE_LABEL, LIGHT_HELPER_MODES, type LightHelperMode } from '@/engine/renderer/passes/light-helper-pass';
 import { SOUND_HELPER_MODE_LABEL, SOUND_HELPER_MODES, type SoundHelperMode } from '@/engine/renderer/passes/sound-helper-pass';
@@ -113,6 +114,7 @@ export function ViewModeMenu() {
             <Snowflake aria-hidden/>
             Congelar seleção e culling
           </DropdownMenuCheckboxItem>
+          <ExtensionGizmosMenuItem />
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>);

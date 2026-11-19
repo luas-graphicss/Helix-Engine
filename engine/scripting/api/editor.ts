@@ -14,6 +14,7 @@ import { HelixArgumentError, HelixError } from '../runtime/script-errors';
 import type { RuntimeHost } from '../runtime/runtime-host';
 import { requireEntity, requireFunction, requireNumber, requireOneOf, requireString } from '../runtime/values';
 import { createExtensionApiContext } from './editor-extensions/extension-api-context';
+import { createGizmosApi } from './editor-extensions/gizmos-api';
 import { createInspectorsApi } from './editor-extensions/inspectors-api';
 import { createMenusApi } from './editor-extensions/menus-api';
 import { createWindowsApi } from './editor-extensions/windows-api';
@@ -252,6 +253,7 @@ export function createEditorApi(host: RuntimeHost) {
         windows: createWindowsApi(extensionContext),
         menus: createMenusApi(extensionContext),
         inspectors: createInspectorsApi(extensionContext),
+        gizmos: createGizmosApi(extensionContext),
         tools: {
             register: (id: unknown, options: unknown) => {
                 const member = 'helix.editor.tools.register';
