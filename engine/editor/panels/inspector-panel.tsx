@@ -37,6 +37,7 @@ import { BoneSection, RigSection } from './inspector/rig-section';
 import { LibraryMaterialSection, MaterialPickerButton, OwnMaterialRow } from './inspector/material-library-section';
 import { TransformSection } from './inspector/transform-section';
 import { LodGroupSection } from './inspector/lod-group-section';
+import { ClothSection } from './inspector/cloth/cloth-section';
 import { CameraSection } from './inspector/camera/camera-section';
 import { LayerField } from './inspector/layer-field';
 import { SelectionInspector } from './inspector/selection-inspector';
@@ -48,6 +49,8 @@ const AXES = ['x', 'y', 'z'] as const;
 const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain, character: PersonStanding, sound: Volume2, gui: LayoutTemplate, vfx: Sparkles, script: FileCode2 };
 const KIND_LABEL: Record<EntityKind, string> = { group: 'Grupo', mesh: 'Malha estática', light: 'Luz', camera: 'Câmera', terrain: 'Terreno', character: 'Personagem', sound: 'Som', gui: 'Interface no mundo', vfx: 'Efeito visual', script: 'Script' };
 function kindLabel(entity: Entity): string {
+    if (entity.cloth)
+        return 'Tecido';
     if (entity.kind === 'gui' && entity.guiSurface)
         return `Interface · ${GUI_SURFACE_CONTENT_LABEL[entity.guiSurface.content.kind].toLowerCase()}`;
     if (entity.kind === 'script')
@@ -215,6 +218,7 @@ export function InspectorPanel() {
         <MeshSection entity={entity}/>
         <CsgSection entity={entity}/>
         <RigidBodySection entity={entity}/>
+        <ClothSection entity={entity}/>
         <MaterialSection entity={entity}/>
         <TexturesSection entity={entity}/>
         <LightSection entity={entity}/>
