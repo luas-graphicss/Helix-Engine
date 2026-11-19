@@ -24,6 +24,8 @@ import { createClothSettings, normalizeClothSettings } from '@/engine/cloth/clot
 import { createScriptSettings } from '@/engine/scripting/script-settings';
 import { createScriptingSettings } from '@/engine/scripting/scripting-settings';
 import { createCameraSettings, normalizeCameraSettings } from '@/engine/camera/camera-settings';
+import { createVehicleSettings, normalizeVehicleSettings } from '@/engine/vehicle/vehicle-settings';
+import { createWheelSettings, normalizeWheelSettings } from '@/engine/vehicle/wheel/wheel-settings';
 import { clampRenderLayer, createRenderLayerSettings, normalizeRenderLayerSettings } from '@/engine/camera/layers/render-layers';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { Terrain } from '@/engine/terrain/core/terrain';
@@ -231,6 +233,10 @@ class SceneReader {
             options.cloth = normalizeClothSettings(restoreInto(createClothSettings(), json.cloth));
         if (json.camera)
             options.camera = normalizeCameraSettings(restoreInto(createCameraSettings(), json.camera));
+        if (json.vehicle)
+            options.vehicle = normalizeVehicleSettings(restoreInto(createVehicleSettings(), json.vehicle));
+        if (json.wheel)
+            options.wheel = normalizeWheelSettings(restoreInto(createWheelSettings(), json.wheel));
         if (json.layer !== undefined)
             options.layer = clampRenderLayer(json.layer);
         const entity = this.freshIds ? scene.createEntity(options, parent) : scene.restoreEntity({ ...options, id: json.id }, parent);

@@ -12,6 +12,8 @@ import type { ScriptSettings } from '@/engine/scripting/script-settings';
 import type { LodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
 import type { ClothSettings } from '@/engine/cloth/cloth-settings';
 import type { CameraSettings } from '@/engine/camera/camera-settings';
+import type { VehicleSettings } from '@/engine/vehicle/vehicle-settings';
+import type { WheelSettings } from '@/engine/vehicle/wheel/wheel-settings';
 import { DEFAULT_RENDER_LAYER } from '@/engine/camera/layers/render-layers';
 import { Transform } from './transform';
 import type { Material } from './material';
@@ -48,6 +50,8 @@ export interface EntityOptions {
     lodGroup?: LodGroupSettings;
     cloth?: ClothSettings;
     camera?: CameraSettings;
+    vehicle?: VehicleSettings;
+    wheel?: WheelSettings;
     layer?: number;
     castShadows?: boolean;
     receiveShadows?: boolean;
@@ -81,6 +85,8 @@ export class Entity {
     lodGroup: LodGroupSettings | null;
     cloth: ClothSettings | null;
     camera: CameraSettings | null;
+    vehicle: VehicleSettings | null;
+    wheel: WheelSettings | null;
     layer: number;
     castShadows: boolean;
     receiveShadows: boolean;
@@ -109,6 +115,8 @@ export class Entity {
         this.lodGroup = options.lodGroup ?? null;
         this.cloth = options.cloth ?? null;
         this.camera = options.camera ?? null;
+        this.vehicle = options.vehicle ?? null;
+        this.wheel = options.wheel ?? null;
         this.layer = options.layer ?? DEFAULT_RENDER_LAYER;
         this.castShadows = options.castShadows ?? true;
         this.receiveShadows = options.receiveShadows ?? true;

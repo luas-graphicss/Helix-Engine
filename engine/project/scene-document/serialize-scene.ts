@@ -123,6 +123,10 @@ class SceneWriter {
             json.cloth = toPlain(entity.cloth, `${entity.name}.cloth`);
         if (entity.camera)
             json.camera = toPlain(entity.camera, `${entity.name}.camera`);
+        if (entity.vehicle)
+            json.vehicle = toPlain(entity.vehicle, `${entity.name}.vehicle`);
+        if (entity.wheel)
+            json.wheel = toPlain(entity.wheel, `${entity.name}.wheel`);
         if (entity.layer !== DEFAULT_RENDER_LAYER)
             json.layer = entity.layer;
         const modelRoot = entity.character ? findModelRoot(entity) : null;

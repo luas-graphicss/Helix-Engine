@@ -111,6 +111,8 @@ export interface EntityJson {
     lodGroup?: PlainValue;
     cloth?: PlainValue;
     camera?: PlainValue;
+    vehicle?: PlainValue;
+    wheel?: PlainValue;
     layer?: number;
     tags?: string[];
     meta?: Record<string, PlainValue>;
