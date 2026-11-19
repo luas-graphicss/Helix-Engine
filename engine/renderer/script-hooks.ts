@@ -1,3 +1,5 @@
+import * as mat4 from '@/engine/core/math/mat4';
+import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
 import type { CustomPostEffect } from './post/custom-post-pass';
 import type { CompiledShaderBundle } from './shaders/custom/shader-bundle';
@@ -17,6 +19,23 @@ export interface ScriptFrameTarget {
     sceneColor: WebGLTexture | null;
     sceneDepth: WebGLTexture | null;
     hdr: boolean;
+}
+export function createScriptFrameTarget(): ScriptFrameTarget {
+    return {
+        gl: null,
+        width: 0,
+        height: 0,
+        pixelRatio: 1,
+        elapsed: 0,
+        delta: 0,
+        view: mat4.create(),
+        projection: mat4.create(),
+        viewProjection: mat4.create(),
+        cameraPosition: vec3.create(),
+        sceneColor: null,
+        sceneDepth: null,
+        hdr: true,
+    };
 }
 export interface ScriptDebugLine {
     readonly a: Vec3;
