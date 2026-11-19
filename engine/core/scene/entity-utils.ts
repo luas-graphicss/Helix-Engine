@@ -14,6 +14,8 @@ import { cloneGuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings
 import { cloneVfxSettings } from '@/engine/vfx/vfx-settings';
 import { createScriptSettings } from '@/engine/scripting/script-settings';
 import { cloneLodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
+import { cloneClothSettings } from '@/engine/cloth/cloth-settings';
+import { restMeshOf } from '@/engine/cloth/runtime/cloth-rest-meshes';
 import { cloneCameraSettings } from '@/engine/camera/camera-settings';
 const NUMERIC_SUFFIX = /_\d+$/;
 export function uniqueEntityName(scene: Scene, desired: string, ignore: Entity | null = null): string {
@@ -48,7 +50,7 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
     const entity = scene.createEntity({
         name: source.name,
         kind: source.kind,
-        mesh: source.mesh ? (source.csg ? copyMeshData(source.mesh) : source.mesh) : undefined,
+        mesh: source.mesh ? (source.csg ? copyMeshData(source.mesh) : restMeshOf(source.mesh)) : undefined,
         material: source.material ? (source.material.libraryId ? source.material : cloneMaterial(source.material)) : undefined,
         light: source.light ? cloneLight(source.light) : undefined,
         terrain: source.terrain ? source.terrain.clone() : undefined,
@@ -62,6 +64,7 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
         vfx: source.vfx ? cloneVfxSettings(source.vfx) : undefined,
         script: source.script ? createScriptSettings(source.script) : undefined,
         lodGroup: source.lodGroup ? cloneLodGroupSettings(source.lodGroup) : undefined,
+        cloth: source.cloth ? cloneClothSettings(source.cloth) : undefined,
         camera: source.camera ? cloneCameraSettings(source.camera) : undefined,
         layer: source.layer,
         castShadows: source.castShadows,
