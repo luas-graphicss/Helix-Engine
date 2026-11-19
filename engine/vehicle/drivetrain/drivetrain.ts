@@ -4,7 +4,7 @@ import { wheelInertia } from '../wheel/wheel-settings';
 import type { DriveCommand } from './drive-command';
 import { engineTorqueAt, RPM_PER_RADIAN_PER_SECOND } from './engine-torque';
 import { Gearbox, gearRatio } from './gearbox';
-const ENGINE_INERTIA = 0.25;
+const ENGINE_INERTIA_PER_TORQUE = 0.0008;
 export class Drivetrain {
     readonly gearbox = new Gearbox();
     engineRpm = 0;
@@ -31,13 +31,14 @@ export class Drivetrain {
         const engineTorque = engineTorqueAt(settings, this.engineRpm) * command.throttle;
         const isCoasting = command.throttle <= 0 && coupledRpm > settings.idleRpm;
         const engineBrake = isCoasting ? settings.engineBraking * Math.abs(overallRatio) * share : 0;
+        const reflectedInertia = settings.maxTorque * ENGINE_INERTIA_PER_TORQUE * overallRatio * overallRatio * share;
         for (const wheel of wheels) {
             const { driven, handbrake } = wheel.settings;
             const handbrakeTorque = handbrake ? command.handbrake * settings.handbrakeTorque : 0;
             wheel.serviceBrakeTorque = command.brake * settings.brakeTorque;
             wheel.holdingBrakeTorque = handbrakeTorque + (driven ? engineBrake : 0);
             wheel.driveTorque = driven ? engineTorque * overallRatio * share : 0;
-            wheel.inertia = wheelInertia(wheel.settings) + (driven ? ENGINE_INERTIA * overallRatio * overallRatio * share : 0);
+            wheel.inertia = wheelInertia(wheel.settings) + (driven ? reflectedInertia : 0);
         }
     }
 }

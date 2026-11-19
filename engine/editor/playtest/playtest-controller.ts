@@ -8,6 +8,7 @@ import { detectPhysicsBackendCapabilities, resolvePhysicsBackend } from '@/engin
 import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { CharacterRuntime } from '@/engine/character/character-runtime';
 import { createCharacterActor, defaultActorName, defaultSpawnPosition, findPossessableCharacter } from '@/engine/character/character-actor';
+import { VehicleRuntime } from '@/engine/vehicle/runtime/vehicle-runtime';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { applyTransformSnapshot, snapshotTransform, type TransformSnapshot } from '@/engine/editor/operations/transform-operations';
 export type PlaytestState = 'stopped' | 'playing' | 'paused';
@@ -20,6 +21,7 @@ export class PlaytestController {
     physics: PhysicsScene | null = null;
     physicsBudgetMs = Infinity;
     characters: CharacterRuntime | null = null;
+    vehicles: VehicleRuntime | null = null;
     private readonly snapshots = new Map<Entity, TransformSnapshot>();
     private readonly cameraPosition = vec3.create();
     private readonly cameraTarget = vec3.create();
@@ -74,8 +76,10 @@ export class PlaytestController {
             characters?.reconcile();
             if (scripts.switches.locomotion)
                 characters?.applyInput();
+            this.driveVehicles();
             physics.stepOnce();
             characters?.present(h, 1);
+            this.vehicles?.present(h);
             scripts.afterPhysics(h);
             this.elapsedSeconds += h;
         }
@@ -99,11 +103,13 @@ export class PlaytestController {
         characters?.reconcile();
         if (scripts.switches.locomotion)
             characters?.applyInput();
+        this.driveVehicles();
         physics.world.stepBudgetMs = this.physicsBudgetMs;
         frameProfile.begin('physics');
         const steps = physics.update(scaled, elapsedSeconds);
         frameProfile.end('physics');
         characters?.present(scaled, physics.world.interpolation);
+        this.vehicles?.present(scaled);
         frameProfile.begin('scripts');
         scripts.afterPhysics(scaled);
         frameProfile.end('scripts');
@@ -142,6 +148,8 @@ export class PlaytestController {
         }, { backend });
         physics.reconcile();
         this.physics = physics;
+        this.vehicles = new VehicleRuntime(session.scene, physics, { canvas: session.viewportCanvas, camera: session.camera });
+        this.vehicles.reconcile();
         session.log.info('Física', `Simulação iniciada com ${physics.world.bodies.length} corpos · ${PHYSICS_BACKEND_LABELS[physics.world.backend]}.`);
         this.startCharacters();
         void session.scripts.start('play');
@@ -150,6 +158,11 @@ export class PlaytestController {
         const { session, physics } = this;
         if (!physics)
             return;
+        const driven = this.vehicles?.driven;
+        if (driven) {
+            session.log.info('Veículo', `${driven.entity.name} dirigido pelo jogador: W e S aceleram e freiam, A e D viram, Espaço puxa o freio de mão. Os personagens ficam inertes; troque o controle do veículo para Script para possuir um personagem.`);
+            return;
+        }
         if (!session.scene.player.enabled) {
             session.log.info('Personagem', 'Personagem do jogador desligado: nenhum personagem é criado ou possuído; os atores de personagem da cena ficam inertes.');
             return;
@@ -171,10 +184,29 @@ export class PlaytestController {
         this.characters?.dispose();
         this.characters = null;
         this.removeTransientCharacter();
-        if (restoreCamera) {
-            vec3.copy(this.session.camera.position, this.cameraPosition);
-            vec3.copy(this.session.camera.target, this.cameraTarget);
-        }
+        if (restoreCamera)
+            this.restoreCamera();
+    }
+    private driveVehicles(): void {
+        const { vehicles } = this;
+        if (!vehicles)
+            return;
+        vehicles.reconcile();
+        vehicles.applyInput(!this.isPossessing);
+    }
+    private stopVehicles(): void {
+        const { vehicles } = this;
+        if (!vehicles)
+            return;
+        const restoreCamera = vehicles.isPlayerDriving;
+        vehicles.dispose();
+        this.vehicles = null;
+        if (restoreCamera)
+            this.restoreCamera();
+    }
+    private restoreCamera(): void {
+        vec3.copy(this.session.camera.position, this.cameraPosition);
+        vec3.copy(this.session.camera.target, this.cameraTarget);
     }
     private spawnTransientCharacter(): Entity | null {
         const { session } = this;
@@ -197,6 +229,7 @@ export class PlaytestController {
         this.session.guiWorld.reset();
         this.session.vfxWorld.reset();
         this.session.hud.stop();
+        this.stopVehicles();
         this.stopCharacters();
         this.session.cameras.endPlay();
         this.physics?.dispose();
