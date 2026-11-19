@@ -1,0 +1,58 @@
+import { selectAnchoredParticles } from '@/engine/cloth/anchor/cloth-anchors';
+import { CLOTH_PRESETS, findClothPreset } from '@/engine/cloth/cloth-presets';
+import { cloneClothSettings, createClothSettings, normalizeClothSettings, type ClothAnchor, type ClothSettings } from '@/engine/cloth/cloth-settings';
+import { createFlatSheet, createHangingSheet, createSkirt } from '@/engine/cloth/mesh/cloth-shapes';
+import { buildClothTopology } from '@/engine/cloth/mesh/cloth-topology';
+import { createMeshData } from '@/engine/renderer/geometry/mesh-data';
+import { createCheckList } from '../support/check-list';
+const COLUMNS = 4;
+const ROWS = 3;
+const SHEET = { width: 2, length: 1.5, columns: COLUMNS, rows: ROWS };
+const checks = createCheckList('Topologia e fixação do tecido');
+function countAnchored(restPositions: Float32Array, anchor: ClothAnchor, band = 0): number {
+    return selectAnchoredParticles(restPositions, anchor, band).reduce((total, flag) => total + flag, 0);
+}
+const hanging = buildClothTopology(createHangingSheet('hanging', SHEET));
+const horizontalEdges = COLUMNS * (ROWS + 1);
+const verticalEdges = (COLUMNS + 1) * ROWS;
+const diagonalEdges = COLUMNS * ROWS;
+const borderEdges = 2 * (COLUMNS + ROWS);
+checks.check('a grade vira uma partícula por vértice', hanging.particleCount === (COLUMNS + 1) * (ROWS + 1));
+checks.check('cada quadrado gera dois triângulos', hanging.triangles.length / 3 === COLUMNS * ROWS * 2);
+checks.check('cada aresta vira uma restrição de esticamento', hanging.stretchPairs.length / 2 === horizontalEdges + verticalEdges + diagonalEdges);
+checks.check('cada aresta interna vira uma restrição de dobra', hanging.bendPairs.length / 2 === horizontalEdges + verticalEdges + diagonalEdges - borderEdges);
+const skirt = createSkirt('skirt', { waistRadius: 0.2, hemRadius: 0.4, length: 0.6, columns: 8, rows: 2 });
+const skirtTopology = buildClothTopology(skirt);
+checks.check('a costura da saia é soldada num anel fechado', skirt.positions.length / 3 === 27 && skirtTopology.particleCount === 24);
+checks.check('o anel fechado não deixa arestas soltas na costura', skirtTopology.bendPairs.length / 2 === skirtTopology.stretchPairs.length / 2 - 16);
+const split = createMeshData('split', [0, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0], new Array(18).fill(0), new Array(12).fill(0), [0, 1, 2, 3, 4, 5]);
+const splitTopology = buildClothTopology(split);
+checks.check('vértices duplicados na mesma posição viram uma partícula', splitTopology.particleCount === 4 && splitTopology.bendPairs.length / 2 === 1);
+const degenerate = createMeshData('degenerate', [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0], new Array(12).fill(0), new Array(8).fill(0), [0, 1, 2, 0, 3, 1]);
+checks.check('triângulo sem área é descartado', buildClothTopology(degenerate).triangles.length / 3 === 1);
+checks.check('tecido solto não prende partículas', countAnchored(hanging.restPositions, 'none') === 0);
+checks.check('borda de cima prende a primeira linha', countAnchored(hanging.restPositions, 'top') === COLUMNS + 1);
+checks.check('borda de baixo prende a última linha', countAnchored(hanging.restPositions, 'bottom') === COLUMNS + 1);
+checks.check('bordas laterais prendem uma coluna', countAnchored(hanging.restPositions, 'left') === ROWS + 1 && countAnchored(hanging.restPositions, 'right') === ROWS + 1);
+checks.check('cantos prendem só os quatro cantos', countAnchored(hanging.restPositions, 'corners') === 4);
+checks.check('a faixa presa avança para dentro do pano', countAnchored(hanging.restPositions, 'top', 0.5) === 2 * (COLUMNS + 1));
+const topRow = selectAnchoredParticles(hanging.restPositions, 'top', 0);
+const highest = Math.max(...Array.from(hanging.restPositions).filter((_, index) => index % 3 === 1));
+checks.check('a borda de cima é a de maior altura', topRow.every((flag, particle) => (flag === 1) === (hanging.restPositions[particle * 3 + 1] === highest)));
+const flat = buildClothTopology(createFlatSheet('flat', SHEET));
+const farthest = Math.min(...Array.from(flat.restPositions).filter((_, index) => index % 3 === 2));
+const flatTop = selectAnchoredParticles(flat.restPositions, 'top', 0);
+checks.check('pano deitado prende a borda do fundo como borda de cima', countAnchored(flat.restPositions, 'top') === COLUMNS + 1 && flatTop.every((flag, particle) => (flag === 1) === (flat.restPositions[particle * 3 + 2] === farthest)));
+checks.check('a cintura da saia prende o anel inteiro', countAnchored(skirtTopology.restPositions, 'top') === 8);
+for (const preset of CLOTH_PRESETS) {
+    const topology = buildClothTopology(preset.createMesh());
+    checks.check(`perfil ${preset.id} gera malha simulável`, topology.particleCount > 0 && topology.stretchPairs.length > 0 && topology.bendPairs.length > 0);
+    checks.check(`perfil ${preset.id} é reconhecido pelas próprias configurações`, findClothPreset(cloneClothSettings(preset.settings)) === preset.id);
+}
+checks.check('configuração alterada não corresponde a nenhum perfil', findClothPreset({ ...CLOTH_PRESETS[1].settings, windSpeed: 3 }) === null);
+const broken = { ...createClothSettings(), anchor: 'pole', quality: 'ultra', density: -4, windSpeed: Number.NaN, friction: 9, collideWithBodies: 'yes' } as unknown as ClothSettings;
+const repaired = normalizeClothSettings(broken);
+const defaults = createClothSettings();
+checks.check('valores inválidos voltam ao padrão', repaired.anchor === defaults.anchor && repaired.quality === defaults.quality && repaired.windSpeed === defaults.windSpeed && repaired.collideWithBodies === defaults.collideWithBodies);
+checks.check('valores fora da faixa são limitados', repaired.density === 0.05 && repaired.friction === 1);
+checks.finish();
