@@ -14,11 +14,16 @@ import { CompositePass } from '@/engine/renderer/post/composite-pass';
 import { computeCocParams, DepthOfFieldPass } from '@/engine/renderer/post/depth-of-field-pass';
 import { SharpenPass } from '@/engine/renderer/post/sharpen-pass';
 import { SmaaPass } from '@/engine/renderer/post/smaa-pass';
+import { ViewOutputPass } from '@/engine/renderer/post/view-output-pass';
 export interface PostResolveInput {
     camera: PerspectiveCamera;
     settings: PostProcessSettings;
     elapsedSeconds: number;
     compareSplit: number | null;
+}
+interface PostResolveView {
+    camera: PerspectiveCamera;
+    depth: WebGLTexture;
 }
 export class PostPass {
     readonly stats = { drawCalls: 0 };
@@ -32,6 +37,9 @@ export class PostPass {
     private readonly scaled: ColorRenderTarget;
     private readonly captured: ColorRenderTarget;
     private readonly upscale: ShaderProgram;
+    private readonly viewOutput: ViewOutputPass;
+    private effective: PostProcessSettings | null = null;
+    private view: PostResolveView | null = null;
     constructor(gl: GL, triangle: FullscreenTriangle, profile: RenderProfile, sceneFormat: ColorFormat, alphaFormat: ColorFormat, defines: ShaderDefines) {
         this.gl = gl;
         this.triangle = triangle;
@@ -45,6 +53,7 @@ export class PostPass {
         this.scaled = new ColorRenderTarget(gl, { width: 1, height: 1, format: 'rgba8', filter: 'linear' });
         this.captured = new ColorRenderTarget(gl, { width: 1, height: 1, format: 'rgba8', filter: 'nearest' });
         this.upscale = new ShaderProgram(gl, FULLSCREEN_VERTEX_SHADER, UPSCALE_FRAGMENT_SHADER);
+        this.viewOutput = new ViewOutputPass(gl, triangle);
     }
     get capturedFrame(): ColorRenderTarget {
         return this.captured;
@@ -61,12 +70,18 @@ export class PostPass {
     settled(settings: PostProcessSettings): boolean {
         if (this.smaa.loading)
             return false;
+        return this.grainSettled(this.effective ?? settings);
+    }
+    private grainSettled(settings: PostProcessSettings): boolean {
         return !(settings.enabled && settings.filmGrain.enabled && settings.filmGrain.intensity > 0);
     }
     resolve(scene: SceneRenderTarget, input: PostResolveInput): void {
         const { gl } = this;
-        const { settings, camera } = input;
+        const { camera } = input;
+        const settings = camera.postProcessing ?? input.settings;
         const { width, height } = scene;
+        this.effective = settings;
+        this.view = { camera, depth: scene.depth };
         this.stats.drawCalls = 0;
         gl.disable(gl.DEPTH_TEST);
         gl.depthMask(false);
@@ -80,7 +95,7 @@ export class PostPass {
             texture: WebGLTexture;
             coc: ReturnType<typeof computeCocParams>;
         } | null = null;
-        if (active && settings.depthOfField.enabled) {
+        if (active && settings.depthOfField.enabled && !camera.orthographic) {
             const coc = computeCocParams(settings.depthOfField, height);
             const texture = this.depthOfField.render(scene.color, scene.depth, camera, width, height, coc);
             this.stats.drawCalls += this.depthOfField.stats.drawCalls;
@@ -111,8 +126,9 @@ export class PostPass {
     get overlayTarget(): OverlayRenderTarget {
         return this.overlay;
     }
-    compose(settings: PostProcessSettings, width: number, height: number, canvasWidth = width, canvasHeight = height, capture = false): void {
+    compose(sceneSettings: PostProcessSettings, width: number, height: number, canvasWidth = width, canvasHeight = height, capture = false): void {
         const { gl } = this;
+        const settings = this.effective ?? sceneSettings;
         gl.disable(gl.DEPTH_TEST);
         gl.depthMask(false);
         let final: WebGLFramebuffer | null = null;
@@ -151,6 +167,11 @@ export class PostPass {
         }
         if (capture)
             this.presentCaptured(canvasWidth, canvasHeight);
+        const { view } = this;
+        if (view && this.viewOutput.wanted(view.camera)) {
+            this.viewOutput.render(view.camera, view.depth, canvasWidth, canvasHeight);
+            this.stats.drawCalls++;
+        }
         gl.depthMask(true);
         gl.enable(gl.DEPTH_TEST);
     }
@@ -173,5 +194,6 @@ export class PostPass {
         this.scaled.dispose();
         this.captured.dispose();
         this.upscale.dispose();
+        this.viewOutput.dispose();
     }
 }

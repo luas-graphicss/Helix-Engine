@@ -1,0 +1,92 @@
+import type { Entity } from '@/engine/core/scene/entity';
+import { cloneEntity } from '@/engine/core/scene/entity-utils';
+import { Scene } from '@/engine/core/scene/scene';
+import { createCharacterSettings } from '@/engine/character/character-settings';
+import { getClothPreset } from '@/engine/cloth/cloth-presets';
+import { createClothSettings, type ClothSettings } from '@/engine/cloth/cloth-settings';
+import { collectSceneColliders } from '@/engine/cloth/collision/scene-colliders';
+import { createFlatSheet, createHangingSheet } from '@/engine/cloth/mesh/cloth-shapes';
+import { restMeshOf } from '@/engine/cloth/runtime/cloth-rest-meshes';
+import { CLOTH_STEP_SECONDS, ClothSystem } from '@/engine/cloth/runtime/cloth-system';
+import { MaterialLibrary } from '@/engine/materials/material-library';
+import { createRigidBodySettings } from '@/engine/physics/body/rigid-body-settings';
+import { deserializeScene } from '@/engine/project/scene-document/deserialize-scene';
+import { serializeScene } from '@/engine/project/scene-document/serialize-scene';
+import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { createBox } from '@/engine/renderer/geometry/primitives';
+import { createCheckList } from '../support/check-list';
+const THICKNESS = 0.02;
+const CONTACT_SLACK = 2e-3;
+const BOX_HALF_SIZE = 0.5;
+const SHEET = { width: 1.6, length: 1.6, columns: 20, rows: 20 };
+const checks = createCheckList('Tecidos na cena');
+function advance(system: ClothSystem, scene: Scene, seconds: number): void {
+    const steps = Math.round(seconds / CLOTH_STEP_SECONDS);
+    for (let step = 0; step < steps; step++)
+        system.advance(scene, CLOTH_STEP_SECONDS);
+}
+function addCloth(scene: Scene, mesh: MeshData, settings: ClothSettings, height: number): Entity {
+    const entity = scene.createEntity({ name: 'cloth', kind: 'mesh', mesh, cloth: settings });
+    entity.transform.position[1] = height;
+    return entity;
+}
+function worldPoints(entity: Entity): number[][] {
+    const positions = entity.mesh?.positions ?? new Float32Array(0);
+    const offset = entity.transform.position;
+    const points: number[][] = [];
+    for (let index = 0; index < positions.length; index += 3)
+        points.push([positions[index] + offset[0], positions[index + 1] + offset[1], positions[index + 2] + offset[2]]);
+    return points;
+}
+const stage = new Scene('Colisores');
+stage.createEntity({ name: 'crate', kind: 'mesh', mesh: createBox(), rigidBody: createRigidBodySettings({ type: 'static', collider: 'box' }) });
+stage.createEntity({ name: 'ball', kind: 'mesh', mesh: createBox(), rigidBody: createRigidBodySettings({ type: 'static', collider: 'sphere', radius: 0.4 }) });
+stage.createEntity({ name: 'pillar', kind: 'mesh', mesh: createBox(), rigidBody: createRigidBodySettings({ type: 'static', collider: 'capsule', radius: 0.3, height: 2 }) });
+stage.createEntity({ name: 'level', kind: 'mesh', mesh: createBox(), rigidBody: createRigidBodySettings({ type: 'static', collider: 'mesh' }) });
+stage.createEntity({ name: 'hero', kind: 'character', character: createCharacterSettings() });
+addCloth(stage, createFlatSheet('bystander', SHEET), createClothSettings(), 2);
+stage.updateWorldMatrices();
+const kinds = collectSceneColliders(stage).map((collider) => collider.kind).sort().join();
+checks.check('caixas, esferas, cápsulas e personagens viram colisores; malhas e tecidos não', kinds === 'box,capsule,capsule,sphere', kinds);
+const scene = new Scene('Teste');
+scene.createEntity({ name: 'crate', kind: 'mesh', mesh: createBox(), rigidBody: createRigidBodySettings({ type: 'static', collider: 'box' }) });
+const rest = createFlatSheet('sheet', SHEET);
+const restHeights = Array.from(rest.positions);
+const cloth = addCloth(scene, rest, createClothSettings({ thickness: THICKNESS, friction: 0.6 }), 0.9);
+const system = new ClothSystem();
+checks.check('o sistema começa sem tecidos', !system.active && system.instanceOf(cloth) === null);
+advance(system, scene, 3);
+const instance = system.instanceOf(cloth);
+checks.check('o ator com tecido ganha uma simulação', instance !== null && system.active && system.stats.instances === 1 && system.stats.particles === (SHEET.columns + 1) * (SHEET.rows + 1) && system.stats.constraints > 0);
+checks.check('a malha do ator vira a cópia simulada', cloth.mesh !== rest && cloth.mesh?.dynamic === true && cloth.mesh !== null && restMeshOf(cloth.mesh) === rest);
+const reach = BOX_HALF_SIZE + THICKNESS - CONTACT_SLACK;
+checks.check('o pano pousa sobre o corpo rígido da cena sem atravessá-lo', worldPoints(cloth).every(([x, y, z]) => Math.abs(x) >= reach || Math.abs(y) >= reach || Math.abs(z) >= reach) && Math.max(...worldPoints(cloth).map((point) => point[1])) < 0.6);
+const document = await serializeScene(scene, { libraryDocumentForTerrainMaterial: () => null });
+const reopened = await deserializeScene(document, { materials: new MaterialLibrary(() => undefined, null) });
+const reopenedCloth = reopened.scene.entities.find((entity) => entity.name === 'cloth') ?? null;
+checks.check('abrir a cena salva não gera avisos', reopened.warnings.length === 0, reopened.warnings.join(' | '));
+checks.check('as configurações do tecido voltam com a cena', JSON.stringify(reopenedCloth?.cloth) === JSON.stringify(cloth.cloth));
+checks.check('salvar durante a simulação guarda a malha de repouso', Array.from(reopenedCloth?.mesh?.positions ?? []).join() === restHeights.join());
+checks.check('ator sem tecido volta sem o componente', reopened.scene.entities.find((entity) => entity.name === 'crate')?.cloth === null);
+const copy = cloneEntity(scene, cloth, null);
+checks.check('duplicar durante a simulação copia o repouso e as configurações', copy.mesh === rest && copy.cloth !== cloth.cloth && JSON.stringify(copy.cloth) === JSON.stringify(cloth.cloth));
+const pinned = createClothSettings({ anchor: 'corners', thickness: THICKNESS });
+cloth.cloth = pinned;
+advance(system, scene, CLOTH_STEP_SECONDS);
+checks.check('trocar as configurações mantém a simulação em curso', system.instanceOf(cloth) === instance && instance?.settings === pinned && instance.anchoredCount === 4);
+cloth.cloth = null;
+advance(system, scene, CLOTH_STEP_SECONDS);
+checks.check('remover o tecido encerra a simulação e devolve a malha', system.instanceOf(cloth) === null && cloth.mesh === rest && !system.active && system.stats.particles === 0);
+cloth.cloth = getClothPreset('sheet').settings;
+advance(system, scene, 0.5);
+cloth.parent?.remove(cloth);
+advance(system, scene, CLOTH_STEP_SECONDS);
+checks.check('excluir o ator devolve a malha de repouso a ele', cloth.mesh === rest && !system.active);
+const flag = addCloth(scene, createHangingSheet('flag', { width: 1.5, length: 1, columns: 30, rows: 20 }), getClothPreset('flag').settings, 3);
+const flagRest = flag.mesh;
+advance(system, scene, 1);
+checks.check('a bandeira da cena é simulada', system.instanceOf(flag) !== null && flag.mesh !== flagRest);
+system.reset();
+checks.check('encerrar o sistema devolve todas as malhas', flag.mesh === flagRest && !system.active && system.stats.instances === 0);
+checks.check('a malha de repouso nunca é alterada', Array.from(rest.positions).join() === restHeights.join());
+checks.finish();

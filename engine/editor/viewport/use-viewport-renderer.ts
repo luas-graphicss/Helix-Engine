@@ -9,6 +9,7 @@ import type { VfxHelperRequest } from '@/engine/renderer/passes/vfx-helper-pass'
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { EDITOR_QUALITY_LADDER, FrameGovernor, FULL_QUALITY, QUALITY_LADDER, type QualityStep } from '@/engine/renderer/quality/frame-governor';
 import { FrameClock } from '@/engine/core/time/frame-clock';
+import { drawsInMask } from '@/engine/camera/layers/layer-draws';
 import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { resolveEditorLite, resolveFrameInterval, resolveMaxPixelRatio, resolveQualityLadder } from './viewport-preferences';
 const STATS_INTERVAL_MS = 500;
@@ -208,6 +209,8 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
         const draw = (now: number, deltaSeconds: number, elapsedSeconds: number, quality: QualityStep, profileGpu: boolean): void => {
             const selection = session.selectedIds.size > 0 ? session.selectedIds : null;
             const playing = session.playtest.state === 'playing';
+            session.cameras.driveMainView();
+            const { layerMask } = session.camera;
             renderer.render(session.scene, session.camera, {
                 quality,
                 qualityLevel: quality === FULL_QUALITY ? 0 : qualityGovernor.level,
@@ -221,8 +224,8 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
                 lightHelpers: resolveLightHelpers(session, lightHelperRequest, selection),
                 soundHelpers: resolveSoundHelpers(session, soundHelperRequest, selection, elapsedSeconds),
                 vfxHelpers: resolveVfxHelpers(session, vfxHelperRequest, selection, elapsedSeconds),
-                guiSurfaces: session.guiWorld.system.draws,
-                vfx: session.vfxWorld.system.draws,
+                guiSurfaces: drawsInMask(session.scene, session.guiWorld.system.draws, layerMask),
+                vfx: drawsInMask(session.scene, session.vfxWorld.system.draws, layerMask),
                 soloLight: session.render.soloLightId,
                 skeletons: session.animation.overlayRequest(),
                 elapsedSeconds,
@@ -236,6 +239,7 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
                 capture: session.capture.pending,
                 scripts: session.scripts.renderRequest ?? session.extensions.prepareRenderRequest() ?? session.shaderPreview.renderRequest ?? session.shaderGraph.link.renderRequest,
             });
+            session.cameras.render(elapsedSeconds);
             session.colorPicker.sample(renderer.gl);
             session.frameProfile.add('render', renderer.stats.cpuMs);
             lastRenderTime = now;

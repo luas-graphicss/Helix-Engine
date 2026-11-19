@@ -5,6 +5,7 @@ import type { Texture } from '@/engine/core/scene/texture';
 import type { Skin } from '@/engine/core/scene/skin';
 import type { Rig } from '@/engine/core/scene/rig';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
+import { restMeshOf } from '@/engine/cloth/runtime/cloth-rest-meshes';
 import type { Terrain } from '@/engine/terrain/core/terrain';
 import type { TerrainLayer } from '@/engine/terrain/core/terrain-layer';
 import { findModelRoot } from '@/engine/character/rig/character-rig';
@@ -85,7 +86,7 @@ class SceneWriter {
         if (Object.keys(entity.meta).length > 0)
             json.meta = JSON.parse(JSON.stringify(entity.meta)) as Record<string, PlainValue>;
         if (entity.mesh)
-            json.mesh = this.mesh(entity.mesh);
+            json.mesh = this.mesh(restMeshOf(entity.mesh));
         if (entity.material)
             json.material = this.material(entity.material);
         if (entity.light)
@@ -118,6 +119,8 @@ class SceneWriter {
             json.script = toPlain(entity.script, `${entity.name}.script`);
         if (entity.lodGroup)
             json.lodGroup = toPlain(entity.lodGroup, `${entity.name}.lodGroup`);
+        if (entity.cloth)
+            json.cloth = toPlain(entity.cloth, `${entity.name}.cloth`);
         if (entity.camera)
             json.camera = toPlain(entity.camera, `${entity.name}.camera`);
         if (entity.layer !== DEFAULT_RENDER_LAYER)

@@ -25,6 +25,7 @@ import { createHistoryActivityRecorder } from '@/engine/editor/activity/history-
 import { TransformGizmo } from '@/engine/editor/transform/transform-gizmo';
 import type { GizmoTool, PivotMode, SnapTarget, TransformSpace } from '@/engine/editor/transform/transform-settings';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
+import { ClothWorldHost } from '@/engine/editor/cloth/cloth-world-host';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
 import { AnimationEditor } from '@/engine/editor/animation/animation-editor';
 import { AudioEditor } from '@/engine/editor/audio/audio-editor';
@@ -44,6 +45,7 @@ import { syncCodeEditorWithLibrary } from '@/engine/editor/operations/script-ope
 import { syncVfxEditorWithLibrary } from '@/engine/editor/operations/vfx-operations';
 import type { VfxHelperMode } from '@/engine/renderer/passes/vfx-helper-pass';
 import { PlaytestHud } from '@/engine/editor/playtest/playtest-hud';
+import { CameraWorldHost } from '@/engine/editor/cameras/camera-world-host';
 import { syncGuiDesignerWithLibrary } from '@/engine/editor/operations/gui-operations';
 import type { TransformSnapshot } from '@/engine/editor/operations/transform-operations';
 import { ViewportColorPicker } from '@/engine/editor/viewport/viewport-color-picker';
@@ -123,6 +125,8 @@ export class EditorSession {
     readonly guiWorld = new GuiWorldHost(this);
     readonly vfx = new VfxEditor(this);
     readonly vfxWorld = new VfxWorldHost(this);
+    readonly clothWorld = new ClothWorldHost(this);
+    readonly cameras = new CameraWorldHost(this);
     readonly hud = new PlaytestHud(this);
     readonly code = new CodeEditor(this);
     readonly scripts = new ScriptRuntime(this);
@@ -241,6 +245,7 @@ export class EditorSession {
     }
     async dispose(): Promise<void> {
         this.scripts.stop();
+        this.cameras.dispose();
         this.extensions.dispose();
         this.shaderPreview.stop();
         this.assistant.stop();
@@ -593,12 +598,13 @@ export class EditorSession {
             this.extensions.tick(deltaSeconds);
             this.terrain.tick(deltaSeconds);
             this.animation.tick(deltaSeconds);
+            this.clothWorld.tick();
             this.audio.world.tick(deltaSeconds);
             const soundAnimating = this.audio.world.animating && this.render.soundHelpers !== 'off' && this.playtest.state !== 'playing';
             const guiAnimating = this.guiWorld.tick(deltaSeconds, elapsedSeconds);
             const vfxAnimating = this.vfxWorld.tick(deltaSeconds);
             const hudAnimating = this.hud.tick(deltaSeconds);
-            return cycleAdvanced || this.playtest.state === 'playing' || this.scripts.running || this.terrain.isStroking || this.animation.playing || soundAnimating || guiAnimating || vfxAnimating || hudAnimating;
+            return cycleAdvanced || this.playtest.state === 'playing' || this.scripts.running || this.terrain.isStroking || this.animation.playing || soundAnimating || this.cameras.animating || guiAnimating || vfxAnimating || hudAnimating;
         }
         finally {
             this.inTick = false;

@@ -37,6 +37,9 @@ import { BoneSection, RigSection } from './inspector/rig-section';
 import { LibraryMaterialSection, MaterialPickerButton, OwnMaterialRow } from './inspector/material-library-section';
 import { TransformSection } from './inspector/transform-section';
 import { LodGroupSection } from './inspector/lod-group-section';
+import { ClothSection } from './inspector/cloth/cloth-section';
+import { CameraSection } from './inspector/camera/camera-section';
+import { LayerField } from './inspector/layer-field';
 import { SelectionInspector } from './inspector/selection-inspector';
 import { ExtensionInspectorSections } from '@/engine/editor/extensions/ui/inspectors/extension-inspector-sections';
 import { formatNumber, ScalarField } from './inspector/number-fields';
@@ -46,6 +49,8 @@ const AXES = ['x', 'y', 'z'] as const;
 const KIND_ICON: Record<EntityKind, LucideIcon> = { group: Folder, mesh: Box, light: Sun, camera: Camera, terrain: Mountain, character: PersonStanding, sound: Volume2, gui: LayoutTemplate, vfx: Sparkles, script: FileCode2 };
 const KIND_LABEL: Record<EntityKind, string> = { group: 'Grupo', mesh: 'Malha estática', light: 'Luz', camera: 'Câmera', terrain: 'Terreno', character: 'Personagem', sound: 'Som', gui: 'Interface no mundo', vfx: 'Efeito visual', script: 'Script' };
 function kindLabel(entity: Entity): string {
+    if (entity.cloth)
+        return 'Tecido';
     if (entity.kind === 'gui' && entity.guiSurface)
         return `Interface · ${GUI_SURFACE_CONTENT_LABEL[entity.guiSurface.content.kind].toLowerCase()}`;
     if (entity.kind === 'script')
@@ -130,7 +135,7 @@ function TexturesSection({ entity }: {
     const material = entity.material;
     if (!material || material.libraryId)
         return null;
-    const library = session.resources.byKind('texture').map((resource) => resource.texture);
+    const library = [...session.resources.byKind('texture').map((resource) => resource.texture), ...session.scene.cameraFeeds.list()];
     return (<CollapsibleSection title="Texturas">
       {MATERIAL_TEXTURE_SLOTS.map(({ slot, label }) => (<TextureSlotRow key={slot} label={label} texture={material[slot]} library={library} onLoadFile={(file) => void loadTextureIntoSlot(session, entity, slot, file)} onPick={(texture) => setMaterialTexture(session, entity, slot, texture)} onRemove={() => setMaterialTexture(session, entity, slot, null)}/>))}
       {material.normalMap && (<SliderField label="Escala normal" value={material.normalScale} min={0} max={4} onChange={(value) => setMaterialScalar(session, entity, 'normalScale', value)}/>)}
@@ -213,9 +218,11 @@ export function InspectorPanel() {
         <MeshSection entity={entity}/>
         <CsgSection entity={entity}/>
         <RigidBodySection entity={entity}/>
+        <ClothSection entity={entity}/>
         <MaterialSection entity={entity}/>
         <TexturesSection entity={entity}/>
         <LightSection entity={entity}/>
+        <CameraSection entity={entity}/>
         <GuiAttachSection entity={entity}/>
         <VfxAttachSection entity={entity}/>
         <AudioAttachSection entity={entity}/>
@@ -224,6 +231,7 @@ export function InspectorPanel() {
 
         {entity.kind !== 'script' && (<CollapsibleSection title="Renderização">
           <ToggleField label="Visível" on={entity.visible} onToggle={() => setEntityVisibility(session, entity, !entity.visible)}/>
+          {(entity.mesh || entity.terrain || entity.vfx || entity.guiSurface) && <LayerField entity={entity}/>}
           {(entity.mesh || entity.terrain) && (<>
               <ToggleField label="Projeta sombras" on={entity.castShadows} onToggle={() => setShadowFlag(session, entity, 'castShadows', !entity.castShadows)}/>
               <ToggleField label="Recebe sombras" on={entity.receiveShadows} onToggle={() => setShadowFlag(session, entity, 'receiveShadows', !entity.receiveShadows)}/>

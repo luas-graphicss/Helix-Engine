@@ -2,6 +2,7 @@ import * as vec3 from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { GuiViewDescription, GuiViewportProvider } from '@/engine/gui/media/gui-viewport-provider';
 import { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
+import { aimCameraFromEntity, applyCameraLens, applyCameraOutput, resetCameraOutput, screenBackdrop } from '@/engine/renderer/camera/camera-rig';
 import { Renderer } from '@/engine/renderer/renderer';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 const MAX_VIEWS = 4;
@@ -19,7 +20,6 @@ class SceneView {
     lastRender = -Infinity;
     lastTick = 0;
     rendered = false;
-    private readonly forward = vec3.create();
     constructor(readonly key: string) {
         try {
             this.renderer = new Renderer(this.canvas, { offscreen: true });
@@ -34,18 +34,18 @@ class SceneView {
     }
     aim(session: EditorSession, view: GuiViewDescription, aspect: number, elapsedSeconds: number): void {
         const { camera } = this;
+        resetCameraOutput(camera);
         camera.aspect = aspect;
         camera.fovDegrees = Math.max(5, Math.min(150, view.fov));
         if (view.camera === 'entity') {
             const entity = findCamera(session, view.cameraName);
             if (entity) {
-                const m = entity.worldMatrix;
-                vec3.set(camera.position, m[12], m[13], m[14]);
-                vec3.set(this.forward, -m[8], -m[9], -m[10]);
-                if (vec3.length(this.forward) < 1e-6)
-                    vec3.set(this.forward, 0, 0, -1);
-                vec3.normalize(this.forward, this.forward);
-                vec3.scaleAndAdd(camera.target, camera.position, this.forward, 10);
+                aimCameraFromEntity(camera, entity);
+                const settings = entity.camera;
+                if (settings) {
+                    applyCameraLens(camera, settings);
+                    applyCameraOutput(camera, settings, session.scene.postProcessing, { backdrop: screenBackdrop(settings, false), content: 'color' });
+                }
                 return;
             }
             vec3.copy(camera.position, session.camera.position);

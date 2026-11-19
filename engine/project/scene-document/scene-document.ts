@@ -109,6 +109,7 @@ export interface EntityJson {
     vfx?: PlainValue;
     script?: PlainValue;
     lodGroup?: PlainValue;
+    cloth?: PlainValue;
     camera?: PlainValue;
     layer?: number;
     tags?: string[];

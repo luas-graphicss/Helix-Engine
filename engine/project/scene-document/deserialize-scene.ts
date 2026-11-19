@@ -20,6 +20,7 @@ import { createAudioZoneSettings } from '@/engine/audio/world/audio-zone-setting
 import { createGuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings';
 import { createVfxSettings } from '@/engine/vfx/vfx-settings';
 import { createLodGroupSettings, normalizeLodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
+import { createClothSettings, normalizeClothSettings } from '@/engine/cloth/cloth-settings';
 import { createScriptSettings } from '@/engine/scripting/script-settings';
 import { createScriptingSettings } from '@/engine/scripting/scripting-settings';
 import { createCameraSettings, normalizeCameraSettings } from '@/engine/camera/camera-settings';
@@ -226,6 +227,8 @@ class SceneReader {
             options.script = restoreInto(createScriptSettings(), json.script);
         if (json.lodGroup)
             options.lodGroup = normalizeLodGroupSettings(restoreInto(createLodGroupSettings(), json.lodGroup));
+        if (json.cloth)
+            options.cloth = normalizeClothSettings(restoreInto(createClothSettings(), json.cloth));
         if (json.camera)
             options.camera = normalizeCameraSettings(restoreInto(createCameraSettings(), json.camera));
         if (json.layer !== undefined)
