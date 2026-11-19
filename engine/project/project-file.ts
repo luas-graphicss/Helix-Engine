@@ -24,7 +24,7 @@ interface ProjectManifest {
         stats: ProjectStats;
     };
 }
-const PACKED_STORES = [PROJECT_STORES.materials, PROJECT_STORES.assets, PROJECT_STORES.assetFiles, PROJECT_STORES.shaderGraphs] as const;
+const PACKED_STORES = [PROJECT_STORES.materials, PROJECT_STORES.assets, PROJECT_STORES.assetFiles, PROJECT_STORES.shaderGraphs, PROJECT_STORES.vfxGraphs] as const;
 const STORED_AS_IS = /^(image\/|video\/|audio\/|model\/gltf-binary|application\/zip)/;
 type BlobPlaceholder = {
     '@blob': string;

@@ -1,6 +1,6 @@
 import { BrowserDatabase } from './indexed-db';
 export const LEGACY_EDITOR_DATABASE_NAME = 'helix-editor';
-const PROJECT_DATABASE_VERSION = 6;
+const PROJECT_DATABASE_VERSION = 7;
 export const PROJECT_STORES = {
     materials: 'materials',
     assets: 'assets',
@@ -9,6 +9,7 @@ export const PROJECT_STORES = {
     preferences: 'preferences',
     saves: 'saves',
     shaderGraphs: 'shader-graphs',
+    vfxGraphs: 'vfx-graphs',
 } as const;
 export const SAVES_BY_SLOT_INDEX = 'bySlot';
 export const ASSET_FILES_BY_ASSET_INDEX = 'byAsset';
@@ -34,6 +35,8 @@ function upgradeProjectDatabase(db: IDBDatabase): void {
     }
     if (!db.objectStoreNames.contains(PROJECT_STORES.shaderGraphs))
         db.createObjectStore(PROJECT_STORES.shaderGraphs, { keyPath: 'id' });
+    if (!db.objectStoreNames.contains(PROJECT_STORES.vfxGraphs))
+        db.createObjectStore(PROJECT_STORES.vfxGraphs, { keyPath: 'id' });
 }
 export class ProjectDatabase extends BrowserDatabase {
     constructor(name: string) {
