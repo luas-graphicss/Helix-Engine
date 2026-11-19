@@ -12,7 +12,7 @@ export function PanelToggles() {
       {TOOLBAR_PANELS.map((panel) => {
             const Icon = panel.icon;
             const open = dock.isOpen(panel.id);
-            const label = panelLabel(panel.id, workspace);
+            const label = panelLabel(panel, workspace);
             return (<IconButton key={panel.id} label={`${open ? 'Fechar' : 'Abrir'} ${label}${panel.shortcut ? ` (${panel.shortcut})` : ''}`} size="sm" active={open} onClick={() => dock.toggle(panel.id)}>
             <Icon />
           </IconButton>);

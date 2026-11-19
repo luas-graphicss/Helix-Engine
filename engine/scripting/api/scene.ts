@@ -23,7 +23,7 @@ import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { HelixArgumentError, HelixError } from '../runtime/script-errors';
 import type { RuntimeHost } from '../runtime/runtime-host';
 import { assignSettings, isJsonValue, requireEntity, requireFunction, requireJson, requireNumber, requireOneOf, requireString, toQuat, toVec3 } from '../runtime/values';
-const ENTITY_KINDS: readonly EntityKind[] = ['group', 'mesh', 'light', 'camera', 'terrain', 'character', 'sound', 'gui', 'vfx', 'script'];
+export const ENTITY_KINDS: readonly EntityKind[] = ['group', 'mesh', 'light', 'camera', 'terrain', 'character', 'sound', 'gui', 'vfx', 'script'];
 const COMPONENT_KINDS = ['mesh', 'material', 'light', 'rigidBody', 'character', 'csg', 'csgBrush', 'audioSource', 'audioZone', 'guiSurface', 'vfx', 'script'] as const;
 type ComponentKind = (typeof COMPONENT_KINDS)[number];
 const scratchParentInverse = mat4.create();

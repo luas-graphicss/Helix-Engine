@@ -11,6 +11,7 @@ import { useViewportRenderer } from './use-viewport-renderer';
 import { useViewportInput, type ViewportInputHandlers } from './use-viewport-input';
 import { useFileDrop } from './use-file-drop';
 import { useEditorSession, useSessionTopic } from '@/engine/editor/session/editor-session-context';
+import { ExtensionToolPanel } from '@/engine/editor/extensions/ui/tools/extension-tool-panel';
 import { EntityContextMenuContent } from '@/engine/editor/menus/entity-context-menu';
 import { PlaytestHudOverlay } from '@/engine/editor/playtest/playtest-hud-overlay';
 import { PerformanceHud } from '@/engine/editor/playtest/performance-hud';
@@ -73,6 +74,7 @@ export function SceneViewport() {
             <div className="flex min-w-0 flex-1 justify-center">
               <ColorPickerHint />
             </div>
+            <ExtensionToolPanel />
           </div>
         </div>
 

@@ -12,6 +12,7 @@ import { addFolder, copySelected, deleteEntities, describeEntities, duplicateEnt
 import { savePrefabToLibrary } from '@/engine/editor/operations/prefab-operations';
 import { resetTransform } from '@/engine/editor/operations/transform-operations';
 import { focusInspectorName } from '@/engine/editor/shortcuts/focus-targets';
+import { ExtensionActorMenuItems } from '@/engine/editor/extensions/ui/menus/extension-menu-items';
 import { AddEntitySubmenu } from './add-entity-menu';
 import { AudioContextActions } from './audio-context-actions';
 import { CsgContextActions } from './csg-context-actions';
@@ -199,6 +200,7 @@ export function EntityContextMenuContent({ entity, onRename }: EntityContextMenu
       <ContextMenuGroup>
         <AddEntitySubmenu />
       </ContextMenuGroup>
+      <ExtensionActorMenuItems actors={selection}/>
       {entity && (<>
           <ContextMenuSeparator />
           <ContextMenuGroup>

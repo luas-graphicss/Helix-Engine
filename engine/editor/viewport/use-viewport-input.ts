@@ -1,12 +1,13 @@
 'use client';
 import { useEffect } from 'react';
+import type { ToolContribution, ToolPointer } from '@/engine/editor/extensions/tools/tool-contribution';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { GizmoPointer } from '@/engine/editor/transform/gizmo/gizmo-pointer';
 import * as vec3 from '@/engine/core/math/vec3';
 import { dragPointOnViewPlane, pickBone, pickEffector } from '@/engine/editor/animation/viewport/bone-picking';
 import { gizmoCursor } from './gizmo-cursor';
 import { pickEntity } from './pick-entity';
-type DragMode = 'orbit' | 'pan' | 'gizmo' | 'terrain' | 'ik' | 'gui' | 'hud' | null;
+type DragMode = 'orbit' | 'pan' | 'gizmo' | 'terrain' | 'ik' | 'gui' | 'hud' | 'tool' | null;
 const CLICK_DRAG_THRESHOLD_PX = 4;
 export interface ViewportInputHandlers {
     onContextMenu: (clientX: number, clientY: number) => void;
@@ -39,6 +40,14 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 shift: event.shiftKey,
                 alt: event.altKey,
             };
+        };
+        const sampleToolPointer = (event: PointerEvent, dragging: boolean): ToolPointer => {
+            const pointer = samplePointer(event);
+            return { x: pointer.x, y: pointer.y, u: pointer.x / pointer.width, v: pointer.y / pointer.height, button: event.button, dragging, ctrl: pointer.ctrl, shift: pointer.shift, alt: pointer.alt };
+        };
+        const pointerTool = (): ToolContribution | null => {
+            const tool = session.extensions.toolController.active;
+            return tool?.handlesPointer ? tool : null;
         };
         const pickAt = (pointer: GizmoPointer) => pickEntity(session.scene, session.camera, pointer.x / pointer.width, pointer.y / pointer.height, {
             lightHelpers: session.render.lightHelpers,
@@ -147,6 +156,15 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 event.preventDefault();
                 return;
             }
+            const tool = event.button === 0 ? pointerTool() : null;
+            if (tool) {
+                mode = 'tool';
+                canvas.setPointerCapture(event.pointerId);
+                canvas.focus();
+                event.preventDefault();
+                tool.pointer('down', sampleToolPointer(event, true));
+                return;
+            }
             if (event.button === 0 && session.tool === 'terrain') {
                 const pointer = samplePointer(event);
                 if (updateTerrainHover(pointer, event.shiftKey) && session.terrain.beginStroke(event.shiftKey)) {
@@ -203,6 +221,10 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 canvas.style.cursor = 'crosshair';
                 return;
             }
+            if (mode === 'tool') {
+                pointerTool()?.pointer('move', sampleToolPointer(event, true));
+                return;
+            }
             if (mode === 'gizmo') {
                 session.gizmo.updateDrag(samplePointer(event));
                 return;
@@ -237,6 +259,12 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 }
                 if (updateGuiHover(samplePointer(event)))
                     return;
+                const tool = pointerTool();
+                if (tool) {
+                    canvas.style.cursor = tool.cursor ?? 'crosshair';
+                    tool.pointer('move', sampleToolPointer(event, false));
+                    return;
+                }
                 if (session.tool === 'terrain')
                     updateTerrainHover(samplePointer(event), event.shiftKey);
                 else
@@ -263,6 +291,11 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 return;
             if (canvas.hasPointerCapture(event.pointerId))
                 canvas.releasePointerCapture(event.pointerId);
+            if (mode === 'tool') {
+                mode = null;
+                pointerTool()?.pointer('up', sampleToolPointer(event, false));
+                return;
+            }
             if (mode === 'hud') {
                 mode = null;
                 const pointer = samplePointer(event);

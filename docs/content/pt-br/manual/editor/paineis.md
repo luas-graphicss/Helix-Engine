@@ -27,6 +27,7 @@ Os painéis são as abas ao redor do viewport. Cada um cuida de um sistema; abri
 | Efeitos | `Ctrl+Shift+X` | base | O editor de partículas: emissores, módulos e a pré-visualização. |
 | Interface | `Ctrl+Shift+F` | esquerda | A paleta de elementos do designer de telas. Só na área Interface. |
 | Scripts | `Ctrl+Shift+Y` | esquerda | Os scripts do jogo, por pasta, com a linguagem e o estado de compilação de cada um. |
+| Extensões | — | esquerda | As [extensões do editor](/helix/docs/pt-br/scripting/extensoes-do-editor) do projeto, o estado de cada uma e os fluxos de trabalho que elas registram. |
 | Desempenho | `F3` | sobre o viewport | O HUD de orçamento do frame. |
 
 ## Zonas e arranjo

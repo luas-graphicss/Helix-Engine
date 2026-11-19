@@ -1,8 +1,10 @@
 import { readPreference, writePreference } from '@/engine/core/storage/preferences';
 export type DockArea = 'left' | 'right' | 'bottom';
-export type DockPanelId = 'hierarchy' | 'inspector' | 'lights' | 'terrain' | 'character' | 'environment' | 'postprocess' | 'physics' | 'performance' | 'assets' | 'animation' | 'audio' | 'vfx' | 'interface' | 'scripts' | 'console' | 'activity' | 'assistant';
+export type BuiltinPanelId = 'hierarchy' | 'inspector' | 'lights' | 'terrain' | 'character' | 'environment' | 'postprocess' | 'physics' | 'performance' | 'assets' | 'animation' | 'audio' | 'vfx' | 'interface' | 'scripts' | 'console' | 'activity' | 'assistant' | 'extensions';
+export type ExtensionPanelId = `ext:${string}`;
+export type DockPanelId = BuiltinPanelId | ExtensionPanelId;
 export const DOCK_AREAS: readonly DockArea[] = ['left', 'right', 'bottom'];
-export const DOCK_PANEL_IDS: readonly DockPanelId[] = [
+export const DOCK_PANEL_IDS: readonly BuiltinPanelId[] = [
     'hierarchy',
     'inspector',
     'lights',
@@ -21,6 +23,7 @@ export const DOCK_PANEL_IDS: readonly DockPanelId[] = [
     'console',
     'activity',
     'assistant',
+    'extensions',
 ];
 export const DOCK_AREA_LABELS: Record<DockArea, string> = { left: 'Esquerda', right: 'Direita', bottom: 'Inferior' };
 export interface DockAreaLimits {
@@ -43,8 +46,8 @@ export interface DockLayoutState {
     readonly maximized: boolean;
     readonly dragging: DockPanelId | null;
 }
-export const DEFAULT_OPEN_PANELS: readonly DockPanelId[] = ['hierarchy', 'inspector', 'assets', 'console'];
-export const DEFAULT_PANEL_AREA: Record<DockPanelId, DockArea> = {
+export const DEFAULT_OPEN_PANELS: readonly BuiltinPanelId[] = ['hierarchy', 'inspector', 'assets', 'console'];
+export const DEFAULT_PANEL_AREA: Record<BuiltinPanelId, DockArea> = {
     hierarchy: 'left',
     inspector: 'right',
     lights: 'right',
@@ -63,7 +66,25 @@ export const DEFAULT_PANEL_AREA: Record<DockPanelId, DockArea> = {
     console: 'bottom',
     activity: 'bottom',
     assistant: 'right',
+    extensions: 'left',
 };
+const EXTENSION_PANEL_PREFIX = 'ext:';
+const EXTENSION_PANEL_AREA: DockArea = 'right';
+export function extensionPanelId(windowId: string): ExtensionPanelId {
+    return `${EXTENSION_PANEL_PREFIX}${windowId}`;
+}
+export function isExtensionPanelId(value: unknown): value is ExtensionPanelId {
+    return typeof value === 'string' && value.length > EXTENSION_PANEL_PREFIX.length && value.startsWith(EXTENSION_PANEL_PREFIX);
+}
+export function extensionWindowId(id: ExtensionPanelId): string {
+    return id.slice(EXTENSION_PANEL_PREFIX.length);
+}
+export function isDockPanelId(value: unknown): value is DockPanelId {
+    return typeof value === 'string' && ((DOCK_PANEL_IDS as readonly string[]).includes(value) || isExtensionPanelId(value));
+}
+function defaultPanelArea(id: DockPanelId): DockArea {
+    return isExtensionPanelId(id) ? EXTENSION_PANEL_AREA : DEFAULT_PANEL_AREA[id];
+}
 const PREFERENCE_KEY = 'dock-layout';
 const PERSIST_VERSION = 2;
 const PERSIST_DELAY_MS = 400;
@@ -98,9 +119,6 @@ function clampSize(area: DockArea, size: number): number {
         return limits.initial;
     return Math.min(limits.max, Math.max(limits.min, Math.round(size)));
 }
-function isPanelId(value: unknown): value is DockPanelId {
-    return typeof value === 'string' && (DOCK_PANEL_IDS as readonly string[]).includes(value);
-}
 function isArea(value: unknown): value is DockArea {
     return typeof value === 'string' && (DOCK_AREAS as readonly string[]).includes(value);
 }
@@ -114,14 +132,14 @@ function sanitize(persisted: unknown): Pick<PersistedLayout, 'areas' | 'lastArea
     const areas = {} as PersistedLayout['areas'];
     for (const area of DOCK_AREAS) {
         const source = record.areas[area];
-        const panels = Array.isArray(source?.panels) ? source.panels.filter(isPanelId).filter((id) => !seen.has(id) && (seen.add(id), true)) : [];
-        const active = isPanelId(source?.active) && panels.includes(source.active) ? source.active : (panels[0] ?? null);
+        const panels = Array.isArray(source?.panels) ? source.panels.filter(isDockPanelId).filter((id) => !seen.has(id) && (seen.add(id), true)) : [];
+        const active = isDockPanelId(source?.active) && panels.includes(source.active) ? source.active : (panels[0] ?? null);
         areas[area] = { panels, active, size: clampSize(area, Number(source?.size)) };
     }
     const lastArea: PersistedLayout['lastArea'] = {};
     if (record.lastArea && typeof record.lastArea === 'object') {
         for (const [id, area] of Object.entries(record.lastArea))
-            if (isPanelId(id) && isArea(area))
+            if (isDockPanelId(id) && isArea(area))
                 lastArea[id] = area;
     }
     return { areas, lastArea };
@@ -157,10 +175,13 @@ export class DockLayoutStore {
     isOpen(id: DockPanelId): boolean {
         return !this.state.maximized && this.area(id) !== null;
     }
-    closedPanels(): DockPanelId[] {
+    closedPanels(): BuiltinPanelId[] {
         return DOCK_PANEL_IDS.filter((id) => this.area(id) === null);
     }
-    open(id: DockPanelId, area: DockArea = this.lastArea[id] ?? DEFAULT_PANEL_AREA[id]): void {
+    rememberedArea(id: DockPanelId): DockArea | null {
+        return this.lastArea[id] ?? null;
+    }
+    open(id: DockPanelId, area: DockArea = this.lastArea[id] ?? defaultPanelArea(id)): void {
         if (this.state.maximized)
             this.restorePanels();
         const current = this.area(id);

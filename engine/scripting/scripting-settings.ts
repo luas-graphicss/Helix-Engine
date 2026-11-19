@@ -24,13 +24,18 @@ export const GAME_SERVER_MAX_PLAYERS = 256;
 export function createGameServerSettings(): GameServerSettings {
     return { mode: 'none', url: '', tickRate: 20, maxPlayers: 16, target: 'node' };
 }
+export interface EditorExtensionEntry {
+    assetId: string;
+    enabled: boolean;
+}
 export interface ScriptingSettings {
     baseLanguage: ScriptLanguageId | null;
     entryScriptId: string | null;
     server: GameServerSettings;
+    extensions: EditorExtensionEntry[];
 }
 export function createScriptingSettings(): ScriptingSettings {
-    return { baseLanguage: null, entryScriptId: null, server: createGameServerSettings() };
+    return { baseLanguage: null, entryScriptId: null, server: createGameServerSettings(), extensions: [] };
 }
 export function isAuthoritative(settings: ScriptingSettings): boolean {
     return settings.server.mode === 'authoritative';

@@ -3,6 +3,7 @@ import { Axis3d, Mountain, MousePointer2, Move3d, Orbit, Rotate3d, Scale3d, Scal
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/engine/ui/icon-button';
+import { ExtensionToolGroup } from '@/engine/editor/extensions/ui/tools/extension-tool-group';
 import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import type { TransformTool } from '@/engine/editor/session/editor-session';
 import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
@@ -23,14 +24,16 @@ export function ToolRail() {
     const hint = useShortcutHint();
     if (session.playtest.isPossessing)
         return null;
+    const extensionToolActive = session.extensions.toolController.active !== null;
     return (<div role="toolbar" aria-label="Ferramentas do viewport" aria-orientation="vertical" className="flex h-full flex-col flex-wrap content-start gap-1">
       {VIEWPORT_TOOL_GROUPS.map((group) => (<div key={group[0].id} className={cn(HUD_GROUP_CLASS, 'flex-col')}>
           {group.map(({ id, label, shortcut }) => {
                 const Icon = TOOL_ICON[id];
-                return (<IconButton key={id} label={hint(label, shortcut)} active={session.tool === id} onClick={() => session.setTool(id)}>
+                return (<IconButton key={id} label={hint(label, shortcut)} active={session.tool === id && !extensionToolActive} onClick={() => session.setTool(id)}>
                 <Icon />
               </IconButton>);
             })}
         </div>))}
+      <ExtensionToolGroup />
     </div>);
 }

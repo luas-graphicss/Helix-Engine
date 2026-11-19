@@ -26,6 +26,7 @@ import { MaterialEditorHost } from './materials/material-editor-host';
 import { ViewportColorPickerProvider } from './viewport/viewport-color-picker-provider';
 import { useEngineSetting } from '@/engine/settings/engine-settings-store';
 import { useLiveSessionSettings, useRevealConsoleOnError, useWindowFocusPolicies } from '@/engine/settings/apply/use-engine-settings-effects';
+import { useStartExtensions } from './extensions/ui/use-extension-host';
 export function EditorShell({ session }: {
     session: EditorSession;
 }) {
@@ -145,6 +146,7 @@ function EditorLayout() {
     useRevealScriptsPanel();
     useMaximizeOnPlay();
     useScriptSync();
+    useStartExtensions();
     return (<main className="relative flex h-dvh w-full flex-col overflow-clip bg-background text-foreground">
       <MenuBar />
       <MainToolbar />

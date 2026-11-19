@@ -3,6 +3,7 @@ import { AudioLines, Boxes, Clapperboard, Copy, Download, FileCode2, ImagePlus, 
 import { ContextMenuContent, ContextMenuGroup, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut } from '@/components/ui/context-menu';
 import type { LibraryAsset } from '@/engine/assets/library/asset-types';
 import { useAudioEditor } from '@/engine/editor/audio/ui/use-audio-editor';
+import { ExtensionAssetMenuItems } from '@/engine/editor/extensions/ui/menus/extension-menu-items';
 import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_SHORTCUT_CLASS } from '@/engine/editor/menus/menu-styles';
 import { activateLibraryAsset, createMaterialFromLibraryTexture, pickLibraryAssetThumbnail, regenerateLibraryAssetThumbnail, removeLibraryAsset } from '@/engine/editor/operations/asset-library-operations';
 import { toggleQuickAudioPreview } from '@/engine/editor/operations/audio-operations';
@@ -123,6 +124,7 @@ export function LibraryAssetMenu({ asset, onRename }: LibraryAssetMenuProps) {
           {asset.thumbnail?.custom ? 'Voltar à miniatura automática' : 'Regenerar miniatura'}
         </ContextMenuItem>
       </ContextMenuGroup>
+      <ExtensionAssetMenuItems asset={asset}/>
       <ContextMenuSeparator />
       <ContextMenuGroup>
         <ContextMenuItem className={MENU_ITEM_CLASS} variant="destructive" onClick={() => void removeLibraryAsset(session, asset)}>

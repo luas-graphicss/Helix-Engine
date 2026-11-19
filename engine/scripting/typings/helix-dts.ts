@@ -2337,6 +2337,61 @@ const PROJECT_API = `
   }
 `;
 const EDITOR_API = `
+  export interface EditorGuiFieldOptions { disabled?: boolean; key?: string }
+  export interface EditorGui {
+    readonly changed: boolean
+    label(text: string, options?: { muted?: boolean }): void
+    heading(text: string): void
+    help(text: string, level?: 'info' | 'warn' | 'error'): void
+    separator(): void
+    space(size?: number): void
+    progress(value: number, label?: string): void
+    button(label: string, options?: EditorGuiFieldOptions & { icon?: string; variant?: 'primary' | 'secondary' | 'danger' }): boolean
+    toggle(label: string, value: boolean, options?: EditorGuiFieldOptions): boolean
+    number(label: string, value: number, options?: EditorGuiFieldOptions & { min?: number; max?: number; step?: number }): number
+    slider(label: string, value: number, min: number, max: number, options?: EditorGuiFieldOptions & { step?: number }): number
+    text(label: string, value: string, options?: EditorGuiFieldOptions & { placeholder?: string; multiline?: boolean }): string
+    select(label: string, value: string, choices: readonly (string | { value: string; label?: string })[], options?: EditorGuiFieldOptions): string
+    color(label: string, value: ColorLike, options?: EditorGuiFieldOptions): Vec3
+    vector(label: string, value: Vec3Like, options?: EditorGuiFieldOptions): Vec3
+    actor(label: string, value: Entity | null, options?: EditorGuiFieldOptions): Entity | null
+    asset(label: string, value: AssetRef | null, kind?: AssetKind | null, options?: EditorGuiFieldOptions): LibraryAsset | null
+    row(build: () => void): void
+    section(title: string, build: () => void, options?: { key?: string }): void
+  }
+  export interface EditorWindowOptions { title?: string; icon?: string; area?: 'left' | 'right' | 'bottom'; onGui(ui: EditorGui): void }
+  export interface EditorWindowHandle { readonly id: string; readonly isOpen: boolean; open(): void; close(): void; repaint(): void; unregister(): void }
+  export type EditorMenuLocation = 'main' | 'actor' | 'asset'
+  export interface EditorMenuTarget { readonly actors: Entity[]; readonly actor: Entity | null; readonly asset: LibraryAsset | null }
+  export interface EditorMenuOptions { location?: EditorMenuLocation; icon?: string; shortcut?: string; order?: number; separator?: boolean; run(target: EditorMenuTarget): void; enabled?(target: EditorMenuTarget): boolean; checked?(target: EditorMenuTarget): boolean }
+  export interface EditorMenuHandle { readonly path: string; readonly location: EditorMenuLocation; run(): void; unregister(): void }
+  export interface EditorActorFilter { kinds?: EntityKind | readonly EntityKind[]; appliesTo?(actor: Entity): boolean }
+  export interface EditorInspectorOptions extends EditorActorFilter { title?: string; multiple?: boolean; order?: number; open?: boolean; onGui(ui: EditorGui, actors: Entity[]): void }
+  export interface EditorInspectorHandle { readonly id: string; repaint(): void; unregister(): void }
+  export interface EditorGizmoDraw {
+    color(color: ColorLike, alpha?: number): void
+    line(a: Vec3Like, b: Vec3Like): void
+    polyline(points: readonly Vec3Like[], closed?: boolean): void
+    ray(origin: Vec3Like, direction: Vec3Like, length?: number): void
+    arrow(from: Vec3Like, to: Vec3Like): void
+    cross(center: Vec3Like, size?: number): void
+    box(center: Vec3Like, size: Vec3Like | number): void
+    sphere(center: Vec3Like, radius: number): void
+    circle(center: Vec3Like, radius: number, normal?: Vec3Like): void
+    local(actor: Entity, paint: () => void): void
+  }
+  export interface EditorGizmoOptions extends EditorActorFilter { when?: 'always' | 'selected'; onDraw?(draw: EditorGizmoDraw, actor: Entity, selected: boolean): void; onDrawScene?(draw: EditorGizmoDraw): void }
+  export interface EditorGizmoHandle { readonly id: string; unregister(): void }
+  export interface EditorToolEvent { readonly x: number; readonly y: number; readonly button: number; readonly dragging: boolean; readonly ctrl: boolean; readonly shift: boolean; readonly alt: boolean; readonly ray: { origin: Vec3; direction: Vec3 } | null; readonly actor: Entity | null; readonly point: Vec3 | null; readonly ground: Vec3 | null }
+  export interface EditorToolOptions { title?: string; icon?: string; shortcut?: string; cursor?: string; run?(): void; onActivate?(): void; onDeactivate?(): void; onPointerDown?(event: EditorToolEvent): void; onPointerMove?(event: EditorToolEvent): void; onPointerUp?(event: EditorToolEvent): void; onDraw?(draw: EditorGizmoDraw): void; onGui?(ui: EditorGui): void }
+  export interface EditorToolHandle { readonly id: string; readonly isActive: boolean; activate(): void; deactivate(): void; repaint(): void; unregister(): void }
+  export interface EditorEventMap { selectionChanged: Entity[]; sceneChanged: undefined; assetsChanged: undefined; historyChanged: undefined; toolChanged: string; playModeChanged: 'stopped' | 'playing' | 'paused'; projectSaved: number | null }
+  export type EditorEventName = keyof EditorEventMap
+  export type EditorWorkflowOutcome = 'done' | 'failed' | 'cancelled'
+  export interface EditorWorkflowStepContext { readonly cancelled: boolean; readonly data: Record<string, unknown>; progress(fraction: number, message?: string): void }
+  export interface EditorWorkflowStep { title: string; run(step: EditorWorkflowStepContext): void | Promise<void> }
+  export interface EditorWorkflowOptions { title?: string; description?: string; icon?: string; trigger?: EditorEventName; steps?: readonly EditorWorkflowStep[]; run?(step: EditorWorkflowStepContext): void | Promise<void> }
+  export interface EditorWorkflowHandle { readonly id: string; run(): Promise<EditorWorkflowOutcome>; cancel(): void; unregister(): void }
   export interface EditorApi {
     readonly selection: Entity[]
     readonly selected: Entity | null
@@ -2371,7 +2426,13 @@ const EDITOR_API = `
     readonly viewport: { capture(): Promise<Blob | null>; frame(entity: Entity): void; frameSelected(): void; readonly camera: unknown }
     readonly code: { open(asset: AssetRef, line?: number): Promise<boolean>; readonly tabs: { assetId: string; name: string; language: string; dirty: boolean; active: boolean }[]; readonly active: { assetId: string; name: string; language: string } | null; save(asset?: AssetRef): Promise<LibraryAsset | null>; saveAll(): Promise<number>; run(asset?: AssetRef): Promise<void>; compile(): Promise<void>; readonly compileState: { state: string; message: string } }
     readonly console: { clear(): void; readonly entries: { id: number; elapsedMs: number; level: 'debug' | 'info' | 'warn' | 'error'; source: string; message: string; repeat: number }[]; readonly count: number }
-    readonly tools: { register(id: string, options: { label: string; shortcut?: string; run: () => void }): Unsubscribe; unregister(id: string): boolean; list(): { id: string; label: string; shortcut: string | null }[]; run(id: string): void }
+    readonly windows: { register(id: string, options: EditorWindowOptions): EditorWindowHandle; unregister(id: string): boolean; open(id: string): void; close(id: string): void; toggle(id: string): void; isOpen(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
+    readonly menus: { register(path: string, options: EditorMenuOptions): EditorMenuHandle; unregister(path: string, location?: EditorMenuLocation): boolean; run(path: string, location?: EditorMenuLocation): void; list(): { path: string; location: EditorMenuLocation; shortcut: string | null }[] }
+    readonly inspectors: { register(id: string, options: EditorInspectorOptions): EditorInspectorHandle; unregister(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
+    readonly gizmos: { register(id: string, options: EditorGizmoOptions): EditorGizmoHandle; unregister(id: string): boolean; repaint(): void; visible: boolean; list(): { id: string; when: 'always' | 'selected' }[] }
+    readonly tools: { register(id: string, options: EditorToolOptions): EditorToolHandle; unregister(id: string): boolean; activate(id: string): void; deactivate(): void; readonly active: string | null; run(id: string): void; list(): { id: string; title: string; shortcut: string | null; kind: 'action' | 'mode' }[] }
+    readonly workflows: { register(id: string, options: EditorWorkflowOptions): EditorWorkflowHandle; unregister(id: string): boolean; run(id: string): Promise<EditorWorkflowOutcome>; cancel(id?: string): void; readonly running: string | null; list(): { id: string; title: string; trigger: EditorEventName | null }[] }
+    readonly events: { names(): EditorEventName[]; on<TName extends EditorEventName>(name: TName, handler: (payload: EditorEventMap[TName]) => void): Unsubscribe }
     notify(): void
   }
 `;

@@ -8,9 +8,10 @@ import { MENU_ITEM_CLASS } from '@/engine/editor/menus/menu-styles';
 import { ResizeHandle } from './resize-handle';
 import { useResizableSize } from './use-resizable-size';
 import { PanelFrame } from './panel-frame';
-import { DOCK_AREA_LABELS, DOCK_AREA_LIMITS, DOCK_AREAS, type DockArea, type DockPanelId } from './dock-layout';
+import { DOCK_AREA_LABELS, DOCK_AREA_LIMITS, DOCK_AREAS, isDockPanelId, type DockArea, type DockPanelId } from './dock-layout';
 import { useDockLayout } from './dock-layout-context';
-import { DOCK_PANELS, panelLabel } from './dock-panels';
+import { panelLabel } from './dock-panels';
+import { useDockPanelResolver } from './use-dock-panels';
 import { useEditorSession, useSessionSelector } from '@/engine/editor/session/editor-session-context';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 const WORKSPACE_TOPICS = ['workspace'] as const;
@@ -18,7 +19,7 @@ const selectWorkspace = (session: EditorSession) => session.workspace;
 export const DOCK_DRAG_TYPE = 'application/x-helix-dock-panel';
 export function readDraggedPanel(event: DragEvent<HTMLElement>): DockPanelId | null {
     const id = event.dataTransfer.getData(DOCK_DRAG_TYPE);
-    return id && id in DOCK_PANELS ? (id as DockPanelId) : null;
+    return isDockPanelId(id) ? id : null;
 }
 export function isPanelDrag(event: DragEvent<HTMLElement>): boolean {
     return Array.from(event.dataTransfer.types).includes(DOCK_DRAG_TYPE);
@@ -35,6 +36,7 @@ export function DockAreaView({ area, axis, inverted = false, handleSide, classNa
     const [layout, dock] = useDockLayout();
     const session = useEditorSession();
     const workspace = useSessionSelector(selectWorkspace, { topics: WORKSPACE_TOPICS });
+    const resolvePanel = useDockPanelResolver();
     const state = layout.areas[area];
     const limits = DOCK_AREA_LIMITS[area];
     const asideRef = useRef<HTMLElement>(null);
@@ -49,23 +51,24 @@ export function DockAreaView({ area, axis, inverted = false, handleSide, classNa
         onResizingChange: (resizing) => viewportGovernor.setResizing(resizing),
     });
     const markUiActivity = () => viewportGovernor.markUiActivity();
-    if (state.panels.length === 0)
+    const panels = state.panels.flatMap((id) => resolvePanel(id) ?? []);
+    if (panels.length === 0)
         return null;
-    const tabs: TabDefinition[] = state.panels.map((id) => ({ id, label: panelLabel(id, workspace), icon: DOCK_PANELS[id].icon }));
-    const active = state.active ?? state.panels[0];
-    const activePanel = DOCK_PANELS[active];
+    const tabs: TabDefinition[] = panels.map((panel) => ({ id: panel.id, label: panelLabel(panel, workspace), icon: panel.icon }));
+    const activePanel = panels.find((panel) => panel.id === state.active) ?? panels[0];
+    const active = activePanel.id;
     const otherAreas = DOCK_AREAS.filter((candidate) => candidate !== area);
     const handle = (<ResizeHandle axis={axis} active={resize.isResizing} label={`Redimensionar painel ${DOCK_AREA_LABELS[area].toLowerCase()}`} {...resize.handleProps}/>);
     const menu = (<>
       <DropdownMenuGroup>
         <DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.close(active)}>
           <X aria-hidden/>
-          Fechar {panelLabel(active, workspace)}
+          Fechar {panelLabel(activePanel, workspace)}
           {activePanel.shortcut && <MenuShortcut action={activePanel.shortcut}/>}
         </DropdownMenuItem>
-        {state.panels.length > 1 && (<DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.closeArea(area)}>
+        {panels.length > 1 && (<DropdownMenuItem className={MENU_ITEM_CLASS} onClick={() => dock.closeArea(area)}>
             <PanelTopClose aria-hidden/>
-            Fechar grupo ({state.panels.length} painéis)
+            Fechar grupo ({panels.length} painéis)
           </DropdownMenuItem>)}
       </DropdownMenuGroup>
       <DropdownMenuSeparator />
@@ -91,7 +94,7 @@ export function DockAreaView({ area, axis, inverted = false, handleSide, classNa
         </DropdownMenuItem>
       </DropdownMenuGroup>
     </>);
-    const frame = (<PanelFrame tabs={tabs} activeTabId={active} onActiveTabChange={(id) => dock.setActive(area, id as DockPanelId)} renderTab={(id) => DOCK_PANELS[id as DockPanelId].render()} onCloseTab={(id) => dock.close(id as DockPanelId)} menu={menu} onDragTab={(id, event) => {
+    const frame = (<PanelFrame tabs={tabs} activeTabId={active} onActiveTabChange={(id) => dock.setActive(area, id as DockPanelId)} renderTab={(id) => panels.find((panel) => panel.id === id)?.render() ?? null} onCloseTab={(id) => dock.close(id as DockPanelId)} menu={menu} onDragTab={(id, event) => {
             if (id)
                 event.dataTransfer.setData(DOCK_DRAG_TYPE, id);
             dock.setDragging(id as DockPanelId | null);
