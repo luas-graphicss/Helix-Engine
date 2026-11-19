@@ -31,6 +31,7 @@ function useSurfaceRefresh(surface: GuiSurface): void {
 export function ExtensionGuiView({ surface }: {
     surface: GuiSurface;
 }) {
+    const session = useEditorSession();
     useSyncExternalStore(surface.subscribe, surface.getVersion, surface.getVersion);
     useSurfaceRefresh(surface);
     if (surface.hasFailed)
@@ -44,6 +45,9 @@ export function ExtensionGuiView({ surface }: {
           </ActionButton>
         </div>);
     return (<div className="flex flex-col py-1">
-      <GuiNodeList nodes={surface.tree} emit={(key, value) => surface.dispatch(key, value)}/>
+      <GuiNodeList nodes={surface.tree} emit={(key, value) => {
+            surface.dispatch(key, value);
+            session.notify();
+        }}/>
     </div>);
 }

@@ -51,6 +51,7 @@ export function createToolsApi(context: ExtensionApiContext) {
                 if (action)
                     context.run(owner, `${label} (${hook})`, action);
             };
+            const runAction = guarded('run', run);
             const surface = onGui ? new GuiSurface((frame) => onGui(createGuiBuilder(host, frame)), (render) => context.run(owner, `${label} (onGui)`, render)) : null;
             const tool: ToolContribution = {
                 id: key,
@@ -61,7 +62,10 @@ export function createToolsApi(context: ExtensionApiContext) {
                 isAction: run !== null,
                 handlesPointer,
                 surface,
-                run: guarded('run', run),
+                run: () => {
+                    runAction();
+                    session.notify();
+                },
                 activate: guarded('onActivate', onActivate),
                 deactivate: guarded('onDeactivate', onDeactivate),
                 pointer: (phase, pointer) => {
@@ -69,8 +73,10 @@ export function createToolsApi(context: ExtensionApiContext) {
                     if (!handler)
                         return;
                     context.run(owner, `${label} (${POINTER_HOOK[phase]})`, () => handler(createToolEvent(session, pointer)));
-                    if (phase !== 'move')
-                        surface?.requestRepaint();
+                    if (phase === 'move')
+                        return;
+                    surface?.requestRepaint();
+                    session.notify();
                 },
                 paint: onDraw ? guardedAction(context, owner, `${label} (onDraw)`, (painter: GizmoPainter) => onDraw(gizmoDrawFor(painter))) : paintNothing,
             };

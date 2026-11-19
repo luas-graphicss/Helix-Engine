@@ -73,6 +73,9 @@ export function createWorkflowsApi(context: ExtensionApiContext) {
                         });
                         throw new HelixError(`${phase} falhou.`);
                     }
+                    finally {
+                        host.session.notify();
+                    }
                 },
             }));
             const workflow: WorkflowContribution = {

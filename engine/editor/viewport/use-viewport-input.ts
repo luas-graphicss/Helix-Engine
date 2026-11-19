@@ -41,9 +41,9 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 alt: event.altKey,
             };
         };
-        const sampleToolPointer = (event: PointerEvent): ToolPointer => {
+        const sampleToolPointer = (event: PointerEvent, dragging: boolean): ToolPointer => {
             const pointer = samplePointer(event);
-            return { x: pointer.x, y: pointer.y, u: pointer.x / pointer.width, v: pointer.y / pointer.height, button: event.button, ctrl: pointer.ctrl, shift: pointer.shift, alt: pointer.alt };
+            return { x: pointer.x, y: pointer.y, u: pointer.x / pointer.width, v: pointer.y / pointer.height, button: event.button, dragging, ctrl: pointer.ctrl, shift: pointer.shift, alt: pointer.alt };
         };
         const pointerTool = (): ToolContribution | null => {
             const tool = session.extensions.toolController.active;
@@ -162,7 +162,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 canvas.setPointerCapture(event.pointerId);
                 canvas.focus();
                 event.preventDefault();
-                tool.pointer('down', sampleToolPointer(event));
+                tool.pointer('down', sampleToolPointer(event, true));
                 return;
             }
             if (event.button === 0 && session.tool === 'terrain') {
@@ -222,7 +222,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 return;
             }
             if (mode === 'tool') {
-                pointerTool()?.pointer('move', sampleToolPointer(event));
+                pointerTool()?.pointer('move', sampleToolPointer(event, true));
                 return;
             }
             if (mode === 'gizmo') {
@@ -262,7 +262,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 const tool = pointerTool();
                 if (tool) {
                     canvas.style.cursor = tool.cursor ?? 'crosshair';
-                    tool.pointer('move', sampleToolPointer(event));
+                    tool.pointer('move', sampleToolPointer(event, false));
                     return;
                 }
                 if (session.tool === 'terrain')
@@ -293,7 +293,7 @@ export function useViewportInput(canvasRef: React.RefObject<HTMLCanvasElement | 
                 canvas.releasePointerCapture(event.pointerId);
             if (mode === 'tool') {
                 mode = null;
-                pointerTool()?.pointer('up', sampleToolPointer(event));
+                pointerTool()?.pointer('up', sampleToolPointer(event, false));
                 return;
             }
             if (mode === 'hud') {

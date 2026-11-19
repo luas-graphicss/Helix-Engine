@@ -2382,7 +2382,7 @@ const EDITOR_API = `
   }
   export interface EditorGizmoOptions extends EditorActorFilter { when?: 'always' | 'selected'; onDraw?(draw: EditorGizmoDraw, actor: Entity, selected: boolean): void; onDrawScene?(draw: EditorGizmoDraw): void }
   export interface EditorGizmoHandle { readonly id: string; unregister(): void }
-  export interface EditorToolEvent { readonly x: number; readonly y: number; readonly button: number; readonly ctrl: boolean; readonly shift: boolean; readonly alt: boolean; readonly ray: { origin: Vec3; direction: Vec3 } | null; readonly actor: Entity | null; readonly point: Vec3 | null; readonly ground: Vec3 | null }
+  export interface EditorToolEvent { readonly x: number; readonly y: number; readonly button: number; readonly dragging: boolean; readonly ctrl: boolean; readonly shift: boolean; readonly alt: boolean; readonly ray: { origin: Vec3; direction: Vec3 } | null; readonly actor: Entity | null; readonly point: Vec3 | null; readonly ground: Vec3 | null }
   export interface EditorToolOptions { title?: string; icon?: string; shortcut?: string; cursor?: string; run?(): void; onActivate?(): void; onDeactivate?(): void; onPointerDown?(event: EditorToolEvent): void; onPointerMove?(event: EditorToolEvent): void; onPointerUp?(event: EditorToolEvent): void; onDraw?(draw: EditorGizmoDraw): void; onGui?(ui: EditorGui): void }
   export interface EditorToolHandle { readonly id: string; readonly isActive: boolean; activate(): void; deactivate(): void; repaint(): void; unregister(): void }
   export interface EditorEventMap { selectionChanged: Entity[]; sceneChanged: undefined; assetsChanged: undefined; historyChanged: undefined; toolChanged: string; playModeChanged: 'stopped' | 'playing' | 'paused'; projectSaved: number | null }

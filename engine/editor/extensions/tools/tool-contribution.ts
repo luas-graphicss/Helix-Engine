@@ -8,6 +8,7 @@ export interface ToolPointer {
     readonly u: number;
     readonly v: number;
     readonly button: number;
+    readonly dragging: boolean;
     readonly ctrl: boolean;
     readonly shift: boolean;
     readonly alt: boolean;

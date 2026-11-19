@@ -63,6 +63,7 @@ export function createMenusApi(context: ExtensionApiContext) {
                 checkable: checked !== null,
                 run: (target) => {
                     context.run(owner, `menu "${label}"`, () => run(toScriptTarget(target)));
+                    host.session.notify();
                 },
                 isEnabled: enabled ? guardedPredicate(context, owner, `menu "${label}" (enabled)`, false, (target: MenuTarget) => enabled(toScriptTarget(target))) : () => true,
                 isChecked: checked ? guardedPredicate(context, owner, `menu "${label}" (checked)`, false, (target: MenuTarget) => checked(toScriptTarget(target))) : () => false,

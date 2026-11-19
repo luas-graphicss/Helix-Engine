@@ -16,6 +16,7 @@ export function createToolEvent(session: EditorSession, pointer: ToolPointer) {
         x: pointer.x,
         y: pointer.y,
         button: pointer.button,
+        dragging: pointer.dragging,
         ctrl: pointer.ctrl,
         shift: pointer.shift,
         alt: pointer.alt,
