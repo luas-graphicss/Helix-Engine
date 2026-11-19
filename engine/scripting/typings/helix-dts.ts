@@ -2382,6 +2382,9 @@ const EDITOR_API = `
   }
   export interface EditorGizmoOptions extends EditorActorFilter { when?: 'always' | 'selected'; onDraw?(draw: EditorGizmoDraw, actor: Entity, selected: boolean): void; onDrawScene?(draw: EditorGizmoDraw): void }
   export interface EditorGizmoHandle { readonly id: string; unregister(): void }
+  export interface EditorToolEvent { readonly x: number; readonly y: number; readonly button: number; readonly ctrl: boolean; readonly shift: boolean; readonly alt: boolean; readonly ray: { origin: Vec3; direction: Vec3 } | null; readonly actor: Entity | null; readonly point: Vec3 | null; readonly ground: Vec3 | null }
+  export interface EditorToolOptions { title?: string; icon?: string; shortcut?: string; cursor?: string; run?(): void; onActivate?(): void; onDeactivate?(): void; onPointerDown?(event: EditorToolEvent): void; onPointerMove?(event: EditorToolEvent): void; onPointerUp?(event: EditorToolEvent): void; onDraw?(draw: EditorGizmoDraw): void; onGui?(ui: EditorGui): void }
+  export interface EditorToolHandle { readonly id: string; readonly isActive: boolean; activate(): void; deactivate(): void; repaint(): void; unregister(): void }
   export interface EditorApi {
     readonly selection: Entity[]
     readonly selected: Entity | null
@@ -2420,7 +2423,7 @@ const EDITOR_API = `
     readonly menus: { register(path: string, options: EditorMenuOptions): EditorMenuHandle; unregister(path: string, location?: EditorMenuLocation): boolean; run(path: string, location?: EditorMenuLocation): void; list(): { path: string; location: EditorMenuLocation; shortcut: string | null }[] }
     readonly inspectors: { register(id: string, options: EditorInspectorOptions): EditorInspectorHandle; unregister(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
     readonly gizmos: { register(id: string, options: EditorGizmoOptions): EditorGizmoHandle; unregister(id: string): boolean; repaint(): void; visible: boolean; list(): { id: string; when: 'always' | 'selected' }[] }
-    readonly tools: { register(id: string, options: { label: string; shortcut?: string; run: () => void }): Unsubscribe; unregister(id: string): boolean; list(): { id: string; label: string; shortcut: string | null }[]; run(id: string): void }
+    readonly tools: { register(id: string, options: EditorToolOptions): EditorToolHandle; unregister(id: string): boolean; activate(id: string): void; deactivate(): void; readonly active: string | null; run(id: string): void; list(): { id: string; title: string; shortcut: string | null; kind: 'action' | 'mode' }[] }
     notify(): void
   }
 `;

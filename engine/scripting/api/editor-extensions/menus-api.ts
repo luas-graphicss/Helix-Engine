@@ -3,10 +3,10 @@ import type { Entity } from '@/engine/core/scene/entity';
 import { selectionMenuTarget } from '@/engine/editor/extensions/menus/menu-commands';
 import { MENU_LOCATIONS, menuContributionId, type MenuContribution, type MenuLocation, type MenuTarget } from '@/engine/editor/extensions/menus/menu-contribution';
 import { parseMenuPath } from '@/engine/editor/extensions/menus/menu-path';
-import { normalizeShortcut } from '@/engine/editor/extensions/menus/menu-shortcut';
 import { HelixArgumentError, HelixError } from '../../runtime/script-errors';
 import { optionalNumber, requireFunction, requireObject, requireOneOf, requireString } from '../../runtime/values';
 import { guardedPredicate, type ExtensionApiContext } from './extension-api-context';
+import { shortcutOf } from './shortcut-option';
 interface ScriptMenuTarget {
     readonly actors: Entity[];
     readonly actor: Entity | null;
@@ -26,14 +26,6 @@ function pathOf(value: unknown, location: MenuLocation, member: string): string[
     if (location === 'main' && path.length < 2)
         throw new HelixArgumentError(member, 'no menu principal o caminho começa pelo nome do menu, como "Ferramentas/Apoiar no chão".');
     return path;
-}
-function shortcutOf(value: unknown, member: string): string | null {
-    if (value === undefined)
-        return null;
-    const shortcut = normalizeShortcut(requireString(value, member, 'o atalho'));
-    if (shortcut === null)
-        throw new HelixArgumentError(member, `o atalho "${String(value)}" não foi entendido. Use o formato "Ctrl+Shift+G".`);
-    return shortcut;
 }
 function optionalCallback(value: unknown, member: string, what: string): MenuCallback | null {
     return value === undefined ? null : requireFunction<MenuCallback>(value, member, what);

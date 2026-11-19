@@ -652,6 +652,7 @@ export class EditorSession {
         this.log.info('Física', 'Parâmetros do mundo restaurados ao padrão.');
     }
     setTool(tool: TransformTool): void {
+        this.extensions.toolController.deactivate();
         if (this.tool === tool)
             return;
         if (this.tool === 'terrain') {

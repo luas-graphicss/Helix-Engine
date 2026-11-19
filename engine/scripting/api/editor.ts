@@ -17,20 +17,14 @@ import { createExtensionApiContext } from './editor-extensions/extension-api-con
 import { createGizmosApi } from './editor-extensions/gizmos-api';
 import { createInspectorsApi } from './editor-extensions/inspectors-api';
 import { createMenusApi } from './editor-extensions/menus-api';
+import { createToolsApi } from './editor-extensions/tools-api';
 import { createWindowsApi } from './editor-extensions/windows-api';
 const DIALOG_IDS: readonly EditorDialogId[] = ['settings', 'shortcuts', 'autosaves', 'beta', 'about', 'exit', 'renameProject', 'baseLanguage'];
 const TOOLS: readonly TransformTool[] = VIEWPORT_TOOLS.map((tool) => tool.id);
 const SPACES: readonly TransformSpace[] = ['global', 'local'];
 const SETTING_IDS = Object.keys(ENGINE_SETTINGS) as SettingId[];
-export interface ScriptTool {
-    readonly id: string;
-    readonly label: string;
-    readonly shortcut: string | null;
-    readonly run: () => void;
-}
 export function createEditorApi(host: RuntimeHost) {
     const { session, bus } = host;
-    const tools = new Map<string, ScriptTool>();
     const extensionContext = createExtensionApiContext(host);
     let groupDepth = 0;
     let groupLabel: string | null = null;
@@ -49,7 +43,6 @@ export function createEditorApi(host: RuntimeHost) {
     function panelId(value: unknown, member: string): DockPanelId {
         return requireOneOf(value, DOCK_PANEL_IDS, member, 'o painel');
     }
-    host.disposers.add(() => tools.clear());
     const history = {
         undo: () => session.history.undo(),
         redo: () => session.history.redo(),
@@ -254,38 +247,7 @@ export function createEditorApi(host: RuntimeHost) {
         menus: createMenusApi(extensionContext),
         inspectors: createInspectorsApi(extensionContext),
         gizmos: createGizmosApi(extensionContext),
-        tools: {
-            register: (id: unknown, options: unknown) => {
-                const member = 'helix.editor.tools.register';
-                const key = requireString(id, member, 'o id');
-                const value = (options ?? {}) as Record<string, unknown>;
-                const tool: ScriptTool = {
-                    id: key,
-                    label: typeof value.label === 'string' ? value.label : key,
-                    shortcut: typeof value.shortcut === 'string' ? value.shortcut : null,
-                    run: requireFunction<() => void>(value.run, member, 'run'),
-                };
-                tools.set(key, tool);
-                bus.emit('editor.toolsChanged', { id: key });
-                const unregister = () => {
-                    if (tools.get(key) === tool) {
-                        tools.delete(key);
-                        bus.emit('editor.toolsChanged', { id: key });
-                    }
-                };
-                host.current?.track(unregister);
-                return unregister;
-            },
-            unregister: (id: unknown) => tools.delete(requireString(id, 'helix.editor.tools.unregister', 'o id')),
-            list: () => [...tools.values()].map((tool) => ({ id: tool.id, label: tool.label, shortcut: tool.shortcut })),
-            run: (id: unknown) => {
-                const key = requireString(id, 'helix.editor.tools.run', 'o id');
-                const tool = tools.get(key);
-                if (!tool)
-                    throw new HelixError(`helix.editor.tools.run: ferramenta "${key}" não registrada.`);
-                host.invoke(host.current, `tool:${key}`, tool.run);
-            },
-        },
+        tools: createToolsApi(extensionContext),
         notify: () => session.notify(),
     };
 }

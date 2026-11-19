@@ -7,6 +7,8 @@ import type { InspectorContribution } from './inspectors/inspector-contribution'
 import type { MenuContribution } from './menus/menu-contribution';
 import { ViewportOverlay } from './overlay/viewport-overlay';
 import { ContributionRegistry, RegistrationClock, type Contribution, type OwnedContributions } from './registry/contribution-registry';
+import type { ToolContribution } from './tools/tool-contribution';
+import { ToolController } from './tools/tool-controller';
 import type { WindowContribution } from './windows/window-contribution';
 export class EditorExtensions {
     readonly host: ExtensionHost;
@@ -15,6 +17,8 @@ export class EditorExtensions {
     readonly inspectors: ContributionRegistry<InspectorContribution>;
     readonly gizmos: ContributionRegistry<GizmoContribution>;
     readonly gizmoLayer: GizmoLayer;
+    readonly tools: ContributionRegistry<ToolContribution>;
+    readonly toolController: ToolController;
     private readonly overlay: ViewportOverlay;
     private readonly clock = new RegistrationClock();
     private readonly registries: OwnedContributions[] = [];
@@ -25,7 +29,9 @@ export class EditorExtensions {
         this.gizmos = this.createRegistry();
         this.gizmoLayer = new GizmoLayer(session, this.gizmos);
         this.gizmos.subscribe(() => this.gizmoLayer.requestRepaint());
-        this.overlay = new ViewportOverlay([this.gizmoLayer]);
+        this.tools = this.createRegistry((tool) => this.toolController.handleRemoved(tool));
+        this.toolController = new ToolController({ selectBuiltInTool: () => session.setTool('select'), notifyToolChanged: () => session.notify('tool') }, this.tools);
+        this.overlay = new ViewportOverlay([this.gizmoLayer, this.toolController]);
         this.host = new ExtensionHost(session, {
             mark: () => this.clock.current,
             sweep: (assetId, mark) => this.registries.forEach((registry) => registry.sweep(assetId, mark)),

@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { handleCodeShortcut } from '@/engine/editor/code/code-shortcuts';
 import { editorDialogs } from '@/engine/editor/dialogs/editor-dialogs';
 import { runMenuShortcut } from '@/engine/editor/extensions/menus/menu-commands';
+import { releaseToolOnEscape, runToolShortcut } from '@/engine/editor/extensions/tools/tool-shortcuts';
 import { handleGuiShortcut } from '@/engine/editor/gui/gui-shortcuts';
 import { openImportFilePicker } from '@/engine/editor/import/import-file-picker';
 import type { DockLayoutStore } from '@/engine/editor/layout/dock-layout';
@@ -281,7 +282,7 @@ export function useEditorShortcuts(session: EditorSession, dock: DockLayoutStore
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.defaultPrevented || isTextEntryTarget(event.target))
                 return;
-            if (runBuiltInShortcut({ session, dock, router, event }) || runMenuShortcut(session, event))
+            if (releaseToolOnEscape(session, event) || runBuiltInShortcut({ session, dock, router, event }) || runMenuShortcut(session, event) || runToolShortcut(session, event))
                 event.preventDefault();
         };
         window.addEventListener('keydown', onKeyDown);

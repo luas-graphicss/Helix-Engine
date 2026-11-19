@@ -1,7 +1,8 @@
 import { menuContributionId, type MenuContribution, type MenuLocation, type MenuTarget } from '@/engine/editor/extensions/menus/menu-contribution';
 import { menuLabelKey, parseMenuPath } from '@/engine/editor/extensions/menus/menu-path';
-import { findMenuByShortcut, normalizeShortcut } from '@/engine/editor/extensions/menus/menu-shortcut';
+import { findMenuByShortcut } from '@/engine/editor/extensions/menus/menu-shortcut';
 import { buildMenuTree, customMenuLabels, type MenuNode } from '@/engine/editor/extensions/menus/menu-tree';
+import { normalizeShortcut } from '@/engine/editor/extensions/shortcuts/shortcut-chord';
 import { createCheckList } from '../../support/check-list';
 const checks = createCheckList('Menus das extensões');
 const NO_TARGET: MenuTarget = { actors: [], asset: null };
