@@ -14,6 +14,7 @@ import { cloneGuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings
 import { cloneVfxSettings } from '@/engine/vfx/vfx-settings';
 import { createScriptSettings } from '@/engine/scripting/script-settings';
 import { cloneLodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
+import { cloneCameraSettings } from '@/engine/camera/camera-settings';
 const NUMERIC_SUFFIX = /_\d+$/;
 export function uniqueEntityName(scene: Scene, desired: string, ignore: Entity | null = null): string {
     const taken = new Set<string>();
@@ -61,6 +62,8 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
         vfx: source.vfx ? cloneVfxSettings(source.vfx) : undefined,
         script: source.script ? createScriptSettings(source.script) : undefined,
         lodGroup: source.lodGroup ? cloneLodGroupSettings(source.lodGroup) : undefined,
+        camera: source.camera ? cloneCameraSettings(source.camera) : undefined,
+        layer: source.layer,
         castShadows: source.castShadows,
         receiveShadows: source.receiveShadows,
         locked: source.locked,

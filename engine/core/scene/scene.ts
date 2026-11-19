@@ -5,6 +5,8 @@ import { createPhysicsSettings, type PhysicsSettings } from '@/engine/physics/wo
 import { createPlayerSettings, type PlayerSettings } from '@/engine/character/player-settings';
 import { createMixerSettings, type MixerSettings } from '@/engine/audio/mixer/mixer-settings';
 import { createScriptingSettings, type ScriptingSettings } from '@/engine/scripting/scripting-settings';
+import { createRenderLayerSettings, type RenderLayerSettings } from '@/engine/camera/layers/render-layers';
+import { CameraFeeds } from '@/engine/camera/targets/camera-feeds';
 import { Entity, entityTreeGeneration, type EntityOptions } from './entity';
 export class Scene {
     readonly root: Entity;
@@ -14,6 +16,8 @@ export class Scene {
     readonly player: PlayerSettings;
     readonly audio: MixerSettings;
     readonly scripting: ScriptingSettings;
+    readonly layers: RenderLayerSettings = createRenderLayerSettings();
+    readonly cameraFeeds = new CameraFeeds();
     private nextId = 1;
     constructor(rootName = 'Cena', sky: SkySettings = createSkySettings(), physics: PhysicsSettings = createPhysicsSettings(), player: PlayerSettings = createPlayerSettings(), postProcessing: PostProcessSettings = createPostProcessSettings(), audio: MixerSettings = createMixerSettings(), scripting: ScriptingSettings = createScriptingSettings()) {
         this.root = new Entity({ id: this.nextId++, name: rootName, kind: 'group' });

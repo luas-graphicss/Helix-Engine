@@ -22,6 +22,8 @@ import { createVfxSettings } from '@/engine/vfx/vfx-settings';
 import { createLodGroupSettings, normalizeLodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
 import { createScriptSettings } from '@/engine/scripting/script-settings';
 import { createScriptingSettings } from '@/engine/scripting/scripting-settings';
+import { createCameraSettings, normalizeCameraSettings } from '@/engine/camera/camera-settings';
+import { clampRenderLayer, createRenderLayerSettings, normalizeRenderLayerSettings } from '@/engine/camera/layers/render-layers';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { Terrain } from '@/engine/terrain/core/terrain';
 import { Heightfield } from '@/engine/terrain/core/heightfield';
@@ -57,6 +59,7 @@ export async function deserializeScene(document: SceneDocument, options: Deseria
     await reader.decodeTextures();
     const scene = reader.scene(json);
     reader.populate(scene, json.root);
+    reader.bindCameraFeeds(scene);
     reader.dressCharacters(scene);
     return { scene, pendingTerrainLayers: reader.pendingTerrainLayers, warnings: reader.warnings };
 }
@@ -89,6 +92,10 @@ class SceneReader {
         json: RigJson;
     }> = [];
     private readonly characters: Entity[] = [];
+    private readonly cameraFeeds: Array<{
+        texture: Texture;
+        cameraId: number;
+    }> = [];
     private freshIds = false;
     constructor(private readonly document: SceneResourcesDocument, private readonly options: DeserializeSceneOptions) {
         this.binary = new BinaryReader(document.binary);
@@ -126,7 +133,7 @@ class SceneReader {
         }));
         json.textures.forEach((texture, index) => {
             const image = decoded[index];
-            this.textures.push(createTexture({
+            const created = createTexture({
                 name: texture.name,
                 image,
                 width: image?.width ?? texture.width,
@@ -138,14 +145,28 @@ class SceneReader {
                 minFilter: texture.minFilter,
                 sourcePath: texture.sourcePath,
                 mimeType: texture.mimeType,
-            }));
+                dynamic: texture.cameraFeed !== undefined,
+            });
+            this.textures.push(created);
+            if (texture.cameraFeed !== undefined)
+                this.cameraFeeds.push({ texture: created, cameraId: texture.cameraFeed });
         });
     }
     scene(json: SceneJson): Scene {
         const { environment, name, nextEntityId } = json;
         const scene = new Scene(name, restoreInto(createSkySettings(), environment.sky), restoreInto(createPhysicsSettings(), environment.physics), restoreInto(createPlayerSettings(), environment.player), restoreInto(createPostProcessSettings(), environment.postProcessing), restoreInto(createMixerSettings(), environment.audio), restoreInto(createScriptingSettings(), environment.scripting));
         scene.reserveEntityIds(nextEntityId);
+        scene.layers.names = normalizeRenderLayerSettings(restoreInto(createRenderLayerSettings(), environment.layers)).names;
         return scene;
+    }
+    bindCameraFeeds(scene: Scene): void {
+        for (const { texture, cameraId } of this.cameraFeeds) {
+            const camera = this.entitiesById.get(cameraId);
+            if (camera)
+                scene.cameraFeeds.adopt(camera.id, texture);
+            else
+                this.warnings.push(`A textura "${texture.name}" apontava para uma câmera que não está na cena (id ${cameraId}).`);
+        }
     }
     populate(scene: Scene, root: EntityJson): void {
         this.applyCommon(scene.root, root);
@@ -158,6 +179,7 @@ class SceneReader {
         this.freshIds = true;
         const root = this.entity(scene, json, null);
         this.bindSkeletons();
+        this.remapCameraStacks();
         return root;
     }
     dressCharacters(scene: Scene): void {
@@ -204,6 +226,10 @@ class SceneReader {
             options.script = restoreInto(createScriptSettings(), json.script);
         if (json.lodGroup)
             options.lodGroup = normalizeLodGroupSettings(restoreInto(createLodGroupSettings(), json.lodGroup));
+        if (json.camera)
+            options.camera = normalizeCameraSettings(restoreInto(createCameraSettings(), json.camera));
+        if (json.layer !== undefined)
+            options.layer = clampRenderLayer(json.layer);
         const entity = this.freshIds ? scene.createEntity(options, parent) : scene.restoreEntity({ ...options, id: json.id }, parent);
         this.applyCommon(entity, json);
         if (this.entitiesById.has(json.id))
@@ -218,6 +244,13 @@ class SceneReader {
         for (const child of json.children)
             this.entity(scene, child, entity);
         return entity;
+    }
+    private remapCameraStacks(): void {
+        for (const entity of this.entitiesById.values()) {
+            const { camera } = entity;
+            if (camera)
+                camera.overlays = camera.overlays.map((id) => this.entitiesById.get(id)?.id ?? id);
+        }
     }
     private applyCommon(entity: Entity, json: EntityJson): void {
         entity.transform.position.set(json.position);

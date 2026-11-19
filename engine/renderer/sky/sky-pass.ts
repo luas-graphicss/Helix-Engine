@@ -5,7 +5,6 @@ import { withDefines, type ShaderDefines } from '@/engine/renderer/gl/shader-sou
 import { FULLSCREEN_RAY_VERTEX_SHADER } from '@/engine/renderer/shaders/chunks/fullscreen.glsl';
 import { SKY_FRAGMENT_SHADER } from '@/engine/renderer/shaders/sky/sky.glsl';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
-import { degToRad } from '@/engine/core/math/scalar';
 import type { AtmosphereLuts } from './atmosphere-luts';
 import type { SkyFrame } from './sky-frame';
 const SKY_VIEW_UNIT = 1;
@@ -47,7 +46,7 @@ export class SkyPass {
         gl.uniform1f(program.uniform('u_moonAngularRadius'), frame.moonAngularRadius);
         gl.uniformMatrix3fv(program.uniform('u_starRotation'), false, frame.starRotation);
         gl.uniform1f(program.uniform('u_starsIntensity'), frame.starsIntensity);
-        gl.uniform1f(program.uniform('u_pixelAngle'), degToRad(camera.fovDegrees) / input.height);
+        gl.uniform1f(program.uniform('u_pixelAngle'), (2 * Math.atan(camera.tanHalfFov)) / input.height);
         gl.uniform1f(program.uniform('u_time'), input.elapsedSeconds);
         gl.uniform1f(program.uniform('u_exposure'), camera.exposure);
         gl.uniform1f(program.uniform('u_mieScale'), frame.mieScale);

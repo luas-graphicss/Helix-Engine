@@ -11,6 +11,7 @@ import { SpatialGrid, type SpatialGridStats } from './spatial-grid';
 import { pixelsPerTangent, projectedDiameterPixels } from './screen-coverage';
 import { OcclusionCuller } from './occlusion/occlusion-culler';
 import { LodGroupVisibility } from '@/engine/renderer/lod/groups/lod-group-visibility';
+import { ALL_RENDER_LAYERS, maskIncludesLayer } from '@/engine/camera/layers/render-layers';
 export interface VisibleMesh {
     entity: Entity;
     mesh: MeshData;
@@ -69,11 +70,13 @@ export class VisibleSet {
     private readonly lodGroups = new LodGroupVisibility();
     private occlusion: OcclusionCuller | null = null;
     private showBrushes = true;
+    private layerMask = ALL_RENDER_LAYERS;
     collect(scene: Scene, camera: PerspectiveCamera, viewportHeight: number, options: CullingOptions, showCsgBrushes = true): void {
         const { stats, meshes, terrains, casters, terrainCasters, grid } = this;
         this.camera = camera;
         this.options = options;
         this.showBrushes = showCsgBrushes;
+        this.layerMask = camera.layerMask;
         this.pixelScale = pixelsPerTangent(camera, viewportHeight);
         this.frustum.setFromViewProjection(camera.viewProjectionMatrix);
         meshes.length = 0;
@@ -117,13 +120,14 @@ export class VisibleSet {
     private readonly register = (entity: Entity): void => {
         if (this.lodGroups.hides(entity))
             return;
+        const inMask = maskIncludesLayer(this.layerMask, entity.layer);
         const { terrain } = entity;
         if (terrain) {
             this.stats.renderables++;
             const bounds = this.bounds.resolve(entity, terrain.localBounds, terrain.heightVersion);
             if (entity.castShadows)
                 this.pushTerrainCaster(entity, terrain, bounds);
-            if (!this.options.frustumCulling || this.frustum.intersectsAabb(bounds.aabb))
+            if (inMask && (!this.options.frustumCulling || this.frustum.intersectsAabb(bounds.aabb)))
                 this.terrains.push(entity);
             return;
         }
@@ -144,6 +148,8 @@ export class VisibleSet {
         }
         if (entity.castShadows && !brush)
             this.pushCaster(entity, mesh, bounds);
+        if (!inMask)
+            return;
         this.grid.update(entity, bounds);
         this.stats.candidates++;
         this.stats.renderables++;

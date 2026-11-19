@@ -8,6 +8,8 @@ import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import type { Terrain } from '@/engine/terrain/core/terrain';
 import type { TerrainLayer } from '@/engine/terrain/core/terrain-layer';
 import { findModelRoot } from '@/engine/character/rig/character-rig';
+import { DEFAULT_RENDER_LAYER } from '@/engine/camera/layers/render-layers';
+import type { CameraFeeds } from '@/engine/camera/targets/camera-feeds';
 import { BinaryWriter } from './binary-table';
 import { toPlain, type PlainValue } from './plain-data';
 import { bakeTexture } from './texture-baking';
@@ -16,7 +18,7 @@ export interface SerializeSceneOptions {
     libraryDocumentForTerrainMaterial: (terrainMaterialId: string) => string | null;
 }
 export async function serializeScene(scene: Scene, options: SerializeSceneOptions): Promise<SceneDocument> {
-    const writer = new SceneWriter(options);
+    const writer = new SceneWriter(options, scene.cameraFeeds);
     const root = writer.entity(scene.root);
     const images = await writer.collectImages();
     const json: SceneJson = {
@@ -32,6 +34,7 @@ export async function serializeScene(scene: Scene, options: SerializeSceneOption
             player: toPlain(scene.player, 'player'),
             audio: toPlain(scene.audio, 'audio'),
             scripting: toPlain(scene.scripting, 'scripting'),
+            layers: toPlain(scene.layers, 'layers'),
         },
         meshes: writer.meshes,
         textures: writer.textures,
@@ -46,7 +49,7 @@ export interface SerializedSubtree extends SceneResourcesDocument {
     entityCount: number;
 }
 export async function serializeSubtree(entity: Entity, options: SerializeSceneOptions): Promise<SerializedSubtree> {
-    const writer = new SceneWriter(options);
+    const writer = new SceneWriter(options, null);
     const root = writer.entity(entity);
     const images = await writer.collectImages();
     return { json: { meshes: writer.meshes, textures: writer.textures, materials: writer.materials }, binary: writer.binary.finish(), images, root, entityCount: writer.entityCount };
@@ -61,7 +64,7 @@ class SceneWriter {
     private readonly textureIndex = new Map<Texture, number>();
     private readonly materialIndex = new Map<Material, number>();
     private readonly textureList: Texture[] = [];
-    constructor(private readonly options: SerializeSceneOptions) { }
+    constructor(private readonly options: SerializeSceneOptions, private readonly cameraFeeds: CameraFeeds | null) { }
     entity(entity: Entity): EntityJson {
         this.entityCount++;
         const json: EntityJson = {
@@ -115,6 +118,10 @@ class SceneWriter {
             json.script = toPlain(entity.script, `${entity.name}.script`);
         if (entity.lodGroup)
             json.lodGroup = toPlain(entity.lodGroup, `${entity.name}.lodGroup`);
+        if (entity.camera)
+            json.camera = toPlain(entity.camera, `${entity.name}.camera`);
+        if (entity.layer !== DEFAULT_RENDER_LAYER)
+            json.layer = entity.layer;
         const modelRoot = entity.character ? findModelRoot(entity) : null;
         for (const child of entity.children) {
             if (child !== modelRoot)
@@ -123,7 +130,7 @@ class SceneWriter {
         return json;
     }
     async collectImages(): Promise<Blob[]> {
-        const blobs = await Promise.all(this.textureList.map((texture) => bakeTexture(texture)));
+        const blobs = await Promise.all(this.textureList.map((texture, index) => (this.textures[index].cameraFeed === undefined ? bakeTexture(texture) : null)));
         const images: Blob[] = [];
         blobs.forEach((blob, index) => {
             if (!blob)
@@ -167,6 +174,9 @@ class SceneWriter {
             sourcePath: texture.sourcePath,
             mimeType: texture.mimeType,
         };
+        const feedOwner = this.cameraFeeds?.ownerOf(texture) ?? null;
+        if (feedOwner !== null)
+            json.cameraFeed = feedOwner;
         const index = this.textures.push(json) - 1;
         this.textureIndex.set(texture, index);
         this.textureList.push(texture);

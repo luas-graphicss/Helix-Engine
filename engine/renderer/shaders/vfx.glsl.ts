@@ -118,6 +118,7 @@ uniform float u_blend;
 uniform float u_intensity;
 uniform float u_softness;
 uniform float u_fadeNear;
+uniform float u_orthographic;
 uniform float u_alphaCutoff;
                                              
 uniform float u_lit;
@@ -127,9 +128,10 @@ ${SCENE_LIGHTING_CHUNK}
 out vec4 fragColor;
 
 float linearDepth(float sampled) {
-  float ndc = sampled * 2.0 - 1.0;
   float n = u_depthParams.x;
   float f = u_depthParams.y;
+  if (u_orthographic > 0.5) return mix(n, f, sampled);
+  float ndc = sampled * 2.0 - 1.0;
   return 2.0 * n * f / (f + n - ndc * (f - n));
 }
 

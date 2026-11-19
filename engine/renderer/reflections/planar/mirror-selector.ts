@@ -1,6 +1,5 @@
 import * as mat4 from '@/engine/core/math/mat4';
 import * as vec3 from '@/engine/core/math/vec3';
-import { degToRad } from '@/engine/core/math/scalar';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { Material } from '@/engine/core/scene/material';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
@@ -33,7 +32,12 @@ export class MirrorSelector {
     private readonly edgeB = vec3.create();
     private readonly axisOut = vec3.create();
     select(meshes: readonly VisibleMesh[], camera: PerspectiveCamera): boolean {
-        const tangent = Math.tan(degToRad(camera.fovDegrees) * 0.5);
+        if (camera.orthographic) {
+            this.entity = null;
+            this.face = null;
+            return false;
+        }
+        const tangent = camera.tanHalfFov;
         const viewArea = 4 * tangent * tangent * camera.aspect;
         let bestScore = MIN_SCORE;
         let bestEntity: Entity | null = null;
