@@ -2,6 +2,7 @@ import type { Entity } from '@/engine/core/scene/entity';
 import type { Scene } from '@/engine/core/scene/scene';
 import type { PhysicsScene } from '@/engine/physics/scene/physics-scene';
 import { GroundProbe } from '../ground/ground-probe';
+import { collectVehicleWheels } from '../vehicle-hierarchy';
 import { VehicleInstance } from './vehicle-instance';
 import { writeWheelPose } from './wheel-pose';
 export class VehicleSystem {
@@ -29,8 +30,7 @@ export class VehicleSystem {
         }
         for (const instance of this.instances) {
             this.wheelEntities.length = 0;
-            this.collectWheels(instance.entity);
-            instance.syncWheels(this.wheelEntities);
+            instance.syncWheels(collectVehicleWheels(instance.entity, this.wheelEntities));
         }
     }
     present(): void {
@@ -61,14 +61,5 @@ export class VehicleSystem {
             return;
         this.scene.updateWorldMatrices();
         this.instances.push(new VehicleInstance(entity, binding.body, this.physics.world, this.probe));
-    }
-    private collectWheels(parent: Entity): void {
-        for (const child of parent.children) {
-            if (child.vehicle)
-                continue;
-            if (child.wheel)
-                this.wheelEntities.push(child);
-            this.collectWheels(child);
-        }
     }
 }

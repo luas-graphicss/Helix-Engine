@@ -1,4 +1,4 @@
-import { createVehicleSettings, type VehicleSettings } from './vehicle-settings';
+import { createVehicleSettings, type VehicleScalar, type VehicleSettings } from './vehicle-settings';
 import { createWheelSettings, type WheelSettings } from './wheel/wheel-settings';
 const VEHICLE_PRESET_IDS = ['car', 'offroad', 'truck', 'kart'] as const;
 export type VehiclePresetId = (typeof VEHICLE_PRESET_IDS)[number];
@@ -103,6 +103,11 @@ export const VEHICLE_PRESETS: readonly VehiclePreset[] = [
         },
     },
 ];
+export function findVehiclePreset(settings: VehicleSettings): VehiclePresetId | null {
+    const tuning = (Object.keys(settings) as (keyof VehicleSettings)[]).filter((key): key is VehicleScalar => key !== 'control');
+    const match = VEHICLE_PRESETS.find((preset) => tuning.every((key) => preset.settings[key] === settings[key]));
+    return match?.id ?? null;
+}
 export function getVehiclePreset(id: VehiclePresetId): VehiclePreset {
     const preset = VEHICLE_PRESETS.find((candidate) => candidate.id === id);
     if (!preset)
