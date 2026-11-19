@@ -1,9 +1,10 @@
 'use client';
-import { ChevronDown, Eye, Grid2x2, Lightbulb, Snowflake, Sparkles, Volume2 } from 'lucide-react';
+import { ChevronDown, Eye, Grid2x2, Lightbulb, Route, Snowflake, Sparkles, Volume2 } from 'lucide-react';
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger, } from '@/components/ui/dropdown-menu';
 import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { MENU_CONTENT_CLASS, MENU_ITEM_CLASS, MENU_LABEL_CLASS } from '@/engine/editor/menus/menu-styles';
 import { ExtensionGizmosMenuItem } from '@/engine/editor/extensions/ui/gizmos/extension-gizmos-menu-item';
+import { NAVIGATION_HELPER_MODE_LABEL, NAVIGATION_HELPER_MODES, type NavigationHelperMode } from '@/engine/editor/navigation/navigation-editor';
 import { debugViewNeedsMyriad, MYRIAD_DEBUG_VIEW_HINTS, MYRIAD_DEBUG_VIEW_LABELS, MYRIAD_DEBUG_VIEWS, type MyriadDebugView, } from '@/engine/renderer/myriad/runtime/myriad-settings';
 import { LIGHT_HELPER_MODE_LABEL, LIGHT_HELPER_MODES, type LightHelperMode } from '@/engine/renderer/passes/light-helper-pass';
 import { SOUND_HELPER_MODE_LABEL, SOUND_HELPER_MODES, type SoundHelperMode } from '@/engine/renderer/passes/sound-helper-pass';
@@ -23,6 +24,11 @@ const VFX_HELPER_HINT: Record<VfxHelperMode, string> = {
     all: 'Marcador de cada efeito (pulsa enquanto toca); a seleção ganha as formas de emissão dos emissores',
     selected: 'Só os atores de efeito selecionados são desenhados; os demais ficam invisíveis e não clicáveis',
     off: 'Nenhum marcador desenhado; as partículas continuam aparecendo normalmente',
+};
+const NAVIGATION_HELPER_HINT: Record<NavigationHelperMode, string> = {
+    all: 'NavMesh gerado, agentes, obstáculos, links e volumes de área; ao simular, só a seleção é desenhada, com o caminho do agente',
+    selected: 'Só a navegação dos atores selecionados é desenhada',
+    off: 'Nada de navegação desenhado; os agentes continuam andando normalmente',
 };
 export function ViewModeMenu() {
     const session = useSessionTopic('view');
@@ -100,6 +106,23 @@ export function ViewModeMenu() {
                 <span className="flex flex-col gap-0.5">
                   <span>{VFX_HELPER_MODE_LABEL[mode]}</span>
                   <span className="text-3xs leading-relaxed text-pretty text-muted-foreground">{VFX_HELPER_HINT[mode]}</span>
+                </span>
+              </DropdownMenuRadioItem>))}
+          </DropdownMenuGroup>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuRadioGroup value={session.navigation.helpers} onValueChange={(value) => session.navigation.setHelpers(value as NavigationHelperMode)}>
+          <DropdownMenuGroup>
+            <DropdownMenuLabel className={MENU_LABEL_CLASS}>
+              <span className="flex items-center gap-1.5">
+                <Route className="size-3" aria-hidden/>
+                Navegação no viewport
+              </span>
+            </DropdownMenuLabel>
+            {NAVIGATION_HELPER_MODES.map((mode) => (<DropdownMenuRadioItem key={mode} className={`${MENU_ITEM_CLASS} items-start py-1.5`} value={mode}>
+                <span className="flex flex-col gap-0.5">
+                  <span>{NAVIGATION_HELPER_MODE_LABEL[mode]}</span>
+                  <span className="text-3xs leading-relaxed text-pretty text-muted-foreground">{NAVIGATION_HELPER_HINT[mode]}</span>
                 </span>
               </DropdownMenuRadioItem>))}
           </DropdownMenuGroup>

@@ -14,6 +14,7 @@ import { createLightApi } from './light';
 import { createMaterialApi } from './material';
 import { createMathApi } from './math';
 import { createMeshApi } from './mesh';
+import { createNavigationApi } from './navigation';
 import { createPhysicsApi, type AxisLocks } from './physics';
 import { createNetApi, createPlayApi, netRealmFor } from './play';
 import { createProjectApi, createStorageApi } from './project';
@@ -66,6 +67,7 @@ export function createHelixRoot(host: RuntimeHost, bridges: HelixBridges): Helix
         physics: createPhysicsApi(host, bridges.locks),
         character: createCharacterApi(host),
         player: createPlayerApi(host),
+        navigation: createNavigationApi(host),
         terrain: createTerrainApi(host, scene),
         gui: createGuiApi(host),
         audio: createAudioApi(host),

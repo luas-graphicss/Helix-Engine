@@ -42,7 +42,7 @@ const PRIMITIVES = `
 `;
 const SCENE_TYPES = `
   export type EntityKind = 'group' | 'mesh' | 'light' | 'camera' | 'terrain' | 'character' | 'sound' | 'gui' | 'vfx' | 'script'
-  export type ComponentKind = 'mesh' | 'material' | 'light' | 'rigidBody' | 'character' | 'csg' | 'csgBrush' | 'audioSource' | 'audioZone' | 'guiSurface' | 'vfx' | 'script'
+  export type ComponentKind = 'mesh' | 'material' | 'light' | 'rigidBody' | 'character' | 'csg' | 'csgBrush' | 'audioSource' | 'audioZone' | 'guiSurface' | 'vfx' | 'script' | 'navSurface' | 'navAgent' | 'navObstacle' | 'navLink' | 'navModifier'
   export type PrimitiveKind = 'box' | 'roundedBox' | 'plane' | 'sphere' | 'cylinder' | 'cone' | 'torus' | 'capsule' | 'rock' | 'denseSphere' | 'torusKnot' | 'flutedColumn' | 'engravedTorus'
 
   export interface Transform {
@@ -330,6 +330,11 @@ const SCENE_TYPES = `
     rig: unknown | null
     csg: CsgSettings | null
     csgBrush: CsgBrushSettings | null
+    navSurface: NavSurfaceSettings | null
+    navAgent: NavAgentSettings | null
+    navObstacle: NavObstacleSettings | null
+    navLink: NavLinkSettings | null
+    navModifier: NavModifierSettings | null
     audioSource: AudioSourceSettings | null
     audioZone: AudioZoneSettings | null
     guiSurface: GuiSurfaceSettings | null
@@ -1617,6 +1622,102 @@ const PHYSICS_API = `
     readonly spawnPoint: Vec3
     onPossessed(handler: (entity: Entity | null) => void): Unsubscribe
   }
+  export type NavPathStatus = 'complete' | 'partial' | 'invalid'
+  export type NavAvoidanceQuality = 'none' | 'low' | 'medium' | 'high'
+  export type NavCollectMode = 'scene' | 'children' | 'volume'
+  export interface NavSurfaceSettings {
+    agentRadius: number
+    agentHeight: number
+    maxSlope: number
+    stepHeight: number
+    cellSize: number
+    minRegionArea: number
+    collect: NavCollectMode
+    volumeSize: Vec3
+    volumeCenter: Vec3
+    defaultArea: number
+  }
+  export interface NavAgentSettings {
+    speed: number
+    angularSpeed: number
+    acceleration: number
+    stoppingDistance: number
+    autoBraking: boolean
+    radius: number
+    height: number
+    baseOffset: number
+    avoidance: NavAvoidanceQuality
+    avoidancePriority: number
+    areaMask: number
+    target: number | null
+  }
+  export interface NavObstacleSettings {
+    shape: 'box' | 'capsule'
+    center: Vec3
+    size: Vec3
+    carve: boolean
+    carveOnlyStationary: boolean
+    moveThreshold: number
+    timeToStationary: number
+  }
+  export interface NavLinkSettings {
+    start: Vec3
+    end: Vec3
+    bidirectional: boolean
+    costOverride: number
+    area: number
+    enabled: boolean
+  }
+  export interface NavModifierSettings {
+    mode: 'area' | 'ignore' | 'volume'
+    area: number
+    size: Vec3
+    center: Vec3
+  }
+  export interface NavPathInfo {
+    readonly status: NavPathStatus
+    readonly corners: Vec3[]
+    readonly length: number
+  }
+  export interface NavAreaInfo {
+    readonly index: number
+    readonly name: string
+    readonly cost: number
+  }
+  export interface NavAgentHandle {
+    readonly entity: Entity | null
+    readonly settings: NavAgentSettings
+    readonly position: Vec3
+    readonly velocity: Vec3
+    readonly destination: Vec3 | null
+    readonly hasPath: boolean
+    readonly pathStatus: NavPathStatus
+    readonly corners: Vec3[]
+    readonly remainingDistance: number
+    readonly isOnNavMesh: boolean
+    readonly isOnLink: boolean
+    readonly hasArrived: boolean
+    isStopped: boolean
+    setDestination(target: Vec3Like | Entity): void
+    stop(): void
+    resume(): void
+    resetPath(): void
+    warp(point: Vec3Like): boolean
+  }
+  export interface NavigationApi {
+    readonly isReady: boolean
+    agent(entity: Entity): NavAgentHandle
+    hasAgent(entity: Entity): boolean
+    agents(): NavAgentHandle[]
+    setDestination(entity: Entity, target: Vec3Like | Entity): void
+    stop(entity: Entity): void
+    findPath(start: Vec3Like, end: Vec3Like, areaMask?: number): NavPathInfo
+    samplePosition(point: Vec3Like, maxDistance?: number): Vec3 | null
+    rebuild(): void
+    areas(): NavAreaInfo[]
+    areaMask(...names: string[]): number
+    onArrived(handler: (entity: Entity) => void): Unsubscribe
+  }
 `;
 const TERRAIN_API = `
   export type TerrainPreset = 'flat' | 'hills' | 'mountains' | 'valley' | 'islands' | 'plateau' | 'dunes'
@@ -2524,6 +2625,7 @@ const HELIX_ROOT = `
     readonly physics: PhysicsApi
     readonly character: CharacterApi
     readonly player: PlayerApi
+    readonly navigation: NavigationApi
     readonly terrain: TerrainApi
     readonly gui: GuiApi
     readonly audio: AudioApi
@@ -2569,6 +2671,7 @@ const HELIX_ROOT = `
   export const physics: PhysicsApi
   export const character: CharacterApi
   export const player: PlayerApi
+  export const navigation: NavigationApi
   export const terrain: TerrainApi
   export const gui: GuiApi
   export const audio: AudioApi

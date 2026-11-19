@@ -7,6 +7,7 @@ import type { LightHelperRequest } from '@/engine/renderer/passes/light-helper-p
 import type { SoundHelperRequest } from '@/engine/renderer/passes/sound-helper-pass';
 import type { VfxHelperRequest } from '@/engine/renderer/passes/vfx-helper-pass';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
+import { NavigationOverlay } from '@/engine/editor/navigation/navigation-overlay';
 import { EDITOR_QUALITY_LADDER, FrameGovernor, FULL_QUALITY, QUALITY_LADDER, type QualityStep } from '@/engine/renderer/quality/frame-governor';
 import { FrameClock } from '@/engine/core/time/frame-clock';
 import { drawsInMask } from '@/engine/camera/layers/layer-draws';
@@ -80,6 +81,7 @@ function sessionSignature(session: EditorSession): string {
         session.render.vfxHelpers,
         session.vfx.getVersion(),
         session.audio.world.getVersion(),
+        session.navigation.version,
         session.render.postCompare.enabled ? session.render.postCompare.split : '',
         session.render.profileGpu ? 1 : 0,
         brush ? `${brush.entityId}:${brush.x}:${brush.z}` : '',
@@ -176,6 +178,7 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
             state: (entityId) => session.vfxWorld.helperState(entityId),
             elapsedSeconds: 0,
         };
+        const navigationOverlay = new NavigationOverlay();
         const wake = () => {
             lastInputTime = performance.now();
         };
@@ -237,7 +240,7 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
                 postCompareSplit: session.render.postCompare.enabled && session.playtest.state !== 'playing' ? session.render.postCompare.split : null,
                 profileGpu,
                 capture: session.capture.pending,
-                scripts: session.scripts.renderRequest ?? session.extensions.prepareRenderRequest() ?? session.shaderPreview.renderRequest ?? session.shaderGraph.link.renderRequest,
+                scripts: navigationOverlay.decorate(session, selection, session.scripts.renderRequest ?? session.extensions.prepareRenderRequest() ?? session.shaderPreview.renderRequest ?? session.shaderGraph.link.renderRequest),
             });
             session.cameras.render(elapsedSeconds);
             session.colorPicker.sample(renderer.gl);

@@ -26,6 +26,7 @@ import { TransformGizmo } from '@/engine/editor/transform/transform-gizmo';
 import type { GizmoTool, PivotMode, SnapTarget, TransformSpace } from '@/engine/editor/transform/transform-settings';
 import { PlaytestController } from '@/engine/editor/playtest/playtest-controller';
 import { ClothWorldHost } from '@/engine/editor/cloth/cloth-world-host';
+import { NavigationEditor } from '@/engine/editor/navigation/navigation-editor';
 import { TerrainEditor } from '@/engine/editor/terrain/terrain-editor';
 import { AnimationEditor } from '@/engine/editor/animation/animation-editor';
 import { AudioEditor } from '@/engine/editor/audio/audio-editor';
@@ -126,6 +127,7 @@ export class EditorSession {
     readonly vfx = new VfxEditor(this);
     readonly vfxWorld = new VfxWorldHost(this);
     readonly clothWorld = new ClothWorldHost(this);
+    readonly navigation = new NavigationEditor(this);
     readonly cameras = new CameraWorldHost(this);
     readonly hud = new PlaytestHud(this);
     readonly code = new CodeEditor(this);
