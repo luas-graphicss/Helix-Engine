@@ -28,6 +28,7 @@ export interface TextureJson {
     minFilter: TextureFilter;
     sourcePath: string;
     mimeType: string | null;
+    cameraFeed?: number;
 }
 export interface MaterialJson {
     library: string | null;
@@ -108,6 +109,8 @@ export interface EntityJson {
     vfx?: PlainValue;
     script?: PlainValue;
     lodGroup?: PlainValue;
+    camera?: PlainValue;
+    layer?: number;
     tags?: string[];
     meta?: Record<string, PlainValue>;
     children: EntityJson[];
@@ -135,6 +138,7 @@ export interface SceneJson extends SceneResourcesJson {
         player: PlainValue;
         audio: PlainValue;
         scripting?: PlainValue;
+        layers?: PlainValue;
     };
     root: EntityJson;
     stats: {

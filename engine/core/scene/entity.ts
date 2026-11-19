@@ -10,6 +10,8 @@ import type { GuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings
 import type { VfxSettings } from '@/engine/vfx/vfx-settings';
 import type { ScriptSettings } from '@/engine/scripting/script-settings';
 import type { LodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
+import type { CameraSettings } from '@/engine/camera/camera-settings';
+import { DEFAULT_RENDER_LAYER } from '@/engine/camera/layers/render-layers';
 import { Transform } from './transform';
 import type { Material } from './material';
 import type { Light } from './light';
@@ -43,6 +45,8 @@ export interface EntityOptions {
     vfx?: VfxSettings;
     script?: ScriptSettings;
     lodGroup?: LodGroupSettings;
+    camera?: CameraSettings;
+    layer?: number;
     castShadows?: boolean;
     receiveShadows?: boolean;
     locked?: boolean;
@@ -73,6 +77,8 @@ export class Entity {
     vfx: VfxSettings | null;
     script: ScriptSettings | null;
     lodGroup: LodGroupSettings | null;
+    camera: CameraSettings | null;
+    layer: number;
     castShadows: boolean;
     receiveShadows: boolean;
     locked: boolean;
@@ -98,6 +104,8 @@ export class Entity {
         this.vfx = options.vfx ?? null;
         this.script = options.script ?? null;
         this.lodGroup = options.lodGroup ?? null;
+        this.camera = options.camera ?? null;
+        this.layer = options.layer ?? DEFAULT_RENDER_LAYER;
         this.castShadows = options.castShadows ?? true;
         this.receiveShadows = options.receiveShadows ?? true;
         this.locked = options.locked ?? false;
