@@ -77,8 +77,9 @@ function TargetField({ entity, settings }: {
     const session = useEditorSession();
     const candidates = session.scene.entities.filter((candidate) => candidate !== entity && candidate.kind !== 'script');
     const options = [{ value: NO_TARGET, label: 'Nenhum (definido por script)' }, ...candidates.map((candidate) => ({ value: candidate.id, label: candidate.name }))];
+    const target = candidates.find((candidate) => candidate.id === settings.target)?.id ?? NO_TARGET;
     return (<PropertyRow label="Destino" hint="Ator que o agente persegue: o caminho é refeito sempre que ele se move">
-      <SelectField label="Destino do agente" options={options} value={settings.target ?? NO_TARGET} onChange={(target) => setNavAgentTarget(session, entity, target === NO_TARGET ? null : target)}/>
+      <SelectField label="Destino do agente" options={options} value={target} onChange={(target) => setNavAgentTarget(session, entity, target === NO_TARGET ? null : target)}/>
     </PropertyRow>);
 }
 function AreaMaskField({ entity, settings }: {
