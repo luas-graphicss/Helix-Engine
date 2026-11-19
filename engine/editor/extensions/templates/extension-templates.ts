@@ -4,7 +4,8 @@ import { menuTemplateSource } from './sources/menu-template';
 import { startupTemplateSource } from './sources/startup-template';
 import { toolTemplateSource } from './sources/tool-template';
 import { windowTemplateSource } from './sources/window-template';
-export type ExtensionTemplateId = 'startup' | 'window' | 'menu' | 'inspector' | 'gizmo' | 'tool';
+import { workflowTemplateSource } from './sources/workflow-template';
+export type ExtensionTemplateId = 'startup' | 'window' | 'menu' | 'inspector' | 'gizmo' | 'tool' | 'workflow';
 export interface ExtensionTemplate {
     readonly id: ExtensionTemplateId;
     readonly label: string;
@@ -19,4 +20,5 @@ export const EXTENSION_TEMPLATES: readonly ExtensionTemplate[] = [
     { id: 'inspector', label: 'Seção do inspetor', description: 'Campos próprios no Inspetor para os atores que você escolher.', defaultName: 'InspetorAltura', source: inspectorTemplateSource },
     { id: 'gizmo', label: 'Gizmo', description: 'Linhas e formas desenhadas no viewport para os atores ou para a cena.', defaultName: 'GizmoFrente', source: gizmoTemplateSource },
     { id: 'tool', label: 'Ferramenta do viewport', description: 'Um botão no trilho de ferramentas que recebe os cliques, desenha no viewport e mostra opções.', defaultName: 'FerramentaCarimbo', source: toolTemplateSource },
+    { id: 'workflow', label: 'Fluxo de trabalho', description: 'Passos automáticos com progresso e cancelamento, disparados à mão ou por um evento do editor.', defaultName: 'FluxoRevisarCena', source: workflowTemplateSource },
 ];

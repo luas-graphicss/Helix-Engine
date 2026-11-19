@@ -198,7 +198,7 @@ export const API_MANIFEST: readonly ApiNamespace[] = [
         name: 'editor',
         section: '19',
         editorOnly: true,
-        members: ['selection', 'selected', 'select', 'toggleSelect', 'selectAll', 'clearSelection', 'onSelectionChanged', 'history', 'undo', 'redo', 'execute', 'beginGroup', 'endGroup', 'revision', 'panels', 'dialogs', 'settings', 'gizmo', 'viewport', 'code', 'console', 'windows', 'menus', 'inspectors', 'gizmos', 'tools', 'notify'],
+        members: ['selection', 'selected', 'select', 'toggleSelect', 'selectAll', 'clearSelection', 'onSelectionChanged', 'history', 'undo', 'redo', 'execute', 'beginGroup', 'endGroup', 'revision', 'panels', 'dialogs', 'settings', 'gizmo', 'viewport', 'code', 'console', 'windows', 'menus', 'inspectors', 'gizmos', 'tools', 'workflows', 'events', 'notify'],
     },
 ];
 export const API_ROOT_MEMBERS: readonly string[] = ['context', 'isEditor', 'isPlaying', 'engine', 'self', 'script', 'ActorScript'];

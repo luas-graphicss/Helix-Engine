@@ -2385,6 +2385,13 @@ const EDITOR_API = `
   export interface EditorToolEvent { readonly x: number; readonly y: number; readonly button: number; readonly ctrl: boolean; readonly shift: boolean; readonly alt: boolean; readonly ray: { origin: Vec3; direction: Vec3 } | null; readonly actor: Entity | null; readonly point: Vec3 | null; readonly ground: Vec3 | null }
   export interface EditorToolOptions { title?: string; icon?: string; shortcut?: string; cursor?: string; run?(): void; onActivate?(): void; onDeactivate?(): void; onPointerDown?(event: EditorToolEvent): void; onPointerMove?(event: EditorToolEvent): void; onPointerUp?(event: EditorToolEvent): void; onDraw?(draw: EditorGizmoDraw): void; onGui?(ui: EditorGui): void }
   export interface EditorToolHandle { readonly id: string; readonly isActive: boolean; activate(): void; deactivate(): void; repaint(): void; unregister(): void }
+  export interface EditorEventMap { selectionChanged: Entity[]; sceneChanged: undefined; assetsChanged: undefined; historyChanged: undefined; toolChanged: string; playModeChanged: 'stopped' | 'playing' | 'paused'; projectSaved: number | null }
+  export type EditorEventName = keyof EditorEventMap
+  export type EditorWorkflowOutcome = 'done' | 'failed' | 'cancelled'
+  export interface EditorWorkflowStepContext { readonly cancelled: boolean; readonly data: Record<string, unknown>; progress(fraction: number, message?: string): void }
+  export interface EditorWorkflowStep { title: string; run(step: EditorWorkflowStepContext): void | Promise<void> }
+  export interface EditorWorkflowOptions { title?: string; description?: string; icon?: string; trigger?: EditorEventName; steps?: readonly EditorWorkflowStep[]; run?(step: EditorWorkflowStepContext): void | Promise<void> }
+  export interface EditorWorkflowHandle { readonly id: string; run(): Promise<EditorWorkflowOutcome>; cancel(): void; unregister(): void }
   export interface EditorApi {
     readonly selection: Entity[]
     readonly selected: Entity | null
@@ -2424,6 +2431,8 @@ const EDITOR_API = `
     readonly inspectors: { register(id: string, options: EditorInspectorOptions): EditorInspectorHandle; unregister(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
     readonly gizmos: { register(id: string, options: EditorGizmoOptions): EditorGizmoHandle; unregister(id: string): boolean; repaint(): void; visible: boolean; list(): { id: string; when: 'always' | 'selected' }[] }
     readonly tools: { register(id: string, options: EditorToolOptions): EditorToolHandle; unregister(id: string): boolean; activate(id: string): void; deactivate(): void; readonly active: string | null; run(id: string): void; list(): { id: string; title: string; shortcut: string | null; kind: 'action' | 'mode' }[] }
+    readonly workflows: { register(id: string, options: EditorWorkflowOptions): EditorWorkflowHandle; unregister(id: string): boolean; run(id: string): Promise<EditorWorkflowOutcome>; cancel(id?: string): void; readonly running: string | null; list(): { id: string; title: string; trigger: EditorEventName | null }[] }
+    readonly events: { names(): EditorEventName[]; on<TName extends EditorEventName>(name: TName, handler: (payload: EditorEventMap[TName]) => void): Unsubscribe }
     notify(): void
   }
 `;

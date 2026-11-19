@@ -13,12 +13,14 @@ import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { HelixArgumentError, HelixError } from '../runtime/script-errors';
 import type { RuntimeHost } from '../runtime/runtime-host';
 import { requireEntity, requireFunction, requireNumber, requireOneOf, requireString } from '../runtime/values';
+import { createEventsApi } from './editor-extensions/events-api';
 import { createExtensionApiContext } from './editor-extensions/extension-api-context';
 import { createGizmosApi } from './editor-extensions/gizmos-api';
 import { createInspectorsApi } from './editor-extensions/inspectors-api';
 import { createMenusApi } from './editor-extensions/menus-api';
 import { createToolsApi } from './editor-extensions/tools-api';
 import { createWindowsApi } from './editor-extensions/windows-api';
+import { createWorkflowsApi } from './editor-extensions/workflows-api';
 const DIALOG_IDS: readonly EditorDialogId[] = ['settings', 'shortcuts', 'autosaves', 'beta', 'about', 'exit', 'renameProject', 'baseLanguage'];
 const TOOLS: readonly TransformTool[] = VIEWPORT_TOOLS.map((tool) => tool.id);
 const SPACES: readonly TransformSpace[] = ['global', 'local'];
@@ -248,6 +250,8 @@ export function createEditorApi(host: RuntimeHost) {
         inspectors: createInspectorsApi(extensionContext),
         gizmos: createGizmosApi(extensionContext),
         tools: createToolsApi(extensionContext),
+        workflows: createWorkflowsApi(extensionContext),
+        events: createEventsApi(extensionContext),
         notify: () => session.notify(),
     };
 }

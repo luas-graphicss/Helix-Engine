@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { useSessionTopic, useViewportStats } from '@/engine/editor/session/editor-session-context';
 import { useDockLayout } from '@/engine/editor/layout/dock-layout-context';
 import { formatTimeOfDay } from '@/engine/core/environment/celestial';
+import { WorkflowStatus } from '@/engine/editor/extensions/ui/workflows/workflow-status';
 import { AutosaveStatus } from './autosave-status';
 const CELL_CLASS = 'flex h-full shrink-0 items-center gap-1.5 pl-3 whitespace-nowrap shadow-[-1px_0_0_0_var(--border),-2px_0_0_0_var(--bevel)]';
 function formatElapsedSeconds(seconds: number): string {
@@ -35,6 +36,7 @@ export function StatusBar() {
           Sem aceleração gráfica
         </span>)}
 
+      <WorkflowStatus />
       <span className="ml-auto flex h-full shrink-0 items-center">
         <AutosaveStatus />
       </span>

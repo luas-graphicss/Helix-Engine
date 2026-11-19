@@ -1,5 +1,8 @@
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { ScriptRenderRequest } from '@/engine/renderer/script-hooks';
+import { connectEditorEvents } from './events/editor-event-source';
+import { EDITOR_EVENT_NAMES, EditorEvents, type EditorEventName } from './events/editor-events';
+import { notifyEventListeners, type EventListenerContribution } from './events/event-listener-contribution';
 import type { GizmoContribution } from './gizmos/gizmo-contribution';
 import { GizmoLayer } from './gizmos/gizmo-layer';
 import { ExtensionHost } from './host/extension-host';
@@ -10,6 +13,10 @@ import { ContributionRegistry, RegistrationClock, type Contribution, type OwnedC
 import type { ToolContribution } from './tools/tool-contribution';
 import { ToolController } from './tools/tool-controller';
 import type { WindowContribution } from './windows/window-contribution';
+import type { WorkflowContribution } from './workflows/workflow-contribution';
+import { createWorkflowReporter } from './workflows/workflow-log';
+import { WorkflowRunner } from './workflows/workflow-runner';
+import { connectWorkflowTriggers } from './workflows/workflow-triggers';
 export class EditorExtensions {
     readonly host: ExtensionHost;
     readonly windows: ContributionRegistry<WindowContribution>;
@@ -19,10 +26,15 @@ export class EditorExtensions {
     readonly gizmoLayer: GizmoLayer;
     readonly tools: ContributionRegistry<ToolContribution>;
     readonly toolController: ToolController;
+    readonly workflows: ContributionRegistry<WorkflowContribution>;
+    readonly workflowRunner: WorkflowRunner;
+    readonly eventListeners: ContributionRegistry<EventListenerContribution>;
+    private readonly events = new EditorEvents();
+    private eventListenerCount = 0;
     private readonly overlay: ViewportOverlay;
     private readonly clock = new RegistrationClock();
     private readonly registries: OwnedContributions[] = [];
-    constructor(session: EditorSession) {
+    constructor(private readonly session: EditorSession) {
         this.windows = this.createRegistry();
         this.menus = this.createRegistry();
         this.inspectors = this.createRegistry();
@@ -32,6 +44,11 @@ export class EditorExtensions {
         this.tools = this.createRegistry((tool) => this.toolController.handleRemoved(tool));
         this.toolController = new ToolController({ selectBuiltInTool: () => session.setTool('select'), notifyToolChanged: () => session.notify('tool') }, this.tools);
         this.overlay = new ViewportOverlay([this.gizmoLayer, this.toolController]);
+        this.workflowRunner = new WorkflowRunner(createWorkflowReporter(session.log));
+        this.workflows = this.createRegistry((workflow) => this.workflowRunner.cancel(workflow.id));
+        this.eventListeners = this.createRegistry();
+        for (const name of EDITOR_EVENT_NAMES)
+            this.events.on(name, (payload) => notifyEventListeners(this.eventListeners.list(), name, payload));
         this.host = new ExtensionHost(session, {
             mark: () => this.clock.current,
             sweep: (assetId, mark) => this.registries.forEach((registry) => registry.sweep(assetId, mark)),
@@ -55,8 +72,18 @@ export class EditorExtensions {
     contributionCount(assetId: string): number {
         return this.registries.reduce((total, registry) => total + registry.countOwnedBy(assetId), 0);
     }
+    nextEventListenerId(event: EditorEventName): string {
+        return `${event}#${++this.eventListenerCount}`;
+    }
     start(): () => void {
-        return this.host.start();
+        const stopEvents = connectEditorEvents(this.session, this.events);
+        const stopTriggers = connectWorkflowTriggers(this.events, this.workflows, this.workflowRunner);
+        const stopHost = this.host.start();
+        return () => {
+            stopTriggers();
+            stopEvents();
+            stopHost();
+        };
     }
     tick(deltaSeconds: number): void {
         this.host.tick(deltaSeconds);
