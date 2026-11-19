@@ -18,6 +18,8 @@ import { PerformanceHud } from '@/engine/editor/playtest/performance-hud';
 import { requestImport } from '@/engine/editor/import/import-requests';
 import { dropLibraryAssetOnViewport } from '@/engine/editor/operations/asset-library-operations';
 import { IMPORT_FORMAT_SUMMARY } from '@/engine/assets/import/import-registry';
+import { CameraLayers } from './cameras/camera-layers';
+import { CameraPreview } from './cameras/camera-preview';
 function ViewportContextMenu() {
     const session = useSessionTopic('scene', 'selection');
     return <EntityContextMenuContent entity={session.selectedEntity}/>;
@@ -58,6 +60,7 @@ export function SceneViewport() {
       <ContextMenuTrigger render={<div ref={surfaceRef} className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-surface-sunken" aria-label="Viewport da cena" {...drop.handlers}/>}>
         <canvas ref={canvasRef} tabIndex={0} aria-label="Cena 3D. Arraste para orbitar, Shift+arraste para panoramizar, scroll para aproximar, clique para selecionar, clique direito para o menu de contexto, F para enquadrar." className="block size-full touch-none outline-none focus-visible:ring-1 focus-visible:ring-primary/60 focus-visible:ring-inset"/>
 
+        <CameraLayers />
         <PlaytestHudOverlay />
         <SimulationFrame />
         <PerformanceHud />
@@ -81,6 +84,8 @@ export function SceneViewport() {
         <div className="pointer-events-none absolute inset-x-0 bottom-2 flex justify-center">
           <GizmoReadout />
         </div>
+
+        <CameraPreview />
 
         <div className="pointer-events-none absolute right-2 bottom-2">
           <AxisGizmo />

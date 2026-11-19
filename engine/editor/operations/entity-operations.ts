@@ -16,6 +16,8 @@ import type { Command, CommandActivity } from '@/engine/editor/history/command';
 import { AddEntityCommand, RemoveEntityCommand, ReparentEntityCommand } from '@/engine/editor/commands/entity-commands';
 import { CompositeCommand, SetValueCommand } from '@/engine/editor/commands/set-value-command';
 import { getPrimitive, type PrimitiveKind } from '@/engine/editor/primitives/primitive-catalog';
+import { findCameraPreset, type CameraPresetId } from '@/engine/camera/camera-presets';
+import { placeAtEditorView } from './camera-operations';
 import { snapValue } from './transform-operations';
 export type LightKind = 'directional' | 'ambient' | LocalLightType;
 const LOCAL_LIGHT_NAME: Record<LocalLightType, string> = {
@@ -110,9 +112,10 @@ export function addFolder(session: EditorSession, parent: Entity = defaultParent
     session.select(folder);
     return folder;
 }
-export function addCamera(session: EditorSession): Entity {
-    const entity = session.scene.createEntity({ name: 'Camera', kind: 'camera' }, null);
-    vec3.copy(entity.transform.position, session.camera.position);
+export function addCamera(session: EditorSession, presetId: CameraPresetId = 'perspective'): Entity {
+    const preset = findCameraPreset(presetId);
+    const entity = session.scene.createEntity({ name: preset.actorName, kind: 'camera', camera: preset.create() }, null);
+    placeAtEditorView(session, entity);
     return addEntity(session, entity);
 }
 export function topLevelOnly(entities: readonly Entity[]): Entity[] {

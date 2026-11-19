@@ -127,6 +127,7 @@ export class PlaytestController {
         session.scene.traverse((entity) => this.snapshots.set(entity, snapshotTransform(entity)));
         vec3.copy(this.cameraPosition, session.camera.position);
         vec3.copy(this.cameraTarget, session.camera.target);
+        session.cameras.beginPlay();
         this.elapsedSeconds = 0;
         session.audio.world.enterGame();
         session.guiWorld.reset();
@@ -197,6 +198,7 @@ export class PlaytestController {
         this.session.vfxWorld.reset();
         this.session.hud.stop();
         this.stopCharacters();
+        this.session.cameras.endPlay();
         this.physics?.dispose();
         this.physics = null;
         for (const [entity, snapshot] of this.snapshots)

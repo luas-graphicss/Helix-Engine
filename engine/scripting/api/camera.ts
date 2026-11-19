@@ -13,6 +13,7 @@ const scratchForward = vec3.create();
 const scratchOffset = vec3.create();
 export class CameraEffects {
     main: Entity | null = null;
+    readonly shakeOffset = vec3.create();
     private shakeAmplitude = 0;
     private shakeRemaining = 0;
     private shakeDuration = 0;
@@ -28,6 +29,7 @@ export class CameraEffects {
     }
     reset(): void {
         this.main = null;
+        vec3.set(this.shakeOffset, 0, 0, 0);
         this.shakeAmplitude = 0;
         this.shakeRemaining = 0;
         this.shakeDuration = 0;
@@ -40,6 +42,7 @@ export class CameraEffects {
             vec3.normalize(scratchForward, vec3.set(scratchForward, -m[8], -m[9], -m[10]));
             vec3.scaleAndAdd(camera.target, camera.position, scratchForward, 10);
         }
+        vec3.set(this.shakeOffset, 0, 0, 0);
         if (this.shakeRemaining <= 0)
             return;
         this.shakeRemaining = Math.max(0, this.shakeRemaining - dt);
@@ -48,6 +51,7 @@ export class CameraEffects {
         const t = elapsed * 23 + this.shakeSeed;
         vec3.set(scratchOffset, Math.sin(t * 1.3) * Math.cos(t * 0.7), Math.sin(t * 1.9 + 1.7), Math.cos(t * 1.1 + 0.4) * Math.sin(t * 0.5));
         vec3.scale(scratchOffset, scratchOffset, strength);
+        vec3.copy(this.shakeOffset, scratchOffset);
         vec3.add(camera.position, camera.position, scratchOffset);
         vec3.add(camera.target, camera.target, scratchOffset);
     }

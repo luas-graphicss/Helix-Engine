@@ -13,11 +13,12 @@ export class WebGLContextLostError extends Error {
 }
 export interface ContextOptions {
     offscreen?: boolean;
+    alpha?: boolean;
 }
-export function createContext(canvas: HTMLCanvasElement, { offscreen = false }: ContextOptions = {}): GL {
+export function createContext(canvas: HTMLCanvasElement, { offscreen = false, alpha = false }: ContextOptions = {}): GL {
     const gl = canvas.getContext('webgl2', {
         antialias: false,
-        alpha: false,
+        alpha,
         depth: false,
         stencil: false,
         premultipliedAlpha: false,
