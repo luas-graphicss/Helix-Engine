@@ -11,7 +11,7 @@ const SAME_SIZE = 1e-4;
 const worldPosition = vec3.create();
 const previousPosition = vec3.create();
 const parentInverse = mat4.create();
-function axisScale(entity: Entity, axis: number): number {
+export function axisScale(entity: Entity, axis: number): number {
     const world = entity.worldMatrix;
     return Math.hypot(world[axis * 4], world[axis * 4 + 1], world[axis * 4 + 2]);
 }
