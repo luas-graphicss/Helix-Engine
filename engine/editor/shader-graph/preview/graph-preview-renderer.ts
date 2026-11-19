@@ -94,7 +94,6 @@ export class GraphPreviewRenderer {
         this.sphere.dispose();
         this.triangle.dispose();
         this.textures.dispose();
-        this.gl.getExtension('WEBGL_lose_context')?.loseContext();
     }
     private ensureProgram(compiled: CompiledGraph): void {
         if (compiled.source === '')
