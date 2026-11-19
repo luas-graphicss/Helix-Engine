@@ -19,6 +19,7 @@ import { GuiEditMenuItems, InterfaceMenuItems } from '@/engine/editor/menus/gui-
 import { CodeMenuItems } from '@/engine/editor/menus/code-menu-items';
 import { HelpMenuItems } from '@/engine/editor/menus/help-menu-items';
 import { ExtensionsMenuItems } from '@/engine/editor/extensions/ui/extensions-menu-items';
+import { ExtensionMainMenuItems, useCustomMenuLabels } from '@/engine/editor/extensions/ui/menus/extension-menu-items';
 import { HelixLogo } from '@/engine/boot/helix-logo';
 import { UI_SCALE_OPTIONS, type UiScaleValue } from '@/engine/settings/engine-settings-schema';
 import { engineSettings, useEngineSetting } from '@/engine/settings/engine-settings-store';
@@ -26,12 +27,13 @@ const MENU_TRIGGER_CLASS = 'h-full shrink-0 px-2 text-2xs whitespace-nowrap text
 function MenuBarMenu({ label, contentClassName, children }: {
     label: string;
     contentClassName?: string;
-    children: ReactNode;
+    children?: ReactNode;
 }) {
     return (<DropdownMenu>
       <DropdownMenuTrigger render={<button type="button" className={MENU_TRIGGER_CLASS}/>}>{label}</DropdownMenuTrigger>
       <DropdownMenuContent align="start" sideOffset={2} className={contentClassName ? `${MENU_CONTENT_CLASS} ${contentClassName}` : MENU_CONTENT_CLASS}>
         {children}
+        <ExtensionMainMenuItems menu={label} separated={children !== undefined}/>
       </DropdownMenuContent>
     </DropdownMenu>);
 }
@@ -154,6 +156,7 @@ function UiScaleMenuItems() {
 export function MenuBar() {
     const session = useSessionTopic('scene', 'selection', 'view', 'workspace', 'project');
     const projectName = useProjectName();
+    const customMenus = useCustomMenuLabels();
     const { playtest } = session;
     const hasSelection = session.selectedEntity !== null;
     const playing = playtest.state === 'playing';
@@ -252,6 +255,8 @@ export function MenuBar() {
         <MenuBarMenu label="Extensões">
           <ExtensionsMenuItems />
         </MenuBarMenu>
+
+        {customMenus.map((label) => (<MenuBarMenu key={label} label={label}/>))}
 
         <MenuBarMenu label="Ajuda" contentClassName="[&_[role=menuitem]]:whitespace-nowrap">
           <HelpMenuItems />

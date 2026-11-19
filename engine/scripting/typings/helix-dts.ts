@@ -2361,6 +2361,10 @@ const EDITOR_API = `
   }
   export interface EditorWindowOptions { title?: string; icon?: string; area?: 'left' | 'right' | 'bottom'; onGui(ui: EditorGui): void }
   export interface EditorWindowHandle { readonly id: string; readonly isOpen: boolean; open(): void; close(): void; repaint(): void; unregister(): void }
+  export type EditorMenuLocation = 'main' | 'actor' | 'asset'
+  export interface EditorMenuTarget { readonly actors: Entity[]; readonly actor: Entity | null; readonly asset: LibraryAsset | null }
+  export interface EditorMenuOptions { location?: EditorMenuLocation; icon?: string; shortcut?: string; order?: number; separator?: boolean; run(target: EditorMenuTarget): void; enabled?(target: EditorMenuTarget): boolean; checked?(target: EditorMenuTarget): boolean }
+  export interface EditorMenuHandle { readonly path: string; readonly location: EditorMenuLocation; run(): void; unregister(): void }
   export interface EditorApi {
     readonly selection: Entity[]
     readonly selected: Entity | null
@@ -2396,6 +2400,7 @@ const EDITOR_API = `
     readonly code: { open(asset: AssetRef, line?: number): Promise<boolean>; readonly tabs: { assetId: string; name: string; language: string; dirty: boolean; active: boolean }[]; readonly active: { assetId: string; name: string; language: string } | null; save(asset?: AssetRef): Promise<LibraryAsset | null>; saveAll(): Promise<number>; run(asset?: AssetRef): Promise<void>; compile(): Promise<void>; readonly compileState: { state: string; message: string } }
     readonly console: { clear(): void; readonly entries: { id: number; elapsedMs: number; level: 'debug' | 'info' | 'warn' | 'error'; source: string; message: string; repeat: number }[]; readonly count: number }
     readonly windows: { register(id: string, options: EditorWindowOptions): EditorWindowHandle; unregister(id: string): boolean; open(id: string): void; close(id: string): void; toggle(id: string): void; isOpen(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
+    readonly menus: { register(path: string, options: EditorMenuOptions): EditorMenuHandle; unregister(path: string, location?: EditorMenuLocation): boolean; run(path: string, location?: EditorMenuLocation): void; list(): { path: string; location: EditorMenuLocation; shortcut: string | null }[] }
     readonly tools: { register(id: string, options: { label: string; shortcut?: string; run: () => void }): Unsubscribe; unregister(id: string): boolean; list(): { id: string; label: string; shortcut: string | null }[]; run(id: string): void }
     notify(): void
   }

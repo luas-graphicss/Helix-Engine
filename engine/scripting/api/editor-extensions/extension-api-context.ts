@@ -18,6 +18,18 @@ export function requireContributionId(value: unknown, member: string): string {
 export function optionsOf(value: unknown, member: string): Record<string, unknown> {
     return value === undefined || value === null ? {} : requireObject(value, member);
 }
+export function guardedPredicate<TArgs extends unknown[]>(context: ExtensionApiContext, owner: ScriptContext | null, phase: string, fallback: boolean, predicate: (...args: TArgs) => unknown): (...args: TArgs) => boolean {
+    let failed = false;
+    return (...args) => {
+        if (failed)
+            return fallback;
+        let result = fallback;
+        failed = !context.run(owner, phase, () => {
+            result = Boolean(predicate(...args));
+        });
+        return failed ? fallback : result;
+    };
+}
 export function createExtensionApiContext(host: RuntimeHost): ExtensionApiContext {
     const { extensions } = host.session;
     const registrations = new Set<() => void>();

@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { handleCodeShortcut } from '@/engine/editor/code/code-shortcuts';
 import { editorDialogs } from '@/engine/editor/dialogs/editor-dialogs';
+import { runMenuShortcut } from '@/engine/editor/extensions/menus/menu-commands';
 import { handleGuiShortcut } from '@/engine/editor/gui/gui-shortcuts';
 import { openImportFilePicker } from '@/engine/editor/import/import-file-picker';
 import type { DockLayoutStore } from '@/engine/editor/layout/dock-layout';
@@ -261,34 +262,26 @@ function runEditorAction(action: ShortcutActionId, { session, dock, router, even
             return false;
     }
 }
+function runBuiltInShortcut(context: ShortcutContext): boolean {
+    const { session, event } = context;
+    const action = shortcutBindings.resolve(event, 'editor');
+    if (action && isGlobalAction(action))
+        return runEditorAction(action, context);
+    if (session.workspace === 'gui')
+        return handleGuiShortcut(event, session);
+    if (session.workspace === 'code')
+        return handleCodeShortcut(event, session);
+    if (session.code.windowOpen && session.code.presentation === 'window' && handleCodeShortcut(event, session))
+        return true;
+    return action !== null && runEditorAction(action, context);
+}
 export function useEditorShortcuts(session: EditorSession, dock: DockLayoutStore): void {
     const router = useRouter();
     useEffect(() => {
         const onKeyDown = (event: KeyboardEvent) => {
             if (event.defaultPrevented || isTextEntryTarget(event.target))
                 return;
-            const context: ShortcutContext = { session, dock, router, event };
-            const action = shortcutBindings.resolve(event, 'editor');
-            if (action && isGlobalAction(action)) {
-                if (runEditorAction(action, context))
-                    event.preventDefault();
-                return;
-            }
-            if (session.workspace === 'gui') {
-                if (handleGuiShortcut(event, session))
-                    event.preventDefault();
-                return;
-            }
-            if (session.workspace === 'code') {
-                if (handleCodeShortcut(event, session))
-                    event.preventDefault();
-                return;
-            }
-            if (session.code.windowOpen && session.code.presentation === 'window' && handleCodeShortcut(event, session)) {
-                event.preventDefault();
-                return;
-            }
-            if (action && runEditorAction(action, context))
+            if (runBuiltInShortcut({ session, dock, router, event }) || runMenuShortcut(session, event))
                 event.preventDefault();
         };
         window.addEventListener('keydown', onKeyDown);
