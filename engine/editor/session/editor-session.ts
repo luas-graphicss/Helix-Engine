@@ -34,6 +34,7 @@ import { VfxWorldHost } from '@/engine/editor/vfx/vfx-world-host';
 import { CodeEditor } from '@/engine/editor/code/code-editor';
 import { ShaderPreview } from '@/engine/editor/code/shader-preview';
 import { ShaderGraphEditor } from '@/engine/editor/shader-graph/shader-graph-editor';
+import { VfxGraphEditor } from '@/engine/editor/vfx-graph/vfx-graph-editor';
 import { EditorAssistant } from '@/engine/editor/assistant/editor-assistant';
 import { McpBridge } from '@/engine/editor/mcp/mcp-bridge';
 import { EditorExtensions } from '@/engine/editor/extensions/editor-extensions';
@@ -63,7 +64,7 @@ import { createCsgPreferences, type CsgPreferences } from './csg-preferences';
 import { IMAGE_TOPICS, type NotifyOptions, type SessionTopic } from './session-topics';
 export type { NotifyOptions, SessionTopic } from './session-topics';
 export type TransformTool = 'select' | GizmoTool | 'terrain';
-export type EditorWorkspace = 'scene' | 'gui' | 'code' | 'shader';
+export type EditorWorkspace = 'scene' | 'gui' | 'code' | 'shader' | 'effect';
 export type TransformInterceptor = (entity: Entity, before: TransformSnapshot, after: TransformSnapshot) => boolean;
 export interface SnapSettings {
     enabled: boolean;
@@ -127,6 +128,7 @@ export class EditorSession {
     readonly extensions = new EditorExtensions(this);
     readonly shaderPreview = new ShaderPreview(this);
     readonly shaderGraph = new ShaderGraphEditor(this);
+    readonly vfxGraph = new VfxGraphEditor(this);
     readonly assistant = new EditorAssistant(this);
     readonly mcp = new McpBridge(this);
     workspace: EditorWorkspace = 'scene';
@@ -275,6 +277,8 @@ export class EditorSession {
         this.workspace = workspace;
         if (workspace === 'shader')
             void this.shaderGraph.load();
+        if (workspace === 'effect')
+            void this.vfxGraph.load();
         this.notify('workspace');
     }
     toggleWorkspace(): void {
