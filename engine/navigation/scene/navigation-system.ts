@@ -71,6 +71,13 @@ export class NavigationSystem {
     agentOf(entity: Entity): NavAgent | null {
         return this.agents.get(entity) ?? null;
     }
+    ensureAgent(entity: Entity): NavAgent | null {
+        const settings = entity.navAgent;
+        const existing = this.agents.get(entity);
+        if (existing || !settings || !this.isInScene(entity))
+            return existing ?? null;
+        return this.createAgent(entity, settings);
+    }
     private isInScene(entity: Entity): boolean {
         return this.scene.findById(entity.id) === entity;
     }

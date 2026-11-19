@@ -159,10 +159,10 @@ export class PlaytestController {
         this.startCharacters();
         void session.scripts.start('play');
     }
-    private startNavigation(): void {
+    ensureNavigation(): NavigationSystem | null {
         const { session } = this;
-        if (!NavigationSystem.isUsedBy(session.scene))
-            return;
+        if (this.navigation || !this.physics)
+            return this.navigation;
         const navigation = new NavigationSystem(session.scene);
         navigation.build();
         this.navigation = navigation;
@@ -172,6 +172,11 @@ export class PlaytestController {
             else
                 session.log.warn('Navegação', `${surfaceName} não gerou área caminhável; os agentes ficam parados.`);
         }
+        return navigation;
+    }
+    private startNavigation(): void {
+        if (NavigationSystem.isUsedBy(this.session.scene))
+            this.ensureNavigation();
     }
     private startCharacters(): void {
         const { session, physics } = this;

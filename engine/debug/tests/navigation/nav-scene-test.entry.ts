@@ -66,6 +66,8 @@ checks.check('corpo dinâmico fica fora da geração', isWalkableAt(mesh, -6, 6)
 checks.check('o próprio agente fica fora da geração', isWalkableAt(mesh, -6, 0));
 checks.check('modificador de área marca a geometria do ator', areaAt(mesh, -6, -6) === RUG_AREA, `área ${areaAt(mesh, -6, -6)}`);
 checks.check('volume de área pinta o piso dentro dele', areaAt(mesh, 6, -6) === SWAMP_AREA && areaAt(mesh, 6, 6) === 0);
+const eagerAgent = system.ensureAgent(npc);
+checks.check('agente é criado sob demanda antes do primeiro passo', eagerAgent !== null && system.agentOf(npc) === eagerAgent && system.ensureAgent(target) === null);
 let arrivedEntity: Entity | null = null;
 system.onArrived = (entity) => {
     arrivedEntity = entity;

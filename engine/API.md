@@ -461,6 +461,18 @@ Ponte: `physics/forces/field-region.ts` (regiões), `region-field.ts` (base), `d
 - `explode(center, radius, strength, { falloff?, upwardBias?, mode?: 'impulse' | 'velocity' }): number` — impulso radial instantâneo aplicado no ponto do corpo mais próximo do centro (gira os destroços); devolve quantos corpos atingiu. `engine`
 - Handles: `enabled`, `region`, os parâmetros do tipo (todos ao vivo), `attached`, `remove()`; `helix.physics.forces.remove(field)`. Os campos de um script saem quando ele para. Com a física no worker, os campos de scripts rodam na thread principal sobre os espelhos, uma vez por frame, e as velocidades resultantes seguem ao worker. `engine`
 
+### 9.9 Navegação — `helix.navigation`
+
+Ponte: `navigation/scene/navigation-system.ts` (cena), `world/navigation-world.ts` (agentes, obstáculos e links), `path/find-path.ts` (A* e funil), `bake/bake-nav-mesh.ts` (geração), `areas/nav-areas.ts`. O NavMesh é gerado ao iniciar a simulação a partir dos atores com `navSurface` (sem nenhum, a cena inteira vira uma superfície padrão) e só existe com a simulação em andamento.
+
+- Componentes no ator, todos aceitos por `helix.scene.addComponent`: `navSurface` (`agentRadius, agentHeight, maxSlope, stepHeight, cellSize, minRegionArea, collect: 'scene' | 'children' | 'volume', volumeSize, volumeCenter, defaultArea`), `navAgent` (`speed, angularSpeed, acceleration, stoppingDistance, autoBraking, radius, height, baseOffset, avoidance: 'none' | 'low' | 'medium' | 'high', avoidancePriority, areaMask, target`), `navObstacle` (`shape: 'box' | 'capsule', center, size, carve, carveOnlyStationary, moveThreshold, timeToStationary`), `navLink` (`start, end, bidirectional, costOverride, area, enabled`), `navModifier` (`mode: 'area' | 'ignore' | 'volume', area, size, center`). `engine`
+- Agente (`helix.navigation.agent(entity)`): `setDestination(ponto | ator)`, `stop()`, `resume()`, `resetPath()`, `warp(ponto)`, `isStopped`; leitura: `position, velocity, destination, hasPath, pathStatus: 'complete' | 'partial' | 'invalid', corners, remainingDistance, isOnNavMesh, isOnLink, hasArrived, settings, entity`. Com `settings.target` (id de um ator) o agente persegue esse ator sem script. `engine`
+- Atalhos: `setDestination(entity, ponto | ator)`, `stop(entity)`, `hasAgent(entity)`, `agents()`. `engine`
+- Consultas: `findPath(start, end, areaMask?)` devolve `{ status, corners, length }` sem mover ninguém; `samplePosition(point, maxDistance = 2)` devolve o ponto do NavMesh mais próximo ou `null`. `engine`
+- Áreas: `areas()` lista `{ index, name, cost }` da cena; `areaMask(...nomes)` monta a máscara usada em `navAgent.areaMask` e em `findPath`. `engine`
+- `rebuild()` gera o NavMesh de novo com a cena do momento; `isReady` diz se o sistema já existe. `engine`
+- Evento: `onArrived(handler)` recebe o ator do agente que chegou ao destino. `engine`
+
 ---
 
 ## 10. Terreno — `helix.terrain`

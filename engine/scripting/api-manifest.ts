@@ -106,6 +106,7 @@ export const API_MANIFEST: readonly ApiNamespace[] = [
     },
     { name: 'character', section: '9.5', members: ['of', 'has', 'all', 'inputSource', 'inputFrame', 'settingsOf', 'spawn', 'findPossessable', 'controllerClass', 'onLanded', 'onJumped'] },
     { name: 'player', section: '9.5', members: ['settings', 'set', 'enabled', 'possessed', 'isPossessing', 'possess', 'unpossess', 'cameraControl', 'pointerLocked', 'transientCharacter', 'spawnPoint', 'onPossessed'] },
+    { name: 'navigation', section: '9.9', members: ['isReady', 'agent', 'hasAgent', 'agents', 'setDestination', 'stop', 'findPath', 'samplePosition', 'rebuild', 'areas', 'areaMask', 'onArrived'] },
     {
         name: 'terrain',
         section: '10',

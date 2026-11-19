@@ -23,8 +23,9 @@ import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { HelixArgumentError, HelixError } from '../runtime/script-errors';
 import type { RuntimeHost } from '../runtime/runtime-host';
 import { assignSettings, isJsonValue, requireEntity, requireFunction, requireJson, requireNumber, requireOneOf, requireString, toQuat, toVec3 } from '../runtime/values';
+import { attachNavComponent, NAV_COMPONENT_KINDS } from './navigation-components';
 export const ENTITY_KINDS: readonly EntityKind[] = ['group', 'mesh', 'light', 'camera', 'terrain', 'character', 'sound', 'gui', 'vfx', 'script'];
-const COMPONENT_KINDS = ['mesh', 'material', 'light', 'rigidBody', 'character', 'csg', 'csgBrush', 'audioSource', 'audioZone', 'guiSurface', 'vfx', 'script'] as const;
+const COMPONENT_KINDS = ['mesh', 'material', 'light', 'rigidBody', 'character', 'csg', 'csgBrush', 'audioSource', 'audioZone', 'guiSurface', 'vfx', 'script', ...NAV_COMPONENT_KINDS] as const;
 type ComponentKind = (typeof COMPONENT_KINDS)[number];
 const scratchParentInverse = mat4.create();
 const scratchMatrix = mat4.create();
@@ -323,6 +324,13 @@ export function createSceneApi(host: RuntimeHost) {
             case 'script':
                 entity.script = createScriptSettings(patch as object);
                 host.requestActorSync();
+                break;
+            case 'navSurface':
+            case 'navAgent':
+            case 'navObstacle':
+            case 'navLink':
+            case 'navModifier':
+                attachNavComponent(entity, kind, settings ? patch : null, member);
                 break;
         }
         session.notify();
