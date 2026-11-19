@@ -2,7 +2,7 @@ import type { TextureColorSpace } from '@/engine/core/scene/texture';
 import type { GL } from '@/engine/renderer/gl/context';
 import { mipLevelCount, mipLevelSize } from '@/engine/renderer/textures/mips/mip-levels';
 import { applyImageUnpackState, imageInternalFormat } from './image-transfer';
-export interface ImageMipSource {
+interface ImageMipSource {
     readonly image: TexImageSource;
     readonly colorSpace: TextureColorSpace;
     readonly width: number;

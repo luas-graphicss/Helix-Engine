@@ -1,7 +1,7 @@
 import type { PixelLevel } from '@/engine/renderer/textures/mips/pixel-level';
 import type { CompressedMipChain } from './compressed-mip-chain';
 import type { TextureCompressionRequest, TextureCompressionResponse } from './texture-compression.worker';
-export type CompressionListener = (chain: CompressedMipChain | null) => void;
+type CompressionListener = (chain: CompressedMipChain | null) => void;
 function createWorker(): Worker | null {
     if (typeof Worker === 'undefined')
         return null;

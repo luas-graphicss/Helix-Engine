@@ -1,7 +1,7 @@
 import type { GL } from '@/engine/renderer/gl/context';
 import type { CompressedMipChain } from '@/engine/renderer/textures/compression/compressed-mip-chain';
 import { mipLevelSize } from '@/engine/renderer/textures/mips/mip-levels';
-export interface CompressedMipSource {
+interface CompressedMipSource {
     readonly chain: CompressedMipChain;
     readonly internalFormat: number;
 }

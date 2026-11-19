@@ -21,14 +21,14 @@ export interface TextureResidencySettings {
     mipStreaming: boolean;
     textureBudgetMb: number;
 }
-export interface ResidentTextureStats {
+interface ResidentTextureStats {
     resident: number;
     bytes: number;
     compressed: number;
     reduced: number;
     compressing: number;
 }
-export interface UploadCounter {
+interface UploadCounter {
     uploads: number;
 }
 type CompressionState = 'waiting' | 'running' | 'done' | 'unavailable';
