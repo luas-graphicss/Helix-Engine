@@ -15,7 +15,7 @@ export function GpuMemorySection() {
     useViewportStats();
     const settings = session.render.optimization;
     const stats = session.optimizationStats;
-    return (<CollapsibleSection title="Memória de GPU">
+    return (<CollapsibleSection title="Memória de malhas">
       <ToggleField label="Compactar vértices" hint="Normais e tangentes em 10 bits e coordenadas de textura em 16 bits; as malhas são reenviadas ao trocar" on={settings.meshCompression} onToggle={() => session.updateOptimization({ meshCompression: !settings.meshCompression })}/>
       <ToggleField label="Streaming de malhas" hint="Acima do orçamento, as malhas que não são desenhadas há mais tempo saem da GPU" on={settings.meshStreaming} onToggle={() => session.updateOptimization({ meshStreaming: !settings.meshStreaming })}/>
       <SliderField label="Orçamento" value={settings.meshBudgetMb} min={MIN_BUDGET_MB} max={MAX_BUDGET_MB} step={BUDGET_STEP_MB} scale="log" disabled={!settings.meshStreaming} format={megabytes} onChange={(value) => session.updateOptimization({ meshBudgetMb: value })}/>

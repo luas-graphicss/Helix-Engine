@@ -610,6 +610,26 @@ export const ENGINE_SETTINGS = {
         unit: ' MB',
         scale: 'log',
     }),
+    'render.textures.compression': booleanSetting({
+        label: 'Compactar texturas dos materiais',
+        description: 'Os mapas de cor, de metal e rugosidade, de oclusão e de emissão vão para a GPU em blocos BC1, ou BC3 quando há transparência: 4 ou 8 bits por pixel em vez de 32. A conversão roda fora da thread principal e a textura aparece sem compressão até terminar. Mapas de normais, texturas com lados fora de potência de dois, pixel art e imagens de interface, de efeitos e de shaders próprios ficam como estão. Só tem efeito em placas que aceitam S3TC.',
+        default: false,
+    }),
+    'render.streaming.mipmaps': booleanSetting({
+        label: 'Streaming de mipmaps',
+        description: 'Cada textura de material fica na GPU só até o nível de mip que o seu tamanho em tela pede, medido pela distância e pela densidade de UV das malhas que a usam. Os níveis maiores sobem quando a câmera se aproxima e saem dois segundos depois de deixarem de ser necessários.',
+        default: false,
+    }),
+    'render.streaming.textureBudget': numberSetting({
+        label: 'Orçamento de texturas',
+        description: 'Memória de GPU que as texturas de material podem ocupar com o streaming de mipmaps ligado. Acima disso, as maiores perdem mais um nível, mesmo estando em tela.',
+        default: 512,
+        min: 64,
+        max: 4096,
+        step: 64,
+        unit: ' MB',
+        scale: 'log',
+    }),
     'render.myriad.enabled': booleanSetting({
         label: 'Geometria virtual (Myriad)',
         description: 'Malhas densas são desenhadas por clusters refinados por pixel em vez de LODs fixos.',
@@ -976,8 +996,8 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
             },
             {
                 title: 'Compressão e streaming',
-                description: 'Quanto da memória de GPU as malhas ocupam e o que acontece quando ela aperta.',
-                settings: ['render.mesh.compression', 'render.streaming.meshes', 'render.streaming.meshBudget'],
+                description: 'Quanto da memória de GPU as malhas e as texturas ocupam e o que acontece quando ela aperta.',
+                settings: ['render.mesh.compression', 'render.streaming.meshes', 'render.streaming.meshBudget', 'render.textures.compression', 'render.streaming.mipmaps', 'render.streaming.textureBudget'],
             },
             { title: 'Geometria virtual', settings: ['render.myriad.enabled', 'render.myriad.pixelError', 'render.myriad.occlusion', 'render.myriad.shadowClusters'] },
             { title: 'Terreno e CSG', settings: ['render.terrainCache', 'render.csgGhosts'] },

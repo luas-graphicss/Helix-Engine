@@ -16,6 +16,7 @@ import { VirtualGeometrySection } from './performance/virtual-geometry-section';
 import { LocalLightsSection } from './performance/local-lights-section';
 import { BatchingSection } from './performance/batching-section';
 import { GpuMemorySection } from './performance/gpu-memory-section';
+import { TextureMemorySection } from './performance/texture-memory-section';
 import { GHOST_ACTION_CLASS } from '@/engine/ui/surface-styles';
 import { cn } from '@/lib/utils';
 const TIER_LABEL = { high: 'alta', mid: 'média', low: 'baixa' } as const;
@@ -209,6 +210,8 @@ export function PerformancePanel() {
         <BatchingSection />
 
         <GpuMemorySection />
+
+        <TextureMemorySection />
 
         <CollapsibleSection title="Sombras e terreno">
           <ToggleField label="Sombras" on={session.shadowsEnabled} onToggle={() => session.toggleShadows()}/>
