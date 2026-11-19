@@ -16,7 +16,7 @@ import { REVERSE_GEAR } from '@/engine/vehicle/drivetrain/gearbox';
 import { collectVehicleWheels } from '@/engine/vehicle/vehicle-hierarchy';
 import { findVehiclePreset, VEHICLE_PRESETS } from '@/engine/vehicle/vehicle-presets';
 import type { VehicleControl, VehicleSettings } from '@/engine/vehicle/vehicle-settings';
-import { useLiveReadout } from './use-live-readout';
+import { useLiveReadout } from '../use-live-readout';
 import { VEHICLE_HINT_CLASS } from './vehicle-field-styles';
 import { formatWhole } from './vehicle-formats';
 const METERS_PER_SECOND_TO_KMH = 3.6;

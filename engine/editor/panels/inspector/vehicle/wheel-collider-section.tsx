@@ -14,7 +14,7 @@ import { RPM_PER_RADIAN_PER_SECOND } from '@/engine/vehicle/drivetrain/engine-to
 import { findVehicleAncestor } from '@/engine/vehicle/vehicle-hierarchy';
 import type { WheelRole, WheelSettings } from '@/engine/vehicle/wheel/wheel-settings';
 import { ScalarField } from '../number-fields';
-import { useLiveReadout } from './use-live-readout';
+import { useLiveReadout } from '../use-live-readout';
 import { VEHICLE_HINT_CLASS } from './vehicle-field-styles';
 import { formatPercent, formatWhole, toPercent } from './vehicle-formats';
 const ROLES: ReadonlyArray<{
