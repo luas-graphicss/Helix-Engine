@@ -3,7 +3,6 @@ import * as mat4 from '@/engine/core/math/mat4';
 import type { Mat4 } from '@/engine/core/math/mat4';
 import * as vec3 from '@/engine/core/math/vec3';
 import type { Vec3 } from '@/engine/core/math/vec3';
-import { degToRad } from '@/engine/core/math/scalar';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 export const MAX_SHADOW_CASCADES = 4;
 const WORLD_UP = vec3.create(0, 1, 0);
@@ -61,12 +60,12 @@ export class ShadowCascades {
         mat4.invert(this.cameraWorld, camera.viewMatrix);
         vec3.set(this.forward, -this.cameraWorld[8], -this.cameraWorld[9], -this.cameraWorld[10]);
         vec3.normalize(this.forward, this.forward);
-        const cornerSlope = Math.tan(degToRad(camera.fovDegrees) * 0.5) * Math.sqrt(1 + camera.aspect * camera.aspect);
+        const aspectDiagonal = Math.sqrt(1 + camera.aspect * camera.aspect);
         for (let i = 0; i < this.count; i++) {
             const near = this.splits[i];
             const far = this.splits[i + 1];
-            const nearRadius = near * cornerSlope;
-            const farRadius = far * cornerSlope;
+            const nearRadius = camera.halfHeightAt(near) * aspectDiagonal;
+            const farRadius = camera.halfHeightAt(far) * aspectDiagonal;
             let centerDistance = (far * far + farRadius * farRadius - near * near - nearRadius * nearRadius) / (2 * (far - near));
             centerDistance = Math.min(Math.max(centerDistance, near), far);
             const radius = Math.max(Math.hypot(far - centerDistance, farRadius), Math.hypot(centerDistance - near, nearRadius)) * RADIUS_PADDING;

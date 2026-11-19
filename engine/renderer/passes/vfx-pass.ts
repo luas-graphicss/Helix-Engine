@@ -215,6 +215,7 @@ export class VfxPass {
         gl.uniform1i(program.uniform('u_sprite'), SPRITE_TEXTURE_UNIT);
         gl.uniform1i(program.uniform('u_sceneDepth'), DEPTH_TEXTURE_UNIT);
         gl.uniform4f(program.uniform('u_depthParams'), camera.near, camera.far, 1 / sceneTarget.width, 1 / sceneTarget.height);
+        gl.uniform1f(program.uniform('u_orthographic'), camera.orthographic ? 1 : 0);
         gl.activeTexture(gl.TEXTURE0 + DEPTH_TEXTURE_UNIT);
         gl.bindTexture(gl.TEXTURE_2D, depth);
         gl.activeTexture(gl.TEXTURE0 + SPRITE_TEXTURE_UNIT);

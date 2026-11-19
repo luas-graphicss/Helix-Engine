@@ -1,4 +1,3 @@
-import { degToRad } from '@/engine/core/math/scalar';
 import type { Aabb } from '@/engine/core/math/aabb';
 import type { Mat4 } from '@/engine/core/math/mat4';
 import type { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
@@ -29,7 +28,7 @@ export function projectAabbToNdcRect(box: Aabb, viewProjection: Mat4, out: Float
     return true;
 }
 export function pixelsPerTangent(camera: PerspectiveCamera, viewportHeight: number): number {
-    return (viewportHeight * 0.5) / Math.tan(degToRad(camera.fovDegrees) * 0.5);
+    return (viewportHeight * 0.5) / camera.tanHalfFov;
 }
 export function projectedDiameterPixels(radius: number, distance: number, pixelsPerTangentUnit: number): number {
     if (distance <= radius)

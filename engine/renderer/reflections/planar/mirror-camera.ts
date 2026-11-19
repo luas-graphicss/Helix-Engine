@@ -3,10 +3,8 @@ import * as vec3 from '@/engine/core/math/vec3';
 import { degToRad } from '@/engine/core/math/scalar';
 import { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { reflectDirection, reflectPoint, type MirrorPlane } from './mirror-plane';
-const WORLD_UP = vec3.create(0, 1, 0);
 const CLIP_BIAS = 0.02;
 export class MirrorCamera extends PerspectiveCamera {
-    private readonly up = vec3.create(0, 1, 0);
     private readonly clipNormal = vec3.create();
     private readonly clipPoint = vec3.create();
     private plane: MirrorPlane | null = null;
@@ -16,7 +14,7 @@ export class MirrorCamera extends PerspectiveCamera {
     reflect(source: PerspectiveCamera, plane: MirrorPlane): void {
         reflectPoint(this.position, plane, source.position);
         reflectPoint(this.target, plane, source.target);
-        reflectDirection(this.up, plane, WORLD_UP);
+        reflectDirection(this.up, plane, source.up);
         this.fovDegrees = source.fovDegrees;
         this.aspect = source.aspect;
         this.near = source.near;

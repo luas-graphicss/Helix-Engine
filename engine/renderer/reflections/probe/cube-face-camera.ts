@@ -27,13 +27,12 @@ const FACE_UP: readonly (readonly [
 ];
 export class CubeFaceCamera extends PerspectiveCamera {
     private readonly forward: Float32Array;
-    private readonly up: Float32Array;
     constructor(readonly face: number) {
         super();
         const [fx, fy, fz] = FACE_FORWARD[face];
         const [ux, uy, uz] = FACE_UP[face];
         this.forward = vec3.create(fx, fy, fz);
-        this.up = vec3.create(ux, uy, uz);
+        vec3.set(this.up, ux, uy, uz);
         this.fovDegrees = 90;
         this.aspect = 1;
     }
