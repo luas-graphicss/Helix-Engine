@@ -22,7 +22,7 @@ const RENDER_OPTIONS: Omit<RenderOptions, 'elapsedSeconds' | 'deltaSeconds'> = {
     skeletons: null,
     lightHelpers: null,
     soloLight: null,
-    culling: { frustumCulling: true, minPixelSize: 0, occlusionCulling: false },
+    culling: { frustumCulling: true, minPixelSize: 0, occlusionCulling: false, lodGroups: true },
     lod: { enabled: false, bias: 0 },
     myriad: { ...createMyriadSettings(), enabled: false },
     terrainMaterialCache: true,

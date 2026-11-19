@@ -10,7 +10,7 @@ import { transformMeshData } from '@/engine/renderer/geometry/mesh-transform';
 import { createBox, createSphere } from '@/engine/renderer/geometry/primitives';
 import { createCheckList } from '../support/check-list';
 const VIEWPORT_HEIGHT = 720;
-const OCCLUSION_ON: CullingOptions = { frustumCulling: true, minPixelSize: 0, occlusionCulling: true };
+const OCCLUSION_ON: CullingOptions = { frustumCulling: true, minPixelSize: 0, occlusionCulling: true, lodGroups: true };
 const OCCLUSION_OFF: CullingOptions = { ...OCCLUSION_ON, occlusionCulling: false };
 const RANDOM_SCENES = 40;
 const RANDOM_OCCLUDERS = 6;

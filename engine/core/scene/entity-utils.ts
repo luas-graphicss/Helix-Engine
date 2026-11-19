@@ -13,6 +13,7 @@ import { cloneAudioZoneSettings } from '@/engine/audio/world/audio-zone-settings
 import { cloneGuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings';
 import { cloneVfxSettings } from '@/engine/vfx/vfx-settings';
 import { createScriptSettings } from '@/engine/scripting/script-settings';
+import { cloneLodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
 const NUMERIC_SUFFIX = /_\d+$/;
 export function uniqueEntityName(scene: Scene, desired: string, ignore: Entity | null = null): string {
     const taken = new Set<string>();
@@ -59,6 +60,7 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
         guiSurface: source.guiSurface ? cloneGuiSurfaceSettings(source.guiSurface) : undefined,
         vfx: source.vfx ? cloneVfxSettings(source.vfx) : undefined,
         script: source.script ? createScriptSettings(source.script) : undefined,
+        lodGroup: source.lodGroup ? cloneLodGroupSettings(source.lodGroup) : undefined,
         castShadows: source.castShadows,
         receiveShadows: source.receiveShadows,
         locked: source.locked,

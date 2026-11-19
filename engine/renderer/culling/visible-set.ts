@@ -10,6 +10,7 @@ import { RenderableBoundsCache, type RenderableBounds } from './renderable-bound
 import { SpatialGrid, type SpatialGridStats } from './spatial-grid';
 import { pixelsPerTangent, projectedDiameterPixels } from './screen-coverage';
 import { OcclusionCuller } from './occlusion/occlusion-culler';
+import { LodGroupVisibility } from '@/engine/renderer/lod/groups/lod-group-visibility';
 export interface VisibleMesh {
     entity: Entity;
     mesh: MeshData;
@@ -32,6 +33,7 @@ export interface CullingOptions {
     frustumCulling: boolean;
     minPixelSize: number;
     occlusionCulling: boolean;
+    lodGroups: boolean;
 }
 export interface CullingStats extends SpatialGridStats {
     candidates: number;
@@ -41,11 +43,13 @@ export interface CullingStats extends SpatialGridStats {
     occlusionCulled: number;
     occluders: number;
     occluderTriangles: number;
+    lodGroups: number;
+    lodGroupsCulled: number;
     boundsChanged: number;
     renderables: number;
 }
 export function createCullingStats(): CullingStats {
-    return { candidates: 0, visible: 0, frustumCulled: 0, sizeCulled: 0, occlusionCulled: 0, occluders: 0, occluderTriangles: 0, boundsChanged: 0, renderables: 0, cells: 0, cellsCulled: 0, culledByCell: 0 };
+    return { candidates: 0, visible: 0, frustumCulled: 0, sizeCulled: 0, occlusionCulled: 0, occluders: 0, occluderTriangles: 0, lodGroups: 0, lodGroupsCulled: 0, boundsChanged: 0, renderables: 0, cells: 0, cellsCulled: 0, culledByCell: 0 };
 }
 export class VisibleSet {
     readonly meshes: VisibleMesh[] = [];
@@ -61,7 +65,8 @@ export class VisibleSet {
     private readonly casterPool: ShadowCasterCandidate[] = [];
     private readonly terrainCasterPool: TerrainShadowCaster[] = [];
     private camera: PerspectiveCamera | null = null;
-    private options: CullingOptions = { frustumCulling: true, minPixelSize: 0, occlusionCulling: false };
+    private options: CullingOptions = { frustumCulling: true, minPixelSize: 0, occlusionCulling: false, lodGroups: true };
+    private readonly lodGroups = new LodGroupVisibility();
     private occlusion: OcclusionCuller | null = null;
     private showBrushes = true;
     collect(scene: Scene, camera: PerspectiveCamera, viewportHeight: number, options: CullingOptions, showCsgBrushes = true): void {
@@ -82,7 +87,10 @@ export class VisibleSet {
         stats.renderables = 0;
         this.bounds.beginFrame();
         grid.beginFrame();
+        this.lodGroups.beginFrame({ camera, pixelScale: this.pixelScale, viewportHeight, enabled: options.lodGroups });
         scene.traverseVisible(this.register);
+        stats.lodGroups = this.lodGroups.stats.groups;
+        stats.lodGroupsCulled = this.lodGroups.stats.culled;
         grid.forEachCandidate(options.frustumCulling ? this.frustum : null, stats, this.test);
         stats.frustumCulled += stats.culledByCell;
         stats.boundsChanged = this.bounds.changes;
@@ -104,6 +112,8 @@ export class VisibleSet {
         stats.visible -= occlusion.culled;
     }
     private readonly register = (entity: Entity): void => {
+        if (this.lodGroups.hides(entity))
+            return;
         const { terrain } = entity;
         if (terrain) {
             this.stats.renderables++;

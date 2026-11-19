@@ -11,7 +11,7 @@ export interface PreviewRenderSettings {
     shadows: boolean;
 }
 const MAX_DELTA_SECONDS = 0.1;
-const PREVIEW_CULLING: CullingOptions = { frustumCulling: true, minPixelSize: 0, occlusionCulling: false };
+const PREVIEW_CULLING: CullingOptions = { frustumCulling: true, minPixelSize: 0, occlusionCulling: false, lodGroups: true };
 const PREVIEW_LOD: LodSettings = { enabled: false, bias: 0 };
 const PREVIEW_MYRIAD: MyriadSettings = { ...createMyriadSettings(), enabled: false };
 export function useImportPreviewRenderer(canvasRef: React.RefObject<HTMLCanvasElement | null>, model: ImportPreviewModel, settings: PreviewRenderSettings) {

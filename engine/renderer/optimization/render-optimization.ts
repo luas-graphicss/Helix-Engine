@@ -4,9 +4,11 @@ export interface RenderOptimizationStats {
     occluders: number;
     occluderTriangles: number;
     occlusionCulled: number;
+    lodGroups: number;
+    lodGroupsCulled: number;
 }
 export function createRenderOptimizationStats(): RenderOptimizationStats {
-    return { occluders: 0, occluderTriangles: 0, occlusionCulled: 0 };
+    return { occluders: 0, occluderTriangles: 0, occlusionCulled: 0, lodGroups: 0, lodGroupsCulled: 0 };
 }
 export class RenderOptimization {
     private static readonly byContext = new WeakMap<GL, RenderOptimization>();
@@ -25,5 +27,7 @@ export class RenderOptimization {
         stats.occluders = culling.occluders;
         stats.occluderTriangles = culling.occluderTriangles;
         stats.occlusionCulled = culling.occlusionCulled;
+        stats.lodGroups = culling.lodGroups;
+        stats.lodGroupsCulled = culling.lodGroupsCulled;
     }
 }

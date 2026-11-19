@@ -29,7 +29,7 @@ export interface RenderSettings {
 }
 export function createRenderSettings(): RenderSettings {
     return {
-        culling: { frustumCulling: true, minPixelSize: DEFAULT_MIN_PIXEL_SIZE, occlusionCulling: true },
+        culling: { frustumCulling: true, minPixelSize: DEFAULT_MIN_PIXEL_SIZE, occlusionCulling: true, lodGroups: true },
         lod: { enabled: true, bias: 0 },
         myriad: createMyriadSettings(),
         terrain: { materialCache: true },

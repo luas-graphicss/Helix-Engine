@@ -190,6 +190,12 @@ export function PerformancePanel() {
           <PropertyRow label="Malhas">
             <PerLevel counts={stats.lodPerLevel} levels={MAX_LOD_LEVELS}/>
           </PropertyRow>
+          <ToggleField label="Grupos de LOD" on={culling.lodGroups} onToggle={() => session.updateCulling({ lodGroups: !culling.lodGroups })}/>
+          <PropertyRow label="Grupos">
+            <Value>
+              {integer(optimization.lodGroups)} <span className="text-muted-foreground">· {integer(optimization.lodGroupsCulled)} oculto(s) pela distância</span>
+            </Value>
+          </PropertyRow>
           <PropertyRow label="Gerando">
             <Value>{stats.lodPending > 0 ? `${integer(stats.lodPending)} cadeia(s)` : 'Nenhuma'}</Value>
           </PropertyRow>

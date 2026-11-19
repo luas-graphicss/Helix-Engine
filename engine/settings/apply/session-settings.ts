@@ -55,6 +55,7 @@ export function applyRuntimeSessionSettings(session: EditorSession): void {
     render.culling.frustumCulling = get('render.culling.frustum');
     render.culling.minPixelSize = get('render.culling.minPixelSize');
     render.culling.occlusionCulling = get('render.culling.occlusion');
+    render.culling.lodGroups = get('render.lod.groups');
     render.myriad.enabled = get('render.myriad.enabled');
     render.myriad.pixelError = get('render.myriad.pixelError');
     render.myriad.occlusionCulling = get('render.myriad.occlusion');
