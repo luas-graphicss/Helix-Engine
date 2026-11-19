@@ -99,7 +99,7 @@ export class DynamicBatchSet<TSource extends DynamicBatchSource> {
     }
     private acquireSlot(): MergedSlot {
         const index = this.slotCount++;
-        this.slots[index] ??= { builder: new MergedMeshBuilder(), mesh: createMergedMeshData(`dynamic-batch:${index}`) };
+        this.slots[index] ??= { builder: new MergedMeshBuilder(), mesh: createMergedMeshData(`dynamic-batch:${index}`, true) };
         return this.slots[index];
     }
 }

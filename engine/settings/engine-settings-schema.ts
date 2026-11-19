@@ -590,6 +590,26 @@ export const ENGINE_SETTINGS = {
         description: 'Os lotes são agrupados pela variante de shader antes do material, de modo que o programa e os uniformes do quadro só são trocados quando a variante muda.',
         default: true,
     }),
+    'render.mesh.compression': booleanSetting({
+        label: 'Compactar vértices das malhas',
+        description: 'Normais e tangentes vão para a GPU em 10 bits por componente e as coordenadas de textura entre 0 e 1 em 16 bits, o que reduz a memória de vértices a cerca da metade. As posições continuam em 32 bits e as malhas reenviadas a cada quadro ficam de fora.',
+        default: false,
+    }),
+    'render.streaming.meshes': booleanSetting({
+        label: 'Streaming de malhas',
+        description: 'Com a memória de malhas acima do orçamento, as que não são desenhadas há mais tempo saem da GPU e voltam quando reaparecem.',
+        default: false,
+    }),
+    'render.streaming.meshBudget': numberSetting({
+        label: 'Orçamento de malhas',
+        description: 'Memória de GPU que as malhas podem ocupar antes de as ociosas serem liberadas.',
+        default: 256,
+        min: 32,
+        max: 2048,
+        step: 32,
+        unit: ' MB',
+        scale: 'log',
+    }),
     'render.myriad.enabled': booleanSetting({
         label: 'Geometria virtual (Myriad)',
         description: 'Malhas densas são desenhadas por clusters refinados por pixel em vez de LODs fixos.',
@@ -953,6 +973,11 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
                 title: 'Lotes de desenho',
                 description: 'Como as malhas do caminho clássico são agrupadas em draw calls. Malhas iguais com o mesmo material já saem juntas por instanciamento; estes ajustes cuidam das que sobram.',
                 settings: ['render.batching.static', 'render.batching.dynamic', 'render.batching.shader'],
+            },
+            {
+                title: 'Compressão e streaming',
+                description: 'Quanto da memória de GPU as malhas ocupam e o que acontece quando ela aperta.',
+                settings: ['render.mesh.compression', 'render.streaming.meshes', 'render.streaming.meshBudget'],
             },
             { title: 'Geometria virtual', settings: ['render.myriad.enabled', 'render.myriad.pixelError', 'render.myriad.occlusion', 'render.myriad.shadowClusters'] },
             { title: 'Terreno e CSG', settings: ['render.terrainCache', 'render.csgGhosts'] },

@@ -59,6 +59,9 @@ export function applyRuntimeSessionSettings(session: EditorSession): void {
     render.optimization.staticBatching = get('render.batching.static');
     render.optimization.dynamicBatching = get('render.batching.dynamic');
     render.optimization.shaderBatching = get('render.batching.shader');
+    render.optimization.meshCompression = get('render.mesh.compression');
+    render.optimization.meshStreaming = get('render.streaming.meshes');
+    render.optimization.meshBudgetMb = get('render.streaming.meshBudget');
     render.myriad.enabled = get('render.myriad.enabled');
     render.myriad.pixelError = get('render.myriad.pixelError');
     render.myriad.occlusionCulling = get('render.myriad.occlusion');

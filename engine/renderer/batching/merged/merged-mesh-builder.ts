@@ -12,6 +12,7 @@ export interface MergedMeshData {
     uvs: Float32Array;
     tangents: Float32Array;
     indices: Uint32Array;
+    readonly dynamic: boolean;
 }
 interface CachedTangents {
     version: number;
@@ -37,8 +38,8 @@ function grown(source: Float32Array, required: number): Float32Array {
     target.set(source);
     return target;
 }
-export function createMergedMeshData(name: string): MergedMeshData {
-    return { name, positions: new Float32Array(0), normals: new Float32Array(0), uvs: new Float32Array(0), tangents: new Float32Array(0), indices: new Uint32Array(0) };
+export function createMergedMeshData(name: string, dynamic = false): MergedMeshData {
+    return { name, positions: new Float32Array(0), normals: new Float32Array(0), uvs: new Float32Array(0), tangents: new Float32Array(0), indices: new Uint32Array(0), dynamic };
 }
 export class MergedMeshBuilder {
     vertexCount = 0;

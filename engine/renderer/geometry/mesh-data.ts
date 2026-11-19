@@ -6,6 +6,7 @@ export interface MeshData {
     readonly indices: Uint16Array | Uint32Array;
     readonly tangents?: Float32Array;
     readonly skinning?: MeshSkinning;
+    readonly dynamic?: boolean;
 }
 export interface MeshSkinning {
     readonly joints: Uint16Array;

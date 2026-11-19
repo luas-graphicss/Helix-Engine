@@ -90,9 +90,11 @@ export class MeshPass {
     prepare(visible: VisibleSet, input: MeshPassInput, instances: InstanceBuffer, resolveMesh: MeshResolver): void {
         const { batcher, optimization } = this;
         this.publishSwitches();
+        this.meshes.configure(optimization.settings, performance.now());
         batcher.build(visible, instances, input.selection, resolveMesh, optimization.settings);
         optimization.recordCulling(visible.stats);
         optimization.recordBatching(batcher.stats);
+        optimization.recordMeshes(this.meshes.stats);
         this.stats.drawCalls = 0;
         this.stats.animatedShaders = 0;
         this.stats.triangles = batcher.stats.triangles;
