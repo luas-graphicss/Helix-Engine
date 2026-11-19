@@ -1,3 +1,4 @@
+import { CONTEXT_WIDTH, shiftContextsBelow } from '@/engine/vfx-graph/document/context-layout';
 import { addBlock, findBlock, moveBlock, removeBlock, setBlockEnabled, setBlockValue } from '@/engine/vfx-graph/document/effect-blocks';
 import { addContext, connectFlow, createEffectGraph, disconnectFlow, flowInto, moveContexts, removeContexts, setContextValue, type VfxGraphDocument } from '@/engine/vfx-graph/document/effect-document';
 import { parseEffectGraph } from '@/engine/vfx-graph/document/effect-serialization';
@@ -81,6 +82,16 @@ function systems(): void {
     const [orphan] = resolveSystems(lone.document);
     checks.check('uma inicialização sozinha é um sistema sem emissão nem saída', orphan.spawn === null && orphan.update === null && orphan.outputs.length === 0);
 }
+function layout(): void {
+    const chain = buildChain();
+    const neighbour = addContext(chain.document, 'output', CONTEXT_WIDTH + 40, 300);
+    const shifted = shiftContextsBelow(neighbour.document, chain.initialize, 24);
+    const topOf = (id: string) => shifted.contexts.find((context) => context.id === id)?.y;
+    checks.check('contextos abaixo na mesma coluna descem juntos', topOf(chain.update) === 224 && topOf(chain.output) === 324);
+    checks.check('o contexto que cresceu e os de cima ficam no lugar', topOf(chain.initialize) === 100 && topOf(chain.spawn) === 0);
+    checks.check('contextos de outra coluna ficam no lugar', topOf(neighbour.contextId) === 300);
+    checks.check('deslocamento nulo devolve o mesmo documento', shiftContextsBelow(chain.document, chain.initialize, 0) === chain.document);
+}
 function parsing(): void {
     const chain = buildChain();
     const withBlock = addBlock(chain.document, chain.update, 'gravity', { strength: 4 });
@@ -101,5 +112,6 @@ function parsing(): void {
 flow();
 blocks();
 systems();
+layout();
 parsing();
 checks.finish();

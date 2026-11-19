@@ -3,6 +3,7 @@ import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { blockDefinition } from '@/engine/vfx-graph/blocks/block-catalog';
 import { compileEffectGraph, type CompiledEffect } from '@/engine/vfx-graph/compiler/effect-compiler';
 import type { BlockValue } from '@/engine/vfx-graph/document/block-values';
+import { BLOCK_ROW_HEIGHT, shiftContextsBelow } from '@/engine/vfx-graph/document/context-layout';
 import { addBlock, findBlock, moveBlock, removeBlock, setBlockEnabled, setBlockValue } from '@/engine/vfx-graph/document/effect-blocks';
 import { addContext, connectFlow, disconnectFlow, findContext, moveContexts, removeContexts, setContextValue, type ContextKind, type EffectBlock, type EffectContext, type VfxGraphDocument, } from '@/engine/vfx-graph/document/effect-document';
 import { systemContexts, systemOf } from '@/engine/vfx-graph/document/effect-systems';
@@ -194,11 +195,14 @@ export class VfxGraphEditor implements VfxGraphHost {
         const added = addBlock(document, contextId, type);
         if (!added)
             return;
-        this.apply('Adicionar bloco ao efeito', () => added.document);
+        this.apply('Adicionar bloco ao efeito', () => shiftContextsBelow(added.document, contextId, BLOCK_ROW_HEIGHT));
         this.selectBlock(contextId, added.blockId);
     }
     removeBlock(contextId: string, blockId: string): void {
-        this.apply('Excluir bloco do efeito', (graph) => removeBlock(graph, contextId, blockId));
+        this.apply('Excluir bloco do efeito', (graph) => {
+            const removed = removeBlock(graph, contextId, blockId);
+            return removed === graph ? graph : shiftContextsBelow(removed, contextId, -BLOCK_ROW_HEIGHT);
+        });
     }
     moveBlock(contextId: string, blockId: string, offset: number): void {
         this.apply('Reordenar blocos do efeito', (graph) => moveBlock(graph, contextId, blockId, offset));
