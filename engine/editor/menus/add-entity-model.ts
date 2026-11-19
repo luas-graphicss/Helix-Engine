@@ -22,6 +22,7 @@ import { LIGHT_ICON, LOCAL_LIGHT_DESCRIPTION } from '@/engine/editor/lights/ligh
 import { CLOTH_PRESETS, type ClothPresetId } from '@/engine/cloth/cloth-presets';
 import { CAMERA_PRESETS, type CameraPresetId } from '@/engine/camera/camera-presets';
 import { VEHICLE_PRESETS, type VehiclePresetId } from '@/engine/vehicle/vehicle-presets';
+import { NAVIGATION_ADD_GROUP } from './navigation-add-group';
 export interface AddMenuEntry {
     readonly id: string;
     readonly label: string;
@@ -139,6 +140,7 @@ export const ADD_MENU_GROUPS: readonly AddMenuGroup[] = [
             },
         ],
     },
+    NAVIGATION_ADD_GROUP,
     {
         id: 'vehicles',
         label: 'Veículos',

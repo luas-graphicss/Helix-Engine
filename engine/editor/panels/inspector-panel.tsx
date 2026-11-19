@@ -40,6 +40,7 @@ import { LodGroupSection } from './inspector/lod-group-section';
 import { ClothSection } from './inspector/cloth/cloth-section';
 import { VehicleSection } from './inspector/vehicle/vehicle-section';
 import { WheelSection } from './inspector/vehicle/wheel-section';
+import { NavigationSection } from './inspector/navigation/navigation-section';
 import { CameraSection } from './inspector/camera/camera-section';
 import { LayerField } from './inspector/layer-field';
 import { SelectionInspector } from './inspector/selection-inspector';
@@ -57,6 +58,14 @@ function kindLabel(entity: Entity): string {
         return 'Veículo';
     if (entity.wheel)
         return 'Roda';
+    if (entity.navAgent)
+        return 'Agente de navegação';
+    if (entity.kind === 'group' && entity.navSurface)
+        return 'NavMesh Surface';
+    if (entity.kind === 'group' && entity.navLink)
+        return 'Off-Mesh Link';
+    if (entity.kind === 'group' && entity.navModifier)
+        return 'Volume de área';
     if (entity.kind === 'gui' && entity.guiSurface)
         return `Interface · ${GUI_SURFACE_CONTENT_LABEL[entity.guiSurface.content.kind].toLowerCase()}`;
     if (entity.kind === 'script')
@@ -226,6 +235,7 @@ export function InspectorPanel() {
         <RigidBodySection entity={entity}/>
         <VehicleSection entity={entity}/>
         <WheelSection entity={entity}/>
+        <NavigationSection entity={entity}/>
         <ClothSection entity={entity}/>
         <MaterialSection entity={entity}/>
         <TexturesSection entity={entity}/>
