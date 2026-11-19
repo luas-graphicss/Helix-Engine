@@ -30,12 +30,14 @@ export function ExtensionScriptRow({ script }: {
     const session = useEditorSession();
     const { host } = session.extensions;
     const asset = session.library.get(script.assetId);
+    const contributions = session.extensions.contributionCount(script.assetId);
+    const summary = contributions > 0 ? `${STATE_LABEL[script.state]} · ${contributions}` : STATE_LABEL[script.state];
     return (<div className={cn('group flex h-control items-center gap-1.5 px-2 text-2xs text-foreground/90 hover:bg-highlight', !script.enabled && 'text-muted-foreground')}>
       <span aria-hidden className={cn('size-1.5 shrink-0 rounded-full', STATE_DOT_CLASS[script.state])}/>
-      <button type="button" disabled={!asset} title={`${script.name} · ${STATE_LABEL[script.state]}`} onClick={() => asset && void openScriptAssetInEditor(session, asset, { pin: true })} className={cn('min-w-0 flex-1 truncate rounded-xs text-left', FOCUS_RING_CLASS)}>
+      <button type="button" disabled={!asset} title={`${script.name} · ${STATE_LABEL[script.state]}${contributions > 0 ? ` · ${contributions} ${contributions === 1 ? 'contribuição' : 'contribuições'} ao editor` : ''}`} onClick={() => asset && void openScriptAssetInEditor(session, asset, { pin: true })} className={cn('min-w-0 flex-1 truncate rounded-xs text-left', FOCUS_RING_CLASS)}>
         {script.name}
       </button>
-      <span className="shrink-0 font-mono text-3xs text-muted-foreground/70 group-focus-within:hidden group-hover:hidden">{STATE_LABEL[script.state]}</span>
+      <span className="shrink-0 font-mono text-3xs text-muted-foreground/70 group-focus-within:hidden group-hover:hidden">{summary}</span>
       <span className="hidden shrink-0 items-center group-focus-within:flex group-hover:flex">
         <IconButton label="Abrir no editor de código" size="xs" disabled={!asset} onClick={() => asset && void openScriptAssetInEditor(session, asset, { pin: true })}>
           <Code2 />

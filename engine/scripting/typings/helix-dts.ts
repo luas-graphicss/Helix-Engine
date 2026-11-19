@@ -2337,6 +2337,30 @@ const PROJECT_API = `
   }
 `;
 const EDITOR_API = `
+  export interface EditorGuiFieldOptions { disabled?: boolean; key?: string }
+  export interface EditorGui {
+    readonly changed: boolean
+    label(text: string, options?: { muted?: boolean }): void
+    heading(text: string): void
+    help(text: string, level?: 'info' | 'warn' | 'error'): void
+    separator(): void
+    space(size?: number): void
+    progress(value: number, label?: string): void
+    button(label: string, options?: EditorGuiFieldOptions & { icon?: string; variant?: 'primary' | 'secondary' | 'danger' }): boolean
+    toggle(label: string, value: boolean, options?: EditorGuiFieldOptions): boolean
+    number(label: string, value: number, options?: EditorGuiFieldOptions & { min?: number; max?: number; step?: number }): number
+    slider(label: string, value: number, min: number, max: number, options?: EditorGuiFieldOptions & { step?: number }): number
+    text(label: string, value: string, options?: EditorGuiFieldOptions & { placeholder?: string; multiline?: boolean }): string
+    select(label: string, value: string, choices: readonly (string | { value: string; label?: string })[], options?: EditorGuiFieldOptions): string
+    color(label: string, value: ColorLike, options?: EditorGuiFieldOptions): Vec3
+    vector(label: string, value: Vec3Like, options?: EditorGuiFieldOptions): Vec3
+    actor(label: string, value: Entity | null, options?: EditorGuiFieldOptions): Entity | null
+    asset(label: string, value: AssetRef | null, kind?: AssetKind | null, options?: EditorGuiFieldOptions): LibraryAsset | null
+    row(build: () => void): void
+    section(title: string, build: () => void, options?: { key?: string }): void
+  }
+  export interface EditorWindowOptions { title?: string; icon?: string; area?: 'left' | 'right' | 'bottom'; onGui(ui: EditorGui): void }
+  export interface EditorWindowHandle { readonly id: string; readonly isOpen: boolean; open(): void; close(): void; repaint(): void; unregister(): void }
   export interface EditorApi {
     readonly selection: Entity[]
     readonly selected: Entity | null
@@ -2371,6 +2395,7 @@ const EDITOR_API = `
     readonly viewport: { capture(): Promise<Blob | null>; frame(entity: Entity): void; frameSelected(): void; readonly camera: unknown }
     readonly code: { open(asset: AssetRef, line?: number): Promise<boolean>; readonly tabs: { assetId: string; name: string; language: string; dirty: boolean; active: boolean }[]; readonly active: { assetId: string; name: string; language: string } | null; save(asset?: AssetRef): Promise<LibraryAsset | null>; saveAll(): Promise<number>; run(asset?: AssetRef): Promise<void>; compile(): Promise<void>; readonly compileState: { state: string; message: string } }
     readonly console: { clear(): void; readonly entries: { id: number; elapsedMs: number; level: 'debug' | 'info' | 'warn' | 'error'; source: string; message: string; repeat: number }[]; readonly count: number }
+    readonly windows: { register(id: string, options: EditorWindowOptions): EditorWindowHandle; unregister(id: string): boolean; open(id: string): void; close(id: string): void; toggle(id: string): void; isOpen(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
     readonly tools: { register(id: string, options: { label: string; shortcut?: string; run: () => void }): Unsubscribe; unregister(id: string): boolean; list(): { id: string; label: string; shortcut: string | null }[]; run(id: string): void }
     notify(): void
   }

@@ -13,6 +13,8 @@ import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { HelixArgumentError, HelixError } from '../runtime/script-errors';
 import type { RuntimeHost } from '../runtime/runtime-host';
 import { requireEntity, requireFunction, requireNumber, requireOneOf, requireString } from '../runtime/values';
+import { createExtensionApiContext } from './editor-extensions/extension-api-context';
+import { createWindowsApi } from './editor-extensions/windows-api';
 const DIALOG_IDS: readonly EditorDialogId[] = ['settings', 'shortcuts', 'autosaves', 'beta', 'about', 'exit', 'renameProject', 'baseLanguage'];
 const TOOLS: readonly TransformTool[] = VIEWPORT_TOOLS.map((tool) => tool.id);
 const SPACES: readonly TransformSpace[] = ['global', 'local'];
@@ -26,6 +28,7 @@ export interface ScriptTool {
 export function createEditorApi(host: RuntimeHost) {
     const { session, bus } = host;
     const tools = new Map<string, ScriptTool>();
+    const extensionContext = createExtensionApiContext(host);
     let groupDepth = 0;
     let groupLabel: string | null = null;
     function settingId(value: unknown, member: string): SettingId {
@@ -244,6 +247,7 @@ export function createEditorApi(host: RuntimeHost) {
         viewport,
         code,
         console,
+        windows: createWindowsApi(extensionContext),
         tools: {
             register: (id: unknown, options: unknown) => {
                 const member = 'helix.editor.tools.register';

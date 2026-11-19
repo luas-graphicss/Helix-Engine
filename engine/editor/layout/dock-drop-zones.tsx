@@ -3,7 +3,7 @@ import { useState, type DragEvent } from 'react';
 import { cn } from '@/lib/utils';
 import { DOCK_AREA_LABELS, DOCK_AREAS, type DockArea } from './dock-layout';
 import { useDockLayout } from './dock-layout-context';
-import { DOCK_PANELS } from './dock-panels';
+import { useDockPanelResolver } from './use-dock-panels';
 import { isPanelDrag, readDraggedPanel } from './dock-area';
 const ZONE_CLASS: Record<DockArea, string> = {
     left: 'inset-y-3 left-3 w-24',
@@ -13,9 +13,10 @@ const ZONE_CLASS: Record<DockArea, string> = {
 export function DockDropZones() {
     const [layout, dock] = useDockLayout();
     const [hovered, setHovered] = useState<DockArea | null>(null);
-    if (!layout.dragging)
+    const resolvePanel = useDockPanelResolver();
+    const panel = layout.dragging ? resolvePanel(layout.dragging) : null;
+    if (!panel)
         return null;
-    const panel = DOCK_PANELS[layout.dragging];
     const onDrop = (area: DockArea) => (event: DragEvent<HTMLElement>) => {
         event.preventDefault();
         const id = readDraggedPanel(event);

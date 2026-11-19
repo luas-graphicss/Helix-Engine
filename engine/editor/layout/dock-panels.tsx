@@ -20,7 +20,11 @@ import { ScriptsPanel } from '@/engine/editor/panels/scripts-panel';
 import { ExtensionsPanel } from '@/engine/editor/extensions/ui/extensions-panel';
 import type { EditorWorkspace } from '@/engine/editor/session/editor-session';
 import type { ShortcutActionId } from '@/engine/editor/shortcuts/shortcut-actions';
-import type { DockPanelId } from './dock-layout';
+import type { ContributionRegistry } from '@/engine/editor/extensions/registry/contribution-registry';
+import { ExtensionGuiView } from '@/engine/editor/extensions/ui/gui/extension-gui-view';
+import { extensionIcon } from '@/engine/editor/extensions/ui/extension-icon';
+import type { WindowContribution } from '@/engine/editor/extensions/windows/window-contribution';
+import { extensionWindowId, isExtensionPanelId, type BuiltinPanelId, type DockPanelId } from './dock-layout';
 import { WorkspaceHierarchyPanel, WorkspaceInspectorPanel } from './workspace-panels';
 export interface DockPanelDefinition {
     readonly id: DockPanelId;
@@ -31,7 +35,7 @@ export interface DockPanelDefinition {
     readonly inToolbar?: boolean;
     readonly render: () => ReactNode;
 }
-export const DOCK_PANELS: Record<DockPanelId, DockPanelDefinition> = {
+export const DOCK_PANELS: Record<BuiltinPanelId, DockPanelDefinition> = {
     hierarchy: { id: 'hierarchy', label: 'Hierarquia', guiLabel: 'Camadas', icon: ListTree, shortcut: 'panel.hierarchy', inToolbar: true, render: () => <WorkspaceHierarchyPanel /> },
     inspector: { id: 'inspector', label: 'Inspetor', icon: SlidersHorizontal, inToolbar: true, render: () => <WorkspaceInspectorPanel /> },
     lights: { id: 'lights', label: 'Luzes', icon: Lightbulb, shortcut: 'panel.lights', inToolbar: true, render: () => <LightsPanel /> },
@@ -53,7 +57,12 @@ export const DOCK_PANELS: Record<DockPanelId, DockPanelDefinition> = {
     extensions: { id: 'extensions', label: 'Extensões', icon: Blocks, render: () => <ExtensionsPanel /> },
 };
 export const TOOLBAR_PANELS: readonly DockPanelDefinition[] = Object.values(DOCK_PANELS).filter((panel) => panel.inToolbar);
-export function panelLabel(id: DockPanelId, workspace: EditorWorkspace): string {
-    const panel = DOCK_PANELS[id];
+export function panelLabel(panel: DockPanelDefinition, workspace: EditorWorkspace): string {
     return workspace === 'gui' ? (panel.guiLabel ?? panel.label) : panel.label;
+}
+export function resolveDockPanel(id: DockPanelId, windows: ContributionRegistry<WindowContribution>): DockPanelDefinition | null {
+    if (!isExtensionPanelId(id))
+        return DOCK_PANELS[id];
+    const window = windows.get(extensionWindowId(id));
+    return window ? { id, label: window.title, icon: extensionIcon(window.icon), render: () => <ExtensionGuiView surface={window.surface}/> } : null;
 }

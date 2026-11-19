@@ -8,6 +8,12 @@ import { isProjectTrusted, trustProject } from './extension-trust';
 const LOG_SOURCE = 'Extensões';
 const SYNC_DELAY_MS = 60;
 export type ExtensionScriptState = 'blocked' | 'disabled' | 'missing' | 'loading' | 'active' | 'failed';
+export interface ContributionOwnership {
+    mark(): number;
+    sweep(assetId: string, mark: number): void;
+    release(assetId: string): void;
+    releaseAll(): void;
+}
 export interface ExtensionScriptStatus {
     readonly assetId: string;
     readonly name: string;
@@ -20,6 +26,7 @@ function describeCause(cause: unknown): string {
 }
 export class ExtensionHost {
     trusted = false;
+    loadingAssetId: string | null = null;
     private scriptRuntime: ScriptRuntime | null = null;
     private started = false;
     private viewportCanvas: HTMLCanvasElement | null = null;
@@ -30,7 +37,7 @@ export class ExtensionHost {
     private version = 0;
     private syncTimer: ReturnType<typeof setTimeout> | null = null;
     private syncChain: Promise<void> = Promise.resolve();
-    constructor(private readonly session: EditorSession) { }
+    constructor(private readonly session: EditorSession, private readonly ownership: ContributionOwnership) { }
     readonly subscribe = (listener: Listener): (() => void) => {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
@@ -99,6 +106,7 @@ export class ExtensionHost {
             this.syncTimer = null;
         }
         this.scriptRuntime?.stop();
+        this.ownership.releaseAll();
         this.loadedHashes.clear();
         this.failedLoads.clear();
         this.loading.clear();
@@ -170,23 +178,29 @@ export class ExtensionHost {
         this.changed();
         if (runtime.scriptsOfAsset(asset.id).length === 0)
             runtime.unload(asset.id);
+        const mark = this.ownership.mark();
         let loaded = false;
+        this.loadingAssetId = asset.id;
         try {
             loaded = await runtime.reload(asset);
         }
         finally {
+            this.loadingAssetId = null;
             this.loading.delete(asset.id);
         }
         if (!this.started)
             return;
         this.loadedHashes.set(asset.id, asset.contentHash);
-        if (loaded)
-            this.failedLoads.delete(asset.id);
-        else
+        if (!loaded) {
             this.failedLoads.add(asset.id);
+            return;
+        }
+        this.failedLoads.delete(asset.id);
+        this.ownership.sweep(asset.id, mark);
     }
     private unload(assetId: string): void {
         this.scriptRuntime?.unload(assetId);
+        this.ownership.release(assetId);
         this.loadedHashes.delete(assetId);
         this.failedLoads.delete(assetId);
     }
