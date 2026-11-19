@@ -14,6 +14,7 @@ import { MAX_LOD_LEVELS } from '@/engine/renderer/lod/lod-chain';
 import { TILE_LEVELS } from '@/engine/terrain/chunks/terrain-tiles';
 import { VirtualGeometrySection } from './performance/virtual-geometry-section';
 import { LocalLightsSection } from './performance/local-lights-section';
+import { BatchingSection } from './performance/batching-section';
 import { GHOST_ACTION_CLASS } from '@/engine/ui/surface-styles';
 import { cn } from '@/lib/utils';
 const TIER_LABEL = { high: 'alta', mid: 'média', low: 'baixa' } as const;
@@ -204,13 +205,10 @@ export function PerformancePanel() {
           </PropertyRow>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Lotes e sombras">
+        <BatchingSection />
+
+        <CollapsibleSection title="Sombras e terreno">
           <ToggleField label="Sombras" on={session.shadowsEnabled} onToggle={() => session.toggleShadows()}/>
-          <PropertyRow label="Instâncias">
-            <Value>
-              {integer(stats.instances)} <span className="text-muted-foreground">em {integer(stats.batches)} lote(s)</span>
-            </Value>
-          </PropertyRow>
           <PropertyRow label="Sombras">
             <Value>
               {integer(stats.shadowDrawCalls)} draws <span className="text-muted-foreground">· {integer(stats.shadowTriangles)} tris</span>

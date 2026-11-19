@@ -3,7 +3,7 @@ import type { Entity } from '@/engine/core/scene/entity';
 import { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { OrbitController } from '@/engine/renderer/camera/orbit-controller';
 import { createFrameStats, type FrameStats, type Renderer } from '@/engine/renderer/renderer';
-import { createRenderOptimizationStats } from '@/engine/renderer/optimization/render-optimization';
+import { createRenderOptimizationStats, type RenderOptimizationSettings } from '@/engine/renderer/optimization/render-optimization';
 import type { FrameGovernor } from '@/engine/renderer/quality/frame-governor';
 import { FrameProfile } from '@/engine/renderer/stats/frame-profile';
 import type { FrameClock } from '@/engine/core/time/frame-clock';
@@ -514,6 +514,10 @@ export class EditorSession {
     }
     updateLod(patch: Partial<LodSettings>): void {
         Object.assign(this.render.lod, patch);
+        this.notify('view');
+    }
+    updateOptimization(patch: Partial<RenderOptimizationSettings>): void {
+        Object.assign(this.render.optimization, patch);
         this.notify('view');
     }
     updateMyriad(patch: Partial<MyriadSettings>): void {

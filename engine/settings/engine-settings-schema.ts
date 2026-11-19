@@ -575,6 +575,21 @@ export const ENGINE_SETTINGS = {
         description: 'Não desenha o que está escondido atrás de paredes e de outras malhas opacas grandes. As maiores malhas em tela são desenhadas na CPU num mapa de profundidade pequeno, refeito a cada quadro, contra o qual as demais são testadas.',
         default: true,
     }),
+    'render.batching.static': booleanSetting({
+        label: 'Lotes estáticos',
+        description: 'Malhas pequenas que ficam paradas e usam o mesmo material são fundidas numa só, por região, e saem em um draw call. Quando uma delas se move, muda ou é selecionada, a região volta a ser desenhada peça por peça até ser refeita.',
+        default: true,
+    }),
+    'render.batching.dynamic': booleanSetting({
+        label: 'Lotes dinâmicos',
+        description: 'Malhas de até 256 vértices com o mesmo material, mesmo em movimento, são transformadas na CPU e enviadas juntas a cada quadro. Compensa em cenas com muitas peças pequenas e diferentes entre si.',
+        default: false,
+    }),
+    'render.batching.shader': booleanSetting({
+        label: 'Ordenar lotes por shader (SRP Batcher)',
+        description: 'Os lotes são agrupados pela variante de shader antes do material, de modo que o programa e os uniformes do quadro só são trocados quando a variante muda.',
+        default: true,
+    }),
     'render.myriad.enabled': booleanSetting({
         label: 'Geometria virtual (Myriad)',
         description: 'Malhas densas são desenhadas por clusters refinados por pixel em vez de LODs fixos.',
@@ -934,6 +949,11 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
                 settings: ['render.budget.shadows', 'render.budget.localLights', 'render.budget.clouds', 'render.budget.terrainCache', 'render.budget.post', 'render.budget.myriad', 'render.hdrFormat'],
             },
             { title: 'Níveis de detalhe e descarte', settings: ['render.lod.enabled', 'render.lod.bias', 'render.lod.groups', 'render.culling.frustum', 'render.culling.occlusion', 'render.culling.minPixelSize'] },
+            {
+                title: 'Lotes de desenho',
+                description: 'Como as malhas do caminho clássico são agrupadas em draw calls. Malhas iguais com o mesmo material já saem juntas por instanciamento; estes ajustes cuidam das que sobram.',
+                settings: ['render.batching.static', 'render.batching.dynamic', 'render.batching.shader'],
+            },
             { title: 'Geometria virtual', settings: ['render.myriad.enabled', 'render.myriad.pixelError', 'render.myriad.occlusion', 'render.myriad.shadowClusters'] },
             { title: 'Terreno e CSG', settings: ['render.terrainCache', 'render.csgGhosts'] },
             { title: 'Marcadores do editor', settings: ['render.helpers.lights', 'render.helpers.sounds', 'render.helpers.vfx'] },

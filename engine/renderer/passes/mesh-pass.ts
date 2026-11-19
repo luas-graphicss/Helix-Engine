@@ -61,6 +61,8 @@ export class MeshPass {
     private instances: InstanceBuffer | null = null;
     private debugView = 0;
     private edges = false;
+    private readonly switches = { shaders: 0, materials: 0 };
+    private countedFrame = -1;
     constructor(private readonly gl: GL, private readonly meshes: GpuMeshCache, private readonly textures: GpuTextureCache, private readonly skins: GpuSkinCache, defines: ShaderDefines = {}) {
         this.optimization = RenderOptimization.for(gl);
         const fragment = withDefines(MESH_FRAGMENT_SHADER, defines);
@@ -86,9 +88,11 @@ export class MeshPass {
         this.edges = wireframe || view === 'triangles';
     }
     prepare(visible: VisibleSet, input: MeshPassInput, instances: InstanceBuffer, resolveMesh: MeshResolver): void {
-        const { batcher } = this;
-        batcher.build(visible, instances, input.selection, resolveMesh);
-        this.optimization.recordCulling(visible.stats);
+        const { batcher, optimization } = this;
+        this.publishSwitches();
+        batcher.build(visible, instances, input.selection, resolveMesh, optimization.settings);
+        optimization.recordCulling(visible.stats);
+        optimization.recordBatching(batcher.stats);
         this.stats.drawCalls = 0;
         this.stats.animatedShaders = 0;
         this.stats.triangles = batcher.stats.triangles;
@@ -96,6 +100,15 @@ export class MeshPass {
         this.stats.batches = batcher.stats.batches;
         this.input = input;
         this.instances = instances;
+    }
+    private publishSwitches(): void {
+        const { frame } = this.textures;
+        if (frame === this.countedFrame)
+            return;
+        this.countedFrame = frame;
+        this.optimization.recordSwitches(this.switches);
+        this.switches.shaders = 0;
+        this.switches.materials = 0;
     }
     renderDepth(surface = false): void {
         const { gl, batcher, input, instances } = this;
@@ -114,6 +127,7 @@ export class MeshPass {
             if (program !== wanted) {
                 program = wanted;
                 program.use();
+                this.switches.shaders++;
                 gl.uniformMatrix4fv(program.uniform('u_viewProjection'), false, viewProjection);
                 if (masked)
                     gl.uniform1i(program.uniform('u_baseColorMap'), MATERIAL_TEXTURE_UNIT);
@@ -260,6 +274,7 @@ export class MeshPass {
             gl.uniform1i(program.uniform('u_jointMatrices'), JOINT_MATRICES_TEXTURE_UNIT);
         this.boundProgram = program;
         this.boundState = null;
+        this.switches.shaders++;
     }
     private drawBatch(batch: MeshBatch, instances: InstanceBuffer, fallback: ShaderProgram, variant: SurfaceVariant, shadowSource: ShadowSource): void {
         const { state } = batch;
@@ -279,6 +294,7 @@ export class MeshPass {
         const program = this.boundProgram as ShaderProgram;
         const previous = this.boundState;
         this.boundState = state;
+        this.switches.materials++;
         gl.uniform1f(program.uniform('u_alphaMode'), ALPHA_MODE_VALUE[state.alphaMode]);
         if (!previous || previous.doubleSided !== state.doubleSided) {
             if (state.doubleSided)

@@ -111,7 +111,9 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
         }
         rendererRef.current = renderer;
         session.viewportRenderer = renderer;
-        RenderOptimization.for(renderer.gl).stats = session.optimizationStats;
+        const optimization = RenderOptimization.for(renderer.gl);
+        optimization.settings = session.render.optimization;
+        optimization.stats = session.optimizationStats;
         const governor = session.viewportGovernor;
         let frameHandle = 0;
         let frameCount = 0;

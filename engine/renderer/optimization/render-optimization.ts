@@ -1,17 +1,37 @@
 import type { GL } from '@/engine/renderer/gl/context';
+import type { MeshBatcherStats } from '@/engine/renderer/batching/mesh-batcher';
 import type { CullingStats } from '@/engine/renderer/culling/visible-set';
+export interface RenderOptimizationSettings {
+    staticBatching: boolean;
+    dynamicBatching: boolean;
+    shaderBatching: boolean;
+}
+export function createRenderOptimizationSettings(): RenderOptimizationSettings {
+    return { staticBatching: false, dynamicBatching: false, shaderBatching: false };
+}
 export interface RenderOptimizationStats {
     occluders: number;
     occluderTriangles: number;
     occlusionCulled: number;
     lodGroups: number;
     lodGroupsCulled: number;
+    staticBatches: number;
+    staticBatchedMeshes: number;
+    dynamicBatches: number;
+    dynamicBatchedMeshes: number;
+    shaderSwitches: number;
+    materialSwitches: number;
+}
+export interface DrawStateSwitches {
+    shaders: number;
+    materials: number;
 }
 export function createRenderOptimizationStats(): RenderOptimizationStats {
-    return { occluders: 0, occluderTriangles: 0, occlusionCulled: 0, lodGroups: 0, lodGroupsCulled: 0 };
+    return { occluders: 0, occluderTriangles: 0, occlusionCulled: 0, lodGroups: 0, lodGroupsCulled: 0, staticBatches: 0, staticBatchedMeshes: 0, dynamicBatches: 0, dynamicBatchedMeshes: 0, shaderSwitches: 0, materialSwitches: 0 };
 }
 export class RenderOptimization {
     private static readonly byContext = new WeakMap<GL, RenderOptimization>();
+    settings = createRenderOptimizationSettings();
     stats = createRenderOptimizationStats();
     static for(gl: GL): RenderOptimization {
         let optimization = RenderOptimization.byContext.get(gl);
@@ -29,5 +49,16 @@ export class RenderOptimization {
         stats.occlusionCulled = culling.occlusionCulled;
         stats.lodGroups = culling.lodGroups;
         stats.lodGroupsCulled = culling.lodGroupsCulled;
+    }
+    recordBatching(batching: MeshBatcherStats): void {
+        const { stats } = this;
+        stats.staticBatches = batching.staticBatches;
+        stats.staticBatchedMeshes = batching.staticMeshes;
+        stats.dynamicBatches = batching.dynamicBatches;
+        stats.dynamicBatchedMeshes = batching.dynamicMeshes;
+    }
+    recordSwitches(switches: DrawStateSwitches): void {
+        this.stats.shaderSwitches = switches.shaders;
+        this.stats.materialSwitches = switches.materials;
     }
 }

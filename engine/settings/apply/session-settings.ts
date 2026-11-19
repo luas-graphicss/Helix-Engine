@@ -56,6 +56,9 @@ export function applyRuntimeSessionSettings(session: EditorSession): void {
     render.culling.minPixelSize = get('render.culling.minPixelSize');
     render.culling.occlusionCulling = get('render.culling.occlusion');
     render.culling.lodGroups = get('render.lod.groups');
+    render.optimization.staticBatching = get('render.batching.static');
+    render.optimization.dynamicBatching = get('render.batching.dynamic');
+    render.optimization.shaderBatching = get('render.batching.shader');
     render.myriad.enabled = get('render.myriad.enabled');
     render.myriad.pixelError = get('render.myriad.pixelError');
     render.myriad.occlusionCulling = get('render.myriad.occlusion');

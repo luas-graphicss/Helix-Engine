@@ -57,6 +57,9 @@ export class SpatialGrid {
         }
         cell.dirty = true;
     }
+    contains(entity: Entity): boolean {
+        return this.entries.get(entity)?.seenFrame === this.frame;
+    }
     forEachCandidate(frustum: Frustum | null, stats: SpatialGridStats, visit: GridVisitor): void {
         stats.cells = 0;
         stats.cellsCulled = 0;

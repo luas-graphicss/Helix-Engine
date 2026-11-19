@@ -96,6 +96,9 @@ export class VisibleSet {
         stats.boundsChanged = this.bounds.changes;
         this.cullOccluded(camera);
     }
+    isRenderable(entity: Entity): boolean {
+        return this.grid.contains(entity);
+    }
     private cullOccluded(camera: PerspectiveCamera): void {
         const { stats } = this;
         stats.occlusionCulled = 0;

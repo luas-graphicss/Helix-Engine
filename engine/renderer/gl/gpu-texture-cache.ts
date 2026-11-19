@@ -33,6 +33,7 @@ export class GpuTextureCache {
     readonly white: WebGLTexture;
     readonly flatNormal: WebGLTexture;
     readonly stats = { uploads: 0, pending: 0 };
+    frame = 0;
     private readonly entries = new Map<number, CacheEntry>();
     private readonly anisotropic: EXT_texture_filter_anisotropic | null;
     private readonly maxAnisotropy: number;
@@ -45,6 +46,7 @@ export class GpuTextureCache {
             : 1;
     }
     beginFrame(): void {
+        this.frame++;
         this.stats.uploads = 0;
         this.stats.pending = 0;
     }
