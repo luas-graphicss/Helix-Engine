@@ -1,9 +1,9 @@
 import type { TextureColorSpace } from '@/engine/core/scene/texture';
 import type { GL } from '@/engine/renderer/gl/context';
 import type { BlockFormat } from './block-format';
-type InternalFormats = Record<BlockFormat, number>;
+export type BlockInternalFormats = Readonly<Record<BlockFormat, number>>;
 export interface BlockCompressionSupport {
-    readonly formats: Readonly<Record<TextureColorSpace, InternalFormats | null>>;
+    readonly formats: Readonly<Record<TextureColorSpace, BlockInternalFormats | null>>;
 }
 export function detectBlockCompression(gl: GL): BlockCompressionSupport | null {
     const linear = gl.getExtension('WEBGL_compressed_texture_s3tc');

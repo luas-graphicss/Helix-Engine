@@ -1,13 +1,26 @@
 import type { GL } from './context';
-import type { Texture, TextureFilter, TextureWrap } from '@/engine/core/scene/texture';
+import type { Texture, TextureImage } from '@/engine/core/scene/texture';
+import { mipChainBytes, rgbaLevelBytes } from '@/engine/renderer/textures/mips/mip-levels';
+import { ResidentTextureSet, type TextureResidencySettings } from '@/engine/renderer/textures/resident-texture-set';
+import { uploadImageMipChain } from '@/engine/renderer/textures/upload/image-mip-upload';
+import { applyImageUnpackState, imageInternalFormat } from '@/engine/renderer/textures/upload/image-transfer';
+import { TextureSampling } from '@/engine/renderer/textures/upload/texture-sampling';
 interface CacheEntry {
     handle: WebGLTexture;
     version: number;
     width: number;
     height: number;
     dynamic: boolean;
+    bytes: number;
 }
-const MAX_ANISOTROPY = 16;
+export interface TextureResidencyStats {
+    resident: number;
+    residentBytes: number;
+    compressed: number;
+    reduced: number;
+    compressing: number;
+    compressionAvailable: boolean;
+}
 function createSolidTexture(gl: GL, r: number, g: number, b: number, a: number): WebGLTexture {
     const handle = gl.createTexture();
     if (!handle)
@@ -19,39 +32,72 @@ function createSolidTexture(gl: GL, r: number, g: number, b: number, a: number):
     gl.bindTexture(gl.TEXTURE_2D, null);
     return handle;
 }
-function wrapMode(gl: GL, wrap: TextureWrap): number {
-    if (wrap === 'clamp')
-        return gl.CLAMP_TO_EDGE;
-    if (wrap === 'mirror')
-        return gl.MIRRORED_REPEAT;
-    return gl.REPEAT;
-}
-function minFilterMode(gl: GL, filter: TextureFilter): number {
-    return filter === 'nearest' ? gl.NEAREST_MIPMAP_NEAREST : gl.LINEAR_MIPMAP_LINEAR;
+function residentBytes(texture: Texture): number {
+    return texture.dynamic ? rgbaLevelBytes(texture.width, texture.height) : mipChainBytes(texture.width, texture.height, 0, rgbaLevelBytes);
 }
 export class GpuTextureCache {
     readonly white: WebGLTexture;
     readonly flatNormal: WebGLTexture;
     readonly stats = { uploads: 0, pending: 0 };
+    readonly residency: TextureResidencyStats;
     frame = 0;
     private readonly entries = new Map<number, CacheEntry>();
-    private readonly anisotropic: EXT_texture_filter_anisotropic | null;
-    private readonly maxAnisotropy: number;
+    private readonly exactTextures = new Set<number>();
+    private readonly sampling: TextureSampling;
+    private readonly materialMaps: ResidentTextureSet;
+    private settings: TextureResidencySettings = { textureCompression: false, mipStreaming: false, textureBudgetMb: 0 };
+    private entryBytes = 0;
+    private managingMaterialMaps = false;
     constructor(private readonly gl: GL) {
         this.white = createSolidTexture(gl, 255, 255, 255, 255);
         this.flatNormal = createSolidTexture(gl, 128, 128, 255, 255);
-        this.anisotropic = gl.getExtension('EXT_texture_filter_anisotropic');
-        this.maxAnisotropy = this.anisotropic
-            ? Math.min(gl.getParameter(this.anisotropic.MAX_TEXTURE_MAX_ANISOTROPY_EXT) as number, MAX_ANISOTROPY)
-            : 1;
+        this.sampling = new TextureSampling(gl);
+        this.materialMaps = new ResidentTextureSet(gl, this.sampling, this.stats);
+        this.residency = { resident: 0, residentBytes: 0, compressed: 0, reduced: 0, compressing: 0, compressionAvailable: this.materialMaps.compressionAvailable };
+    }
+    configure(settings: TextureResidencySettings): void {
+        this.settings = settings;
     }
     beginFrame(): void {
         this.frame++;
         this.stats.uploads = 0;
         this.stats.pending = 0;
+        this.materialMaps.beginFrame(this.settings, performance.now());
+        this.handOverMaterialMaps();
+        this.publishResidency();
     }
     resolve(texture: Texture): WebGLTexture | null {
+        this.exactTextures.add(texture.id);
+        this.materialMaps.release(texture);
+        return this.resolveEntry(texture);
+    }
+    resolveMaterialMap(texture: Texture, neededSize: number, blockCompressible: boolean): WebGLTexture | null {
+        if (!this.materialMaps.active || texture.dynamic || this.exactTextures.has(texture.id))
+            return this.resolveEntry(texture);
         if (!texture.image) {
+            this.stats.pending++;
+            return null;
+        }
+        this.releaseEntry(texture.id);
+        return this.materialMaps.resolve(texture, neededSize, blockCompressible);
+    }
+    release(texture: Texture): void {
+        this.releaseEntry(texture.id);
+        this.materialMaps.release(texture);
+        this.exactTextures.delete(texture.id);
+    }
+    dispose(): void {
+        for (const entry of this.entries.values())
+            this.gl.deleteTexture(entry.handle);
+        this.entries.clear();
+        this.entryBytes = 0;
+        this.materialMaps.releaseAll();
+        this.gl.deleteTexture(this.white);
+        this.gl.deleteTexture(this.flatNormal);
+    }
+    private resolveEntry(texture: Texture): WebGLTexture | null {
+        const { image } = texture;
+        if (!image) {
             this.stats.pending++;
             return null;
         }
@@ -63,59 +109,62 @@ export class GpuTextureCache {
             return null;
         const reuse = entry !== undefined && entry.dynamic && texture.dynamic && entry.width === texture.width && entry.height === texture.height;
         if (reuse)
-            this.update(handle, texture);
+            this.update(handle, image);
         else
-            this.upload(handle, texture);
-        this.entries.set(texture.id, { handle, version: texture.version, width: texture.width, height: texture.height, dynamic: texture.dynamic });
+            this.upload(handle, texture, image);
+        const bytes = residentBytes(texture);
+        this.entryBytes += bytes - (entry?.bytes ?? 0);
+        this.entries.set(texture.id, { handle, version: texture.version, width: texture.width, height: texture.height, dynamic: texture.dynamic, bytes });
         this.stats.uploads++;
         return handle;
     }
-    private setUnpackState(): void {
+    private upload(handle: WebGLTexture, texture: Texture, image: TextureImage): void {
         const { gl } = this;
-        gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-        gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
-        gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
-    }
-    private upload(handle: WebGLTexture, texture: Texture): void {
-        const { gl } = this;
-        gl.bindTexture(gl.TEXTURE_2D, handle);
-        this.setUnpackState();
-        const internalFormat = texture.colorSpace === 'srgb' ? gl.SRGB8_ALPHA8 : gl.RGBA8;
-        gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, gl.RGBA, gl.UNSIGNED_BYTE, texture.image as TexImageSource);
         if (texture.dynamic) {
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, texture.minFilter === 'nearest' ? gl.NEAREST : gl.LINEAR);
+            gl.bindTexture(gl.TEXTURE_2D, handle);
+            applyImageUnpackState(gl);
+            gl.texImage2D(gl.TEXTURE_2D, 0, imageInternalFormat(gl, texture.colorSpace), gl.RGBA, gl.UNSIGNED_BYTE, image);
         }
         else {
-            gl.generateMipmap(gl.TEXTURE_2D);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilterMode(gl, texture.minFilter));
+            uploadImageMipChain(gl, handle, { image, colorSpace: texture.colorSpace, width: texture.width, height: texture.height }, 0);
         }
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, texture.magFilter === 'nearest' ? gl.NEAREST : gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, wrapMode(gl, texture.wrapS));
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wrapMode(gl, texture.wrapT));
-        if (this.anisotropic && this.maxAnisotropy > 1 && !texture.dynamic) {
-            gl.texParameterf(gl.TEXTURE_2D, this.anisotropic.TEXTURE_MAX_ANISOTROPY_EXT, this.maxAnisotropy);
-        }
+        this.sampling.applyToBound(texture);
         gl.bindTexture(gl.TEXTURE_2D, null);
     }
-    private update(handle: WebGLTexture, texture: Texture): void {
+    private update(handle: WebGLTexture, image: TextureImage): void {
         const { gl } = this;
         gl.bindTexture(gl.TEXTURE_2D, handle);
-        this.setUnpackState();
-        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, texture.image as TexImageSource);
+        applyImageUnpackState(gl);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, image);
         gl.bindTexture(gl.TEXTURE_2D, null);
     }
-    release(texture: Texture): void {
-        const entry = this.entries.get(texture.id);
+    private releaseEntry(id: number): void {
+        const entry = this.entries.get(id);
         if (!entry)
             return;
         this.gl.deleteTexture(entry.handle);
-        this.entries.delete(texture.id);
+        this.entryBytes -= entry.bytes;
+        this.entries.delete(id);
     }
-    dispose(): void {
-        for (const entry of this.entries.values())
-            this.gl.deleteTexture(entry.handle);
-        this.entries.clear();
-        this.gl.deleteTexture(this.white);
-        this.gl.deleteTexture(this.flatNormal);
+    private handOverMaterialMaps(): void {
+        const managing = this.materialMaps.active;
+        if (managing === this.managingMaterialMaps)
+            return;
+        this.managingMaterialMaps = managing;
+        if (!managing)
+            return;
+        for (const [id, entry] of this.entries) {
+            if (!entry.dynamic && !this.exactTextures.has(id))
+                this.releaseEntry(id);
+        }
+    }
+    private publishResidency(): void {
+        const { residency } = this;
+        const maps = this.materialMaps.stats;
+        residency.resident = this.entries.size + maps.resident;
+        residency.residentBytes = this.entryBytes + maps.bytes;
+        residency.compressed = maps.compressed;
+        residency.reduced = maps.reduced;
+        residency.compressing = maps.compressing;
     }
 }

@@ -2,6 +2,7 @@ import type { GL } from '@/engine/renderer/gl/context';
 import type { MeshBatcherStats } from '@/engine/renderer/batching/mesh-batcher';
 import type { CullingStats } from '@/engine/renderer/culling/visible-set';
 import type { MeshResidencyStats } from '@/engine/renderer/gl/gpu-mesh-cache';
+import type { TextureResidencyStats } from '@/engine/renderer/gl/gpu-texture-cache';
 export interface RenderOptimizationSettings {
     staticBatching: boolean;
     dynamicBatching: boolean;
@@ -9,9 +10,12 @@ export interface RenderOptimizationSettings {
     meshCompression: boolean;
     meshStreaming: boolean;
     meshBudgetMb: number;
+    textureCompression: boolean;
+    mipStreaming: boolean;
+    textureBudgetMb: number;
 }
 export function createRenderOptimizationSettings(): RenderOptimizationSettings {
-    return { staticBatching: false, dynamicBatching: false, shaderBatching: false, meshCompression: false, meshStreaming: false, meshBudgetMb: 256 };
+    return { staticBatching: false, dynamicBatching: false, shaderBatching: false, meshCompression: false, meshStreaming: false, meshBudgetMb: 256, textureCompression: false, mipStreaming: false, textureBudgetMb: 512 };
 }
 export interface RenderOptimizationStats {
     occluders: number;
@@ -28,13 +32,19 @@ export interface RenderOptimizationStats {
     meshesResident: number;
     meshBytes: number;
     meshesReleased: number;
+    texturesResident: number;
+    textureBytes: number;
+    texturesCompressed: number;
+    texturesReduced: number;
+    texturesCompressing: number;
+    textureCompressionAvailable: boolean;
 }
 export interface DrawStateSwitches {
     shaders: number;
     materials: number;
 }
 export function createRenderOptimizationStats(): RenderOptimizationStats {
-    return { occluders: 0, occluderTriangles: 0, occlusionCulled: 0, lodGroups: 0, lodGroupsCulled: 0, staticBatches: 0, staticBatchedMeshes: 0, dynamicBatches: 0, dynamicBatchedMeshes: 0, shaderSwitches: 0, materialSwitches: 0, meshesResident: 0, meshBytes: 0, meshesReleased: 0 };
+    return { occluders: 0, occluderTriangles: 0, occlusionCulled: 0, lodGroups: 0, lodGroupsCulled: 0, staticBatches: 0, staticBatchedMeshes: 0, dynamicBatches: 0, dynamicBatchedMeshes: 0, shaderSwitches: 0, materialSwitches: 0, meshesResident: 0, meshBytes: 0, meshesReleased: 0, texturesResident: 0, textureBytes: 0, texturesCompressed: 0, texturesReduced: 0, texturesCompressing: 0, textureCompressionAvailable: false };
 }
 export class RenderOptimization {
     private static readonly byContext = new WeakMap<GL, RenderOptimization>();
@@ -69,6 +79,15 @@ export class RenderOptimization {
         stats.meshesResident = meshes.resident;
         stats.meshBytes = meshes.residentBytes;
         stats.meshesReleased = meshes.released;
+    }
+    recordTextures(textures: TextureResidencyStats): void {
+        const { stats } = this;
+        stats.texturesResident = textures.resident;
+        stats.textureBytes = textures.residentBytes;
+        stats.texturesCompressed = textures.compressed;
+        stats.texturesReduced = textures.reduced;
+        stats.texturesCompressing = textures.compressing;
+        stats.textureCompressionAvailable = textures.compressionAvailable;
     }
     recordSwitches(switches: DrawStateSwitches): void {
         this.stats.shaderSwitches = switches.shaders;

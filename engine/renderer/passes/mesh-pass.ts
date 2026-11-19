@@ -16,9 +16,11 @@ import { MATERIAL_MAP_SLOTS, type MaterialState } from '@/engine/renderer/batchi
 import type { CustomProgram, SurfaceVariant } from '@/engine/renderer/shaders/custom/custom-shader-programs';
 import type { AlphaMode } from '@/engine/core/scene/material';
 import { RenderOptimization } from '@/engine/renderer/optimization/render-optimization';
+import { MaterialTextureDemand } from '@/engine/renderer/textures/streaming/material-texture-demand';
 import type { MeshSurfaceShaders } from './mesh-surface-shaders';
 const MATERIAL_TEXTURE_UNIT = FIRST_PASS_TEXTURE_UNIT;
 const ALPHA_MODE_VALUE: Record<AlphaMode, number> = { opaque: 0, mask: 1, blend: 2 };
+const BLOCK_COMPRESSIBLE_MAPS: readonly boolean[] = MATERIAL_MAP_SLOTS.map((slot) => slot !== 'normalMap');
 interface TextureBinding {
     uniform: string;
     fallback: 'white' | 'flatNormal';
@@ -52,6 +54,7 @@ export class MeshPass {
     private readonly wireframeProgram: ShaderProgram;
     private readonly wireframeSkinnedProgram: ShaderProgram;
     private readonly batcher = new MeshBatcher();
+    private readonly textureDemand = new MaterialTextureDemand();
     private readonly optimization: RenderOptimization;
     private surface: MeshSurfaceShaders | null = null;
     private boundProgram: ShaderProgram | null = null;
@@ -92,9 +95,11 @@ export class MeshPass {
         this.publishSwitches();
         this.meshes.configure(optimization.settings, performance.now());
         batcher.build(visible, instances, input.selection, resolveMesh, optimization.settings);
+        this.collectTextureDemand(visible, input);
         optimization.recordCulling(visible.stats);
         optimization.recordBatching(batcher.stats);
         optimization.recordMeshes(this.meshes.stats);
+        optimization.recordTextures(this.textures.residency);
         this.stats.drawCalls = 0;
         this.stats.animatedShaders = 0;
         this.stats.triangles = batcher.stats.triangles;
@@ -102,6 +107,23 @@ export class MeshPass {
         this.stats.batches = batcher.stats.batches;
         this.input = input;
         this.instances = instances;
+    }
+    private collectTextureDemand(visible: VisibleSet, input: MeshPassInput): void {
+        const { batcher, textureDemand, optimization } = this;
+        this.textures.configure(optimization.settings);
+        textureDemand.begin(visible.pixelScale, input.camera.position);
+        if (!optimization.settings.mipStreaming)
+            return;
+        for (const batch of batcher.opaque)
+            textureDemand.add(batch);
+        for (const batch of batcher.skinned)
+            textureDemand.add(batch);
+        for (const batch of batcher.transparent)
+            textureDemand.add(batch);
+    }
+    private resolveMap(state: MaterialState, slot: number): WebGLTexture | null {
+        const texture = state.textures[slot];
+        return texture ? this.textures.resolveMaterialMap(texture, this.textureDemand.neededSize(state), BLOCK_COMPRESSIBLE_MAPS[slot]) : null;
     }
     private publishSwitches(): void {
         const { frame } = this.textures;
@@ -186,8 +208,7 @@ export class MeshPass {
     }
     private bindPrepassMap(state: MaterialState, slot: number): boolean {
         const { gl } = this;
-        const texture = state.textures[slot];
-        const handle = texture ? this.textures.resolve(texture) : null;
+        const handle = this.resolveMap(state, slot);
         gl.activeTexture(gl.TEXTURE0 + MATERIAL_TEXTURE_UNIT + slot);
         gl.bindTexture(gl.TEXTURE_2D, handle ?? this.textures.white);
         return handle !== null;
@@ -306,8 +327,7 @@ export class MeshPass {
         }
         let mask = 0;
         for (let i = 0; i < MATERIAL_MAP_SLOTS.length; i++) {
-            const texture = state.textures[i];
-            const handle = texture ? textures.resolve(texture) : null;
+            const handle = this.resolveMap(state, i);
             gl.activeTexture(gl.TEXTURE0 + MATERIAL_TEXTURE_UNIT + i);
             gl.bindTexture(gl.TEXTURE_2D, handle ?? textures[TEXTURE_BINDINGS[i].fallback]);
             if (handle)
