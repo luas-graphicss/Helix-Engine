@@ -1,5 +1,5 @@
 'use client';
-import { Box, Code2, LayoutPanelTop, Workflow, type LucideIcon } from 'lucide-react';
+import { Box, Code2, Flame, LayoutPanelTop, Workflow, type LucideIcon } from 'lucide-react';
 import type { EditorWorkspace } from '@/engine/editor/session/editor-session';
 import { useSessionTopic } from '@/engine/editor/session/editor-session-context';
 import { useGuiDesigner } from '@/engine/editor/gui/ui/use-gui-designer';
@@ -18,6 +18,7 @@ const WORKSPACES: readonly WorkspaceOption[] = [
     { id: 'gui', label: 'Interface', icon: LayoutPanelTop, hint: 'Designer 2D: telas, menus e HUD do jogo' },
     { id: 'code', label: 'Código', icon: Code2, hint: 'Editor de código: os scripts do jogo' },
     { id: 'shader', label: 'Shaders', icon: Workflow, hint: 'Shader Graph: materiais e efeitos de tela montados com nós' },
+    { id: 'effect', label: 'Efeitos', icon: Flame, hint: 'Visual Effect Graph: partículas simuladas na GPU, montadas com blocos' },
 ];
 export function WorkspaceSwitch() {
     const session = useSessionTopic('workspace');

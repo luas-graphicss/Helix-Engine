@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { handleCodeShortcut } from '@/engine/editor/code/code-shortcuts';
 import { handleShaderGraphShortcut } from '@/engine/editor/shader-graph/shader-graph-shortcuts';
+import { handleVfxGraphShortcut } from '@/engine/editor/vfx-graph/vfx-graph-shortcuts';
 import { editorDialogs } from '@/engine/editor/dialogs/editor-dialogs';
 import { runMenuShortcut } from '@/engine/editor/extensions/menus/menu-commands';
 import { releaseToolOnEscape, runToolShortcut } from '@/engine/editor/extensions/tools/tool-shortcuts';
@@ -275,6 +276,8 @@ function runBuiltInShortcut(context: ShortcutContext): boolean {
         return handleCodeShortcut(event, session);
     if (session.workspace === 'shader')
         return handleShaderGraphShortcut(event, session);
+    if (session.workspace === 'effect')
+        return handleVfxGraphShortcut(event, session);
     if (session.code.windowOpen && session.code.presentation === 'window' && handleCodeShortcut(event, session))
         return true;
     return action !== null && runEditorAction(action, context);

@@ -11,6 +11,7 @@ import { GuiWorkspace } from './gui/ui/gui-workspace';
 import { CodeWorkspace } from './code/ui/code-workspace';
 import { CodeWindow } from './code/ui/code-window';
 import { ShaderGraphWorkspace } from './shader-graph/ui/shader-graph-workspace';
+import { VfxGraphWorkspace } from './vfx-graph/ui/vfx-graph-workspace';
 import { useCodeSelector } from './code/ui/use-code-editor';
 import { CommandBar } from './chrome/command-bar';
 import { refreshScriptFromStorage, scriptSync } from './operations/script-operations';
@@ -125,6 +126,7 @@ function WorkspaceCenter() {
       {workspace === 'gui' && <GuiWorkspace />}
       {workspace === 'code' && <CodeWorkspace />}
       {workspace === 'shader' && <ShaderGraphWorkspace />}
+      {workspace === 'effect' && <VfxGraphWorkspace />}
       {floatingCode && <CodeWindow />}
       <DockDropZones />
     </div>);
