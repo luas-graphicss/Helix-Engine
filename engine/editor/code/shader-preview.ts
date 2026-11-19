@@ -1,11 +1,9 @@
 import type { LibraryAsset } from '@/engine/assets/library/asset-types';
-import * as mat4 from '@/engine/core/math/mat4';
-import * as vec3 from '@/engine/core/math/vec3';
 import type { Entity } from '@/engine/core/scene/entity';
 import type { Material } from '@/engine/core/scene/material';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { CustomPostEffect } from '@/engine/renderer/post/custom-post-pass';
-import type { ScriptDebugLine, ScriptFrameTarget, ScriptRenderRequest } from '@/engine/renderer/script-hooks';
+import { createScriptFrameTarget, type ScriptDebugLine, type ScriptRenderRequest } from '@/engine/renderer/script-hooks';
 import { SHADER_MODEL_LABEL } from '@/engine/renderer/shaders/custom/custom-shader.glsl';
 import { materialShader, setMaterialShader } from '@/engine/renderer/shaders/custom/material-shader-registry';
 import { decodeShaderBundle, type CompiledShaderBundle } from '@/engine/renderer/shaders/custom/shader-bundle';
@@ -20,29 +18,12 @@ export interface ShaderPreviewTarget {
     readonly bundle: CompiledShaderBundle;
     readonly entity: Entity | null;
 }
-function createFrameTarget(): ScriptFrameTarget {
-    return {
-        gl: null,
-        width: 0,
-        height: 0,
-        pixelRatio: 1,
-        elapsed: 0,
-        delta: 0,
-        view: mat4.create(),
-        projection: mat4.create(),
-        viewProjection: mat4.create(),
-        cameraPosition: vec3.create(),
-        sceneColor: null,
-        sceneDepth: null,
-        hdr: true,
-    };
-}
 export class ShaderPreview implements ScriptRenderRequest {
     status: ShaderPreviewStatus = 'off';
     message: string | null = null;
     target: ShaderPreviewTarget | null = null;
     readonly enabled = true;
-    readonly frame = createFrameTarget();
+    readonly frame = createScriptFrameTarget();
     readonly debugLines: readonly ScriptDebugLine[] = [];
     private assetId: string | null = null;
     private binding: ShaderBinding | null = null;
