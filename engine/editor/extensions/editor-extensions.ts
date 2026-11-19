@@ -1,6 +1,7 @@
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { ScriptRenderRequest } from '@/engine/renderer/script-hooks';
 import { ExtensionHost } from './host/extension-host';
+import type { InspectorContribution } from './inspectors/inspector-contribution';
 import type { MenuContribution } from './menus/menu-contribution';
 import { ContributionRegistry, RegistrationClock, type Contribution, type OwnedContributions } from './registry/contribution-registry';
 import type { WindowContribution } from './windows/window-contribution';
@@ -8,11 +9,13 @@ export class EditorExtensions {
     readonly host: ExtensionHost;
     readonly windows: ContributionRegistry<WindowContribution>;
     readonly menus: ContributionRegistry<MenuContribution>;
+    readonly inspectors: ContributionRegistry<InspectorContribution>;
     private readonly clock = new RegistrationClock();
     private readonly registries: OwnedContributions[] = [];
     constructor(session: EditorSession) {
         this.windows = this.createRegistry();
         this.menus = this.createRegistry();
+        this.inspectors = this.createRegistry();
         this.host = new ExtensionHost(session, {
             mark: () => this.clock.current,
             sweep: (assetId, mark) => this.registries.forEach((registry) => registry.sweep(assetId, mark)),

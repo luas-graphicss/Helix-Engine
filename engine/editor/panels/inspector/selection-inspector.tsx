@@ -1,5 +1,6 @@
 'use client';
 import { Layers } from 'lucide-react';
+import { ExtensionInspectorSections } from '@/engine/editor/extensions/ui/inspectors/extension-inspector-sections';
 import { editableTransformRoots, selectionEditBlock, setSelectionTransformAxis, sharedTransformAxes } from '@/engine/editor/operations/selection-transform-operations';
 import { FIELD_LABEL } from '@/engine/editor/operations/transform-operations';
 import { useLiveEdits } from '@/engine/editor/session/editor-session-context';
@@ -48,6 +49,7 @@ export function SelectionInspector() {
                         </p>
                     )}
                 </CollapsibleSection>
+                <ExtensionInspectorSections selection={session.selectedEntities()}/>
             </div>
         </section>
     );

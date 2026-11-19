@@ -2365,6 +2365,9 @@ const EDITOR_API = `
   export interface EditorMenuTarget { readonly actors: Entity[]; readonly actor: Entity | null; readonly asset: LibraryAsset | null }
   export interface EditorMenuOptions { location?: EditorMenuLocation; icon?: string; shortcut?: string; order?: number; separator?: boolean; run(target: EditorMenuTarget): void; enabled?(target: EditorMenuTarget): boolean; checked?(target: EditorMenuTarget): boolean }
   export interface EditorMenuHandle { readonly path: string; readonly location: EditorMenuLocation; run(): void; unregister(): void }
+  export interface EditorActorFilter { kinds?: EntityKind | readonly EntityKind[]; appliesTo?(actor: Entity): boolean }
+  export interface EditorInspectorOptions extends EditorActorFilter { title?: string; multiple?: boolean; order?: number; open?: boolean; onGui(ui: EditorGui, actors: Entity[]): void }
+  export interface EditorInspectorHandle { readonly id: string; repaint(): void; unregister(): void }
   export interface EditorApi {
     readonly selection: Entity[]
     readonly selected: Entity | null
@@ -2401,6 +2404,7 @@ const EDITOR_API = `
     readonly console: { clear(): void; readonly entries: { id: number; elapsedMs: number; level: 'debug' | 'info' | 'warn' | 'error'; source: string; message: string; repeat: number }[]; readonly count: number }
     readonly windows: { register(id: string, options: EditorWindowOptions): EditorWindowHandle; unregister(id: string): boolean; open(id: string): void; close(id: string): void; toggle(id: string): void; isOpen(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
     readonly menus: { register(path: string, options: EditorMenuOptions): EditorMenuHandle; unregister(path: string, location?: EditorMenuLocation): boolean; run(path: string, location?: EditorMenuLocation): void; list(): { path: string; location: EditorMenuLocation; shortcut: string | null }[] }
+    readonly inspectors: { register(id: string, options: EditorInspectorOptions): EditorInspectorHandle; unregister(id: string): boolean; repaint(id: string): void; list(): { id: string; title: string }[] }
     readonly tools: { register(id: string, options: { label: string; shortcut?: string; run: () => void }): Unsubscribe; unregister(id: string): boolean; list(): { id: string; label: string; shortcut: string | null }[]; run(id: string): void }
     notify(): void
   }

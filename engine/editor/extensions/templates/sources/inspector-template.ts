@@ -1,0 +1,28 @@
+export function inspectorTemplateSource(tab: string): string {
+    return [
+        'import helix from "helix"',
+        '',
+        'const editor = helix.editor',
+        '',
+        'if (editor) {',
+        `${tab}editor.inspectors.register("altura-rapida", {`,
+        `${tab}${tab}title: "Altura rápida",`,
+        `${tab}${tab}kinds: ["mesh", "group"],`,
+        `${tab}${tab}multiple: true,`,
+        `${tab}${tab}onGui(ui, actors) {`,
+        `${tab}${tab}${tab}const current = helix.transform.position(actors[0])[1]`,
+        `${tab}${tab}${tab}const height = ui.slider("Altura", current, -10, 10, { step: 0.25 })`,
+        `${tab}${tab}${tab}const grounded = ui.button("Apoiar no chão", { icon: "magnet" })`,
+        `${tab}${tab}${tab}if (height !== current || grounded) {`,
+        `${tab}${tab}${tab}${tab}for (const actor of actors) {`,
+        `${tab}${tab}${tab}${tab}${tab}const position = helix.transform.position(actor)`,
+        `${tab}${tab}${tab}${tab}${tab}helix.transform.setPosition(actor, [position[0], grounded ? 0 : height, position[2]])`,
+        `${tab}${tab}${tab}${tab}}`,
+        `${tab}${tab}${tab}}`,
+        `${tab}${tab}${tab}ui.label(\`\${actors.length} ator(es) nesta seção\`, { muted: true })`,
+        `${tab}${tab}},`,
+        `${tab}})`,
+        '}',
+        '',
+    ].join('\n');
+}

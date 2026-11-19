@@ -37,6 +37,7 @@ import { BoneSection, RigSection } from './inspector/rig-section';
 import { LibraryMaterialSection, MaterialPickerButton, OwnMaterialRow } from './inspector/material-library-section';
 import { TransformSection } from './inspector/transform-section';
 import { SelectionInspector } from './inspector/selection-inspector';
+import { ExtensionInspectorSections } from '@/engine/editor/extensions/ui/inspectors/extension-inspector-sections';
 import { formatNumber, ScalarField } from './inspector/number-fields';
 import { INSPECTOR_NAME_INPUT_ID } from '@/engine/editor/shortcuts/focus-targets';
 import { useShortcutHint } from '@/engine/editor/shortcuts/shortcut-bindings';
@@ -218,6 +219,7 @@ export function InspectorPanel() {
         <VfxAttachSection entity={entity}/>
         <AudioAttachSection entity={entity}/>
         <ScriptAttachSection entity={entity}/>
+        <ExtensionInspectorSections selection={[entity]}/>
 
         {entity.kind !== 'script' && (<CollapsibleSection title="Renderização">
           <ToggleField label="Visível" on={entity.visible} onToggle={() => setEntityVisibility(session, entity, !entity.visible)}/>
