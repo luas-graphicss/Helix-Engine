@@ -219,7 +219,6 @@ export function InspectorPanel() {
         <VfxAttachSection entity={entity}/>
         <AudioAttachSection entity={entity}/>
         <ScriptAttachSection entity={entity}/>
-        <ExtensionInspectorSections selection={[entity]}/>
 
         {entity.kind !== 'script' && (<CollapsibleSection title="Renderização">
           <ToggleField label="Visível" on={entity.visible} onToggle={() => setEntityVisibility(session, entity, !entity.visible)}/>
@@ -228,6 +227,7 @@ export function InspectorPanel() {
               <ToggleField label="Recebe sombras" on={entity.receiveShadows} onToggle={() => setShadowFlag(session, entity, 'receiveShadows', !entity.receiveShadows)}/>
             </>)}
         </CollapsibleSection>)}
+        <ExtensionInspectorSections selection={[entity]}/>
       </div>
     </div>);
 }
