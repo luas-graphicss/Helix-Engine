@@ -80,4 +80,6 @@ No Inspetor, cada script anexado tem o interruptor **ativado**, o seletor de **c
 
 ## Scripts de ferramenta
 
-Um script que usa `helix.editor` é uma **ferramenta**: roda só dentro do editor, nunca entra no jogo compilado. Ferramentas acrescentam itens de menu, painéis e atalhos, e toda alteração que fazem na cena passa pelo histórico, então `Ctrl+Z` desfaz o que uma ferramenta fez. Veja a [referência de `helix.editor`](/helix/docs/pt-br/referencia/ferramentas).
+Um script que usa `helix.editor` é uma **ferramenta**: roda só dentro do editor. **Executar** roda a ferramenta uma vez, e o que ela registrou no editor some quando ela termina.
+
+Para que o script suba junto com o editor e mantenha janelas, itens de menu, seções do Inspetor, gizmos, ferramentas do viewport e fluxos de trabalho, marque-o como extensão. Veja [Extensões do editor](/helix/docs/pt-br/scripting/extensoes-do-editor).
