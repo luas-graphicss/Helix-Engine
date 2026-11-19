@@ -3,6 +3,7 @@ import type { Entity } from '@/engine/core/scene/entity';
 import { PerspectiveCamera } from '@/engine/renderer/camera/perspective-camera';
 import { OrbitController } from '@/engine/renderer/camera/orbit-controller';
 import { createFrameStats, type FrameStats, type Renderer } from '@/engine/renderer/renderer';
+import { createRenderOptimizationStats } from '@/engine/renderer/optimization/render-optimization';
 import type { FrameGovernor } from '@/engine/renderer/quality/frame-governor';
 import { FrameProfile } from '@/engine/renderer/stats/frame-profile';
 import type { FrameClock } from '@/engine/core/time/frame-clock';
@@ -156,6 +157,7 @@ export class EditorSession {
     readonly gizmo = new TransformGizmo(this);
     readonly stats: ViewportStats = { ...createFrameStats(), fps: 0, idle: false };
     readonly render: RenderSettings = createRenderSettings();
+    readonly optimizationStats = createRenderOptimizationStats();
     private version = 0;
     private readonly listeners = new Set<Listener>();
     private sceneVersion = 0;

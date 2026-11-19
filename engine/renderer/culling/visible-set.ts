@@ -9,6 +9,7 @@ import { Frustum } from './frustum';
 import { RenderableBoundsCache, type RenderableBounds } from './renderable-bounds';
 import { SpatialGrid, type SpatialGridStats } from './spatial-grid';
 import { pixelsPerTangent, projectedDiameterPixels } from './screen-coverage';
+import { OcclusionCuller } from './occlusion/occlusion-culler';
 export interface VisibleMesh {
     entity: Entity;
     mesh: MeshData;
@@ -30,17 +31,21 @@ export interface TerrainShadowCaster extends ShadowCaster {
 export interface CullingOptions {
     frustumCulling: boolean;
     minPixelSize: number;
+    occlusionCulling: boolean;
 }
 export interface CullingStats extends SpatialGridStats {
     candidates: number;
     visible: number;
     frustumCulled: number;
     sizeCulled: number;
+    occlusionCulled: number;
+    occluders: number;
+    occluderTriangles: number;
     boundsChanged: number;
     renderables: number;
 }
 export function createCullingStats(): CullingStats {
-    return { candidates: 0, visible: 0, frustumCulled: 0, sizeCulled: 0, boundsChanged: 0, renderables: 0, cells: 0, cellsCulled: 0, culledByCell: 0 };
+    return { candidates: 0, visible: 0, frustumCulled: 0, sizeCulled: 0, occlusionCulled: 0, occluders: 0, occluderTriangles: 0, boundsChanged: 0, renderables: 0, cells: 0, cellsCulled: 0, culledByCell: 0 };
 }
 export class VisibleSet {
     readonly meshes: VisibleMesh[] = [];
@@ -56,7 +61,8 @@ export class VisibleSet {
     private readonly casterPool: ShadowCasterCandidate[] = [];
     private readonly terrainCasterPool: TerrainShadowCaster[] = [];
     private camera: PerspectiveCamera | null = null;
-    private options: CullingOptions = { frustumCulling: true, minPixelSize: 0 };
+    private options: CullingOptions = { frustumCulling: true, minPixelSize: 0, occlusionCulling: false };
+    private occlusion: OcclusionCuller | null = null;
     private showBrushes = true;
     collect(scene: Scene, camera: PerspectiveCamera, viewportHeight: number, options: CullingOptions, showCsgBrushes = true): void {
         const { stats, meshes, terrains, casters, terrainCasters, grid } = this;
@@ -80,6 +86,22 @@ export class VisibleSet {
         grid.forEachCandidate(options.frustumCulling ? this.frustum : null, stats, this.test);
         stats.frustumCulled += stats.culledByCell;
         stats.boundsChanged = this.bounds.changes;
+        this.cullOccluded(camera);
+    }
+    private cullOccluded(camera: PerspectiveCamera): void {
+        const { stats } = this;
+        stats.occlusionCulled = 0;
+        stats.occluders = 0;
+        stats.occluderTriangles = 0;
+        if (!this.options.occlusionCulling)
+            return;
+        this.occlusion ??= new OcclusionCuller();
+        this.occlusion.cull(this.meshes, camera);
+        const occlusion = this.occlusion.stats;
+        stats.occlusionCulled = occlusion.culled;
+        stats.occluders = occlusion.occluders;
+        stats.occluderTriangles = occlusion.occluderTriangles;
+        stats.visible -= occlusion.culled;
     }
     private readonly register = (entity: Entity): void => {
         const { terrain } = entity;

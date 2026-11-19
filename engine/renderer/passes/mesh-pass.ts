@@ -15,6 +15,7 @@ import { MeshBatcher, type MeshBatch, type MeshResolver } from '@/engine/rendere
 import { MATERIAL_MAP_SLOTS, type MaterialState } from '@/engine/renderer/batching/material-state';
 import type { CustomProgram, SurfaceVariant } from '@/engine/renderer/shaders/custom/custom-shader-programs';
 import type { AlphaMode } from '@/engine/core/scene/material';
+import { RenderOptimization } from '@/engine/renderer/optimization/render-optimization';
 import type { MeshSurfaceShaders } from './mesh-surface-shaders';
 const MATERIAL_TEXTURE_UNIT = FIRST_PASS_TEXTURE_UNIT;
 const ALPHA_MODE_VALUE: Record<AlphaMode, number> = { opaque: 0, mask: 1, blend: 2 };
@@ -51,6 +52,7 @@ export class MeshPass {
     private readonly wireframeProgram: ShaderProgram;
     private readonly wireframeSkinnedProgram: ShaderProgram;
     private readonly batcher = new MeshBatcher();
+    private readonly optimization: RenderOptimization;
     private surface: MeshSurfaceShaders | null = null;
     private boundProgram: ShaderProgram | null = null;
     private boundState: MaterialState | null = null;
@@ -60,6 +62,7 @@ export class MeshPass {
     private debugView = 0;
     private edges = false;
     constructor(private readonly gl: GL, private readonly meshes: GpuMeshCache, private readonly textures: GpuTextureCache, private readonly skins: GpuSkinCache, defines: ShaderDefines = {}) {
+        this.optimization = RenderOptimization.for(gl);
         const fragment = withDefines(MESH_FRAGMENT_SHADER, defines);
         const skinnedVertex = withDefines(MESH_VERTEX_SHADER, { SKINNED: true });
         this.program = new ShaderProgram(gl, MESH_VERTEX_SHADER, fragment);
@@ -85,6 +88,7 @@ export class MeshPass {
     prepare(visible: VisibleSet, input: MeshPassInput, instances: InstanceBuffer, resolveMesh: MeshResolver): void {
         const { batcher } = this;
         batcher.build(visible, instances, input.selection, resolveMesh);
+        this.optimization.recordCulling(visible.stats);
         this.stats.drawCalls = 0;
         this.stats.animatedShaders = 0;
         this.stats.triangles = batcher.stats.triangles;

@@ -58,6 +58,7 @@ export function PerformancePanel() {
     const session = useSessionTopic('view', 'scene', 'playtest');
     const stats = useViewportStats();
     const { culling, lod } = session.render;
+    const optimization = session.optimizationStats;
     const gpu = stats.gpuStageMs;
     const cpuTotal = stats.cpuStageMs.reduce((sum, value) => sum + value, 0);
     const frameMs = stats.fps > 0 ? 1000 / stats.fps : 0;
@@ -157,12 +158,21 @@ export function PerformancePanel() {
 
         <CollapsibleSection title="Descarte de objetos">
           <ToggleField label="Fora da câmera" on={culling.frustumCulling} onToggle={() => session.toggleFrustumCulling()}/>
+          <ToggleField label="Atrás de outros" on={culling.occlusionCulling} onToggle={() => session.updateCulling({ occlusionCulling: !culling.occlusionCulling })}/>
           <SliderField label="Tamanho mín." value={culling.minPixelSize} min={0} max={12} step={0.5} format={pixels} onChange={(value) => session.updateCulling({ minPixelSize: value })}/>
           <PropertyRow label="Visíveis">
             <Ratio part={stats.meshesVisible} total={stats.meshCandidates}/>
           </PropertyRow>
           <PropertyRow label="Fora da câmera">
             <Value>{integer(stats.frustumCulled)}</Value>
+          </PropertyRow>
+          <PropertyRow label="Atrás de outros">
+            <Value>
+              {integer(optimization.occlusionCulled)}{' '}
+              <span className="text-muted-foreground" title="Malhas opacas grandes desenhadas na CPU para esconder o que fica atrás delas">
+                · {integer(optimization.occluders)} oclusor(es), {integer(optimization.occluderTriangles)} tris
+              </span>
+            </Value>
           </PropertyRow>
           <PropertyRow label="Pequenas demais">
             <Value>{integer(stats.sizeCulled)}</Value>

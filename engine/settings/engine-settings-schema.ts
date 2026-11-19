@@ -565,6 +565,11 @@ export const ENGINE_SETTINGS = {
         step: 0.5,
         unit: ' px',
     }),
+    'render.culling.occlusion': booleanSetting({
+        label: 'Descarte por oclusão',
+        description: 'Não desenha o que está escondido atrás de paredes e de outras malhas opacas grandes. As maiores malhas em tela são desenhadas na CPU num mapa de profundidade pequeno, refeito a cada quadro, contra o qual as demais são testadas.',
+        default: true,
+    }),
     'render.myriad.enabled': booleanSetting({
         label: 'Geometria virtual (Myriad)',
         description: 'Malhas densas são desenhadas por clusters refinados por pixel em vez de LODs fixos.',
@@ -923,7 +928,7 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
                 description: 'Cada orçamento segue o perfil em Automático; forçado, toma os valores de outra classe só para aquele subsistema. Nenhum muda o resultado convergido, só quanto trabalho é feito por frame e em que resolução. Valem ao reabrir o jogo.',
                 settings: ['render.budget.shadows', 'render.budget.localLights', 'render.budget.clouds', 'render.budget.terrainCache', 'render.budget.post', 'render.budget.myriad', 'render.hdrFormat'],
             },
-            { title: 'Níveis de detalhe e descarte', settings: ['render.lod.enabled', 'render.lod.bias', 'render.culling.frustum', 'render.culling.minPixelSize'] },
+            { title: 'Níveis de detalhe e descarte', settings: ['render.lod.enabled', 'render.lod.bias', 'render.culling.frustum', 'render.culling.occlusion', 'render.culling.minPixelSize'] },
             { title: 'Geometria virtual', settings: ['render.myriad.enabled', 'render.myriad.pixelError', 'render.myriad.occlusion', 'render.myriad.shadowClusters'] },
             { title: 'Terreno e CSG', settings: ['render.terrainCache', 'render.csgGhosts'] },
             { title: 'Marcadores do editor', settings: ['render.helpers.lights', 'render.helpers.sounds', 'render.helpers.vfx'] },
