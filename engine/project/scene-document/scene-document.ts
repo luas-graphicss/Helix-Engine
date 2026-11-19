@@ -107,6 +107,7 @@ export interface EntityJson {
     guiSurface?: PlainValue;
     vfx?: PlainValue;
     script?: PlainValue;
+    lodGroup?: PlainValue;
     tags?: string[];
     meta?: Record<string, PlainValue>;
     children: EntityJson[];

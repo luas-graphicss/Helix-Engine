@@ -5,6 +5,7 @@ export interface EntityLodOverride {
 }
 const lodOverrides = new WeakMap<Entity, EntityLodOverride>();
 const myriadDisabled = new WeakSet<Entity>();
+const lodGroupPreviews = new WeakMap<Entity, number>();
 export function setEntityLodOverride(entity: Entity, override: EntityLodOverride | null): void {
     if (override)
         lodOverrides.set(entity, override);
@@ -22,4 +23,13 @@ export function setEntityMyriadEnabled(entity: Entity, enabled: boolean): void {
 }
 export function isEntityMyriadEnabled(entity: Entity): boolean {
     return !myriadDisabled.has(entity);
+}
+export function setLodGroupPreview(group: Entity, level: number | null): void {
+    if (level === null)
+        lodGroupPreviews.delete(group);
+    else
+        lodGroupPreviews.set(group, Math.max(0, Math.floor(level)));
+}
+export function lodGroupPreview(group: Entity): number | null {
+    return lodGroupPreviews.get(group) ?? null;
 }

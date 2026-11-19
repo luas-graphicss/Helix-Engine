@@ -92,7 +92,7 @@ export class MaterialResolvePass {
         let mask = 0;
         for (let i = 0; i < MATERIAL_MAP_SLOTS.length; i++) {
             const texture = state.textures[i];
-            const handle = texture ? textures.resolve(texture) : null;
+            const handle = texture ? textures.resolveMaterialMap(texture, Infinity, MATERIAL_MAP_SLOTS[i] !== 'normalMap') : null;
             gl.activeTexture(gl.TEXTURE0 + FIRST_PASS_TEXTURE_UNIT + i);
             gl.bindTexture(gl.TEXTURE_2D, handle ?? textures[MAP_BINDINGS[i].fallback]);
             if (handle)

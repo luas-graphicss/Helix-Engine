@@ -113,6 +113,8 @@ class SceneWriter {
             json.vfx = toPlain(entity.vfx, `${entity.name}.vfx`);
         if (entity.script)
             json.script = toPlain(entity.script, `${entity.name}.script`);
+        if (entity.lodGroup)
+            json.lodGroup = toPlain(entity.lodGroup, `${entity.name}.lodGroup`);
         const modelRoot = entity.character ? findModelRoot(entity) : null;
         for (const child of entity.children) {
             if (child !== modelRoot)

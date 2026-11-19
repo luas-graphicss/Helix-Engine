@@ -19,6 +19,7 @@ import { createAudioSourceSettings } from '@/engine/audio/world/audio-source-set
 import { createAudioZoneSettings } from '@/engine/audio/world/audio-zone-settings';
 import { createGuiSurfaceSettings } from '@/engine/gui/world/gui-surface-settings';
 import { createVfxSettings } from '@/engine/vfx/vfx-settings';
+import { createLodGroupSettings, normalizeLodGroupSettings } from '@/engine/renderer/lod/groups/lod-group-settings';
 import { createScriptSettings } from '@/engine/scripting/script-settings';
 import { createScriptingSettings } from '@/engine/scripting/scripting-settings';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
@@ -201,6 +202,8 @@ class SceneReader {
             options.vfx = restoreInto(createVfxSettings(), json.vfx);
         if (json.script)
             options.script = restoreInto(createScriptSettings(), json.script);
+        if (json.lodGroup)
+            options.lodGroup = normalizeLodGroupSettings(restoreInto(createLodGroupSettings(), json.lodGroup));
         const entity = this.freshIds ? scene.createEntity(options, parent) : scene.restoreEntity({ ...options, id: json.id }, parent);
         this.applyCommon(entity, json);
         if (this.entitiesById.has(json.id))

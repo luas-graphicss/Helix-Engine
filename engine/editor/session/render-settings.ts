@@ -1,5 +1,6 @@
 import type { CullingOptions } from '@/engine/renderer/culling/visible-set';
 import type { LodSettings } from '@/engine/renderer/lod/lod-selector';
+import { createRenderOptimizationSettings, type RenderOptimizationSettings } from '@/engine/renderer/optimization/render-optimization';
 import { createMyriadSettings, type MyriadSettings } from '@/engine/renderer/myriad/runtime/myriad-settings';
 import type { LightHelperMode } from '@/engine/renderer/passes/light-helper-pass';
 import type { SoundHelperMode } from '@/engine/renderer/passes/sound-helper-pass';
@@ -15,6 +16,7 @@ export interface PostCompareSettings {
 export interface RenderSettings {
     readonly culling: CullingOptions;
     readonly lod: LodSettings;
+    readonly optimization: RenderOptimizationSettings;
     readonly myriad: MyriadSettings;
     readonly terrain: TerrainRenderSettings;
     readonly postCompare: PostCompareSettings;
@@ -29,8 +31,9 @@ export interface RenderSettings {
 }
 export function createRenderSettings(): RenderSettings {
     return {
-        culling: { frustumCulling: true, minPixelSize: DEFAULT_MIN_PIXEL_SIZE },
+        culling: { frustumCulling: true, minPixelSize: DEFAULT_MIN_PIXEL_SIZE, occlusionCulling: true, lodGroups: true },
         lod: { enabled: true, bias: 0 },
+        optimization: createRenderOptimizationSettings(),
         myriad: createMyriadSettings(),
         terrain: { materialCache: true },
         postCompare: { enabled: false, split: 0.5 },

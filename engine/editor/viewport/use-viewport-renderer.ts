@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Renderer } from '@/engine/renderer/renderer';
 import { WebGLContextLostError, WebGLUnsupportedError } from '@/engine/renderer/gl/context';
+import { RenderOptimization } from '@/engine/renderer/optimization/render-optimization';
 import type { LightHelperRequest } from '@/engine/renderer/passes/light-helper-pass';
 import type { SoundHelperRequest } from '@/engine/renderer/passes/sound-helper-pass';
 import type { VfxHelperRequest } from '@/engine/renderer/passes/vfx-helper-pass';
@@ -110,6 +111,9 @@ export function useViewportRenderer(canvasRef: React.RefObject<HTMLCanvasElement
         }
         rendererRef.current = renderer;
         session.viewportRenderer = renderer;
+        const optimization = RenderOptimization.for(renderer.gl);
+        optimization.settings = session.render.optimization;
+        optimization.stats = session.optimizationStats;
         const governor = session.viewportGovernor;
         let frameHandle = 0;
         let frameCount = 0;

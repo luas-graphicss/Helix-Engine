@@ -14,6 +14,9 @@ import { MAX_LOD_LEVELS } from '@/engine/renderer/lod/lod-chain';
 import { TILE_LEVELS } from '@/engine/terrain/chunks/terrain-tiles';
 import { VirtualGeometrySection } from './performance/virtual-geometry-section';
 import { LocalLightsSection } from './performance/local-lights-section';
+import { BatchingSection } from './performance/batching-section';
+import { GpuMemorySection } from './performance/gpu-memory-section';
+import { TextureMemorySection } from './performance/texture-memory-section';
 import { GHOST_ACTION_CLASS } from '@/engine/ui/surface-styles';
 import { cn } from '@/lib/utils';
 const TIER_LABEL = { high: 'alta', mid: 'média', low: 'baixa' } as const;
@@ -58,6 +61,7 @@ export function PerformancePanel() {
     const session = useSessionTopic('view', 'scene', 'playtest');
     const stats = useViewportStats();
     const { culling, lod } = session.render;
+    const optimization = session.optimizationStats;
     const gpu = stats.gpuStageMs;
     const cpuTotal = stats.cpuStageMs.reduce((sum, value) => sum + value, 0);
     const frameMs = stats.fps > 0 ? 1000 / stats.fps : 0;
@@ -157,12 +161,21 @@ export function PerformancePanel() {
 
         <CollapsibleSection title="Descarte de objetos">
           <ToggleField label="Fora da câmera" on={culling.frustumCulling} onToggle={() => session.toggleFrustumCulling()}/>
+          <ToggleField label="Atrás de outros" on={culling.occlusionCulling} onToggle={() => session.updateCulling({ occlusionCulling: !culling.occlusionCulling })}/>
           <SliderField label="Tamanho mín." value={culling.minPixelSize} min={0} max={12} step={0.5} format={pixels} onChange={(value) => session.updateCulling({ minPixelSize: value })}/>
           <PropertyRow label="Visíveis">
             <Ratio part={stats.meshesVisible} total={stats.meshCandidates}/>
           </PropertyRow>
           <PropertyRow label="Fora da câmera">
             <Value>{integer(stats.frustumCulled)}</Value>
+          </PropertyRow>
+          <PropertyRow label="Atrás de outros">
+            <Value>
+              {integer(optimization.occlusionCulled)}{' '}
+              <span className="text-muted-foreground" title="Malhas opacas grandes desenhadas na CPU para esconder o que fica atrás delas">
+                · {integer(optimization.occluders)} oclusor(es), {integer(optimization.occluderTriangles)} tris
+              </span>
+            </Value>
           </PropertyRow>
           <PropertyRow label="Pequenas demais">
             <Value>{integer(stats.sizeCulled)}</Value>
@@ -180,6 +193,12 @@ export function PerformancePanel() {
           <PropertyRow label="Malhas">
             <PerLevel counts={stats.lodPerLevel} levels={MAX_LOD_LEVELS}/>
           </PropertyRow>
+          <ToggleField label="Grupos de LOD" on={culling.lodGroups} onToggle={() => session.updateCulling({ lodGroups: !culling.lodGroups })}/>
+          <PropertyRow label="Grupos">
+            <Value>
+              {integer(optimization.lodGroups)} <span className="text-muted-foreground">· {integer(optimization.lodGroupsCulled)} oculto(s) pela distância</span>
+            </Value>
+          </PropertyRow>
           <PropertyRow label="Gerando">
             <Value>{stats.lodPending > 0 ? `${integer(stats.lodPending)} cadeia(s)` : 'Nenhuma'}</Value>
           </PropertyRow>
@@ -188,13 +207,14 @@ export function PerformancePanel() {
           </PropertyRow>
         </CollapsibleSection>
 
-        <CollapsibleSection title="Lotes e sombras">
+        <BatchingSection />
+
+        <GpuMemorySection />
+
+        <TextureMemorySection />
+
+        <CollapsibleSection title="Sombras e terreno">
           <ToggleField label="Sombras" on={session.shadowsEnabled} onToggle={() => session.toggleShadows()}/>
-          <PropertyRow label="Instâncias">
-            <Value>
-              {integer(stats.instances)} <span className="text-muted-foreground">em {integer(stats.batches)} lote(s)</span>
-            </Value>
-          </PropertyRow>
           <PropertyRow label="Sombras">
             <Value>
               {integer(stats.shadowDrawCalls)} draws <span className="text-muted-foreground">· {integer(stats.shadowTriangles)} tris</span>
