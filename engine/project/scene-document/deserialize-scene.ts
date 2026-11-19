@@ -26,6 +26,12 @@ import { createScriptingSettings } from '@/engine/scripting/scripting-settings';
 import { createCameraSettings, normalizeCameraSettings } from '@/engine/camera/camera-settings';
 import { createVehicleSettings, normalizeVehicleSettings } from '@/engine/vehicle/vehicle-settings';
 import { createWheelSettings, normalizeWheelSettings } from '@/engine/vehicle/wheel/wheel-settings';
+import { createNavigationSettings, normalizeNavigationSettings } from '@/engine/navigation/areas/nav-areas';
+import { createNavSurfaceSettings, normalizeNavSurfaceSettings } from '@/engine/navigation/surface/nav-surface-settings';
+import { createNavAgentSettings, normalizeNavAgentSettings } from '@/engine/navigation/agent/nav-agent-settings';
+import { createNavObstacleSettings, normalizeNavObstacleSettings } from '@/engine/navigation/obstacle/nav-obstacle-settings';
+import { createNavLinkSettings, normalizeNavLinkSettings } from '@/engine/navigation/link/nav-link-settings';
+import { createNavModifierSettings, normalizeNavModifierSettings } from '@/engine/navigation/modifier/nav-modifier-settings';
 import { clampRenderLayer, createRenderLayerSettings, normalizeRenderLayerSettings } from '@/engine/camera/layers/render-layers';
 import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import { Terrain } from '@/engine/terrain/core/terrain';
@@ -160,6 +166,7 @@ class SceneReader {
         const scene = new Scene(name, restoreInto(createSkySettings(), environment.sky), restoreInto(createPhysicsSettings(), environment.physics), restoreInto(createPlayerSettings(), environment.player), restoreInto(createPostProcessSettings(), environment.postProcessing), restoreInto(createMixerSettings(), environment.audio), restoreInto(createScriptingSettings(), environment.scripting));
         scene.reserveEntityIds(nextEntityId);
         scene.layers.names = normalizeRenderLayerSettings(restoreInto(createRenderLayerSettings(), environment.layers)).names;
+        scene.navigation.areas = normalizeNavigationSettings(restoreInto(createNavigationSettings(), environment.navigation)).areas;
         return scene;
     }
     bindCameraFeeds(scene: Scene): void {
@@ -237,6 +244,16 @@ class SceneReader {
             options.vehicle = normalizeVehicleSettings(restoreInto(createVehicleSettings(), json.vehicle));
         if (json.wheel)
             options.wheel = normalizeWheelSettings(restoreInto(createWheelSettings(), json.wheel));
+        if (json.navSurface)
+            options.navSurface = normalizeNavSurfaceSettings(restoreInto(createNavSurfaceSettings(), json.navSurface));
+        if (json.navAgent)
+            options.navAgent = normalizeNavAgentSettings(restoreInto(createNavAgentSettings(), json.navAgent));
+        if (json.navObstacle)
+            options.navObstacle = normalizeNavObstacleSettings(restoreInto(createNavObstacleSettings(), json.navObstacle));
+        if (json.navLink)
+            options.navLink = normalizeNavLinkSettings(restoreInto(createNavLinkSettings(), json.navLink));
+        if (json.navModifier)
+            options.navModifier = normalizeNavModifierSettings(restoreInto(createNavModifierSettings(), json.navModifier));
         if (json.layer !== undefined)
             options.layer = clampRenderLayer(json.layer);
         const entity = this.freshIds ? scene.createEntity(options, parent) : scene.restoreEntity({ ...options, id: json.id }, parent);

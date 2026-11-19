@@ -9,6 +9,7 @@ import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { CharacterRuntime } from '@/engine/character/character-runtime';
 import { createCharacterActor, defaultActorName, defaultSpawnPosition, findPossessableCharacter } from '@/engine/character/character-actor';
 import { VehicleRuntime } from '@/engine/vehicle/runtime/vehicle-runtime';
+import { NavigationSystem } from '@/engine/navigation/scene/navigation-system';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { applyTransformSnapshot, snapshotTransform, type TransformSnapshot } from '@/engine/editor/operations/transform-operations';
 export type PlaytestState = 'stopped' | 'playing' | 'paused';
@@ -22,6 +23,7 @@ export class PlaytestController {
     physicsBudgetMs = Infinity;
     characters: CharacterRuntime | null = null;
     vehicles: VehicleRuntime | null = null;
+    navigation: NavigationSystem | null = null;
     private readonly snapshots = new Map<Entity, TransformSnapshot>();
     private readonly cameraPosition = vec3.create();
     private readonly cameraTarget = vec3.create();
@@ -80,6 +82,7 @@ export class PlaytestController {
             physics.stepOnce();
             characters?.present(h, 1);
             this.vehicles?.present(h);
+            this.navigation?.update(h);
             scripts.afterPhysics(h);
             this.elapsedSeconds += h;
         }
@@ -110,6 +113,7 @@ export class PlaytestController {
         frameProfile.end('physics');
         characters?.present(scaled, physics.world.interpolation);
         this.vehicles?.present(scaled);
+        this.navigation?.update(scaled);
         frameProfile.begin('scripts');
         scripts.afterPhysics(scaled);
         frameProfile.end('scripts');
@@ -150,9 +154,24 @@ export class PlaytestController {
         this.physics = physics;
         this.vehicles = new VehicleRuntime(session.scene, physics, { canvas: session.viewportCanvas, camera: session.camera });
         this.vehicles.reconcile();
+        this.startNavigation();
         session.log.info('Física', `Simulação iniciada com ${physics.world.bodies.length} corpos · ${PHYSICS_BACKEND_LABELS[physics.world.backend]}.`);
         this.startCharacters();
         void session.scripts.start('play');
+    }
+    private startNavigation(): void {
+        const { session } = this;
+        if (!NavigationSystem.isUsedBy(session.scene))
+            return;
+        const navigation = new NavigationSystem(session.scene);
+        navigation.build();
+        this.navigation = navigation;
+        for (const { surfaceName, mesh, milliseconds } of navigation.reports) {
+            if (mesh)
+                session.log.info('Navegação', `NavMesh de ${surfaceName}: ${mesh.polygons.count} polígonos, ${mesh.walkableArea.toFixed(0)} m² em ${milliseconds.toFixed(0)} ms.`);
+            else
+                session.log.warn('Navegação', `${surfaceName} não gerou área caminhável; os agentes ficam parados.`);
+        }
     }
     private startCharacters(): void {
         const { session, physics } = this;
@@ -229,6 +248,7 @@ export class PlaytestController {
         this.session.guiWorld.reset();
         this.session.vfxWorld.reset();
         this.session.hud.stop();
+        this.navigation = null;
         this.stopVehicles();
         this.stopCharacters();
         this.session.cameras.endPlay();

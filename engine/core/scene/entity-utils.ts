@@ -19,6 +19,11 @@ import { restMeshOf } from '@/engine/cloth/runtime/cloth-rest-meshes';
 import { cloneCameraSettings } from '@/engine/camera/camera-settings';
 import { cloneVehicleSettings } from '@/engine/vehicle/vehicle-settings';
 import { cloneWheelSettings } from '@/engine/vehicle/wheel/wheel-settings';
+import { cloneNavSurfaceSettings } from '@/engine/navigation/surface/nav-surface-settings';
+import { cloneNavAgentSettings } from '@/engine/navigation/agent/nav-agent-settings';
+import { cloneNavObstacleSettings } from '@/engine/navigation/obstacle/nav-obstacle-settings';
+import { cloneNavLinkSettings } from '@/engine/navigation/link/nav-link-settings';
+import { cloneNavModifierSettings } from '@/engine/navigation/modifier/nav-modifier-settings';
 const NUMERIC_SUFFIX = /_\d+$/;
 export function uniqueEntityName(scene: Scene, desired: string, ignore: Entity | null = null): string {
     const taken = new Set<string>();
@@ -70,6 +75,11 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
         camera: source.camera ? cloneCameraSettings(source.camera) : undefined,
         vehicle: source.vehicle ? cloneVehicleSettings(source.vehicle) : undefined,
         wheel: source.wheel ? cloneWheelSettings(source.wheel) : undefined,
+        navSurface: source.navSurface ? cloneNavSurfaceSettings(source.navSurface) : undefined,
+        navAgent: source.navAgent ? cloneNavAgentSettings(source.navAgent) : undefined,
+        navObstacle: source.navObstacle ? cloneNavObstacleSettings(source.navObstacle) : undefined,
+        navLink: source.navLink ? cloneNavLinkSettings(source.navLink) : undefined,
+        navModifier: source.navModifier ? cloneNavModifierSettings(source.navModifier) : undefined,
         layer: source.layer,
         castShadows: source.castShadows,
         receiveShadows: source.receiveShadows,

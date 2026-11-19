@@ -113,6 +113,11 @@ export interface EntityJson {
     camera?: PlainValue;
     vehicle?: PlainValue;
     wheel?: PlainValue;
+    navSurface?: PlainValue;
+    navAgent?: PlainValue;
+    navObstacle?: PlainValue;
+    navLink?: PlainValue;
+    navModifier?: PlainValue;
     layer?: number;
     tags?: string[];
     meta?: Record<string, PlainValue>;
@@ -142,6 +147,7 @@ export interface SceneJson extends SceneResourcesJson {
         audio: PlainValue;
         scripting?: PlainValue;
         layers?: PlainValue;
+        navigation?: PlainValue;
     };
     root: EntityJson;
     stats: {

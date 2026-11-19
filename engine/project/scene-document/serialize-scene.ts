@@ -36,6 +36,7 @@ export async function serializeScene(scene: Scene, options: SerializeSceneOption
             audio: toPlain(scene.audio, 'audio'),
             scripting: toPlain(scene.scripting, 'scripting'),
             layers: toPlain(scene.layers, 'layers'),
+            navigation: toPlain(scene.navigation, 'navigation'),
         },
         meshes: writer.meshes,
         textures: writer.textures,
@@ -127,6 +128,16 @@ class SceneWriter {
             json.vehicle = toPlain(entity.vehicle, `${entity.name}.vehicle`);
         if (entity.wheel)
             json.wheel = toPlain(entity.wheel, `${entity.name}.wheel`);
+        if (entity.navSurface)
+            json.navSurface = toPlain(entity.navSurface, `${entity.name}.navSurface`);
+        if (entity.navAgent)
+            json.navAgent = toPlain(entity.navAgent, `${entity.name}.navAgent`);
+        if (entity.navObstacle)
+            json.navObstacle = toPlain(entity.navObstacle, `${entity.name}.navObstacle`);
+        if (entity.navLink)
+            json.navLink = toPlain(entity.navLink, `${entity.name}.navLink`);
+        if (entity.navModifier)
+            json.navModifier = toPlain(entity.navModifier, `${entity.name}.navModifier`);
         if (entity.layer !== DEFAULT_RENDER_LAYER)
             json.layer = entity.layer;
         const modelRoot = entity.character ? findModelRoot(entity) : null;
