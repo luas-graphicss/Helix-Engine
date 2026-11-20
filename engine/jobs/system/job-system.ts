@@ -281,8 +281,10 @@ export class JobSystem {
     private describeThread(index: number): ThreadSnapshot {
         const slot = this.pool.slotAt(index);
         const entry = slot ? this.running.get(slot) : undefined;
-        const job = entry ? { name: entry.name, label: entry.label, batch: entry.batch, startedAt: entry.startedAt ?? this.now() } : null;
-        return { index, job, completed: slot?.completed ?? 0, busyMs: slot?.busyMs ?? 0 };
+        const startedAt = entry?.startedAt ?? null;
+        const job = entry && startedAt !== null ? { name: entry.name, label: entry.label, batch: entry.batch, startedAt } : null;
+        const inFlightMs = startedAt === null ? 0 : this.now() - startedAt;
+        return { index, job, completed: slot?.completed ?? 0, busyMs: (slot?.busyMs ?? 0) + inFlightMs };
     }
     private reserve(count: number): void {
         if (this.entries.size + count > this.settings.maxQueued)

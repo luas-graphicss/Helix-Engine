@@ -58,6 +58,8 @@ const stuck = single.schedule(single.program(NEVER_ENDING), null, { name: 'stuck
 await nextTurn();
 const stuckFailure = failureOf(stuck);
 const wasRunning = stuck.status === 'running';
+const [busyThread] = single.snapshot().threads;
+checks.check('o retrato mostra o job em andamento e o tempo ocupado da thread', busyThread.job?.name === 'stuck' && busyThread.busyMs > 0);
 stuck.cancel();
 checks.check('cancelar um job em execução rejeita o handle', wasRunning && (await stuckFailure) instanceof JobCancelledError);
 checks.check('a thread volta a atender depois do cancelamento', (await single.schedule<number>(quick, null)) === 1);
