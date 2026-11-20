@@ -19,6 +19,20 @@ const RANDOM = ['seed', 'value', 'range', 'int', 'bool', 'pick', 'shuffle', 'gau
 function nested(prefix: string, members: readonly string[]): string[] {
     return members.map((member) => `${prefix}.${member}`);
 }
+const INPUT_SYSTEM = [
+    'findAction',
+    'map',
+    'maps',
+    'rebind',
+    'overrides',
+    'devices',
+    'schemes',
+    'players',
+    ...nested('overrides', ['save', 'load', 'reset', 'set', 'count']),
+    ...nested('devices', ['list', 'find', 'custom', 'connectXR', 'onChange']),
+    ...nested('schemes', ['list', 'current', 'lastDevice', 'onChanged']),
+    ...nested('players', ['list', 'get', 'count', 'max', 'join', 'leave', 'onJoined', 'onLeft', 'onDeviceLost']),
+];
 export const API_MANIFEST: readonly ApiNamespace[] = [
     { name: 'time', section: '1.3', members: ['now', 'delta', 'fixedDelta', 'unscaledDelta', 'frame', 'realtime', 'scale', 'wait', 'waitFrames', 'delay', 'every', 'nextFrame'] },
     { name: 'task', section: '1.3', members: ['spawn', 'cancel', 'all', 'running'] },
@@ -135,7 +149,7 @@ export const API_MANIFEST: readonly ApiNamespace[] = [
     {
         name: 'input',
         section: '15',
-        members: ['isDown', 'wasPressed', 'wasReleased', 'keysDown', 'onKeyDown', 'onKeyUp', 'onTextInput', 'pointer', 'pointerLocked', 'lockPointer', 'unlockPointer', 'onPointerDown', 'onPointerUp', 'onPointerMove', 'onWheel', 'cursor', 'cursors', 'touches', 'gamepads', 'axis', 'button', 'rumble', 'onGamepadButtonDown', 'onGamepadButtonUp', 'actions', 'action', 'axis2d', 'characterFrame', 'capture', 'guiHasFocus', 'shortcuts'],
+        members: ['isDown', 'wasPressed', 'wasReleased', 'keysDown', 'onKeyDown', 'onKeyUp', 'onTextInput', 'pointer', 'pointerLocked', 'lockPointer', 'unlockPointer', 'onPointerDown', 'onPointerUp', 'onPointerMove', 'onWheel', 'cursor', 'cursors', 'touches', 'gamepads', 'axis', 'button', 'rumble', 'onGamepadButtonDown', 'onGamepadButtonUp', 'actions', 'action', 'axis2d', 'characterFrame', 'capture', 'guiHasFocus', 'shortcuts', ...INPUT_SYSTEM],
     },
     {
         name: 'assets',

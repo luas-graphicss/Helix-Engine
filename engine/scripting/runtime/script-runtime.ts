@@ -36,6 +36,7 @@ import { isAuthoritative } from '../scripting-settings';
 import { WebUiHost } from '../web/web-ui-host';
 import { EventBus } from './event-bus';
 import { ForeignGames, toLogLocation, type ForeignGameServices } from './foreign-games';
+import { LiveInputSystem } from '@/engine/input/runtime/live-input-system';
 import { InputState } from './input-state';
 import { ModuleLoader, type LoadedModule } from './module-loader';
 import { NetHub, type NetHubServices } from './net-hub';
@@ -112,6 +113,7 @@ export class ScriptRuntime implements RuntimeHost {
     bus: EventBus;
     scheduler: Scheduler;
     input: InputState;
+    inputSystem: LiveInputSystem;
     web: WebUiHost;
     mode: RuntimeMode = 'play';
     current: ScriptInstance | null = null;
@@ -153,6 +155,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.bus = new EventBus(this);
         this.scheduler = new Scheduler(this);
         this.input = new InputState(this.bus);
+        this.inputSystem = new LiveInputSystem(session.scene.input);
         this.web = new WebUiHost(this.webAssets());
         this.loader = this.createLoader();
         this.net = new NetHub(this.netServices());
@@ -233,6 +236,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.renderBridge.reset();
         this.renderState.shaderWarmup = result.compiled.filter((script) => script.kind === 'shader' && script.errorCount === 0).map((script) => decodeShaderBundle(script.code)).filter((bundle): bundle is CompiledShaderBundle => bundle !== null);
         this.input.attach(this.session.viewportCanvas);
+        this.attachInputSystem(this.session.viewportCanvas);
         this.web.attach(this.session.viewportCanvas?.parentElement ?? null);
         this.startNet(link);
         this.helixRoot = createHelixRoot(this, { props: this.props, locks: this.locks });
@@ -356,6 +360,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.scheduler.reset();
         this.bus.clear();
         this.input.dispose();
+        this.inputSystem.dispose();
         this.web.clear();
         this.web.dispose();
         this.restoreScene();
@@ -555,6 +560,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.scheduler.tick(delta);
         this.net.tick(unscaledDelta * 1000);
         this.input.pollGamepads();
+        this.inputSystem.beginFrame(unscaledDelta);
         this.web.beginFrame();
         this.sky.tick();
         this.syncActorsIfNeeded();
@@ -607,6 +613,7 @@ export class ScriptRuntime implements RuntimeHost {
         if (this.mode === 'play')
             this.cameraEffects.apply(delta, this.session.camera, this.time.now);
         this.input.endFrame();
+        this.inputSystem.endFrame();
         this.scriptDebugger.frameEnd(this.instances);
         if (this.mode === 'editor' && !this.persistent && this.idle) {
             if (this.entryName)
@@ -621,6 +628,10 @@ export class ScriptRuntime implements RuntimeHost {
         this.beforePhysics(delta, delta);
         this.afterPhysics(delta);
     }
+    private attachInputSystem(canvas: HTMLCanvasElement | null): void {
+        this.inputSystem.system.setAsset(this.session.scene.input);
+        this.inputSystem.attach({ surface: canvas, acceptsKeyboard: () => this.input.gameHasKeyboard });
+    }
     get renderRequest(): ScriptRenderRequest | null {
         return this.running ? this.renderBridge : null;
     }
@@ -628,6 +639,7 @@ export class ScriptRuntime implements RuntimeHost {
         if (!this.running)
             return;
         this.input.attach(canvas);
+        this.attachInputSystem(canvas);
         this.web.attach(canvas?.parentElement ?? null);
     }
     invoke<T>(owner: ScriptOwner | null, phase: string, fn: () => T): T | undefined {
@@ -914,6 +926,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.bus = new EventBus(this);
         this.scheduler = new Scheduler(this);
         this.input = new InputState(this.bus);
+        this.inputSystem = new LiveInputSystem(this.session.scene.input);
         this.web = new WebUiHost(this.webAssets());
         this.helixRoot = {};
         this.loader = this.createLoader();

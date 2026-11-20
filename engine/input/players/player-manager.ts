@@ -56,6 +56,16 @@ export class PlayerManager {
         this.players = this.players.filter((other) => other !== player);
         this.notify('left', player, null);
     }
+    switchScheme(player: InputPlayer, schemeKey: string): boolean {
+        const scheme = findControlScheme(this.asset, schemeKey);
+        if (!scheme)
+            return false;
+        const devices = collectSchemeDevices(scheme, this.registry.all, (device, schemeId) => this.isClaimed(device, schemeId, player), null);
+        if (!devices)
+            return false;
+        player.assign(scheme.id, devices);
+        return true;
+    }
     update(delta: number, frame: number): void {
         if (this.asset.players.joinMode === 'buttonPress')
             this.detectJoins();
@@ -68,7 +78,10 @@ export class PlayerManager {
         this.listeners.add(listener);
         return () => this.listeners.delete(listener);
     }
-    private readonly isTaken = (device: InputDevice, schemeId: string): boolean => this.players.some((player) => player.devices.includes(device) && (player.scheme === null || player.scheme === schemeId));
+    private readonly isTaken = (device: InputDevice, schemeId: string): boolean => this.isClaimed(device, schemeId, null);
+    private isClaimed(device: InputDevice, schemeId: string, except: InputPlayer | null): boolean {
+        return this.players.some((player) => player !== except && player.devices.includes(device) && (player.scheme === null || player.scheme === schemeId));
+    }
     private add(scheme: string | null, devices: readonly InputDevice[]): InputPlayer {
         const player = new InputPlayer(this.freeIndex(), this.asset, scheme, devices, this.announce);
         this.players = [...this.players, player].sort((a, b) => a.index - b.index);

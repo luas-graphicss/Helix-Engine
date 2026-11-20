@@ -2206,7 +2206,55 @@ const INPUT_API = `
   export interface PointerInputEvent { x: number; y: number; button: number; buttons: number; dx: number; dy: number }
   export interface GamepadSnapshot { index: number; id: string; axes: number[]; buttons: { pressed: boolean; value: number }[] }
   export type Cursor = 'default' | 'none' | 'text' | 'crosshair' | 'pointer' | 'grab' | 'grabbing' | 'move' | 'wait' | 'not-allowed' | 'help' | 'cell' | 'zoom-in' | 'zoom-out'
-  export interface InputApi {
+  export type InputActionType = 'button' | 'axis' | 'vector2'
+  export type InputActionPhase = 'waiting' | 'started' | 'performed' | 'canceled'
+  export type InputActionValue = number | { x: number; y: number }
+  export interface InputDevice {
+    readonly id: string
+    readonly layout: string
+    readonly name: string
+    readonly usages: string[]
+    readonly custom: boolean
+    readonly connected: boolean
+    read(control: string): number
+    controls(): { id: string; label: string; kind: 'button' | 'axis' | 'vector2' }[]
+    set(control: string, value: number): void
+  }
+  export interface InputActionEvent { readonly action: InputAction; readonly phase: 'started' | 'performed' | 'canceled'; readonly value: InputActionValue; readonly device: InputDevice | null; readonly player: number | null }
+  export interface InputRebindOptions { binding?: number; part?: string; exclude?: readonly string[]; cancel?: string | null; timeout?: number; onComplete?: (path: string) => void; onCancel?: (reason: 'canceled' | 'timedOut') => void }
+  export interface InputAction {
+    readonly name: string
+    readonly path: string
+    readonly map: string
+    readonly type: InputActionType
+    readonly player: number | null
+    readonly value: InputActionValue
+    readonly phase: InputActionPhase
+    readonly down: boolean
+    readonly pressed: boolean
+    readonly released: boolean
+    readonly performed: boolean
+    readonly device: InputDevice | null
+    readonly bindings: string[]
+    onStarted(handler: (event: InputActionEvent) => void): Unsubscribe
+    onPerformed(handler: (event: InputActionEvent) => void): Unsubscribe
+    onCanceled(handler: (event: InputActionEvent) => void): Unsubscribe
+    rebind(options?: InputRebindOptions): { cancel(): void }
+    resetBindings(): void
+  }
+  export interface InputActionMap { readonly name: string; enabled: boolean; enable(): void; disable(): void; enableOnly(): void; action(name: string): InputAction; actions(): InputAction[] }
+  export interface InputOverrides { save(): Record<string, string>; load(stored: unknown): void; reset(): void; set(action: string | InputAction, path: string, options?: { binding?: number; part?: string }): void; readonly count: number }
+  export interface InputActionSet {
+    findAction(path: string): InputAction | null
+    map(name: string): InputActionMap
+    maps(): InputActionMap[]
+    rebind(action: string | InputAction, options?: InputRebindOptions): { cancel(): void }
+    readonly overrides: InputOverrides
+  }
+  export interface InputControlScheme { readonly id: string; readonly name: string; readonly devices: { layout: string; optional: boolean }[] }
+  export interface InputPlayer extends InputActionSet { readonly index: number; readonly scheme: string | null; readonly devices: InputDevice[]; readonly joined: boolean; switchScheme(scheme: string): boolean; leave(): void }
+  export interface InputPlayerEvent { readonly player: InputPlayer; readonly device: InputDevice | null }
+  export interface InputApi extends InputActionSet {
                                                                              
     isDown(key: string): boolean
     wasPressed(key: string): boolean
@@ -2248,6 +2296,19 @@ const INPUT_API = `
     capture: 'game' | 'gui' | 'both'
     readonly guiHasFocus: boolean
     readonly shortcuts: { resolve(event: KeyboardEvent | KeyEvent, scope?: string): string | null; chordsFor(id: string): readonly string[]; bind(id: string, chord: string): void; unbind(id: string, chord: string): void; conflicts(): unknown[] }
+    readonly devices: { list(): InputDevice[]; find(id: string): InputDevice | null; custom(name: string): InputDevice; connectXR(session: unknown): void; onChange(handler: (event: { change: 'added' | 'removed'; device: InputDevice }) => void): Unsubscribe }
+    readonly schemes: { list(): InputControlScheme[]; readonly current: InputControlScheme | null; readonly lastDevice: InputDevice | null; onChanged(handler: (scheme: InputControlScheme) => void): Unsubscribe }
+    readonly players: {
+      list(): InputPlayer[]
+      get(index: number): InputPlayer | null
+      readonly count: number
+      readonly max: number
+      join(options?: { scheme?: string; devices?: readonly (InputDevice | string)[] }): InputPlayer | null
+      leave(player: InputPlayer | number): void
+      onJoined(handler: (event: InputPlayerEvent) => void): Unsubscribe
+      onLeft(handler: (event: InputPlayerEvent) => void): Unsubscribe
+      onDeviceLost(handler: (event: InputPlayerEvent) => void): Unsubscribe
+    }
   }
 `;
 const ASSETS_API = `

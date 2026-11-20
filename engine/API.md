@@ -736,6 +736,18 @@ Ponte: `character/controller/character-input.ts`, `editor/viewport/use-viewport-
 - Prioridade: GUI com foco consome primeiro (`hasFocusedInput`); `helix.input.capture = 'game' | 'gui' | 'both'`. `expor`
 - Atalhos do editor (`isEditor`): `shortcutBindings.resolve`, `register(action, chord)` (seção 19). `engine`
 
+### 15.1 Sistema de entrada — mapas de ações, esquemas e jogadores
+
+Ponte: `input/runtime/input-system.ts` (ações avaliadas a cada quadro), `input/devices/*` (teclado, mouse, toque, gamepad, joystick, controles VR e dispositivos customizados), `input/rebinding/*`, `input/players/*`. Os mapas, as ações, os vínculos e os esquemas vêm do painel Entrada e ficam gravados na cena. A leitura por tecla das linhas acima continua valendo ao lado.
+
+- Caminhos de controle: `<Keyboard>/Space`, `<Mouse>/delta`, `<Gamepad>/leftStick/x`, `<Touchscreen>/primaryTouch/press`, `<Joystick>/button3`, `<XRController>{RightHand}/trigger`, `<NomeDoCustomizado>/controle`. `engine`
+- Ação (`helix.input.map('Gameplay').action('Jump')` ou `helix.input.findAction('Gameplay/Jump')`, que devolve `null` quando a ação não existe): `value` (número em botão e eixo, `{ x, y }` em vetor), `down`, `pressed`, `released`, `performed`, `phase: 'waiting' | 'started' | 'performed' | 'canceled'`, `device`, `bindings`, `onStarted(handler)`, `onPerformed(handler)`, `onCanceled(handler)`. O handler recebe `{ action, phase, value, device, player }`. `engine`
+- Mapa (`helix.input.map(nome)`, `helix.input.maps()`): `enabled`, `enable()`, `disable()`, `enableOnly()`, `action(nome)`, `actions()`. Todos os mapas começam ativos. `engine`
+- Revinculação: `helix.input.rebind(ação, { binding?, part?, exclude?, cancel?, timeout?, onComplete?, onCancel? })` escuta o próximo controle acionado e grava a troca quando ele é solto. As ações ficam suspensas enquanto a escuta dura e `Esc` cancela. `helix.input.overrides.save()` devolve as trocas para guardar em `helix.storage`, `load(dados)` aplica, `reset()` volta aos vínculos da cena e `set(ação, caminho, { binding?, part? })` troca sem escutar. `engine`
+- Dispositivos (`helix.input.devices`): `list()`, `find(id)`, `onChange(handler)` com `{ change: 'added' | 'removed', device }`. Cada dispositivo expõe `id, layout, name, usages, custom, connected, read(controle), controls()`. `custom(nome)` devolve o dispositivo customizado criado no painel, o único que aceita `set(controle, valor)`. `connectXR(session)` liga os controles de uma `XRSession`; `connectXR(null)` desliga. `engine`
+- Esquemas (`helix.input.schemes`): `list()`, `current` (o esquema do último dispositivo usado), `lastDevice`, `onChanged(handler)`. `engine`
+- Jogadores locais (`helix.input.players`): `join({ scheme?, devices? })` devolve o jogador, ou `null` quando falta dispositivo livre ou o limite foi atingido; `leave(jogador)`, `list()`, `get(índice)`, `count`, `max`, `onJoined`, `onLeft`, `onDeviceLost`. Cada jogador tem `index, scheme, devices, joined`, `switchScheme(esquema)`, `leave()` e as próprias `map`, `maps`, `findAction`, `rebind` e `overrides`, que só leem os dispositivos dele. Com a entrada "Ao pressionar" no painel, apertar um controle vinculado em um dispositivo livre cria o jogador. Dois esquemas podem dividir o mesmo teclado. `engine`
+
 ---
 
 ## 16. Ativos e biblioteca — `helix.assets`
