@@ -13,6 +13,7 @@ import type { NetServer } from '../session/net-server';
 import type { SessionPlayer } from '../session/session-protocol';
 import { normalizeSessionName } from '../settings/multiplayer-settings';
 import { describeDisconnect } from '../transport/disconnect-reason';
+import { TestClients } from '../tools/test-clients';
 import type { NetworkConditions } from '../transport/network-conditions';
 import { HostedSessionLink } from './hosted-session-link';
 import { LocalSessionLink } from './local-session-link';
@@ -44,6 +45,7 @@ interface ActiveRuntime {
     readonly services: ServiceClient;
     readonly lobby: LobbyClient;
     readonly matchmaking: MatchmakingClient;
+    readonly testClients: TestClients;
     identity: PlayerIdentity;
 }
 const INACTIVE_MESSAGE = 'o multiplayer não está ligado nesta cena';
@@ -138,6 +140,9 @@ export class MultiplayerRuntime {
     get matchmaking(): MatchmakingClient | null {
         return this.active?.matchmaking ?? null;
     }
+    get testClientCount(): number {
+        return this.active?.testClients.count ?? 0;
+    }
     get playerName(): string {
         return this.active?.identity.name ?? '';
     }
@@ -179,6 +184,7 @@ export class MultiplayerRuntime {
             services,
             lobby,
             matchmaking,
+            testClients: new TestClients(link, blueprint.plan.schema),
             identity: plan.identity,
         };
         binding.hideTemplates();
@@ -193,6 +199,7 @@ export class MultiplayerRuntime {
         const { active } = this;
         if (!active)
             return;
+        active.testClients.clear();
         active.connector.leave();
         active.services.close();
         active.binding.clear();
@@ -205,12 +212,20 @@ export class MultiplayerRuntime {
             return;
         active.link.advance(elapsedMs);
         active.connector.update(elapsedMs);
+        active.testClients.update(elapsedMs);
         const { client } = active.connector;
         if (client?.phase !== 'connected')
             return;
         const { authority } = this;
         active.binding.reconcile(client.objects, client.localId, authority !== null);
         active.binding.sync(client, authority);
+    }
+    addTestClient(): boolean {
+        const { active } = this;
+        return active !== null && this.phase === 'connected' && active.testClients.add(active.connector.guestPath);
+    }
+    removeTestClient(): boolean {
+        return this.active?.testClients.remove() ?? false;
     }
     setConditions(conditions: NetworkConditions): boolean {
         const link = this.active?.link;
@@ -286,6 +301,7 @@ export class MultiplayerRuntime {
         };
     }
     private handleDisconnected(reason: string): void {
+        this.active?.testClients.clear();
         this.active?.binding.release();
         this.listener.phaseChanged('offline', reason);
     }

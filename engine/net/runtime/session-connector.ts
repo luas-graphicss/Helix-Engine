@@ -42,6 +42,18 @@ const RELAY_HOST_ROLE = 'host';
 const RELAY_GUEST_ROLE = 'client';
 const RECONNECT_ATTEMPTS = 6;
 const RECONNECT_BASE_DELAY_MS = 500;
+export function createSessionClient(link: SessionLink, schema: string, openSocket: () => PacketSocket, identity: PlayerIdentity, listener: NetClientListener): NetClient {
+    return new NetClient({
+        name: identity.name,
+        ticket: identity.ticket,
+        schema,
+        clock: () => link.now(),
+        openSocket,
+        reconnectAttempts: RECONNECT_ATTEMPTS,
+        reconnectBaseDelayMs: RECONNECT_BASE_DELAY_MS,
+        connection: DEFAULT_CONNECTION_OPTIONS,
+    }, listener);
+}
 export class SessionConnector {
     private current: NetClient | null = null;
     private hosted: HostedSession | null = null;
@@ -56,6 +68,12 @@ export class SessionConnector {
     }
     get joinCode(): string {
         return this.code;
+    }
+    get guestPath(): string {
+        if (this.code)
+            return `${RELAY_ROUTE}/${this.code}/${RELAY_GUEST_ROLE}`;
+        const sessionId = this.current?.sessionId ?? '';
+        return sessionId ? `${SESSION_ROUTE}/${sessionId}` : '';
     }
     joinSession(sessionId: string, identity: PlayerIdentity): void {
         this.leave();
@@ -125,17 +143,7 @@ export class SessionConnector {
         this.events.hostEnded(reason);
     }
     private open(openSocket: () => PacketSocket, identity: PlayerIdentity): void {
-        const { link, schema } = this.setup;
-        const client = new NetClient({
-            name: identity.name,
-            ticket: identity.ticket,
-            schema,
-            clock: () => link.now(),
-            openSocket,
-            reconnectAttempts: RECONNECT_ATTEMPTS,
-            reconnectBaseDelayMs: RECONNECT_BASE_DELAY_MS,
-            connection: DEFAULT_CONNECTION_OPTIONS,
-        }, this.listener);
+        const client = createSessionClient(this.setup.link, this.setup.schema, openSocket, identity, this.listener);
         this.current = client;
         this.events.clientOpened(client);
         client.start();
