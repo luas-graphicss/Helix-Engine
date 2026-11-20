@@ -30,6 +30,7 @@ import { createNavigationSettings, normalizeNavigationSettings } from '@/engine/
 import { normalizeInputAsset } from '@/engine/input/actions/normalize-input-asset';
 import { createNetworkObjectSettings, normalizeNetworkObjectSettings } from '@/engine/net/scene/network-object-settings';
 import { createMultiplayerSettings, normalizeMultiplayerSettings } from '@/engine/net/settings/multiplayer-settings';
+import { createJobSettings, normalizeJobSettings } from '@/engine/jobs/settings/job-settings';
 import { createNavSurfaceSettings, normalizeNavSurfaceSettings } from '@/engine/navigation/surface/nav-surface-settings';
 import { createNavAgentSettings, normalizeNavAgentSettings } from '@/engine/navigation/agent/nav-agent-settings';
 import { createNavObstacleSettings, normalizeNavObstacleSettings } from '@/engine/navigation/obstacle/nav-obstacle-settings';
@@ -172,6 +173,7 @@ class SceneReader {
         scene.navigation.areas = normalizeNavigationSettings(restoreInto(createNavigationSettings(), environment.navigation)).areas;
         Object.assign(scene.input, normalizeInputAsset(environment.input));
         Object.assign(scene.multiplayer, normalizeMultiplayerSettings(restoreInto(createMultiplayerSettings(), environment.multiplayer)));
+        Object.assign(scene.jobs, normalizeJobSettings(restoreInto(createJobSettings(), environment.jobs)));
         return scene;
     }
     bindCameraFeeds(scene: Scene): void {

@@ -11,6 +11,7 @@ import { createNavigationSettings, type NavigationSettings } from '@/engine/navi
 import { createDefaultInputAsset } from '@/engine/input/actions/default-input-asset';
 import type { InputAsset } from '@/engine/input/actions/input-asset';
 import { createMultiplayerSettings, type MultiplayerSettings } from '@/engine/net/settings/multiplayer-settings';
+import { createJobSettings, type JobSettings } from '@/engine/jobs/settings/job-settings';
 import { Entity, entityTreeGeneration, type EntityOptions } from './entity';
 export class Scene {
     readonly root: Entity;
@@ -24,6 +25,7 @@ export class Scene {
     readonly navigation: NavigationSettings = createNavigationSettings();
     readonly input: InputAsset = createDefaultInputAsset();
     readonly multiplayer: MultiplayerSettings = createMultiplayerSettings();
+    readonly jobs: JobSettings = createJobSettings();
     readonly cameraFeeds = new CameraFeeds();
     private nextId = 1;
     constructor(rootName = 'Cena', sky: SkySettings = createSkySettings(), physics: PhysicsSettings = createPhysicsSettings(), player: PlayerSettings = createPlayerSettings(), postProcessing: PostProcessSettings = createPostProcessSettings(), audio: MixerSettings = createMixerSettings(), scripting: ScriptingSettings = createScriptingSettings()) {
