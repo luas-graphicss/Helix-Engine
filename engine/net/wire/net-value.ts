@@ -32,6 +32,16 @@ export function isNetValue(value: unknown, depth = 0): value is NetValue {
         return false;
     return Object.entries(value).every(([key, entry]) => !FORBIDDEN_KEYS.has(key) && isNetValue(entry, depth + 1));
 }
+export function equalNetValues(a: NetValue, b: NetValue): boolean {
+    if (a === b)
+        return true;
+    if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null)
+        return false;
+    if (Array.isArray(a) || Array.isArray(b))
+        return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((entry, index) => equalNetValues(entry, b[index]));
+    const keys = Object.keys(a);
+    return keys.length === Object.keys(b).length && keys.every((key) => Object.hasOwn(b, key) && equalNetValues(a[key], b[key]));
+}
 function writeNumber(writer: ByteWriter, value: number): void {
     if (!Number.isFinite(value))
         throw new WireError(`${value} cannot cross the network`);

@@ -122,6 +122,10 @@ export class Connection {
         this.unreliable.push(payload);
     }
     update(): void {
+        this.receive();
+        this.transmit();
+    }
+    receive(): void {
         if (this.ended)
             return;
         const now = this.clock();
@@ -136,12 +140,13 @@ export class Connection {
             this.end(this.remoteEnd);
             return;
         }
-        if (now - this.lastReceivedAt > this.options.timeoutMs) {
+        if (now - this.lastReceivedAt > this.options.timeoutMs)
             this.fail(DISCONNECT.timeout);
+    }
+    transmit(): void {
+        if (this.ended || !this.socketOpen)
             return;
-        }
-        if (!this.socketOpen)
-            return;
+        const now = this.clock();
         if (this.outbox.backlogBytes > this.options.maxBacklogBytes) {
             this.fail(DISCONNECT.overflow);
             return;
