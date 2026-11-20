@@ -1,6 +1,6 @@
 import { createJobBuffer, viewJobBuffer, type JobArray } from '../memory/job-buffer';
 import { collectTransferables } from '../memory/transferables';
-import { JobProgramError, compileJobProgram, type JobFunction } from '../program/job-program';
+import { JobProgramError, compileJobProgram, type JobContext, type JobFunction } from '../program/job-program';
 import type { JobToolkit } from '../program/job-toolkit';
 import type { JobRequest, JobResponse, OutputBinding, SerializedJobError } from '../protocol/job-messages';
 export interface JobOutcome {
@@ -23,6 +23,18 @@ function bindOutput(binding: OutputBinding | null): JobArray | null {
         return viewJobBuffer(binding.kind, binding.buffer, binding.byteOffset, binding.length);
     return createJobBuffer(binding.kind, binding.length, false);
 }
+function createContext(toolkit: JobToolkit, request: JobRequest, output: JobArray | null): JobContext {
+    return {
+        ...toolkit,
+        ...request.range,
+        thread: request.thread,
+        get output() {
+            if (!output)
+                throw new JobProgramError('job.output só existe quando o job é criado com a opção output.');
+            return output;
+        },
+    };
+}
 export class JobRunner {
     private readonly programs = new Map<number, JobFunction>();
     constructor(private readonly toolkit: JobToolkit) { }
@@ -30,7 +42,7 @@ export class JobRunner {
         try {
             const output = bindOutput(request.output);
             const run = this.programFor(request);
-            const value = await run(request.input, { ...this.toolkit, ...request.range, thread: request.thread, output });
+            const value = await run(request.input, createContext(this.toolkit, request, output));
             const copied = request.output?.mode === 'copy' ? output : null;
             return { response: { jobId: request.jobId, ok: true, value, output: copied }, transfer: collectTransferables([value, copied]) };
         }

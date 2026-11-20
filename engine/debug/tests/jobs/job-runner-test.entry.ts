@@ -7,7 +7,7 @@ import { createCheckList } from '../support/check-list';
 const checks = createCheckList('Execução de jobs dentro da thread');
 const toolkit = createJobToolkit();
 const runner = new JobRunner(toolkit);
-const context: JobContext = { ...toolkit, index: 0, start: 0, end: 0, thread: 0, output: null };
+const context: JobContext = { ...toolkit, index: 0, start: 0, end: 0, thread: 0, output: new Int32Array(1) };
 function request(overrides: Partial<JobRequest>): JobRequest {
     return { jobId: 1, thread: 0, programId: 1, source: null, input: null, range: { index: 0, start: 0, end: 0 }, output: null, ...overrides };
 }
@@ -22,6 +22,8 @@ checks.check('o job conhece o lote, a thread e a matemática', described.respons
 const write = '(input, job) => { job.output[0] = 42; }';
 const copy = await runner.run(request({ programId: 3, source: write, output: { mode: 'copy', kind: 'int32', length: 2 } }));
 checks.check('saída sem memória compartilhada volta junto com a resposta', copy.response.ok && copy.response.output?.[0] === 42 && copy.transfer.length === 1);
+const unbound = await runner.run(request({ programId: 3 }));
+checks.check('usar job.output sem a opção output explica o que faltou', !unbound.response.ok && unbound.response.error.message.includes('opção output'));
 const sharedMemory = new SharedArrayBuffer(8);
 const inPlace = await runner.run(request({ programId: 3, output: { mode: 'shared', kind: 'int32', buffer: sharedMemory, byteOffset: 4, length: 1 } }));
 checks.check('saída compartilhada é escrita no lugar e não é copiada', inPlace.response.ok && inPlace.response.output === null && new Int32Array(sharedMemory)[1] === 42 && inPlace.transfer.length === 0);

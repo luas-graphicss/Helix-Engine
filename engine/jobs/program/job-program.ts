@@ -7,7 +7,7 @@ export interface JobProgram {
 }
 export interface JobContext extends JobToolkit, JobRange {
     readonly thread: number;
-    readonly output: JobArray | null;
+    readonly output: JobArray;
 }
 export type JobFunction = (input: unknown, job: JobContext) => unknown;
 export class JobProgramError extends Error {
