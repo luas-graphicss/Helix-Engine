@@ -1,6 +1,6 @@
 import { readPreference, writePreference } from '@/engine/core/storage/preferences';
 export type DockArea = 'left' | 'right' | 'bottom';
-export type BuiltinPanelId = 'hierarchy' | 'inspector' | 'lights' | 'terrain' | 'character' | 'environment' | 'postprocess' | 'physics' | 'performance' | 'assets' | 'animation' | 'audio' | 'vfx' | 'interface' | 'scripts' | 'console' | 'activity' | 'assistant' | 'extensions';
+export type BuiltinPanelId = 'hierarchy' | 'inspector' | 'lights' | 'terrain' | 'character' | 'environment' | 'postprocess' | 'physics' | 'performance' | 'assets' | 'animation' | 'audio' | 'vfx' | 'interface' | 'input' | 'multiplayer' | 'scripts' | 'console' | 'activity' | 'assistant' | 'extensions';
 export type ExtensionPanelId = `ext:${string}`;
 export type DockPanelId = BuiltinPanelId | ExtensionPanelId;
 export const DOCK_AREAS: readonly DockArea[] = ['left', 'right', 'bottom'];
@@ -19,6 +19,8 @@ export const DOCK_PANEL_IDS: readonly BuiltinPanelId[] = [
     'audio',
     'vfx',
     'interface',
+    'input',
+    'multiplayer',
     'scripts',
     'console',
     'activity',
@@ -62,6 +64,8 @@ export const DEFAULT_PANEL_AREA: Record<BuiltinPanelId, DockArea> = {
     audio: 'bottom',
     vfx: 'bottom',
     interface: 'bottom',
+    input: 'bottom',
+    multiplayer: 'bottom',
     scripts: 'left',
     console: 'bottom',
     activity: 'bottom',

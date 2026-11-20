@@ -4,6 +4,7 @@ import { HelixArgumentError } from '../runtime/script-errors';
 import type { RuntimeHost } from '../runtime/runtime-host';
 import type { InputCapture, KeyEventPayload, PointerEventPayload } from '../runtime/input-state';
 import { requireFunction, requireNumber, requireObject, requireOneOf, requireString } from '../runtime/values';
+import { createInputSystemApi } from './input-system';
 const CAPTURE_MODES: readonly InputCapture[] = ['game', 'gui', 'both'];
 const CURSORS = ['default', 'none', 'crosshair', 'pointer', 'grab', 'grabbing', 'move', 'text', 'wait', 'not-allowed', 'help', 'cell', 'zoom-in', 'zoom-out'] as const;
 export function createInputApi(host: RuntimeHost) {
@@ -27,6 +28,7 @@ export function createInputApi(host: RuntimeHost) {
         released: (name: unknown) => input.actionReleased(requireString(name, 'helix.input.actions.released', 'o nome da ação')),
     };
     return {
+        ...createInputSystemApi(host),
         isDown: (key: unknown) => input.isDown(requireString(key, 'helix.input.isDown', 'a tecla')),
         wasPressed: (key: unknown) => input.wasPressed(requireString(key, 'helix.input.wasPressed', 'a tecla')),
         wasReleased: (key: unknown) => input.wasReleased(requireString(key, 'helix.input.wasReleased', 'a tecla')),

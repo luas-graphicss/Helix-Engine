@@ -2206,7 +2206,55 @@ const INPUT_API = `
   export interface PointerInputEvent { x: number; y: number; button: number; buttons: number; dx: number; dy: number }
   export interface GamepadSnapshot { index: number; id: string; axes: number[]; buttons: { pressed: boolean; value: number }[] }
   export type Cursor = 'default' | 'none' | 'text' | 'crosshair' | 'pointer' | 'grab' | 'grabbing' | 'move' | 'wait' | 'not-allowed' | 'help' | 'cell' | 'zoom-in' | 'zoom-out'
-  export interface InputApi {
+  export type InputActionType = 'button' | 'axis' | 'vector2'
+  export type InputActionPhase = 'waiting' | 'started' | 'performed' | 'canceled'
+  export type InputActionValue = number | { x: number; y: number }
+  export interface InputDevice {
+    readonly id: string
+    readonly layout: string
+    readonly name: string
+    readonly usages: string[]
+    readonly custom: boolean
+    readonly connected: boolean
+    read(control: string): number
+    controls(): { id: string; label: string; kind: 'button' | 'axis' | 'vector2' }[]
+    set(control: string, value: number): void
+  }
+  export interface InputActionEvent { readonly action: InputAction; readonly phase: 'started' | 'performed' | 'canceled'; readonly value: InputActionValue; readonly device: InputDevice | null; readonly player: number | null }
+  export interface InputRebindOptions { binding?: number; part?: string; exclude?: readonly string[]; cancel?: string | null; timeout?: number; onComplete?: (path: string) => void; onCancel?: (reason: 'canceled' | 'timedOut') => void }
+  export interface InputAction {
+    readonly name: string
+    readonly path: string
+    readonly map: string
+    readonly type: InputActionType
+    readonly player: number | null
+    readonly value: InputActionValue
+    readonly phase: InputActionPhase
+    readonly down: boolean
+    readonly pressed: boolean
+    readonly released: boolean
+    readonly performed: boolean
+    readonly device: InputDevice | null
+    readonly bindings: string[]
+    onStarted(handler: (event: InputActionEvent) => void): Unsubscribe
+    onPerformed(handler: (event: InputActionEvent) => void): Unsubscribe
+    onCanceled(handler: (event: InputActionEvent) => void): Unsubscribe
+    rebind(options?: InputRebindOptions): { cancel(): void }
+    resetBindings(): void
+  }
+  export interface InputActionMap { readonly name: string; enabled: boolean; enable(): void; disable(): void; enableOnly(): void; action(name: string): InputAction; actions(): InputAction[] }
+  export interface InputOverrides { save(): Record<string, string>; load(stored: unknown): void; reset(): void; set(action: string | InputAction, path: string, options?: { binding?: number; part?: string }): void; readonly count: number }
+  export interface InputActionSet {
+    findAction(path: string): InputAction | null
+    map(name: string): InputActionMap
+    maps(): InputActionMap[]
+    rebind(action: string | InputAction, options?: InputRebindOptions): { cancel(): void }
+    readonly overrides: InputOverrides
+  }
+  export interface InputControlScheme { readonly id: string; readonly name: string; readonly devices: { layout: string; optional: boolean }[] }
+  export interface InputPlayer extends InputActionSet { readonly index: number; readonly scheme: string | null; readonly devices: InputDevice[]; readonly joined: boolean; switchScheme(scheme: string): boolean; leave(): void }
+  export interface InputPlayerEvent { readonly player: InputPlayer; readonly device: InputDevice | null }
+  export interface InputApi extends InputActionSet {
                                                                              
     isDown(key: string): boolean
     wasPressed(key: string): boolean
@@ -2248,6 +2296,19 @@ const INPUT_API = `
     capture: 'game' | 'gui' | 'both'
     readonly guiHasFocus: boolean
     readonly shortcuts: { resolve(event: KeyboardEvent | KeyEvent, scope?: string): string | null; chordsFor(id: string): readonly string[]; bind(id: string, chord: string): void; unbind(id: string, chord: string): void; conflicts(): unknown[] }
+    readonly devices: { list(): InputDevice[]; find(id: string): InputDevice | null; custom(name: string): InputDevice; connectXR(session: unknown): void; onChange(handler: (event: { change: 'added' | 'removed'; device: InputDevice }) => void): Unsubscribe }
+    readonly schemes: { list(): InputControlScheme[]; readonly current: InputControlScheme | null; readonly lastDevice: InputDevice | null; onChanged(handler: (scheme: InputControlScheme) => void): Unsubscribe }
+    readonly players: {
+      list(): InputPlayer[]
+      get(index: number): InputPlayer | null
+      readonly count: number
+      readonly max: number
+      join(options?: { scheme?: string; devices?: readonly (InputDevice | string)[] }): InputPlayer | null
+      leave(player: InputPlayer | number): void
+      onJoined(handler: (event: InputPlayerEvent) => void): Unsubscribe
+      onLeft(handler: (event: InputPlayerEvent) => void): Unsubscribe
+      onDeviceLost(handler: (event: InputPlayerEvent) => void): Unsubscribe
+    }
   }
 `;
 const ASSETS_API = `
@@ -2435,6 +2496,107 @@ const PROJECT_API = `
     connect(options?: string | { url?: string; room?: string; ticket?: JsonValue | null }): void
                                                                                       
     disconnect(reason?: string): void
+  }
+`;
+const MULTIPLAYER_API = `
+  export type MultiplayerPhase = 'offline' | 'connecting' | 'connected' | 'reconnecting'
+  export interface MultiplayerPlayer { readonly id: number; readonly name: string; readonly local: boolean }
+  export interface MultiplayerStats { ping: number; jitter: number; loss: number; bytesSentPerSecond: number; bytesReceivedPerSecond: number; packetsSentPerSecond: number; packetsReceivedPerSecond: number; backlogBytes: number; resentFrames: number }
+  export interface NetworkObject {
+    readonly id: number
+    readonly kind: string
+    readonly actor: Entity
+    readonly ownerId: number
+    readonly authority: 'server' | 'owner'
+    readonly isCopy: boolean
+    readonly isMine: boolean
+    readonly isServerOwned: boolean
+    get(name: string): JsonValue | null
+    set(name: string, value: JsonValue): boolean
+    watch(name: string, handler: (value: JsonValue, previous: JsonValue) => void): Unsubscribe
+    requestOwnership(): boolean
+    setOwner(playerId: number): boolean
+    teleport(position: Vec3Like, eulerDegrees?: Vec3Like): boolean
+    despawn(): boolean
+    send(name: string, ...args: JsonValue[]): boolean
+    on(name: string, handler: (senderId: number, ...args: JsonValue[]) => void): Unsubscribe
+  }
+  export interface MultiplayerObjectsApi {
+    list(): NetworkObject[]
+    find(objectId: number): NetworkObject | null
+    onSpawned(handler: (object: NetworkObject) => void): Unsubscribe
+    onDespawned(handler: (object: NetworkObject) => void): Unsubscribe
+    onOwnerChanged(handler: (object: NetworkObject, previousOwnerId: number) => void): Unsubscribe
+    onCorrected(handler: (object: NetworkObject) => void): Unsubscribe
+  }
+  export interface MultiplayerRpcApi {
+    send(name: string, ...args: JsonValue[]): boolean
+    sendUnreliable(name: string, ...args: JsonValue[]): boolean
+    on(name: string, handler: (senderId: number, ...args: JsonValue[]) => void): Unsubscribe
+    onServer(name: string, handler: (senderId: number, objectId: number, ...args: JsonValue[]) => void): Unsubscribe
+    toClients(name: string, ...args: JsonValue[]): boolean
+    toPlayer(playerId: number, name: string, ...args: JsonValue[]): boolean
+  }
+  export type SessionTicket = { readonly mode: 'dedicated'; readonly sessionId: string } | { readonly mode: 'relay'; readonly joinCode: string }
+  export interface LobbyMember { readonly id: string; readonly name: string; readonly isReady: boolean; readonly data: Record<string, JsonValue> }
+  export interface Lobby { readonly id: string; readonly code: string; readonly name: string; readonly hostId: string; readonly maxMembers: number; readonly isPrivate: boolean; readonly isLocked: boolean; readonly data: Record<string, JsonValue>; readonly members: LobbyMember[] }
+  export interface LobbyOptions { name?: string; maxMembers?: number; isPrivate?: boolean; data?: Record<string, JsonValue> }
+  export interface MultiplayerLobbyApi {
+    readonly current: Lobby | null
+    readonly isHost: boolean
+    create(options?: LobbyOptions): Promise<Lobby>
+    join(lobbyId: string): Promise<Lobby>
+    joinByCode(code: string): Promise<Lobby>
+    quickJoin(filter?: Record<string, JsonValue>): Promise<Lobby>
+    list(filter?: Record<string, JsonValue>, limit?: number): Promise<Lobby[]>
+    leave(): Promise<void>
+    update(changes: LobbyOptions & { isLocked?: boolean }): Promise<Lobby>
+    setReady(ready: boolean): Promise<Lobby>
+    setData(data: Record<string, JsonValue>): Promise<Lobby>
+    kick(memberId: string): Promise<Lobby>
+    transferHost(memberId: string): Promise<Lobby>
+    start(): Promise<SessionTicket>
+    onChanged(handler: (lobby: Lobby | null) => void): Unsubscribe
+    onStarted(handler: (ticket: SessionTicket, lobby: Lobby) => void): Unsubscribe
+  }
+  export interface MatchPlayer { readonly id: string; readonly name: string; readonly team: number }
+  export interface MatchFound { readonly matchId: string; readonly queue: string; readonly team: number; readonly players: MatchPlayer[]; readonly session: SessionTicket }
+  export interface MultiplayerMatchmakingApi {
+    readonly isSearching: boolean
+    find(queue: string, options?: { skill?: number; party?: boolean }): Promise<MatchFound>
+    cancel(): Promise<void>
+    onMatched(handler: (match: MatchFound) => void): Unsubscribe
+  }
+  export interface MultiplayerApi {
+    readonly enabled: boolean
+    readonly phase: MultiplayerPhase
+    readonly connected: boolean
+    readonly isHost: boolean
+    readonly hosted: boolean
+    readonly sessionId: string
+    readonly joinCode: string
+    readonly localPlayer: MultiplayerPlayer | null
+    playerName: string
+    readonly ping: number
+    players(): MultiplayerPlayer[]
+    stats(): MultiplayerStats | null
+    join(sessionId?: string): boolean
+    joinByCode(code: string): boolean
+    host(options?: { maxPlayers?: number }): Promise<string>
+    leave(): void
+    kick(playerId: number, reason?: string): boolean
+    onConnected(handler: (info: { sessionId: string; playerId: number; resumed: boolean }) => void): Unsubscribe
+    onDisconnected(handler: (reason: string, description: string) => void): Unsubscribe
+    onReconnecting(handler: (attempt: number) => void): Unsubscribe
+    onPlayerJoined(handler: (player: MultiplayerPlayer) => void): Unsubscribe
+    onPlayerLeft(handler: (player: MultiplayerPlayer, reason: string) => void): Unsubscribe
+    object(actor: Entity): NetworkObject | null
+    readonly objects: MultiplayerObjectsApi
+    spawn(template: Entity, options?: { owner?: number; position?: Vec3Like; rotation?: Vec3Like }): number | null
+    despawn(objectId: number): boolean
+    readonly rpc: MultiplayerRpcApi
+    readonly lobby: MultiplayerLobbyApi
+    readonly matchmaking: MultiplayerMatchmakingApi
   }
 `;
 const EDITOR_API = `
@@ -2637,6 +2799,7 @@ const HELIX_ROOT = `
     readonly storage: StorageApi
     readonly play: PlayApi
     readonly net: NetApi
+    readonly multiplayer: MultiplayerApi
                                                          
     readonly editor?: EditorApi
   }
@@ -2683,9 +2846,10 @@ const HELIX_ROOT = `
   export const storage: StorageApi
   export const play: PlayApi
   export const net: NetApi
+  export const multiplayer: MultiplayerApi
   export const editor: EditorApi | undefined
 `;
-export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${EDITOR_API}${HELIX_ROOT}
+export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${MULTIPLAYER_API}${EDITOR_API}${HELIX_ROOT}
 }
 
 declare module '@helix/engine' {

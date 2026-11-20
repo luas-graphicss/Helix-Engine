@@ -1,0 +1,107 @@
+import { addControlScheme, removeControlScheme, updateBinding, updatePlayerSettings } from '@/engine/input/actions/asset-edits';
+import { createDefaultInputAsset, GAMEPAD_SCHEME, KEYBOARD_MOUSE_SCHEME } from '@/engine/input/actions/default-input-asset';
+import type { InputAsset } from '@/engine/input/actions/input-asset';
+import type { InputPlayer } from '@/engine/input/players/input-player';
+import type { ActionState } from '@/engine/input/runtime/action-state';
+import { InputSystem } from '@/engine/input/runtime/input-system';
+import { createCheckList } from '../support/check-list';
+import { createGamepad, createKeyboard, createMouse, FRAME, requireAction } from './input-test-devices';
+const JUMP = 'Gameplay/Jump';
+const MOVE = 'Gameplay/Move';
+const checks = createCheckList('Jogadores locais');
+function actionOf(player: InputPlayer, path: string): ActionState {
+    return requireAction(player.actions.find(path), path);
+}
+function requirePlayer(player: InputPlayer | null): InputPlayer {
+    if (!player)
+        throw new Error('The player was expected to join.');
+    return player;
+}
+const system = new InputSystem(createDefaultInputAsset());
+const padA = createGamepad(0);
+const padB = createGamepad(1);
+for (const device of [createKeyboard(), createMouse(), padA, padB])
+    system.devices.add(device);
+const events: string[] = [];
+system.players.onEvent((event, player, device) => events.push(`${event}:${player.index}${device ? `:${device.id}` : ''}`));
+const first = requirePlayer(system.players.join({ scheme: GAMEPAD_SCHEME }));
+const second = requirePlayer(system.players.join({ scheme: 'Gamepad' }));
+checks.check('cada jogador recebe um gamepad livre', first.devices[0] === padA && second.devices[0] === padB && events.join(',') === 'joined:0,joined:1');
+checks.check('sem gamepad livre ninguém entra', system.players.join({ scheme: GAMEPAD_SCHEME }) === null);
+checks.check('esquema inexistente não cria jogador', system.players.join({ scheme: 'Telepatia' }) === null);
+padB.write('buttonSouth', 1);
+system.update(FRAME);
+checks.check('ações de um jogador só leem os dispositivos dele', actionOf(second, JUMP).isPressed && !actionOf(first, JUMP).isPressed && actionOf(second, JUMP).player === 1);
+checks.check('ações globais leem todos os dispositivos', system.actions.find(JUMP)?.isPressed === true);
+padB.write('buttonSouth', 0);
+second.actions.overrides.set('gameplay.jump.gamepad', null, '<Gamepad>/buttonNorth');
+padA.write('buttonNorth', 1);
+padB.write('buttonNorth', 1);
+system.update(FRAME);
+checks.check('troca de controle vale só para o jogador que trocou', actionOf(second, JUMP).isPressed && !actionOf(first, JUMP).isPressed);
+padA.write('buttonNorth', 0);
+padB.write('buttonNorth', 0);
+system.devices.remove(padB.id);
+checks.check('dispositivo desconectado sai do jogador', second.devices.length === 0 && events.includes('deviceLost:1:gamepad:1'));
+system.players.leave(first);
+checks.check('sair avisa e libera o dispositivo', events.includes('left:0') && system.players.get(0) === null);
+checks.check('quem entra depois ocupa o menor índice livre', system.players.join({ scheme: GAMEPAD_SCHEME })?.index === 0);
+const partyAsset = createDefaultInputAsset();
+Object.assign(partyAsset, updatePlayerSettings(partyAsset, { joinMode: 'buttonPress', maxPlayers: 2 }));
+const party = new InputSystem(partyAsset);
+const partyKeyboard = createKeyboard();
+const partyMouse = createMouse();
+const partyPad = createGamepad(0);
+const latePad = createGamepad(1);
+partyKeyboard.write('Space', 1);
+for (const device of [partyKeyboard, partyMouse, partyPad, latePad])
+    party.devices.add(device);
+party.update(FRAME);
+checks.check('controle segurado desde antes não cria jogador', party.players.all.length === 0);
+partyKeyboard.write('Space', 0);
+party.update(FRAME);
+partyPad.write('buttonSouth', 1);
+party.update(FRAME);
+checks.check('apertar um botão vinculado cria o jogador com o esquema do dispositivo', party.players.all.length === 1 && party.players.get(0)?.scheme === GAMEPAD_SCHEME);
+partyPad.write('buttonSouth', 0);
+party.update(FRAME);
+partyPad.write('buttonSouth', 1);
+party.update(FRAME);
+checks.check('dispositivo já pareado não cria outro jogador', party.players.all.length === 1);
+partyMouse.writeVector('position', 120, 80);
+partyMouse.writeVector('delta', 50, 0);
+partyKeyboard.write('KeyP', 1);
+party.update(FRAME);
+checks.check('mover o mouse ou apertar tecla sem vínculo não cria jogador', party.players.all.length === 1);
+partyKeyboard.write('Space', 1);
+party.update(FRAME);
+const keyboardPlayer = party.players.get(1);
+checks.check('teclado entra com o mouse do mesmo esquema', keyboardPlayer?.scheme === KEYBOARD_MOUSE_SCHEME && keyboardPlayer.devices.length === 2);
+latePad.write('buttonSouth', 1);
+party.update(FRAME);
+checks.check('limite de jogadores barra novas entradas', party.players.all.length === 2);
+function couchAsset(): InputAsset {
+    let asset = createDefaultInputAsset();
+    asset = addControlScheme(asset, { id: 'left', name: 'Teclado esquerdo', devices: [{ layout: 'Keyboard', optional: false }] });
+    asset = addControlScheme(asset, { id: 'right', name: 'Teclado direito', devices: [{ layout: 'Keyboard', optional: false }] });
+    asset = updateBinding(asset, 'gameplay.move.wasd', { schemes: ['left'] });
+    asset = updateBinding(asset, 'gameplay.move.arrows', { schemes: ['right'] });
+    asset = removeControlScheme(asset, KEYBOARD_MOUSE_SCHEME);
+    return updatePlayerSettings(asset, { joinMode: 'buttonPress', defaultMap: 'gameplay' });
+}
+const couch = new InputSystem(couchAsset());
+const sharedKeyboard = createKeyboard();
+couch.devices.add(sharedKeyboard);
+couch.update(FRAME);
+sharedKeyboard.write('KeyW', 1);
+couch.update(FRAME);
+sharedKeyboard.write('ArrowLeft', 1);
+couch.update(FRAME);
+couch.update(FRAME);
+const leftPlayer = requirePlayer(couch.players.get(0));
+const rightPlayer = requirePlayer(couch.players.get(1));
+checks.check('dois esquemas dividem o mesmo teclado', leftPlayer.scheme === 'left' && rightPlayer.scheme === 'right' && leftPlayer.devices[0] === rightPlayer.devices[0]);
+checks.nearAll('jogador da esquerda lê só as teclas dele', [actionOf(leftPlayer, MOVE).value.x, actionOf(leftPlayer, MOVE).value.y], [0, 1]);
+checks.nearAll('jogador da direita lê só as teclas dele', [actionOf(rightPlayer, MOVE).value.x, actionOf(rightPlayer, MOVE).value.y], [-1, 0]);
+checks.check('jogador começa só com o mapa inicial ativo', leftPlayer.actions.isEnabled('gameplay') && !leftPlayer.actions.isEnabled('ui'));
+checks.finish();

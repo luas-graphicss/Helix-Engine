@@ -19,6 +19,55 @@ const RANDOM = ['seed', 'value', 'range', 'int', 'bool', 'pick', 'shuffle', 'gau
 function nested(prefix: string, members: readonly string[]): string[] {
     return members.map((member) => `${prefix}.${member}`);
 }
+const INPUT_SYSTEM = [
+    'findAction',
+    'map',
+    'maps',
+    'rebind',
+    'overrides',
+    'devices',
+    'schemes',
+    'players',
+    ...nested('overrides', ['save', 'load', 'reset', 'set', 'count']),
+    ...nested('devices', ['list', 'find', 'custom', 'connectXR', 'onChange']),
+    ...nested('schemes', ['list', 'current', 'lastDevice', 'onChanged']),
+    ...nested('players', ['list', 'get', 'count', 'max', 'join', 'leave', 'onJoined', 'onLeft', 'onDeviceLost']),
+];
+const MULTIPLAYER = [
+    'enabled',
+    'phase',
+    'connected',
+    'isHost',
+    'hosted',
+    'sessionId',
+    'joinCode',
+    'localPlayer',
+    'playerName',
+    'ping',
+    'players',
+    'stats',
+    'join',
+    'joinByCode',
+    'host',
+    'leave',
+    'kick',
+    'onConnected',
+    'onDisconnected',
+    'onReconnecting',
+    'onPlayerJoined',
+    'onPlayerLeft',
+    'object',
+    'objects',
+    'spawn',
+    'despawn',
+    'rpc',
+    'lobby',
+    'matchmaking',
+    ...nested('objects', ['list', 'find', 'onSpawned', 'onDespawned', 'onOwnerChanged', 'onCorrected']),
+    ...nested('rpc', ['send', 'sendUnreliable', 'on', 'onServer', 'toClients', 'toPlayer']),
+    ...nested('lobby', ['current', 'isHost', 'create', 'join', 'joinByCode', 'quickJoin', 'list', 'leave', 'update', 'setReady', 'setData', 'kick', 'transferHost', 'start', 'onChanged', 'onStarted']),
+    ...nested('matchmaking', ['isSearching', 'find', 'cancel', 'onMatched']),
+];
 export const API_MANIFEST: readonly ApiNamespace[] = [
     { name: 'time', section: '1.3', members: ['now', 'delta', 'fixedDelta', 'unscaledDelta', 'frame', 'realtime', 'scale', 'wait', 'waitFrames', 'delay', 'every', 'nextFrame'] },
     { name: 'task', section: '1.3', members: ['spawn', 'cancel', 'all', 'running'] },
@@ -135,7 +184,7 @@ export const API_MANIFEST: readonly ApiNamespace[] = [
     {
         name: 'input',
         section: '15',
-        members: ['isDown', 'wasPressed', 'wasReleased', 'keysDown', 'onKeyDown', 'onKeyUp', 'onTextInput', 'pointer', 'pointerLocked', 'lockPointer', 'unlockPointer', 'onPointerDown', 'onPointerUp', 'onPointerMove', 'onWheel', 'cursor', 'cursors', 'touches', 'gamepads', 'axis', 'button', 'rumble', 'onGamepadButtonDown', 'onGamepadButtonUp', 'actions', 'action', 'axis2d', 'characterFrame', 'capture', 'guiHasFocus', 'shortcuts'],
+        members: ['isDown', 'wasPressed', 'wasReleased', 'keysDown', 'onKeyDown', 'onKeyUp', 'onTextInput', 'pointer', 'pointerLocked', 'lockPointer', 'unlockPointer', 'onPointerDown', 'onPointerUp', 'onPointerMove', 'onWheel', 'cursor', 'cursors', 'touches', 'gamepads', 'axis', 'button', 'rumble', 'onGamepadButtonDown', 'onGamepadButtonUp', 'actions', 'action', 'axis2d', 'characterFrame', 'capture', 'guiHasFocus', 'shortcuts', ...INPUT_SYSTEM],
     },
     {
         name: 'assets',
@@ -195,6 +244,7 @@ export const API_MANIFEST: readonly ApiNamespace[] = [
             'disconnect',
         ],
     },
+    { name: 'multiplayer', section: '18.1', members: MULTIPLAYER },
     {
         name: 'editor',
         section: '19',

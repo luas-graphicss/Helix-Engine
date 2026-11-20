@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { bundleServerRuntime } from '@/engine/net/server-bundle/runtime-bundler';
-import { serverRuntimeModule } from '@/engine/net/server-bundle/runtime-modules';
+import { serverBundleModule } from '@/engine/net/server-bundle/runtime-modules';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -11,7 +11,7 @@ export async function GET(request: Request, { params }: {
     }>;
 }): Promise<Response> {
     const { module: id } = await params;
-    const module = serverRuntimeModule(id);
+    const module = serverBundleModule(id);
     if (!module)
         return NextResponse.json({ error: `"${id}" não é um runtime de servidor da engine.` }, { status: 404, headers: NO_STORE });
     try {

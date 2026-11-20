@@ -4,6 +4,7 @@ import type { LibraryAsset, AssetKind } from '@/engine/assets/library/asset-type
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import type { LogEntryExtras, LogLevel } from '@/engine/editor/session/editor-log';
 import type { EventBus } from './event-bus';
+import type { LiveInputSystem } from '@/engine/input/runtime/live-input-system';
 import type { InputState } from './input-state';
 import type { Scheduler } from './scheduler';
 import type { StackMapper } from './stack-mapper';
@@ -18,6 +19,7 @@ import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import type { EntityLodOverride } from '@/engine/renderer/render-overrides';
 import type { ShaderBindings, ShaderMaterial } from './shader-bindings';
 import type { NetHub } from './net-hub';
+import type { MultiplayerRuntime } from '@/engine/net/runtime/multiplayer-runtime';
 export interface TimeState {
     now: number;
     delta: number;
@@ -58,6 +60,8 @@ export interface RuntimeHost extends CallbackInvoker {
     readonly bus: EventBus;
     readonly scheduler: Scheduler;
     readonly input: InputState;
+    readonly inputSystem: LiveInputSystem;
+    readonly multiplayer: MultiplayerRuntime;
     readonly stacks: StackMapper;
     readonly web: WebUiHost;
     readonly time: TimeState;

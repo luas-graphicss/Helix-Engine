@@ -118,6 +118,7 @@ export interface EntityJson {
     navObstacle?: PlainValue;
     navLink?: PlainValue;
     navModifier?: PlainValue;
+    networkObject?: PlainValue;
     layer?: number;
     tags?: string[];
     meta?: Record<string, PlainValue>;
@@ -148,6 +149,8 @@ export interface SceneJson extends SceneResourcesJson {
         scripting?: PlainValue;
         layers?: PlainValue;
         navigation?: PlainValue;
+        input?: PlainValue;
+        multiplayer?: PlainValue;
     };
     root: EntityJson;
     stats: {

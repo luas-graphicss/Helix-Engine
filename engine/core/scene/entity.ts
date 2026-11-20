@@ -19,6 +19,7 @@ import type { NavAgentSettings } from '@/engine/navigation/agent/nav-agent-setti
 import type { NavObstacleSettings } from '@/engine/navigation/obstacle/nav-obstacle-settings';
 import type { NavLinkSettings } from '@/engine/navigation/link/nav-link-settings';
 import type { NavModifierSettings } from '@/engine/navigation/modifier/nav-modifier-settings';
+import type { NetworkObjectSettings } from '@/engine/net/scene/network-object-settings';
 import { DEFAULT_RENDER_LAYER } from '@/engine/camera/layers/render-layers';
 import { Transform } from './transform';
 import type { Material } from './material';
@@ -62,6 +63,7 @@ export interface EntityOptions {
     navObstacle?: NavObstacleSettings;
     navLink?: NavLinkSettings;
     navModifier?: NavModifierSettings;
+    networkObject?: NetworkObjectSettings;
     layer?: number;
     castShadows?: boolean;
     receiveShadows?: boolean;
@@ -102,6 +104,7 @@ export class Entity {
     navObstacle: NavObstacleSettings | null;
     navLink: NavLinkSettings | null;
     navModifier: NavModifierSettings | null;
+    networkObject: NetworkObjectSettings | null;
     layer: number;
     castShadows: boolean;
     receiveShadows: boolean;
@@ -137,6 +140,7 @@ export class Entity {
         this.navObstacle = options.navObstacle ?? null;
         this.navLink = options.navLink ?? null;
         this.navModifier = options.navModifier ?? null;
+        this.networkObject = options.networkObject ?? null;
         this.layer = options.layer ?? DEFAULT_RENDER_LAYER;
         this.castShadows = options.castShadows ?? true;
         this.receiveShadows = options.receiveShadows ?? true;

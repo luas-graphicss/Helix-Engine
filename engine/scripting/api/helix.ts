@@ -14,6 +14,7 @@ import { createLightApi } from './light';
 import { createMaterialApi } from './material';
 import { createMathApi } from './math';
 import { createMeshApi } from './mesh';
+import { createMultiplayerApi } from './multiplayer/multiplayer';
 import { createNavigationApi } from './navigation';
 import { createPhysicsApi, type AxisLocks } from './physics';
 import { createNetApi, createPlayApi, netRealmFor } from './play';
@@ -79,6 +80,7 @@ export function createHelixRoot(host: RuntimeHost, bridges: HelixBridges): Helix
         storage: createStorageApi(host),
         play: createPlayApi(host),
         net: createNetApi(host),
+        multiplayer: createMultiplayerApi(host),
         editor: host.mode === 'editor' ? createEditorApi(host) : undefined,
     };
     Object.defineProperties(root, {

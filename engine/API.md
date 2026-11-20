@@ -736,6 +736,18 @@ Ponte: `character/controller/character-input.ts`, `editor/viewport/use-viewport-
 - Prioridade: GUI com foco consome primeiro (`hasFocusedInput`); `helix.input.capture = 'game' | 'gui' | 'both'`. `expor`
 - Atalhos do editor (`isEditor`): `shortcutBindings.resolve`, `register(action, chord)` (seção 19). `engine`
 
+### 15.1 Sistema de entrada — mapas de ações, esquemas e jogadores
+
+Ponte: `input/runtime/input-system.ts` (ações avaliadas a cada quadro), `input/devices/*` (teclado, mouse, toque, gamepad, joystick, controles VR e dispositivos customizados), `input/rebinding/*`, `input/players/*`. Os mapas, as ações, os vínculos e os esquemas vêm do painel Entrada e ficam gravados na cena. A leitura por tecla das linhas acima continua valendo ao lado.
+
+- Caminhos de controle: `<Keyboard>/Space`, `<Mouse>/delta`, `<Gamepad>/leftStick/x`, `<Touchscreen>/primaryTouch/press`, `<Joystick>/button3`, `<XRController>{RightHand}/trigger`, `<NomeDoCustomizado>/controle`. `engine`
+- Ação (`helix.input.map('Gameplay').action('Jump')` ou `helix.input.findAction('Gameplay/Jump')`, que devolve `null` quando a ação não existe): `value` (número em botão e eixo, `{ x, y }` em vetor), `down`, `pressed`, `released`, `performed`, `phase: 'waiting' | 'started' | 'performed' | 'canceled'`, `device`, `bindings`, `onStarted(handler)`, `onPerformed(handler)`, `onCanceled(handler)`. O handler recebe `{ action, phase, value, device, player }`. `engine`
+- Mapa (`helix.input.map(nome)`, `helix.input.maps()`): `enabled`, `enable()`, `disable()`, `enableOnly()`, `action(nome)`, `actions()`. Todos os mapas começam ativos. `engine`
+- Revinculação: `helix.input.rebind(ação, { binding?, part?, exclude?, cancel?, timeout?, onComplete?, onCancel? })` escuta o próximo controle acionado e grava a troca quando ele é solto. As ações ficam suspensas enquanto a escuta dura e `Esc` cancela. `helix.input.overrides.save()` devolve as trocas para guardar em `helix.storage`, `load(dados)` aplica, `reset()` volta aos vínculos da cena e `set(ação, caminho, { binding?, part? })` troca sem escutar. `engine`
+- Dispositivos (`helix.input.devices`): `list()`, `find(id)`, `onChange(handler)` com `{ change: 'added' | 'removed', device }`. Cada dispositivo expõe `id, layout, name, usages, custom, connected, read(controle), controls()`. `custom(nome)` devolve o dispositivo customizado criado no painel, o único que aceita `set(controle, valor)`. `connectXR(session)` liga os controles de uma `XRSession`; `connectXR(null)` desliga. `engine`
+- Esquemas (`helix.input.schemes`): `list()`, `current` (o esquema do último dispositivo usado), `lastDevice`, `onChanged(handler)`. `engine`
+- Jogadores locais (`helix.input.players`): `join({ scheme?, devices? })` devolve o jogador, ou `null` quando falta dispositivo livre ou o limite foi atingido; `leave(jogador)`, `list()`, `get(índice)`, `count`, `max`, `onJoined`, `onLeft`, `onDeviceLost`. Cada jogador tem `index, scheme, devices, joined`, `switchScheme(esquema)`, `leave()` e as próprias `map`, `maps`, `findAction`, `rebind` e `overrides`, que só leem os dispositivos dele. Com a entrada "Ao pressionar" no painel, apertar um controle vinculado em um dispositivo livre cria o jogador. Dois esquemas podem dividir o mesmo teclado. `engine`
+
 ---
 
 ## 16. Ativos e biblioteca — `helix.assets`
@@ -801,6 +813,18 @@ Ponte: `editor/playtest/*`, `scripting/script-document.ts`.
 - `helix.play.standalone: boolean` — rodando fora do editor (build exportado). `novo`
 - Rede (contextos `client` / `server` já existem no documento de script): `helix.net.isServer`, `isClient`, `rpc(name, handler)`, `call(name, ...args)`, `replicate(entity, fields)`, `onPlayerJoined/Left`, `players()` — a engine define a ABI agora para as linguagens já nascerem com ela; o transporte vem depois. `novo`
 - Build/exportação: `helix.play.export({ target: 'web' })` empacota cena, ativos usados e scripts compilados (seção 21) num site estático. `novo`
+
+### 18.1 Multiplayer — `helix.multiplayer`
+
+Ponte: `scripting/api/multiplayer/*` sobre `net/runtime/*` (sessão, atores e RPCs), `net/session/*` (cliente e servidor da sessão), `net/services/*` (lobby, matchmaking e relay) e `net/transport/*`. O multiplayer liga no painel Multiplayer e vale para a cena; `helix.net` (seção 18) continua servindo às salas dos scripts de Servidor. No teste de jogo o servidor roda simulado no editor ou é o hospedado em Código ▸ Servidor do jogo, com o mesmo protocolo.
+
+- Sessão: `enabled`, `phase: 'offline' | 'connecting' | 'connected' | 'reconnecting'`, `connected`, `isHost` (esta máquina roda o servidor da sessão: servidor simulado ou anfitrião por relay), `hosted`, `sessionId`, `joinCode`, `ping`, `stats()`, `playerName`, `localPlayer`, `players()`. `join(sessão?)` entra numa sessão do servidor dedicado, `host({ maxPlayers? })` abre uma sessão neste jogo e devolve o código, `joinByCode(código)` entra na sessão de um anfitrião, `leave()` sai e `kick(jogador, motivo?)` remove alguém (só o anfitrião). `engine`
+- Eventos: `onConnected({ sessionId, playerId, resumed })`, `onDisconnected(motivo, descrição)`, `onReconnecting(tentativa)`, `onPlayerJoined(jogador)`, `onPlayerLeft(jogador, motivo)`. A ligação perdida tenta voltar sozinha e retoma o mesmo jogador dentro do tempo de reconexão do painel. `engine`
+- Objetos de rede (componente Objeto de rede do Inspetor): `object(ator)` devolve o objeto ligado ao ator, ou `null`. Cada objeto expõe `id, kind, actor, ownerId, authority, isCopy, isMine, isServerOwned`, `get(variável)`, `set(variável, valor)` (aceito do anfitrião e, nas variáveis do dono, de quem tem a posse), `watch(variável, handler)`, `requestOwnership()`, `setOwner(jogador)`, `teleport(posição, rotação?)`, `despawn()`, `send(rpc, ...args)` e `on(rpc, handler)`. `objects.list()`, `find(id)`, `onSpawned`, `onDespawned`, `onOwnerChanged`, `onCorrected`. A pose do ator viaja sozinha: o dono publica, os outros recebem interpolado. `engine`
+- Criar em jogo: `spawn(modelo, { owner?, position?, rotation? })` cria uma cópia de um ator "Modelo sob demanda" em todos os jogadores e devolve o id; `despawn(id)` remove. Só o anfitrião cria e remove. `engine`
+- RPCs (declarados na aba RPCs do painel, com público, limite por segundo e exigência de posse): `rpc.send(nome, ...args)` e `rpc.sendUnreliable` enviam ao servidor, que confere e repassa; `rpc.on(nome, (remetente, ...args) => …)` recebe. `rpc.onServer(nome, (remetente, objeto, ...args) => …)` trata no anfitrião os RPCs de público "Só o servidor"; `rpc.toClients(nome, ...args)` e `rpc.toPlayer(jogador, nome, ...args)` partem do anfitrião e chegam com remetente `0`. Os argumentos são números, textos, booleanos, `null`, listas e objetos simples. `engine`
+- Lobby (`helix.multiplayer.lobby`): `create({ name?, maxMembers?, isPrivate?, data? })`, `join(id)`, `joinByCode(código)`, `quickJoin(filtro?)`, `list(filtro?, limite?)`, `leave()`, `update(mudanças)`, `setReady(pronto)`, `setData(dados)`, `kick(membro)`, `transferHost(membro)`, `start()`, `current`, `isHost`, `onChanged`, `onStarted`. Iniciar reserva a sessão (ou abre o relay, na topologia de jogador anfitrião) e leva todos os membros a ela. As chamadas devolvem promessas que rejeitam com o motivo em português. `engine`
+- Matchmaking (`helix.multiplayer.matchmaking`): `find(fila, { skill?, party? })` procura partida numa fila do painel e, ao achar, entra na sessão reservada; `cancel()`, `isSearching`, `onMatched`. Com `party: true` o grupo do lobby entra junto e fica no mesmo time. `engine`
 
 ---
 
@@ -925,6 +949,7 @@ Critério de aprovação: todas as asserções passam, nenhum aviso no console, 
 | --- | --- |
 | `helix` (núcleo) | `scripting/*`, `editor/playtest/playtest-controller.ts`, `core/engine-info.ts` |
 | `helix.time`, `helix.task`, `helix.events`, `helix.props`, `helix.storage`, `helix.net`, `helix.input` | novos módulos `scripting/runtime/*` |
+| `helix.multiplayer` | `scripting/api/multiplayer/*` sobre `net/runtime/*`, `net/session/*` e `net/services/*` |
 | `helix.log`, `helix.debug` | `editor/session/editor-session.ts` (`log`), `renderer/gl/line-batch.ts` |
 | `helix.math` | `core/math/*`, `core/noise/*`, `core/color/*` |
 | `helix.scene`, `helix.transform` | `core/scene/*`, `editor/commands/entity-commands.ts` |

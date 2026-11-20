@@ -16,7 +16,6 @@ import { entityLodOverride, isEntityMyriadEnabled, setEntityLodOverride, setEnti
 import type { ScriptRenderRequest } from '@/engine/renderer/script-hooks';
 import { decodeShaderBundle, type CompiledShaderBundle } from '@/engine/renderer/shaders/custom/shader-bundle';
 import { NO_LINK, serverRunsHere, type NetLink } from '@/engine/net/transport/net-link';
-import type { JsonValue } from '@/engine/net/protocol';
 import { engineSettings } from '@/engine/settings/engine-settings-store';
 import { CameraEffects } from '../api/camera';
 import { DebugDrawQueue } from '../api/core';
@@ -36,9 +35,13 @@ import { isAuthoritative } from '../scripting-settings';
 import { WebUiHost } from '../web/web-ui-host';
 import { EventBus } from './event-bus';
 import { ForeignGames, toLogLocation, type ForeignGameServices } from './foreign-games';
+import { LiveInputSystem } from '@/engine/input/runtime/live-input-system';
 import { InputState } from './input-state';
 import { ModuleLoader, type LoadedModule } from './module-loader';
 import { NetHub, type NetHubServices } from './net-hub';
+import type { MultiplayerRuntime } from '@/engine/net/runtime/multiplayer-runtime';
+import { createMultiplayerRuntime, startMultiplayer } from './multiplayer-bridge';
+import { parseTestTicket } from './test-ticket';
 import { ScriptRenderBridge } from './render-bridge';
 import type { ScriptOwner } from './runtime-context';
 import type { FrameHooks, RuntimeHost, RuntimeMode, ScriptContext, SystemSwitches, TimeState } from './runtime-host';
@@ -77,17 +80,6 @@ function foreignLanguagesOf(compiled: readonly CompiledScript[]): Set<ScriptLang
             languages.add(script.language);
     return languages;
 }
-function parseTicket(text: string): JsonValue | null {
-    const trimmed = text.trim();
-    if (!trimmed)
-        return null;
-    try {
-        return JSON.parse(trimmed) as JsonValue;
-    }
-    catch {
-        return trimmed;
-    }
-}
 export interface RuntimeStartOptions {
     readonly entry?: LibraryAsset;
     readonly persistent?: boolean;
@@ -112,6 +104,7 @@ export class ScriptRuntime implements RuntimeHost {
     bus: EventBus;
     scheduler: Scheduler;
     input: InputState;
+    inputSystem: LiveInputSystem;
     web: WebUiHost;
     mode: RuntimeMode = 'play';
     current: ScriptInstance | null = null;
@@ -149,13 +142,16 @@ export class ScriptRuntime implements RuntimeHost {
     private entryName: string | null = null;
     private persistent = false;
     readonly net: NetHub;
+    readonly multiplayer: MultiplayerRuntime;
     constructor(readonly session: EditorSession) {
         this.bus = new EventBus(this);
         this.scheduler = new Scheduler(this);
         this.input = new InputState(this.bus);
+        this.inputSystem = new LiveInputSystem(session.scene.input);
         this.web = new WebUiHost(this.webAssets());
         this.loader = this.createLoader();
         this.net = new NetHub(this.netServices());
+        this.multiplayer = createMultiplayerRuntime(this);
     }
     private netServices(): NetHubServices {
         return {
@@ -233,8 +229,11 @@ export class ScriptRuntime implements RuntimeHost {
         this.renderBridge.reset();
         this.renderState.shaderWarmup = result.compiled.filter((script) => script.kind === 'shader' && script.errorCount === 0).map((script) => decodeShaderBundle(script.code)).filter((bundle): bundle is CompiledShaderBundle => bundle !== null);
         this.input.attach(this.session.viewportCanvas);
+        this.attachInputSystem(this.session.viewportCanvas);
         this.web.attach(this.session.viewportCanvas?.parentElement ?? null);
         this.startNet(link);
+        if (mode === 'play')
+            startMultiplayer(this.multiplayer, this.session);
         this.helixRoot = createHelixRoot(this, { props: this.props, locks: this.locks });
         this.loader = this.createLoader();
         const audit = auditHelixRoot(this.helixRoot, mode);
@@ -289,7 +288,7 @@ export class ScriptRuntime implements RuntimeHost {
             return NO_LINK;
         if (engineSettings.get('simulation.net.server') === 'hosted') {
             if (scripting.server.url)
-                return { kind: 'websocket', url: scripting.server.url, room: engineSettings.get('simulation.net.room'), ticket: parseTicket(engineSettings.get('simulation.net.ticket')) };
+                return { kind: 'websocket', url: scripting.server.url, room: engineSettings.get('simulation.net.room'), ticket: parseTestTicket(engineSettings.get('simulation.net.ticket')) };
             this.say('warn', 'As preferências pedem o servidor hospedado, mas o projeto não tem endereço em Código ▸ Servidor do jogo; o playtest usa o servidor simulado.');
         }
         return { kind: 'local', conditions: { latencyMs: engineSettings.get('simulation.net.latency'), jitterMs: engineSettings.get('simulation.net.jitter'), loss: engineSettings.get('simulation.net.loss') / 100 } };
@@ -352,10 +351,12 @@ export class ScriptRuntime implements RuntimeHost {
         this.loader.clear();
         this.foreign.dispose();
         this.pendingCompiles.clear();
+        this.multiplayer.stop();
         this.net.reset();
         this.scheduler.reset();
         this.bus.clear();
         this.input.dispose();
+        this.inputSystem.dispose();
         this.web.clear();
         this.web.dispose();
         this.restoreScene();
@@ -555,6 +556,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.scheduler.tick(delta);
         this.net.tick(unscaledDelta * 1000);
         this.input.pollGamepads();
+        this.inputSystem.beginFrame(unscaledDelta);
         this.web.beginFrame();
         this.sky.tick();
         this.syncActorsIfNeeded();
@@ -606,7 +608,9 @@ export class ScriptRuntime implements RuntimeHost {
         }
         if (this.mode === 'play')
             this.cameraEffects.apply(delta, this.session.camera, this.time.now);
+        this.multiplayer.update(this.time.unscaledDelta * 1000);
         this.input.endFrame();
+        this.inputSystem.endFrame();
         this.scriptDebugger.frameEnd(this.instances);
         if (this.mode === 'editor' && !this.persistent && this.idle) {
             if (this.entryName)
@@ -621,6 +625,10 @@ export class ScriptRuntime implements RuntimeHost {
         this.beforePhysics(delta, delta);
         this.afterPhysics(delta);
     }
+    private attachInputSystem(canvas: HTMLCanvasElement | null): void {
+        this.inputSystem.system.setAsset(this.session.scene.input);
+        this.inputSystem.attach({ surface: canvas, acceptsKeyboard: () => this.input.gameHasKeyboard });
+    }
     get renderRequest(): ScriptRenderRequest | null {
         return this.running ? this.renderBridge : null;
     }
@@ -628,6 +636,7 @@ export class ScriptRuntime implements RuntimeHost {
         if (!this.running)
             return;
         this.input.attach(canvas);
+        this.attachInputSystem(canvas);
         this.web.attach(canvas?.parentElement ?? null);
     }
     invoke<T>(owner: ScriptOwner | null, phase: string, fn: () => T): T | undefined {
@@ -914,6 +923,7 @@ export class ScriptRuntime implements RuntimeHost {
         this.bus = new EventBus(this);
         this.scheduler = new Scheduler(this);
         this.input = new InputState(this.bus);
+        this.inputSystem = new LiveInputSystem(this.session.scene.input);
         this.web = new WebUiHost(this.webAssets());
         this.helixRoot = {};
         this.loader = this.createLoader();

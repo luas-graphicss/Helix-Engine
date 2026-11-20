@@ -5,7 +5,9 @@ import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { HELIX_NET_PROTOCOL } from '@/engine/net/protocol';
 import { hostFiles } from '@/engine/net/server-bundle/host-sources';
 import { ROOM_RUNTIME_FILE, ROOM_RUNTIME_SOURCE } from '@/engine/net/server-bundle/room-runtime-source';
-import { runtimeModuleForLanguage, serverRuntimeUrl, type ServerRuntimeModule } from '@/engine/net/server-bundle/runtime-modules';
+import { createSessionBlueprint } from '@/engine/net/runtime/session-blueprint';
+import { createMultiplayerManifest, type MultiplayerManifest } from '@/engine/net/server-bundle/multiplayer-manifest';
+import { MULTIPLAYER_HOST_MODULE, runtimeModuleForLanguage, serverRuntimeUrl, type ServerBundleModule, type ServerRuntimeModule } from '@/engine/net/server-bundle/runtime-modules';
 import type { CompiledScript } from '@/engine/scripting/compiler/compile-types';
 import { collectScriptSources } from '@/engine/scripting/compiler/project-sources';
 import { scriptFileName } from '@/engine/scripting/script-document';
@@ -35,7 +37,7 @@ interface EmbeddedRuntime {
     readonly module: ServerRuntimeModule;
     readonly code: string;
 }
-async function fetchRuntime(module: ServerRuntimeModule): Promise<EmbeddedRuntime> {
+async function fetchBundle(module: ServerBundleModule): Promise<string> {
     const response = await fetch(serverRuntimeUrl(module));
     if (!response.ok) {
         const detail = await response
@@ -46,9 +48,30 @@ async function fetchRuntime(module: ServerRuntimeModule): Promise<EmbeddedRuntim
             .catch(() => undefined);
         throw new Error(detail || `HTTP ${response.status}`);
     }
-    return { module, code: await response.text() };
+    return response.text();
 }
-function readme(name: string, target: GameServerTarget, scripts: ManifestScript[], runtimes: EmbeddedRuntime[], tickRate: number, maxPlayers: number, url: string): string {
+async function fetchRuntime(module: ServerRuntimeModule): Promise<EmbeddedRuntime> {
+    return { module, code: await fetchBundle(module) };
+}
+function multiplayerNotes(multiplayer: MultiplayerManifest | null): string[] {
+    if (!multiplayer)
+        return [];
+    const { settings, plan } = multiplayer;
+    const queues = settings.matchmaking.enabled ? settings.matchmaking.queues.length : 0;
+    return [
+        '## Multiplayer',
+        '',
+        `O pacote também atende o multiplayer da cena, no mesmo endereço e porta, sob \`/mp\`: sessões em \`/mp/session/<nome>\`, lobby e matchmaking em \`/mp/services\` e relay para jogador anfitrião em \`/mp/relay/<código>\`. O jogo usa esses caminhos sozinho quando o endereço deste servidor está em **Código ▸ Servidor do jogo**.`,
+        '',
+        `- \`${MULTIPLAYER_HOST_MODULE.file}\`: sessões, objetos de rede, RPCs, lobby, matchmaking e relay; o mesmo código que roda no servidor simulado do editor. Não precisa editar.`,
+        `- Esta exportação leva ${plan.sceneObjects.length} objetos da cena, ${plan.playerTemplates.length} criados por jogador, ${settings.rpcs.length} RPCs declarados, ${queues} filas de matchmaking e até ${settings.server.maxSessions} sessões ao mesmo tempo (esquema \`${plan.schema}\`).`,
+        '- O servidor confere a posse, a velocidade dos objetos movidos pelo dono e o limite por segundo de cada RPC; quem insiste em mensagens fora do protocolo é derrubado.',
+        '- Jogo e servidor precisam sair da mesma versão da cena: depois de mudar objetos de rede ou RPCs, exporte o pacote de novo. Um jogo de outra versão é recusado ao entrar.',
+        '- `/health` mostra sessões, jogadores, lobbies, buscas de partida e salas de relay em andamento.',
+        '',
+    ];
+}
+function readme(name: string, target: GameServerTarget, scripts: ManifestScript[], runtimes: EmbeddedRuntime[], tickRate: number, maxPlayers: number, url: string, multiplayer: MultiplayerManifest | null): string {
     const executable = scripts.filter((script) => script.kind === 'module');
     const foreign = scripts.filter((script) => script.kind !== 'module');
     const run = target === 'cloudflare'
@@ -77,6 +100,7 @@ function readme(name: string, target: GameServerTarget, scripts: ManifestScript[
         ...runtimes.map(({ module }) => `- \`${module.file}\`: runtime de ${scriptLanguage(module.language).label} que os scripts compilados pedem como \`${module.specifier}\`; o mesmo código que roda no editor, empacotado para o servidor. Não precisa editar.`),
         ...foreign.map((script) => `- \`game/${script.file}\`: ${script.name} (${script.language}) — fonte incluído para referência; este pacote executa as linguagens que compilam para JavaScript (JS, TS, C#, GDScript, Java, Kotlin, Dart, Haxe), as demais entram quando o runtime delas chegar ao servidor.`),
         '',
+        ...multiplayerNotes(multiplayer),
         '## A API no servidor',
         '',
         'Os scripts veem o mesmo `helix.net` do editor, do lado do servidor: `rpc(nome, (jogador, ...args) => …, { perSecond })`, `on(nome, (jogador, ...args) => …)`, `send`, `broadcast`, `state.set/get/remove`, `replicate(objeto, campos)`, `kick`, `onPlayerJoined`, `onPlayerLeft` e `authenticate((bilhete, pedido) => true | false | motivo | { name })`. Também `helix.log`, `helix.time`, `helix.task` (wait, delay, every, spawn) e `helix.events`. Não há cena nem renderização: o servidor guarda regras e números, não malhas.',
@@ -98,7 +122,8 @@ export async function exportServerBundle(session: EditorSession): Promise<boolea
     }
     const { server } = scripting;
     const serverAssets = scriptsForSide(session.library.byKind('script'), 'server');
-    if (serverAssets.length === 0) {
+    const multiplayerManifest = session.scene.multiplayer.enabled ? createMultiplayerManifest(createSessionBlueprint(session.scene, { tickRate: server.tickRate, maxPlayers: server.maxPlayers })) : null;
+    if (serverAssets.length === 0 && !multiplayerManifest) {
         session.log.warn(LOG_SOURCE, 'Nenhum script de Servidor ou Ambos na biblioteca: o pacote ficaria vazio. Crie um pelo modelo "Regras no servidor".');
         return false;
     }
@@ -126,6 +151,16 @@ export async function exportServerBundle(session: EditorSession): Promise<boolea
         session.log.error(LOG_SOURCE, `Não foi possível empacotar o runtime de ${Array.from(needed.values(), (module) => scriptLanguage(module.language).label).join(', ')}: ${cause instanceof Error ? cause.message : String(cause)}. O pacote não foi gerado.`);
         return false;
     }
+    let multiplayerCode: string | null = null;
+    if (multiplayerManifest) {
+        try {
+            multiplayerCode = await fetchBundle(MULTIPLAYER_HOST_MODULE);
+        }
+        catch (cause) {
+            session.log.error(LOG_SOURCE, `Não foi possível empacotar o multiplayer: ${cause instanceof Error ? cause.message : String(cause)}. O pacote não foi gerado.`);
+            return false;
+        }
+    }
     const name = session.projectName;
     const slug = serverSlug(name);
     const zip = new JSZip();
@@ -141,6 +176,7 @@ export async function exportServerBundle(session: EditorSession): Promise<boolea
         manifestScripts.push({ name: script.name, file, language: scriptLanguage(script.language).label, kind: isModule ? 'module' : 'source', runContext: script.runContext, entry: scripting.entryScriptId === script.assetId, module: moduleKey });
     });
     indexLines.push(`export const builtins = { ${runtimes.map(({ module }, index) => `${JSON.stringify(module.specifier)}: runtime${index}`).join(', ')} }`);
+    indexLines.push(multiplayerCode === null ? 'export const multiplayerRuntime = null' : `export * as multiplayerRuntime from '../${MULTIPLAYER_HOST_MODULE.file}'`);
     zip.file('game/manifest.json', JSON.stringify({
         format: 'helix-server',
         engine: `${ENGINE_NAME} ${ENGINE_VERSION}`,
@@ -150,14 +186,17 @@ export async function exportServerBundle(session: EditorSession): Promise<boolea
         server: { tickRate: server.tickRate, maxPlayers: server.maxPlayers, target: server.target, url: server.url },
         scripts: manifestScripts,
         runtimes: runtimes.map(({ module }) => ({ language: module.language, specifier: module.specifier, file: module.file })),
+        multiplayer: multiplayerManifest,
     }, null, 2));
     zip.file('game/index.mjs', `${indexLines.join('\n')}\n`);
     for (const { module, code } of runtimes)
         zip.file(module.file, code);
     zip.file(ROOM_RUNTIME_FILE, ROOM_RUNTIME_SOURCE);
+    if (multiplayerCode !== null)
+        zip.file(MULTIPLAYER_HOST_MODULE.file, multiplayerCode);
     for (const entry of hostFiles(server.target, slug, name))
         zip.file(entry.path, entry.content);
-    zip.file('README.md', readme(name, server.target, manifestScripts, runtimes, server.tickRate, server.maxPlayers, server.url));
+    zip.file('README.md', readme(name, server.target, manifestScripts, runtimes, server.tickRate, server.maxPlayers, server.url, multiplayerManifest));
     const blob = await zip.generateAsync({ type: 'blob', mimeType: 'application/zip', compression: 'DEFLATE' });
     const delivered = await downloadBlob(blob, `${slug}-servidor-${server.target}.zip`, 'Pacote de servidor Helix');
     if (!delivered)
@@ -166,6 +205,6 @@ export async function exportServerBundle(session: EditorSession): Promise<boolea
     const sources = manifestScripts.length - modules;
     const duration = Math.max(1, Math.round(performance.now() - startedAt));
     const embedded = runtimes.length > 0 ? ` com o runtime de ${runtimes.map(({ module }) => scriptLanguage(module.language).label).join(' e ')} embutido` : '';
-    session.log.info(LOG_SOURCE, `Pacote ${GAME_SERVER_TARGET_LABEL[server.target]} exportado: ${modules} ${modules === 1 ? 'módulo' : 'módulos'}${embedded}${sources > 0 ? ` e ${sources} ${sources === 1 ? 'fonte' : 'fontes'} de outras linguagens` : ''}, ${server.tickRate} Hz, até ${server.maxPlayers} jogadores · ${duration} ms. Nenhum script de cliente foi incluído.`);
+    session.log.info(LOG_SOURCE, `Pacote ${GAME_SERVER_TARGET_LABEL[server.target]} exportado: ${modules} ${modules === 1 ? 'módulo' : 'módulos'}${embedded}${sources > 0 ? ` e ${sources} ${sources === 1 ? 'fonte' : 'fontes'} de outras linguagens` : ''}, ${server.tickRate} Hz, até ${server.maxPlayers} jogadores · ${duration} ms.${multiplayerManifest ? ' Multiplayer com sessões, lobby, matchmaking e relay incluído.' : ''} Nenhum script de cliente foi incluído.`);
     return true;
 }

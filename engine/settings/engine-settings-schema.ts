@@ -467,6 +467,24 @@ export const ENGINE_SETTINGS = {
         step: 1,
         unit: '%',
     }),
+    'simulation.net.duplicate': numberSetting({
+        label: 'Pacotes duplicados',
+        description: 'Fração dos pacotes do multiplayer que chega duas vezes ao servidor simulado. A engine descarta a cópia; serve para conferir que nada no jogo conta o mesmo pacote em dobro.',
+        default: 0,
+        min: 0,
+        max: 50,
+        step: 1,
+        unit: '%',
+    }),
+    'simulation.net.reorder': numberSetting({
+        label: 'Pacotes fora de ordem',
+        description: 'Fração dos pacotes do multiplayer que atrasa e chega depois de pacotes mais novos no servidor simulado. Os canais confiáveis reordenam e a pose usa sempre o estado mais recente.',
+        default: 0,
+        min: 0,
+        max: 50,
+        step: 1,
+        unit: '%',
+    }),
     'render.profile': selectSetting({
         label: 'Perfil de qualidade',
         description: 'Orçamentos de sombras, nuvens, bloom e terreno. Em Automático, a engine classifica a GPU; forçar um perfil ajuda a testar como o jogo fica noutras máquinas.',
@@ -968,7 +986,7 @@ export const ENGINE_SETTING_SECTIONS: readonly SettingSection[] = [
             {
                 title: 'Ligação simulada',
                 description: 'Com o servidor simulado, estes valores degradam a ligação entre ele e o cliente para testar o jogo como se estivesse na internet. Com o servidor hospedado, a rede é a de verdade.',
-                settings: ['simulation.net.latency', 'simulation.net.jitter', 'simulation.net.loss'],
+                settings: ['simulation.net.latency', 'simulation.net.jitter', 'simulation.net.loss', 'simulation.net.duplicate', 'simulation.net.reorder'],
             },
         ],
     },

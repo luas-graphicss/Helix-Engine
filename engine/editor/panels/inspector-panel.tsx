@@ -41,6 +41,7 @@ import { ClothSection } from './inspector/cloth/cloth-section';
 import { VehicleSection } from './inspector/vehicle/vehicle-section';
 import { WheelSection } from './inspector/vehicle/wheel-section';
 import { NavigationSection } from './inspector/navigation/navigation-section';
+import { NetworkSection } from './inspector/network/network-section';
 import { CameraSection } from './inspector/camera/camera-section';
 import { LayerField } from './inspector/layer-field';
 import { SelectionInspector } from './inspector/selection-inspector';
@@ -236,6 +237,7 @@ export function InspectorPanel() {
         <VehicleSection entity={entity}/>
         <WheelSection entity={entity}/>
         <NavigationSection entity={entity}/>
+        <NetworkSection entity={entity}/>
         <ClothSection entity={entity}/>
         <MaterialSection entity={entity}/>
         <TexturesSection entity={entity}/>

@@ -37,6 +37,8 @@ export async function serializeScene(scene: Scene, options: SerializeSceneOption
             scripting: toPlain(scene.scripting, 'scripting'),
             layers: toPlain(scene.layers, 'layers'),
             navigation: toPlain(scene.navigation, 'navigation'),
+            input: toPlain(scene.input, 'input'),
+            multiplayer: toPlain(scene.multiplayer, 'multiplayer'),
         },
         meshes: writer.meshes,
         textures: writer.textures,
@@ -138,6 +140,8 @@ class SceneWriter {
             json.navLink = toPlain(entity.navLink, `${entity.name}.navLink`);
         if (entity.navModifier)
             json.navModifier = toPlain(entity.navModifier, `${entity.name}.navModifier`);
+        if (entity.networkObject)
+            json.networkObject = toPlain(entity.networkObject, `${entity.name}.networkObject`);
         if (entity.layer !== DEFAULT_RENDER_LAYER)
             json.layer = entity.layer;
         const modelRoot = entity.character ? findModelRoot(entity) : null;
