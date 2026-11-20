@@ -1,6 +1,6 @@
 'use client';
 import type { ReactNode } from 'react';
-import { Aperture, Atom, AudioLines, Blocks, BotMessageSquare, Clapperboard, CloudSun, FileClock, FileCode2, FolderOpen, Gamepad2, Gauge, LayoutPanelTop, Lightbulb, ListTree, Mountain, PersonStanding, SlidersHorizontal, Sparkles, Terminal, type LucideIcon, } from 'lucide-react';
+import { Aperture, Atom, AudioLines, Blocks, BotMessageSquare, Clapperboard, CloudSun, FileClock, FileCode2, FolderOpen, Gamepad2, Gauge, LayoutPanelTop, Lightbulb, ListTree, Mountain, Network, PersonStanding, SlidersHorizontal, Sparkles, Terminal, type LucideIcon, } from 'lucide-react';
 import { AnimationPanel } from '@/engine/editor/panels/animation-panel';
 import { AudioPanel } from '@/engine/editor/panels/audio-panel';
 import { VfxPanel } from '@/engine/editor/panels/vfx-panel';
@@ -17,6 +17,7 @@ import { ActivityPanel } from '@/engine/editor/panels/activity-panel';
 import { AssistantPanel } from '@/engine/editor/panels/assistant-panel';
 import { InterfacePanel } from '@/engine/editor/panels/interface-panel';
 import { InputPanel } from '@/engine/editor/panels/input-panel';
+import { MultiplayerPanel } from '@/engine/editor/panels/multiplayer-panel';
 import { ScriptsPanel } from '@/engine/editor/panels/scripts-panel';
 import { ExtensionsPanel } from '@/engine/editor/extensions/ui/extensions-panel';
 import type { EditorWorkspace } from '@/engine/editor/session/editor-session';
@@ -52,6 +53,7 @@ export const DOCK_PANELS: Record<BuiltinPanelId, DockPanelDefinition> = {
     vfx: { id: 'vfx', label: 'Efeitos', icon: Sparkles, shortcut: 'panel.vfx', inToolbar: true, render: () => <VfxPanel /> },
     interface: { id: 'interface', label: 'Interface', icon: LayoutPanelTop, shortcut: 'panel.interface', inToolbar: true, render: () => <InterfacePanel /> },
     input: { id: 'input', label: 'Entrada', icon: Gamepad2, render: () => <InputPanel /> },
+    multiplayer: { id: 'multiplayer', label: 'Multiplayer', icon: Network, render: () => <MultiplayerPanel /> },
     scripts: { id: 'scripts', label: 'Scripts', icon: FileCode2, shortcut: 'panel.scripts', inToolbar: true, render: () => <ScriptsPanel /> },
     console: { id: 'console', label: 'Console', icon: Terminal, shortcut: 'panel.console', inToolbar: true, render: () => <ConsolePanel /> },
     activity: { id: 'activity', label: 'Histórico de atividade', icon: FileClock, render: () => <ActivityPanel /> },

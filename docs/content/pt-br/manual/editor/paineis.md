@@ -26,6 +26,7 @@ Os painéis são as abas ao redor do viewport. Cada um cuida de um sistema; abri
 | Áudio | `Ctrl+Shift+U` | base | O mixer com os barramentos e o editor de clipes com a forma de onda. |
 | Efeitos | `Ctrl+Shift+X` | base | O editor de partículas: emissores, módulos e a pré-visualização. |
 | Interface | `Ctrl+Shift+F` | esquerda | A paleta de elementos do designer de telas. Só na área Interface. |
+| Multiplayer | — | base | A sessão da cena, lobby, matchmaking e relay, os objetos de rede, os RPCs declarados, o pacote do servidor dedicado e as ferramentas de teste: rede simulada, clientes de teste e tráfego. |
 | Scripts | `Ctrl+Shift+Y` | esquerda | Os scripts do jogo, por pasta, com a linguagem e o estado de compilação de cada um. |
 | Extensões | — | esquerda | As [extensões do editor](/helix/docs/pt-br/scripting/extensoes-do-editor) do projeto, o estado de cada uma e os fluxos de trabalho que elas registram. |
 | Desempenho | `F3` | sobre o viewport | O HUD de orçamento do frame. |
