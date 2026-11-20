@@ -23,6 +23,15 @@ export const NETWORK_PRESETS: readonly NetworkPreset[] = [
     { id: 'unstable', label: 'Conexão instável', conditions: { latencyMs: 120, jitterMs: 120, lossRate: 0.12, duplicateRate: 0.02, reorderRate: 0.1 } },
 ];
 const REORDER_BASE_MS = 20;
+const PERCENT = 100;
+const PERCENT_DECIMALS = 3;
+const RATE_DECIMALS = 5;
+export function rateToPercent(rate: number): number {
+    return Number((rate * PERCENT).toFixed(PERCENT_DECIMALS));
+}
+export function percentToRate(percent: number): number {
+    return Number((percent / PERCENT).toFixed(RATE_DECIMALS));
+}
 function clampRate(rate: number): number {
     return Number.isFinite(rate) ? Math.min(1, Math.max(0, rate)) : 0;
 }

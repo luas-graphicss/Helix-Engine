@@ -2,10 +2,10 @@ import { MultiplayerRuntime, type MultiplayerEnvironment } from '@/engine/net/ru
 import type { RuntimeListener } from '@/engine/net/runtime/runtime-events';
 import { createSessionBlueprint } from '@/engine/net/runtime/session-blueprint';
 import { describeDisconnect, DISCONNECT } from '@/engine/net/transport/disconnect-reason';
-import { normalizeNetworkConditions } from '@/engine/net/transport/network-conditions';
 import type { EditorSession } from '@/engine/editor/session/editor-session';
 import { engineSettings } from '@/engine/settings/engine-settings-store';
 import type { RuntimeHost } from './runtime-host';
+import { readSimulatedConditions } from './simulated-conditions';
 import { parseTestTicket } from './test-ticket';
 export type MultiplayerBridgeHost = Pick<RuntimeHost, 'session' | 'bus' | 'trackSpawned' | 'destroyScriptsOf' | 'requestActorSync' | 'log'>;
 export const MULTIPLAYER_EVENT = {
@@ -19,7 +19,6 @@ export const MULTIPLAYER_EVENT = {
 } as const;
 const LOG_SOURCE = 'Multiplayer';
 const DEFAULT_PLAYER_NAME = 'Jogador';
-const PERCENT = 100;
 export function createMultiplayerRuntime(host: MultiplayerBridgeHost): MultiplayerRuntime {
     const emit = (event: string, payload: unknown): void => void host.bus.emit(event, payload);
     const log: MultiplayerEnvironment['log'] = (level, message) => host.log(level, message, { source: LOG_SOURCE });
@@ -73,11 +72,7 @@ export function startMultiplayer(runtime: MultiplayerRuntime, session: EditorSes
     runtime.start({
         blueprint,
         serverUrl: hosted ? server.url : null,
-        conditions: normalizeNetworkConditions({
-            latencyMs: engineSettings.get('simulation.net.latency'),
-            jitterMs: engineSettings.get('simulation.net.jitter'),
-            lossRate: engineSettings.get('simulation.net.loss') / PERCENT,
-        }),
+        conditions: readSimulatedConditions(),
         identity: { name: DEFAULT_PLAYER_NAME, ticket: parseTestTicket(engineSettings.get('simulation.net.ticket')) },
     });
     const { plan } = blueprint;
