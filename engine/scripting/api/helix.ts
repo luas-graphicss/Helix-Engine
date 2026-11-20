@@ -10,6 +10,7 @@ import { createDebugApi, createEngineInfo, createEventsApi, createLogApi, create
 import { createEditorApi } from './editor';
 import { createGuiApi } from './gui';
 import { createInputApi } from './input';
+import { createJobsApi } from './jobs';
 import { createLightApi } from './light';
 import { createMaterialApi } from './material';
 import { createMathApi } from './math';
@@ -47,6 +48,7 @@ export function createHelixRoot(host: RuntimeHost, bridges: HelixBridges): Helix
         ActorScript,
         time: createTimeApi(host),
         task: createTaskApi(host),
+        jobs: createJobsApi(host),
         log: createLogApi(host),
         debug: createDebugApi(host, host.debug),
         events: createEventsApi(host),

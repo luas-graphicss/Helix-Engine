@@ -18,7 +18,7 @@ const EXPLAINED_GLOBALS: Record<string, string> = {
     fetch: 'Rede direta não está disponível aos scripts. Ativos: helix.assets.import(url); dados: helix.assets.data.',
     XMLHttpRequest: 'Rede direta não está disponível aos scripts. Ativos: helix.assets.import(url).',
     WebSocket: 'Rede direta não está disponível aos scripts; a ABI de rede é helix.net.',
-    Worker: 'Workers não estão disponíveis aos scripts; use helix.task.spawn para trabalho assíncrono.',
+    Worker: 'Workers não estão disponíveis aos scripts; use helix.jobs para rodar trabalho em outras threads e helix.task.spawn para trabalho assíncrono.',
     SharedWorker: 'Workers não estão disponíveis aos scripts.',
     alert: 'alert não existe no jogo; use helix.log ou uma tela (helix.gui).',
     confirm: 'confirm não existe no jogo; monte um diálogo com helix.gui (no editor: helix.editor.dialogs.confirm).',

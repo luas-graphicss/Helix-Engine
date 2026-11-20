@@ -128,6 +128,36 @@ Variáveis do script que aparecem no inspetor (seção de script) e são salvas 
 - Linguagem base: `ScriptingSettings.baseLanguage`. A mesclagem de linguagens é um recurso da engine ligado em Helix ▸ Funcionalidades beta (`settings/beta-features.ts`, `MIX_LANGUAGES_FEATURE`), não uma propriedade do jogo; em jogos mesclados, `require` atravessa linguagens por uma ABI comum (seção 21.3). `engine`
 - Ordem de execução: por padrão a ordem da hierarquia; `helix.props.executionOrder` sobrescreve. `novo`
 
+### 1.9 Jobs paralelos — `helix.jobs`
+
+Trabalho pesado fora da thread do jogo, repartido entre as threads do processador: IA, física customizada, geração procedural, processamento de dados e simulação. Módulo: `jobs/system/job-system.ts`; as threads, a fila e o histórico aparecem no painel Jobs.
+
+- `threads: number` — quantas threads atendem os jobs nesta cena (painel Jobs ▸ Configuração). `engine`
+- `sharedMemory: boolean` — se os arrays de `createBuffer` são divididos com as threads sem cópia. `engine`
+- `run(fn, input?, options?): JobHandle` — roda `fn(input, job)` em uma thread. `engine`
+- `parallelFor(count, fn, input?, options?): JobHandle` — reparte `count` itens em lotes; cada lote recebe `job.start` e `job.end`, e o handle resolve com os retornos na ordem dos lotes. `engine`
+- `all(handles): Promise`, `cancel(handle)` `engine`
+- `createBuffer(kind, length)` — typed array (`'float32'`, `'int32'`, …) em memória compartilhada quando o navegador permite. `engine`
+- `stats()` — `{ threads, mode, queued, running, scheduled, completed, failed, cancelled, timedOut }`. `engine`
+- `JobHandle` — `id`, `name`, `status`, `done`, `cancel()`; aceita `await` direto. Job cancelado rejeita com o mesmo erro de tarefa cancelada de `helix.task`. `engine`
+- Opções — `name`, `priority` (`'high' | 'normal' | 'low'`), `dependsOn` (handles que precisam terminar antes), `timeout` (segundos; `0` desliga), `output`, `transfer`; em `parallelFor`, também `batchSize` e `stride`. `engine`
+- Dentro do job — `job.index`, `job.start`, `job.end`, `job.thread`, `job.output` e `job.math` (o mesmo `helix.math`). `engine`
+
+A função roda em outra thread: ela não enxerga `helix` nem variáveis de fora, só `input` e `job`. `input` e o retorno precisam ser dados clonáveis (números, textos, arrays, objetos simples, typed arrays).
+
+Com `output`, cada lote escreve na própria fatia: `job.output[(i - job.start) * stride]`. Havendo memória compartilhada, as threads escrevem direto no array; sem ela, a engine copia cada fatia de volta.
+
+```ts
+const heights = helix.jobs.createBuffer('float32', size * size)
+await helix.jobs.parallelFor(size * size, (input, job) => {
+  for (let i = job.start; i < job.end; i++) {
+    const x = (i % input.size) * input.scale
+    const z = Math.floor(i / input.size) * input.scale
+    job.output[i - job.start] = job.math.noise.fbm(x, 0, z)
+  }
+}, { size, scale: 0.02 }, { name: 'terrain-heights', output: heights })
+```
+
 ---
 
 ## 2. Cena e atores — `helix.scene`

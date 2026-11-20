@@ -20,6 +20,7 @@ import type { EntityLodOverride } from '@/engine/renderer/render-overrides';
 import type { ShaderBindings, ShaderMaterial } from './shader-bindings';
 import type { NetHub } from './net-hub';
 import type { MultiplayerRuntime } from '@/engine/net/runtime/multiplayer-runtime';
+import type { JobSystem } from '@/engine/jobs/system/job-system';
 export interface TimeState {
     now: number;
     delta: number;
@@ -62,6 +63,7 @@ export interface RuntimeHost extends CallbackInvoker {
     readonly input: InputState;
     readonly inputSystem: LiveInputSystem;
     readonly multiplayer: MultiplayerRuntime;
+    readonly jobs: JobSystem;
     readonly stacks: StackMapper;
     readonly web: WebUiHost;
     readonly time: TimeState;
