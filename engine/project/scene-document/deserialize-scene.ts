@@ -27,6 +27,7 @@ import { createCameraSettings, normalizeCameraSettings } from '@/engine/camera/c
 import { createVehicleSettings, normalizeVehicleSettings } from '@/engine/vehicle/vehicle-settings';
 import { createWheelSettings, normalizeWheelSettings } from '@/engine/vehicle/wheel/wheel-settings';
 import { createNavigationSettings, normalizeNavigationSettings } from '@/engine/navigation/areas/nav-areas';
+import { normalizeInputAsset } from '@/engine/input/actions/normalize-input-asset';
 import { createNavSurfaceSettings, normalizeNavSurfaceSettings } from '@/engine/navigation/surface/nav-surface-settings';
 import { createNavAgentSettings, normalizeNavAgentSettings } from '@/engine/navigation/agent/nav-agent-settings';
 import { createNavObstacleSettings, normalizeNavObstacleSettings } from '@/engine/navigation/obstacle/nav-obstacle-settings';
@@ -167,6 +168,7 @@ class SceneReader {
         scene.reserveEntityIds(nextEntityId);
         scene.layers.names = normalizeRenderLayerSettings(restoreInto(createRenderLayerSettings(), environment.layers)).names;
         scene.navigation.areas = normalizeNavigationSettings(restoreInto(createNavigationSettings(), environment.navigation)).areas;
+        Object.assign(scene.input, normalizeInputAsset(environment.input));
         return scene;
     }
     bindCameraFeeds(scene: Scene): void {

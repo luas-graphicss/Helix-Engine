@@ -37,6 +37,7 @@ export async function serializeScene(scene: Scene, options: SerializeSceneOption
             scripting: toPlain(scene.scripting, 'scripting'),
             layers: toPlain(scene.layers, 'layers'),
             navigation: toPlain(scene.navigation, 'navigation'),
+            input: toPlain(scene.input, 'input'),
         },
         meshes: writer.meshes,
         textures: writer.textures,

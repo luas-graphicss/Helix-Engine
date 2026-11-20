@@ -148,6 +148,7 @@ export interface SceneJson extends SceneResourcesJson {
         scripting?: PlainValue;
         layers?: PlainValue;
         navigation?: PlainValue;
+        input?: PlainValue;
     };
     root: EntityJson;
     stats: {
