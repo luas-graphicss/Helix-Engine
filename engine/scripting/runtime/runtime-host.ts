@@ -19,6 +19,7 @@ import type { MeshData } from '@/engine/renderer/geometry/mesh-data';
 import type { EntityLodOverride } from '@/engine/renderer/render-overrides';
 import type { ShaderBindings, ShaderMaterial } from './shader-bindings';
 import type { NetHub } from './net-hub';
+import type { MultiplayerRuntime } from '@/engine/net/runtime/multiplayer-runtime';
 export interface TimeState {
     now: number;
     delta: number;
@@ -60,6 +61,7 @@ export interface RuntimeHost extends CallbackInvoker {
     readonly scheduler: Scheduler;
     readonly input: InputState;
     readonly inputSystem: LiveInputSystem;
+    readonly multiplayer: MultiplayerRuntime;
     readonly stacks: StackMapper;
     readonly web: WebUiHost;
     readonly time: TimeState;
