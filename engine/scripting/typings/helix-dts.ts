@@ -2498,6 +2498,107 @@ const PROJECT_API = `
     disconnect(reason?: string): void
   }
 `;
+const MULTIPLAYER_API = `
+  export type MultiplayerPhase = 'offline' | 'connecting' | 'connected' | 'reconnecting'
+  export interface MultiplayerPlayer { readonly id: number; readonly name: string; readonly local: boolean }
+  export interface MultiplayerStats { ping: number; jitter: number; loss: number; bytesSentPerSecond: number; bytesReceivedPerSecond: number; packetsSentPerSecond: number; packetsReceivedPerSecond: number; backlogBytes: number; resentFrames: number }
+  export interface NetworkObject {
+    readonly id: number
+    readonly kind: string
+    readonly actor: Entity
+    readonly ownerId: number
+    readonly authority: 'server' | 'owner'
+    readonly isCopy: boolean
+    readonly isMine: boolean
+    readonly isServerOwned: boolean
+    get(name: string): JsonValue | null
+    set(name: string, value: JsonValue): boolean
+    watch(name: string, handler: (value: JsonValue, previous: JsonValue) => void): Unsubscribe
+    requestOwnership(): boolean
+    setOwner(playerId: number): boolean
+    teleport(position: Vec3Like, eulerDegrees?: Vec3Like): boolean
+    despawn(): boolean
+    send(name: string, ...args: JsonValue[]): boolean
+    on(name: string, handler: (senderId: number, ...args: JsonValue[]) => void): Unsubscribe
+  }
+  export interface MultiplayerObjectsApi {
+    list(): NetworkObject[]
+    find(objectId: number): NetworkObject | null
+    onSpawned(handler: (object: NetworkObject) => void): Unsubscribe
+    onDespawned(handler: (object: NetworkObject) => void): Unsubscribe
+    onOwnerChanged(handler: (object: NetworkObject, previousOwnerId: number) => void): Unsubscribe
+    onCorrected(handler: (object: NetworkObject) => void): Unsubscribe
+  }
+  export interface MultiplayerRpcApi {
+    send(name: string, ...args: JsonValue[]): boolean
+    sendUnreliable(name: string, ...args: JsonValue[]): boolean
+    on(name: string, handler: (senderId: number, ...args: JsonValue[]) => void): Unsubscribe
+    onServer(name: string, handler: (senderId: number, objectId: number, ...args: JsonValue[]) => void): Unsubscribe
+    toClients(name: string, ...args: JsonValue[]): boolean
+    toPlayer(playerId: number, name: string, ...args: JsonValue[]): boolean
+  }
+  export type SessionTicket = { readonly mode: 'dedicated'; readonly sessionId: string } | { readonly mode: 'relay'; readonly joinCode: string }
+  export interface LobbyMember { readonly id: string; readonly name: string; readonly isReady: boolean; readonly data: Record<string, JsonValue> }
+  export interface Lobby { readonly id: string; readonly code: string; readonly name: string; readonly hostId: string; readonly maxMembers: number; readonly isPrivate: boolean; readonly isLocked: boolean; readonly data: Record<string, JsonValue>; readonly members: LobbyMember[] }
+  export interface LobbyOptions { name?: string; maxMembers?: number; isPrivate?: boolean; data?: Record<string, JsonValue> }
+  export interface MultiplayerLobbyApi {
+    readonly current: Lobby | null
+    readonly isHost: boolean
+    create(options?: LobbyOptions): Promise<Lobby>
+    join(lobbyId: string): Promise<Lobby>
+    joinByCode(code: string): Promise<Lobby>
+    quickJoin(filter?: Record<string, JsonValue>): Promise<Lobby>
+    list(filter?: Record<string, JsonValue>, limit?: number): Promise<Lobby[]>
+    leave(): Promise<void>
+    update(changes: LobbyOptions & { isLocked?: boolean }): Promise<Lobby>
+    setReady(ready: boolean): Promise<Lobby>
+    setData(data: Record<string, JsonValue>): Promise<Lobby>
+    kick(memberId: string): Promise<Lobby>
+    transferHost(memberId: string): Promise<Lobby>
+    start(): Promise<SessionTicket>
+    onChanged(handler: (lobby: Lobby | null) => void): Unsubscribe
+    onStarted(handler: (ticket: SessionTicket, lobby: Lobby) => void): Unsubscribe
+  }
+  export interface MatchPlayer { readonly id: string; readonly name: string; readonly team: number }
+  export interface MatchFound { readonly matchId: string; readonly queue: string; readonly team: number; readonly players: MatchPlayer[]; readonly session: SessionTicket }
+  export interface MultiplayerMatchmakingApi {
+    readonly isSearching: boolean
+    find(queue: string, options?: { skill?: number; party?: boolean }): Promise<MatchFound>
+    cancel(): Promise<void>
+    onMatched(handler: (match: MatchFound) => void): Unsubscribe
+  }
+  export interface MultiplayerApi {
+    readonly enabled: boolean
+    readonly phase: MultiplayerPhase
+    readonly connected: boolean
+    readonly isHost: boolean
+    readonly hosted: boolean
+    readonly sessionId: string
+    readonly joinCode: string
+    readonly localPlayer: MultiplayerPlayer | null
+    playerName: string
+    readonly ping: number
+    players(): MultiplayerPlayer[]
+    stats(): MultiplayerStats | null
+    join(sessionId?: string): boolean
+    joinByCode(code: string): boolean
+    host(options?: { maxPlayers?: number }): Promise<string>
+    leave(): void
+    kick(playerId: number, reason?: string): boolean
+    onConnected(handler: (info: { sessionId: string; playerId: number; resumed: boolean }) => void): Unsubscribe
+    onDisconnected(handler: (reason: string, description: string) => void): Unsubscribe
+    onReconnecting(handler: (attempt: number) => void): Unsubscribe
+    onPlayerJoined(handler: (player: MultiplayerPlayer) => void): Unsubscribe
+    onPlayerLeft(handler: (player: MultiplayerPlayer, reason: string) => void): Unsubscribe
+    object(actor: Entity): NetworkObject | null
+    readonly objects: MultiplayerObjectsApi
+    spawn(template: Entity, options?: { owner?: number; position?: Vec3Like; rotation?: Vec3Like }): number | null
+    despawn(objectId: number): boolean
+    readonly rpc: MultiplayerRpcApi
+    readonly lobby: MultiplayerLobbyApi
+    readonly matchmaking: MultiplayerMatchmakingApi
+  }
+`;
 const EDITOR_API = `
   export interface EditorGuiFieldOptions { disabled?: boolean; key?: string }
   export interface EditorGui {
@@ -2698,6 +2799,7 @@ const HELIX_ROOT = `
     readonly storage: StorageApi
     readonly play: PlayApi
     readonly net: NetApi
+    readonly multiplayer: MultiplayerApi
                                                          
     readonly editor?: EditorApi
   }
@@ -2744,9 +2846,10 @@ const HELIX_ROOT = `
   export const storage: StorageApi
   export const play: PlayApi
   export const net: NetApi
+  export const multiplayer: MultiplayerApi
   export const editor: EditorApi | undefined
 `;
-export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${EDITOR_API}${HELIX_ROOT}
+export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${MULTIPLAYER_API}${EDITOR_API}${HELIX_ROOT}
 }
 
 declare module '@helix/engine' {
