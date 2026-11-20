@@ -24,6 +24,7 @@ import { cloneNavAgentSettings } from '@/engine/navigation/agent/nav-agent-setti
 import { cloneNavObstacleSettings } from '@/engine/navigation/obstacle/nav-obstacle-settings';
 import { cloneNavLinkSettings } from '@/engine/navigation/link/nav-link-settings';
 import { cloneNavModifierSettings } from '@/engine/navigation/modifier/nav-modifier-settings';
+import { cloneNetworkObjectSettings } from '@/engine/net/scene/network-object-settings';
 const NUMERIC_SUFFIX = /_\d+$/;
 export function uniqueEntityName(scene: Scene, desired: string, ignore: Entity | null = null): string {
     const taken = new Set<string>();
@@ -80,6 +81,7 @@ function cloneSubtree(scene: Scene, source: Entity, parent: Entity | null, copie
         navObstacle: source.navObstacle ? cloneNavObstacleSettings(source.navObstacle) : undefined,
         navLink: source.navLink ? cloneNavLinkSettings(source.navLink) : undefined,
         navModifier: source.navModifier ? cloneNavModifierSettings(source.navModifier) : undefined,
+        networkObject: source.networkObject ? cloneNetworkObjectSettings(source.networkObject) : undefined,
         layer: source.layer,
         castShadows: source.castShadows,
         receiveShadows: source.receiveShadows,

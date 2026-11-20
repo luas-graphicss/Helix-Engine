@@ -10,6 +10,7 @@ import { CameraFeeds } from '@/engine/camera/targets/camera-feeds';
 import { createNavigationSettings, type NavigationSettings } from '@/engine/navigation/areas/nav-areas';
 import { createDefaultInputAsset } from '@/engine/input/actions/default-input-asset';
 import type { InputAsset } from '@/engine/input/actions/input-asset';
+import { createMultiplayerSettings, type MultiplayerSettings } from '@/engine/net/settings/multiplayer-settings';
 import { Entity, entityTreeGeneration, type EntityOptions } from './entity';
 export class Scene {
     readonly root: Entity;
@@ -22,6 +23,7 @@ export class Scene {
     readonly layers: RenderLayerSettings = createRenderLayerSettings();
     readonly navigation: NavigationSettings = createNavigationSettings();
     readonly input: InputAsset = createDefaultInputAsset();
+    readonly multiplayer: MultiplayerSettings = createMultiplayerSettings();
     readonly cameraFeeds = new CameraFeeds();
     private nextId = 1;
     constructor(rootName = 'Cena', sky: SkySettings = createSkySettings(), physics: PhysicsSettings = createPhysicsSettings(), player: PlayerSettings = createPlayerSettings(), postProcessing: PostProcessSettings = createPostProcessSettings(), audio: MixerSettings = createMixerSettings(), scripting: ScriptingSettings = createScriptingSettings()) {

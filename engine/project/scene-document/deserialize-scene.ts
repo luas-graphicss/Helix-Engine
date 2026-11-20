@@ -28,6 +28,8 @@ import { createVehicleSettings, normalizeVehicleSettings } from '@/engine/vehicl
 import { createWheelSettings, normalizeWheelSettings } from '@/engine/vehicle/wheel/wheel-settings';
 import { createNavigationSettings, normalizeNavigationSettings } from '@/engine/navigation/areas/nav-areas';
 import { normalizeInputAsset } from '@/engine/input/actions/normalize-input-asset';
+import { createNetworkObjectSettings, normalizeNetworkObjectSettings } from '@/engine/net/scene/network-object-settings';
+import { createMultiplayerSettings, normalizeMultiplayerSettings } from '@/engine/net/settings/multiplayer-settings';
 import { createNavSurfaceSettings, normalizeNavSurfaceSettings } from '@/engine/navigation/surface/nav-surface-settings';
 import { createNavAgentSettings, normalizeNavAgentSettings } from '@/engine/navigation/agent/nav-agent-settings';
 import { createNavObstacleSettings, normalizeNavObstacleSettings } from '@/engine/navigation/obstacle/nav-obstacle-settings';
@@ -169,6 +171,7 @@ class SceneReader {
         scene.layers.names = normalizeRenderLayerSettings(restoreInto(createRenderLayerSettings(), environment.layers)).names;
         scene.navigation.areas = normalizeNavigationSettings(restoreInto(createNavigationSettings(), environment.navigation)).areas;
         Object.assign(scene.input, normalizeInputAsset(environment.input));
+        Object.assign(scene.multiplayer, normalizeMultiplayerSettings(restoreInto(createMultiplayerSettings(), environment.multiplayer)));
         return scene;
     }
     bindCameraFeeds(scene: Scene): void {
@@ -256,6 +259,8 @@ class SceneReader {
             options.navLink = normalizeNavLinkSettings(restoreInto(createNavLinkSettings(), json.navLink));
         if (json.navModifier)
             options.navModifier = normalizeNavModifierSettings(restoreInto(createNavModifierSettings(), json.navModifier));
+        if (json.networkObject)
+            options.networkObject = normalizeNetworkObjectSettings(restoreInto(createNetworkObjectSettings(), json.networkObject));
         if (json.layer !== undefined)
             options.layer = clampRenderLayer(json.layer);
         const entity = this.freshIds ? scene.createEntity(options, parent) : scene.restoreEntity({ ...options, id: json.id }, parent);

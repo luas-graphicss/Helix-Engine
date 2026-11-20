@@ -1,4 +1,5 @@
 import { DEFAULT_QUEUE, normalizeQueue, type QueueConfig } from '../services/matchmaking/matchmaking-types';
+import { normalizeRpcDeclarations, type RpcDeclaration } from './rpc-declarations';
 export type SessionTopology = 'dedicated' | 'relay';
 export interface MultiplayerSettings {
     enabled: boolean;
@@ -23,6 +24,7 @@ export interface MultiplayerSettings {
         emptySessionSeconds: number;
         openSessions: boolean;
     };
+    rpcs: RpcDeclaration[];
 }
 export const SESSION_TOPOLOGIES: readonly SessionTopology[] = ['dedicated', 'relay'];
 export const SESSION_TOPOLOGY_LABEL: Record<SessionTopology, string> = {
@@ -52,6 +54,7 @@ export function createMultiplayerSettings(): MultiplayerSettings {
         matchmaking: { enabled: true, queues: [{ ...DEFAULT_QUEUE }] },
         relay: { enabled: true },
         server: { maxSessions: 64, emptySessionSeconds: 60, openSessions: true },
+        rpcs: [],
     };
 }
 export function normalizeSessionName(name: string): string {
@@ -89,5 +92,6 @@ export function normalizeMultiplayerSettings(settings: MultiplayerSettings): Mul
             emptySessionSeconds: clamp(Number(settings.server?.emptySessionSeconds), 5, 3600, defaults.server.emptySessionSeconds),
             openSessions: settings.server?.openSessions !== false,
         },
+        rpcs: normalizeRpcDeclarations(Array.isArray(settings.rpcs) ? settings.rpcs : []),
     };
 }
