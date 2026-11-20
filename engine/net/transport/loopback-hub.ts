@@ -2,6 +2,7 @@ import { DISCONNECT } from './disconnect-reason';
 import { PERFECT_CONDITIONS, planDeliveries, type NetworkConditions } from './network-conditions';
 import { BufferedSocket, type SocketAcceptor } from './packet-socket';
 const LOOPBACK_MAX_PACKET_BYTES = 1200;
+const PATH_SEPARATOR = '/';
 interface ScheduledDelivery {
     readonly dueAt: number;
     readonly order: number;
@@ -56,18 +57,21 @@ export class LoopbackHub {
     get timeMs(): number {
         return this.now;
     }
-    listen(address: string, accept: SocketAcceptor): () => void {
-        this.acceptors.set(address, accept);
+    listen(service: string, accept: SocketAcceptor): () => void {
+        this.acceptors.set(service, accept);
         return () => {
-            if (this.acceptors.get(address) === accept)
-                this.acceptors.delete(address);
+            if (this.acceptors.get(service) === accept)
+                this.acceptors.delete(service);
         };
     }
     connect(address: string, conditions: NetworkConditions = PERFECT_CONDITIONS): LoopbackSocket {
         const client = new LoopbackSocket(this, conditions);
         const server = new LoopbackSocket(this, conditions);
+        const separator = address.indexOf(PATH_SEPARATOR);
+        const service = separator < 0 ? address : address.slice(0, separator);
+        const path = separator < 0 ? '' : address.slice(separator + 1);
         this.schedule(conditions.latencyMs, () => {
-            const accept = this.acceptors.get(address);
+            const accept = this.acceptors.get(service);
             if (!accept) {
                 client.close(DISCONNECT.unreachable);
                 return;
@@ -75,7 +79,7 @@ export class LoopbackHub {
             client.link(server);
             server.open();
             client.open();
-            accept(server);
+            accept(server, path);
         });
         return client;
     }

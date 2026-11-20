@@ -9,6 +9,7 @@ export const DISCONNECT = {
     rejected: 'rejected',
     flood: 'flood',
     replaced: 'replaced',
+    hostLeft: 'host-left',
 } as const;
 export type DisconnectCode = (typeof DISCONNECT)[keyof typeof DISCONNECT];
 const LABELS: Record<DisconnectCode, string> = {
@@ -22,6 +23,7 @@ const LABELS: Record<DisconnectCode, string> = {
     rejected: 'entrada recusada',
     flood: 'excesso de mensagens',
     replaced: 'a mesma sessão entrou por outra conexão',
+    'host-left': 'o anfitrião encerrou a sessão',
 };
 const REJECTION_LABELS: Record<string, string> = {
     protocol: 'o servidor fala outra versão do protocolo; exporte o pacote de servidor de novo',
@@ -29,6 +31,7 @@ const REJECTION_LABELS: Record<string, string> = {
     full: 'a sessão está cheia',
     handshake: 'a apresentação não chegou a tempo',
     denied: 'o servidor recusou a entrada',
+    relay: 'esse código de sessão não existe ou já expirou',
 };
 const RECOVERABLE: ReadonlySet<string> = new Set([DISCONNECT.timeout, DISCONNECT.unreachable, DISCONNECT.shutdown, DISCONNECT.overflow]);
 function isDisconnectCode(code: string): code is DisconnectCode {

@@ -11,7 +11,7 @@ export interface PacketSocket {
     send(packet: Uint8Array): void;
     close(reason: string): void;
 }
-export type SocketAcceptor = (socket: PacketSocket) => void;
+export type SocketAcceptor = (socket: PacketSocket, path: string) => void;
 const MAX_BACKLOG_PACKETS = 256;
 export abstract class BufferedSocket implements PacketSocket {
     abstract readonly maxPacketBytes: number;
