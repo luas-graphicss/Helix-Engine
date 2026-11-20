@@ -3,13 +3,13 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { build } from 'esbuild';
 import { ENGINE_VERSION } from '@/engine/core/engine-info';
-import type { ServerRuntimeModule } from './runtime-modules';
+import type { ServerBundleModule } from './runtime-modules';
 export interface BundledRuntime {
     readonly code: string;
     readonly hash: string;
 }
 const cache = new Map<string, Promise<BundledRuntime>>();
-export function bundleServerRuntime(module: ServerRuntimeModule): Promise<BundledRuntime> {
+export function bundleServerRuntime(module: ServerBundleModule): Promise<BundledRuntime> {
     if (process.env.NODE_ENV !== 'production')
         return bundle(module);
     let pending = cache.get(module.id);
@@ -22,7 +22,7 @@ export function bundleServerRuntime(module: ServerRuntimeModule): Promise<Bundle
     }
     return pending;
 }
-async function bundle(module: ServerRuntimeModule): Promise<BundledRuntime> {
+async function bundle(module: ServerBundleModule): Promise<BundledRuntime> {
     const root = process.cwd();
     const result = await build({
         entryPoints: [path.join(root, module.entry)],
@@ -33,7 +33,7 @@ async function bundle(module: ServerRuntimeModule): Promise<BundledRuntime> {
         target: 'es2022',
         alias: { '@': root },
         legalComments: 'none',
-        banner: { js: `// ${module.file} · Helix Engine ${ENGINE_VERSION}\n// Runtime de ${module.language} para o servidor: o código compilado o pede como ${JSON.stringify(module.specifier)}. Gerado pela engine; não precisa editar.` },
+        banner: { js: `// ${module.file} · Helix Engine ${ENGINE_VERSION}\n// ${module.summary} Gerado pela engine; não precisa editar.` },
         logLevel: 'silent',
     });
     const [output] = result.outputFiles;

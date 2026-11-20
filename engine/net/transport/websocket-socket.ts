@@ -1,6 +1,6 @@
 import { DISCONNECT } from './disconnect-reason';
 import { BufferedSocket } from './packet-socket';
-const WEBSOCKET_MAX_PACKET_BYTES = 16 * 1024;
+export const WEBSOCKET_MAX_PACKET_BYTES = 16 * 1024;
 const NORMAL_CLOSURE = 1000;
 const MAX_CLOSE_REASON_LENGTH = 120;
 export class WebSocketPacketSocket extends BufferedSocket {

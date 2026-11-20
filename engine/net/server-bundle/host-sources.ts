@@ -10,12 +10,26 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer } from 'ws'
 import { Room, loadGameFromDisk } from './${ROOM_RUNTIME_FILE}'
-import { builtins } from './game/index.mjs'
+import { builtins, multiplayerRuntime } from './game/index.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const game = await loadGameFromDisk(path.join(here, 'game'), { readFile }, path)
 const port = Number(process.env.PORT) || 8787
 const maxRooms = Number(process.env.HELIX_MAX_ROOMS) || 64
+
+const multiplayer = multiplayerRuntime && game.multiplayer ? new multiplayerRuntime.MultiplayerHost(game.multiplayer, (message) => console.log('[helix] multiplayer · ' + message)) : null
+const multiplayerTimer = multiplayer ? setInterval(() => multiplayer.tick(), multiplayerRuntime.HOST_UPDATE_INTERVAL_MS) : null
+function connectMultiplayer(ws, route) {
+  const connection = multiplayer.connect(route, {
+    send: (data) => {
+      if (ws.readyState === ws.OPEN) ws.send(data)
+    },
+    close: (reason) => ws.close(1000, String(reason || '').slice(0, 120)),
+  })
+  ws.on('message', (data, isBinary) => (isBinary ? connection.binary(new Uint8Array(data)) : connection.text(data.toString())))
+  ws.on('close', (_code, reason) => connection.closed(reason.toString()))
+  ws.on('error', () => connection.closed(''))
+}
 
 const rooms = new Map()
 function roomFor(name) {
@@ -46,7 +60,7 @@ function closeRoom(name, reason) {
 const http = createServer((request, response) => {
   if (request.url === '/health') {
     response.writeHead(200, { 'content-type': 'application/json' })
-    response.end(JSON.stringify({ ok: true, game: game.name, protocol: game.protocol, rooms: rooms.size, players: Array.from(rooms.values()).reduce((sum, room) => sum + room.players.size, 0) }))
+    response.end(JSON.stringify({ ok: true, game: game.name, protocol: game.protocol, rooms: rooms.size, players: Array.from(rooms.values()).reduce((sum, room) => sum + room.players.size, 0), multiplayer: multiplayer ? multiplayer.status() : null }))
     return
   }
   response.writeHead(426, { 'content-type': 'text/plain; charset=utf-8' })
@@ -56,6 +70,12 @@ const http = createServer((request, response) => {
 const wss = new WebSocketServer({ server: http, maxPayload: 256 * 1024 })
 wss.on('connection', (ws, request) => {
   const url = new URL(request.url || '/', 'http://localhost')
+  const route = multiplayerRuntime ? multiplayerRuntime.multiplayerPathOf(url.pathname) : null
+  if (route !== null) {
+    if (multiplayer) connectMultiplayer(ws, route)
+    else ws.close(1008, 'rejected:route')
+    return
+  }
   const name = (url.searchParams.get('room') || 'principal').slice(0, 64)
   const room = roomFor(name)
   if (!room) {
@@ -87,6 +107,8 @@ wss.on('connection', (ws, request) => {
 
 const shutdown = () => {
   for (const name of Array.from(rooms.keys())) closeRoom(name, 'servidor encerrado')
+  if (multiplayerTimer) clearInterval(multiplayerTimer)
+  if (multiplayer) multiplayer.close()
   wss.close()
   http.close(() => process.exit(0))
   setTimeout(() => process.exit(0), 2000).unref()
@@ -107,11 +129,17 @@ import manifest from './game/manifest.json'
 import * as modules from './game/index.mjs'
 
 const game = { ...manifest, scripts: manifest.scripts.map((entry) => ({ ...entry, code: entry.kind === 'module' ? modules[entry.module] : null })) }
+const multiplayerRuntime = modules.multiplayerRuntime
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url)
     if (url.pathname === '/health') return Response.json({ ok: true, game: game.name, protocol: game.protocol })
+    const route = multiplayerRuntime ? multiplayerRuntime.multiplayerPathOf(url.pathname) : null
+    if (route !== null) {
+      if (!game.multiplayer || request.headers.get('Upgrade') !== 'websocket') return new Response('rejected:route', { status: 426 })
+      return env.HELIX_MULTIPLAYER.get(env.HELIX_MULTIPLAYER.idFromName('multiplayer')).fetch(request)
+    }
     if (request.headers.get('Upgrade') !== 'websocket') return new Response('Servidor Helix de ' + game.name + ': conecte por WebSocket.', { status: 426 })
     const name = (url.searchParams.get('room') || 'principal').slice(0, 64)
     const id = env.HELIX_ROOM.idFromName(name)
@@ -184,6 +212,49 @@ export class HelixRoom {
     if (this.room.players.size > 0) this.state.storage.setAlarm(at + Math.round(1000 / this.room.tickRate))
   }
 }
+
+export class HelixMultiplayer {
+  constructor() {
+    this.host = null
+    this.timer = null
+    this.sockets = 0
+  }
+
+  ensureHost() {
+    if (!this.host) this.host = new multiplayerRuntime.MultiplayerHost(game.multiplayer)
+    if (this.timer === null) this.timer = setInterval(() => this.host.tick(), multiplayerRuntime.HOST_UPDATE_INTERVAL_MS)
+    return this.host
+  }
+
+  async fetch(request) {
+    const route = multiplayerRuntime.multiplayerPathOf(new URL(request.url).pathname)
+    if (route === null) return new Response('rejected:route', { status: 404 })
+    const pair = new WebSocketPair()
+    const [client, server] = Object.values(pair)
+    server.accept()
+    const connection = this.ensureHost().connect(route, {
+      send: (data) => {
+        if (server.readyState === 1) server.send(data)
+      },
+      close: (reason) => server.close(1000, String(reason || '').slice(0, 120)),
+    })
+    this.sockets++
+    let released = false
+    const release = (reason) => {
+      if (released) return
+      released = true
+      connection.closed(reason)
+      this.sockets--
+      if (this.sockets > 0 || this.timer === null) return
+      clearInterval(this.timer)
+      this.timer = null
+    }
+    server.addEventListener('message', (event) => (typeof event.data === 'string' ? connection.text(event.data) : connection.binary(new Uint8Array(event.data))))
+    server.addEventListener('close', (event) => release(event.reason || ''))
+    server.addEventListener('error', () => release(''))
+    return new Response(null, { status: 101, webSocket: client })
+  }
+}
 `;
 export const WRANGLER_TOML = (slug: string) => `name = "${slug}-servidor"
 main = "worker.mjs"
@@ -193,9 +264,17 @@ compatibility_date = "2025-01-01"
 name = "HELIX_ROOM"
 class_name = "HelixRoom"
 
+[[durable_objects.bindings]]
+name = "HELIX_MULTIPLAYER"
+class_name = "HelixMultiplayer"
+
 [[migrations]]
 tag = "v1"
 new_classes = ["HelixRoom"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["HelixMultiplayer"]
 `;
 export const DOCKERFILE = `FROM node:22-alpine
 WORKDIR /app
