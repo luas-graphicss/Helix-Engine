@@ -204,7 +204,7 @@ RUN npm install --omit=dev
 COPY . .
 ENV PORT=8787
 EXPOSE 8787
-HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http:                                 
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:8787/health || exit 1
 CMD ["node", "server.mjs"]
 `;
 export const DOCKER_COMPOSE = (slug: string) => `services:
