@@ -33,6 +33,11 @@ export class SnapshotBuffer {
             this.extrapolate(timeMs, target, newest, snapshots.at(-2));
             return true;
         }
+        const oldest = snapshots[0];
+        if (timeMs <= oldest.timeMs) {
+            copyTransformState(target, oldest.transform);
+            return true;
+        }
         let index = snapshots.length - 2;
         while (index > 0 && snapshots[index].timeMs > timeMs)
             index--;
