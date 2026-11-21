@@ -2,7 +2,7 @@ import { pickLocalizedValue, resolveFallbackChain } from '../fallback/fallback-c
 import { argumentNames, walkMessage } from '../message/message-arguments';
 import type { MessageNode } from '../message/message-ast';
 import { MessageSyntaxError, hasMessageSyntax, parseMessage } from '../message/message-parser';
-import { pluralCategories } from '../message/plural-category';
+import { wholeNumberPluralCategories } from '../message/plural-category';
 import { hasLocalizedValue, type LocalizationSettings, type LocalizedEntry, type StringEntry } from '../settings/localization-settings';
 export type TranslationIssueKind = 'missing' | 'syntax' | 'arguments' | 'plural' | 'asset';
 export type LocalizationTable = 'strings' | 'assets';
@@ -16,6 +16,8 @@ export interface TranslationIssue {
 type ChainLookup = (locale: string) => readonly string[];
 const PLAIN_TEXT: readonly MessageNode[] = [];
 const FALLBACK_CATEGORY = 'other';
+const UNASSIGNED_ASSET_DETAIL = 'nenhum idioma da cadeia de fallback tem ativo';
+const REMOVED_ASSET_DETAIL = 'o ativo não está mais na biblioteca';
 function chainLookup(settings: LocalizationSettings): ChainLookup {
     const chains = new Map<string, readonly string[]>();
     return (locale) => {
@@ -61,7 +63,7 @@ function pluralGaps(nodes: readonly MessageNode[], locale: string): string[] {
     walkMessage(nodes, (node) => {
         if (node.type !== 'plural')
             return;
-        const absent = pluralCategories(locale, node.ordinal).filter((category) => category !== FALLBACK_CATEGORY && !node.options.has(category));
+        const absent = wholeNumberPluralCategories(locale, node.ordinal).filter((category) => category !== FALLBACK_CATEGORY && !node.options.has(category));
         if (absent.length > 0)
             gaps.push(`${braced(node.name)} sem a forma ${absent.join(', ')}`);
     });
@@ -94,9 +96,7 @@ export function findAssetIssues(settings: LocalizationSettings, isKnownAsset: (a
     const chainOf = chainLookup(settings);
     return settings.assets.flatMap((entry) => settings.locales.flatMap(({ tag }): TranslationIssue[] => {
         if (!hasLocalizedValue(entry, tag))
-            return [{ table: 'assets', key: entry.key, locale: tag, kind: 'missing', detail: missingDetail(entry, chainOf(tag)) }];
-        if (!isKnownAsset(entry.values[tag]))
-            return [{ table: 'assets', key: entry.key, locale: tag, kind: 'asset', detail: 'o ativo não está mais na biblioteca' }];
-        return [];
+            return pickLocalizedValue(entry.values, chainOf(tag)) ? [] : [{ table: 'assets', key: entry.key, locale: tag, kind: 'missing', detail: UNASSIGNED_ASSET_DETAIL }];
+        return isKnownAsset(entry.values[tag]) ? [] : [{ table: 'assets', key: entry.key, locale: tag, kind: 'asset', detail: REMOVED_ASSET_DETAIL }];
     }));
 }

@@ -2,7 +2,7 @@ import { collectArguments } from '@/engine/localization/message/message-argument
 import { MessageCache } from '@/engine/localization/message/message-cache';
 import { formatMessage } from '@/engine/localization/message/message-formatter';
 import { MessageSyntaxError, hasMessageSyntax, parseMessage } from '@/engine/localization/message/message-parser';
-import { pluralCategories, pluralCategory } from '@/engine/localization/message/plural-category';
+import { pluralCategory, wholeNumberPluralCategories } from '@/engine/localization/message/plural-category';
 import { formatValue } from '@/engine/localization/message/value-formatters';
 import { createCheckList } from '../support/check-list';
 const checks = createCheckList('Mensagens localizadas: argumentos, plural e formatação');
@@ -67,7 +67,8 @@ checks.throws('estilo de data desconhecido é explicado', () => render('{when, d
 const described = collectArguments(parseMessage('{count, plural, one {{name} has # item} other {{name} has # items}} on {when, date} as {role, select, admin {A} other {B}}'));
 checks.check('os argumentos saem com nome, tipo e opções', described.map((argument) => `${argument.name}:${argument.kind}`).join(' ') === 'count:plural name:text when:date role:select' && described[3].choices.join(',') === 'admin,other');
 checks.check('o mesmo argumento fica com o tipo mais específico', collectArguments(parseMessage('{total} of {total, number, integer}'))[0].kind === 'number');
-checks.check('as categorias de plural vêm do idioma', pluralCategories('ru').includes('few') && pluralCategories('ru').includes('many') && pluralCategory('en', 1) === 'one' && pluralCategory('en', 2, true) === 'two');
+checks.check('as categorias de plural vêm do idioma', wholeNumberPluralCategories('ru').join(' ') === 'one few many other' && pluralCategory('en', 1) === 'one' && pluralCategory('en', 2, true) === 'two');
+checks.check('a forma que português e espanhol reservam para milhões não é cobrada', wholeNumberPluralCategories('pt-BR').join(' ') === 'one other' && wholeNumberPluralCategories('es').join(' ') === 'one other' && wholeNumberPluralCategories('ar').length === 6, `${wholeNumberPluralCategories('pt-BR').join(' ')} | ${wholeNumberPluralCategories('ar').join(' ')}`);
 const cache = new MessageCache();
 checks.check('o cache reaproveita a mensagem compilada', cache.compile(items) === cache.compile(items) && cache.render(items, { count: 5 }, 'en') === '5 items' && cache.render('Play', {}, 'en') === 'Play');
 checks.check('formatValue formata fora de uma mensagem', formatValue('number', 'de', 1234.5) === '1.234,5' && formatValue('list', 'en', ['a', 'b'], 'or') === 'a or b');
