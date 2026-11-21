@@ -152,6 +152,7 @@ export interface SceneJson extends SceneResourcesJson {
         input?: PlainValue;
         multiplayer?: PlainValue;
         jobs?: PlainValue;
+        localization?: PlainValue;
     };
     root: EntityJson;
     stats: {
