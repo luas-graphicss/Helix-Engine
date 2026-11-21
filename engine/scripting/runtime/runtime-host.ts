@@ -21,6 +21,7 @@ import type { ShaderBindings, ShaderMaterial } from './shader-bindings';
 import type { NetHub } from './net-hub';
 import type { MultiplayerRuntime } from '@/engine/net/runtime/multiplayer-runtime';
 import type { JobSystem } from '@/engine/jobs/system/job-system';
+import type { LocalizationRuntime } from '@/engine/localization/runtime/localization-runtime';
 export interface TimeState {
     now: number;
     delta: number;
@@ -64,6 +65,7 @@ export interface RuntimeHost extends CallbackInvoker {
     readonly inputSystem: LiveInputSystem;
     readonly multiplayer: MultiplayerRuntime;
     readonly jobs: JobSystem;
+    readonly localization: LocalizationRuntime;
     readonly stacks: StackMapper;
     readonly web: WebUiHost;
     readonly time: TimeState;

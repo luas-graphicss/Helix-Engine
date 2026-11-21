@@ -158,6 +158,30 @@ await helix.jobs.parallelFor(size * size, (input, job) => {
 }, { size, scale: 0.02 }, { name: 'terrain-heights', output: heights })
 ```
 
+### 1.10 Localização — `helix.localization`
+
+Jogo em vários idiomas: textos, ativos por idioma, plural e formatação de números, datas e listas. Módulo: `localization/runtime/localization-runtime.ts`; os idiomas, os textos e os ativos por idioma ficam no painel Localização e são salvos com a cena.
+
+- `locale: string`, `sourceLocale: string`, `direction: 'ltr' | 'rtl'` — idioma ativo, idioma de origem do projeto e sentido de leitura do idioma ativo. `engine`
+- `locales(): LocaleInfo[]` — idiomas ativos do jogo, cada um `{ tag, name, nativeName, direction, fallback, isSource }`; `name` vem no idioma ativo e `nativeName` no próprio idioma, pronto para o menu de opções. `engine`
+- `setLocale(tag): boolean` — troca o idioma do jogo; devolve `false` e avisa no console quando o idioma não está ativo no projeto. `engine`
+- `t(key, args?): string` — texto da chave no idioma ativo. Sem tradução, segue a cadeia de fallback (o fallback escolhido no painel ou o idioma-pai, depois o idioma de origem); sem nenhuma, devolve a própria chave e avisa no console uma vez. `engine`
+- `has(key)`, `keys()` `engine`
+- `format(pattern, args?): string` — formata um texto avulso com a mesma sintaxe das traduções. `engine`
+- `plural(count, ordinal?)` — categoria do número no idioma ativo: `'zero' | 'one' | 'two' | 'few' | 'many' | 'other'`. `engine`
+- `number(value, style?)`, `date(value, style?)`, `time(value, style?)`, `list(values, style?)` — formatação no idioma ativo. Estilos de número: `integer`, `percent`, `compact`, `currency:BRL`; de data e hora: `short`, `medium`, `long`, `full`; de lista: `and`, `or`, `unit`. `engine`
+- `asset(key): LibraryAsset | null` — ativo da chave no idioma ativo, com o mesmo fallback dos textos. `engine`
+- `onChanged(handler)` — chamado com o idioma novo a cada troca e quando a tabela é editada durante o teste de jogo. `engine`
+
+Sintaxe das traduções: `{name}` insere um argumento; `{count, plural, one {# moeda} other {# moedas}}` escolhe pela quantidade (`=0` casa um valor exato, `#` é o número formatado e `offset:1` desconta antes de escolher); `{place, selectordinal, one {#º} other {#º}}` trata ordinais; `{gender, select, female {…} other {…}}` escolhe por texto; `{price, number, currency:BRL}`, `{when, date, long}`, `{when, time, short}` e `{items, list, and}` formatam o valor. Toda escolha precisa da opção `other`, e `'{'` escreve uma chave literal.
+
+```ts
+helix.localization.setLocale('pt-BR')
+helix.gui.setText(menu, 'play', helix.localization.t('menu.play'))
+helix.gui.setText(hud, 'coins', helix.localization.t('hud.coins', { count: 3 }))
+helix.localization.onChanged(() => refreshTexts())
+```
+
 ---
 
 ## 2. Cena e atores — `helix.scene`
@@ -980,6 +1004,7 @@ Critério de aprovação: todas as asserções passam, nenhum aviso no console, 
 | `helix` (núcleo) | `scripting/*`, `editor/playtest/playtest-controller.ts`, `core/engine-info.ts` |
 | `helix.time`, `helix.task`, `helix.events`, `helix.props`, `helix.storage`, `helix.net`, `helix.input` | novos módulos `scripting/runtime/*` |
 | `helix.multiplayer` | `scripting/api/multiplayer/*` sobre `net/runtime/*`, `net/session/*` e `net/services/*` |
+| `helix.localization` | `scripting/api/localization.ts` sobre `localization/runtime/*`, `localization/message/*` e `localization/settings/*` |
 | `helix.log`, `helix.debug` | `editor/session/editor-session.ts` (`log`), `renderer/gl/line-batch.ts` |
 | `helix.math` | `core/math/*`, `core/noise/*`, `core/color/*` |
 | `helix.scene`, `helix.transform` | `core/scene/*`, `editor/commands/entity-commands.ts` |

@@ -2,7 +2,7 @@ import type { Entity } from '@/engine/core/scene/entity';
 import { auditBridge, type BridgeAudit } from '../api-manifest';
 import type { RuntimeHost, ScriptContext, ScriptHandle } from '../runtime/runtime-host';
 import { createAnimationApi } from './animation';
-import { createAssetsApi } from './assets';
+import { createAssetsApi, describeAsset } from './assets';
 import { createAudioApi } from './audio';
 import { createCameraApi } from './camera';
 import { createCharacterApi, createPlayerApi } from './character';
@@ -12,6 +12,7 @@ import { createGuiApi } from './gui';
 import { createInputApi } from './input';
 import { createJobsApi } from './jobs';
 import { createLightApi } from './light';
+import { createLocalizationApi } from './localization';
 import { createMaterialApi } from './material';
 import { createMathApi } from './math';
 import { createMeshApi } from './mesh';
@@ -49,6 +50,7 @@ export function createHelixRoot(host: RuntimeHost, bridges: HelixBridges): Helix
         time: createTimeApi(host),
         task: createTaskApi(host),
         jobs: createJobsApi(host),
+        localization: createLocalizationApi(host, describeAsset),
         log: createLogApi(host),
         debug: createDebugApi(host, host.debug),
         events: createEventsApi(host),

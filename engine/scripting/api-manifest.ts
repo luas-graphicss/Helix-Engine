@@ -72,6 +72,7 @@ export const API_MANIFEST: readonly ApiNamespace[] = [
     { name: 'time', section: '1.3', members: ['now', 'delta', 'fixedDelta', 'unscaledDelta', 'frame', 'realtime', 'scale', 'wait', 'waitFrames', 'delay', 'every', 'nextFrame'] },
     { name: 'task', section: '1.3', members: ['spawn', 'cancel', 'all', 'running'] },
     { name: 'jobs', section: '1.9', members: ['threads', 'sharedMemory', 'run', 'parallelFor', 'all', 'cancel', 'createBuffer', 'stats'] },
+    { name: 'localization', section: '1.10', members: ['locale', 'sourceLocale', 'direction', 'locales', 'setLocale', 't', 'has', 'keys', 'format', 'plural', 'number', 'date', 'time', 'list', 'asset', 'onChanged'] },
     { name: 'log', section: '1.4', members: ['info', 'warn', 'error', 'debug', 'assert', 'trace', 'clear'] },
     { name: 'debug', section: '1.4', members: ['line', 'ray', 'sphere', 'box', 'bounds', 'axes', 'text', 'clear'] },
     { name: 'events', section: '1.5', members: ['on', 'once', 'off', 'emit', 'onEntity', 'emitEntity', 'listenerCount', 'names'] },

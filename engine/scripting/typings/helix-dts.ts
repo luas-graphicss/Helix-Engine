@@ -2553,6 +2553,39 @@ const JOBS_API = `
     stats(): JobStats
   }
 `;
+const LOCALIZATION_API = `
+  export type TextDirection = 'ltr' | 'rtl'
+  export type PluralCategory = 'zero' | 'one' | 'two' | 'few' | 'many' | 'other'
+  export type LocalizationArguments = Record<string, unknown>
+  export type DateTimeStyle = 'short' | 'medium' | 'long' | 'full'
+  export type ListStyle = 'and' | 'or' | 'unit'
+  export interface LocaleInfo {
+    readonly tag: string
+    readonly name: string
+    readonly nativeName: string
+    readonly direction: TextDirection
+    readonly fallback: string | null
+    readonly isSource: boolean
+  }
+  export interface LocalizationApi {
+    readonly locale: string
+    readonly sourceLocale: string
+    readonly direction: TextDirection
+    locales(): LocaleInfo[]
+    setLocale(tag: string): boolean
+    t(key: string, args?: LocalizationArguments): string
+    has(key: string): boolean
+    keys(): string[]
+    format(pattern: string, args?: LocalizationArguments): string
+    plural(count: number, ordinal?: boolean): PluralCategory
+    number(value: number | bigint, style?: string): string
+    date(value: Date | number | string, style?: DateTimeStyle): string
+    time(value: Date | number | string, style?: DateTimeStyle): string
+    list(values: readonly unknown[], style?: ListStyle): string
+    asset(key: string): LibraryAsset | null
+    onChanged(handler: (locale: string) => void): Unsubscribe
+  }
+`;
 const MULTIPLAYER_API = `
   export type MultiplayerPhase = 'offline' | 'connecting' | 'connected' | 'reconnecting'
   export interface MultiplayerPlayer { readonly id: number; readonly name: string; readonly local: boolean }
@@ -2822,6 +2855,7 @@ const HELIX_ROOT = `
     readonly time: TimeApi
     readonly task: TaskApi
     readonly jobs: JobsApi
+    readonly localization: LocalizationApi
     readonly log: LogApi
     readonly debug: DebugApi
     readonly events: EventsApi
@@ -2870,6 +2904,7 @@ const HELIX_ROOT = `
   export const time: TimeApi
   export const task: TaskApi
   export const jobs: JobsApi
+  export const localization: LocalizationApi
   export const log: LogApi
   export const debug: DebugApi
   export const events: EventsApi
@@ -2906,7 +2941,7 @@ const HELIX_ROOT = `
   export const multiplayer: MultiplayerApi
   export const editor: EditorApi | undefined
 `;
-export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${JOBS_API}${MULTIPLAYER_API}${EDITOR_API}${HELIX_ROOT}
+export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${JOBS_API}${LOCALIZATION_API}${MULTIPLAYER_API}${EDITOR_API}${HELIX_ROOT}
 }
 
 declare module '@helix/engine' {
