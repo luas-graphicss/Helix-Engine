@@ -39,6 +39,8 @@ export async function serializeScene(scene: Scene, options: SerializeSceneOption
             navigation: toPlain(scene.navigation, 'navigation'),
             input: toPlain(scene.input, 'input'),
             multiplayer: toPlain(scene.multiplayer, 'multiplayer'),
+            jobs: toPlain(scene.jobs, 'jobs'),
+            localization: toPlain(scene.localization, 'localization'),
         },
         meshes: writer.meshes,
         textures: writer.textures,

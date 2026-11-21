@@ -41,6 +41,10 @@ import { ModuleLoader, type LoadedModule } from './module-loader';
 import { NetHub, type NetHubServices } from './net-hub';
 import type { MultiplayerRuntime } from '@/engine/net/runtime/multiplayer-runtime';
 import { createMultiplayerRuntime, startMultiplayer } from './multiplayer-bridge';
+import type { JobSystem } from '@/engine/jobs/system/job-system';
+import { createRuntimeJobSystem } from './jobs-bridge';
+import type { LocalizationRuntime } from '@/engine/localization/runtime/localization-runtime';
+import { createRuntimeLocalization } from './localization-bridge';
 import { parseTestTicket } from './test-ticket';
 import { ScriptRenderBridge } from './render-bridge';
 import type { ScriptOwner } from './runtime-context';
@@ -143,6 +147,8 @@ export class ScriptRuntime implements RuntimeHost {
     private persistent = false;
     readonly net: NetHub;
     readonly multiplayer: MultiplayerRuntime;
+    readonly jobs: JobSystem;
+    readonly localization: LocalizationRuntime;
     constructor(readonly session: EditorSession) {
         this.bus = new EventBus(this);
         this.scheduler = new Scheduler(this);
@@ -152,6 +158,8 @@ export class ScriptRuntime implements RuntimeHost {
         this.loader = this.createLoader();
         this.net = new NetHub(this.netServices());
         this.multiplayer = createMultiplayerRuntime(this);
+        this.jobs = createRuntimeJobSystem(this);
+        this.localization = createRuntimeLocalization(this);
     }
     private netServices(): NetHubServices {
         return {
@@ -234,6 +242,9 @@ export class ScriptRuntime implements RuntimeHost {
         this.startNet(link);
         if (mode === 'play')
             startMultiplayer(this.multiplayer, this.session);
+        this.jobs.clearHistory();
+        this.jobs.configure(this.session.scene.jobs);
+        this.localization.start();
         this.helixRoot = createHelixRoot(this, { props: this.props, locks: this.locks });
         this.loader = this.createLoader();
         const audit = auditHelixRoot(this.helixRoot, mode);
@@ -352,6 +363,9 @@ export class ScriptRuntime implements RuntimeHost {
         this.foreign.dispose();
         this.pendingCompiles.clear();
         this.multiplayer.stop();
+        this.jobs.cancelAll();
+        this.jobs.releaseThreads();
+        this.localization.stop();
         this.net.reset();
         this.scheduler.reset();
         this.bus.clear();

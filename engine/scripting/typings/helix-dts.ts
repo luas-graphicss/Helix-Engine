@@ -2498,6 +2498,94 @@ const PROJECT_API = `
     disconnect(reason?: string): void
   }
 `;
+const JOBS_API = `
+  export type JobPriority = 'high' | 'normal' | 'low'
+  export type JobStatus = 'waiting' | 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+  export type JobBufferKind = 'int8' | 'uint8' | 'int16' | 'uint16' | 'int32' | 'uint32' | 'float32' | 'float64'
+  export type JobArray = Int8Array | Uint8Array | Int16Array | Uint16Array | Int32Array | Uint32Array | Float32Array | Float64Array
+  export interface JobContext {
+    readonly index: number
+    readonly start: number
+    readonly end: number
+    readonly thread: number
+    readonly output: JobArray
+    readonly math: MathApi
+  }
+  export type JobFunction<TInput, TResult> = (input: TInput, job: JobContext) => TResult | Promise<TResult>
+  export interface JobOptions {
+    name?: string
+    priority?: JobPriority
+    dependsOn?: readonly JobHandle<unknown>[]
+    timeout?: number
+    output?: JobArray
+    transfer?: ReadonlyArray<ArrayBuffer | ArrayBufferView>
+  }
+  export interface ParallelJobOptions extends Omit<JobOptions, 'transfer'> {
+    batchSize?: number
+    stride?: number
+  }
+  export interface JobHandle<TResult> extends PromiseLike<TResult> {
+    readonly id: number
+    readonly name: string
+    readonly status: JobStatus
+    readonly done: Promise<TResult>
+    cancel(): void
+  }
+  export interface JobStats {
+    threads: number
+    mode: 'threads' | 'inline'
+    queued: number
+    running: number
+    scheduled: number
+    completed: number
+    failed: number
+    cancelled: number
+    timedOut: number
+  }
+  export interface JobsApi {
+    readonly threads: number
+    readonly sharedMemory: boolean
+    run<TInput, TResult>(job: JobFunction<TInput, TResult>, input?: TInput, options?: JobOptions): JobHandle<TResult>
+    parallelFor<TInput, TResult>(count: number, job: JobFunction<TInput, TResult>, input?: TInput, options?: ParallelJobOptions): JobHandle<TResult[]>
+    all<TResult>(handles: readonly JobHandle<TResult>[]): Promise<TResult[]>
+    cancel(handle: JobHandle<unknown>): void
+    createBuffer(kind: JobBufferKind, length: number): JobArray
+    stats(): JobStats
+  }
+`;
+const LOCALIZATION_API = `
+  export type TextDirection = 'ltr' | 'rtl'
+  export type PluralCategory = 'zero' | 'one' | 'two' | 'few' | 'many' | 'other'
+  export type LocalizationArguments = Record<string, unknown>
+  export type DateTimeStyle = 'short' | 'medium' | 'long' | 'full'
+  export type ListStyle = 'and' | 'or' | 'unit'
+  export interface LocaleInfo {
+    readonly tag: string
+    readonly name: string
+    readonly nativeName: string
+    readonly direction: TextDirection
+    readonly fallback: string | null
+    readonly isSource: boolean
+  }
+  export interface LocalizationApi {
+    readonly locale: string
+    readonly sourceLocale: string
+    readonly direction: TextDirection
+    locales(): LocaleInfo[]
+    setLocale(tag: string): boolean
+    t(key: string, args?: LocalizationArguments): string
+    has(key: string): boolean
+    keys(): string[]
+    format(pattern: string, args?: LocalizationArguments): string
+    plural(count: number, ordinal?: boolean): PluralCategory
+    number(value: number | bigint, style?: string): string
+    date(value: Date | number | string, style?: DateTimeStyle): string
+    time(value: Date | number | string, style?: DateTimeStyle): string
+    list(values: readonly unknown[], style?: ListStyle): string
+    asset(key: string): LibraryAsset | null
+    onChanged(handler: (locale: string) => void): Unsubscribe
+  }
+`;
 const MULTIPLAYER_API = `
   export type MultiplayerPhase = 'offline' | 'connecting' | 'connected' | 'reconnecting'
   export interface MultiplayerPlayer { readonly id: number; readonly name: string; readonly local: boolean }
@@ -2766,6 +2854,8 @@ const HELIX_ROOT = `
     readonly ActorScript: typeof ActorScript
     readonly time: TimeApi
     readonly task: TaskApi
+    readonly jobs: JobsApi
+    readonly localization: LocalizationApi
     readonly log: LogApi
     readonly debug: DebugApi
     readonly events: EventsApi
@@ -2813,6 +2903,8 @@ const HELIX_ROOT = `
   export const engine: EngineInfo
   export const time: TimeApi
   export const task: TaskApi
+  export const jobs: JobsApi
+  export const localization: LocalizationApi
   export const log: LogApi
   export const debug: DebugApi
   export const events: EventsApi
@@ -2849,7 +2941,7 @@ const HELIX_ROOT = `
   export const multiplayer: MultiplayerApi
   export const editor: EditorApi | undefined
 `;
-export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${MULTIPLAYER_API}${EDITOR_API}${HELIX_ROOT}
+export const HELIX_DECLARATIONS = `declare module 'helix' {${PRIMITIVES}${SCENE_TYPES}${ROOT_TYPES}${MATH_TYPES}${SCENE_API}${RENDER_API}${PHYSICS_API}${TERRAIN_API}${GUI_API}${AUDIO_API}${ANIMATION_API}${VFX_API}${INPUT_API}${ASSETS_API}${PROJECT_API}${JOBS_API}${LOCALIZATION_API}${MULTIPLAYER_API}${EDITOR_API}${HELIX_ROOT}
 }
 
 declare module '@helix/engine' {
